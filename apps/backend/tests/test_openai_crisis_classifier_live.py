@@ -32,7 +32,7 @@ async def test_live_openai_flags_clear_suicidal_ideation() -> None:
     )
 
     assert result.crisis.level >= 2
-    assert result.response_kind == ResponseKind.CRISIS
+    assert result.response_type == ResponseKind.CRISIS
     assert result.crisis.needs_crisis_response
 
 

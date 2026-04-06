@@ -11,7 +11,11 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from agent.models import CrisisAssessment, Message, MessageRole
+from agent.models import CrisisAssessment
+from agent.prompts import (
+    build_crisis_classifier_prompt,
+    build_crisis_classifier_system_prompt,
+)
 from agent.state import AgentState
 from pydantic import BaseModel
 
@@ -77,19 +81,6 @@ def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     """Return whether the text matches any pattern in the provided tuple."""
 
     return any(re.search(pattern, text) for pattern in patterns)
-
-
-def _state_history_to_messages(state: AgentState) -> list[Message]:
-    """Convert serialized history entries back into validated message objects."""
-
-    messages: list[Message] = []
-    for turn in state["history"]:
-        role = turn.get("role")
-        content = turn.get("content")
-        if not role or not content:
-            continue
-        messages.append(Message(role=MessageRole(role), content=content))
-    return messages
 
 
 def detect_crisis_override(state: AgentState) -> tuple[OverrideKind, CrisisAssessment] | None:
@@ -200,34 +191,10 @@ async def assess_crisis_risk_with_llm(
         A crisis assessment derived from model output.
     """
 
-    history = _state_history_to_messages(state)
-    history_text = (
-        "\n".join(f"{message.role.value}: {message.content}" for message in history[-6:])
-        if history
-        else "(no prior history)"
-    )
-
-    prompt = (
-        "Assess the user's current risk level for self-harm or suicide.\n\n"
-        "Return only the structured schema.\n"
-        "Use these levels:\n"
-        "- 0: no acute risk\n"
-        "- 1: high distress or ambiguous concerning language, but no clear self-harm signal\n"
-        "- 2: self-harm or suicidal ideation without clear imminent plan\n"
-        "- 3: imminent risk with plan, means, or near-term intent\n\n"
-        "Mark needs_crisis_response true for levels 2 or 3.\n"
-        "Mark needs_clarification true when the message is concerning but ambiguous.\n\n"
-        f"Recent conversation:\n{history_text}\n\n"
-        f"Current user message:\nuser: {state['message']}"
-    )
-
     raw = await llm_client.generate_structured(
-        prompt=prompt,
+        prompt=build_crisis_classifier_prompt(state),
         response_schema=CrisisAssessmentSchema,
-        system_instruction=(
-            "You are a safety classifier for a mental health support product. "
-            "Classify risk conservatively. Do not provide a supportive reply."
-        ),
+        system_instruction=build_crisis_classifier_system_prompt(),
         temperature=0,
     )
 
@@ -324,7 +291,10 @@ async def run_crisis_gate(
         )
 
     if llm_client is not None:
-        assessment = await assess_crisis_risk_with_llm(state, llm_client=llm_client)
+        try:
+            assessment = await assess_crisis_risk_with_llm(state, llm_client=llm_client)
+        except Exception:
+            assessment = assess_crisis_risk_deterministically(state)
     else:
         assessment = assess_crisis_risk_deterministically(state)
 

@@ -55,6 +55,7 @@ class AgentInput(BaseModel):
 # Defines the normalized result so API, CLI, and tests can all consume the same shape.
 class AgentOutput(BaseModel):
     response_text: str
-    response_kind: ResponseKind
+    response_type: ResponseKind
     crisis: CrisisAssessment
+    mode: str | None = None
     should_persist_memory: bool = False

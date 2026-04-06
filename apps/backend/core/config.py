@@ -18,8 +18,8 @@ _DOTENV_LOADED = False
 def load_runtime_env() -> None:
     """Load local `.env` files for runtime configuration.
 
-    This is intended for local development and scripts. Shell-provided environment
-    variables still take precedence because `override=False` is used.
+    Returns:
+        None.
     """
 
     global _DOTENV_LOADED

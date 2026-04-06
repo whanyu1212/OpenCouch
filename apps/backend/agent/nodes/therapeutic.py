@@ -1,7 +1,15 @@
-"""Minimal therapeutic response node for the MVP graph."""
+"""Therapeutic response node for the MVP graph."""
+
+from __future__ import annotations
 
 from agent.models import ResponseKind
+from agent.prompts import (
+    build_therapeutic_response_prompt,
+    build_therapeutic_system_prompt,
+)
+from agent.prompts.catalog import Modality
 from agent.state import AgentState
+from services.llm.base import BaseLLMClient
 
 CLARIFICATION_TEMPLATES = {
     "high_distress": (
@@ -19,8 +27,8 @@ CLARIFICATION_TEMPLATES = {
 }
 
 
-def _select_clarification_message(state: AgentState) -> str:
-    """Select a bounded clarification template based on crisis context."""
+def _select_safety_check_message(state: AgentState) -> str:
+    """Select a bounded safety-check template based on crisis context."""
 
     reason = state["crisis"].reason.lower()
     if "high-distress" in reason or "high distress" in reason:
@@ -30,20 +38,68 @@ def _select_clarification_message(state: AgentState) -> str:
     return CLARIFICATION_TEMPLATES["general"]
 
 
-async def run_therapeutic_response(state: AgentState) -> AgentState:
-    """Return a placeholder supportive response.
+def _fallback_supportive_response(state: AgentState) -> str:
+    """Return the deterministic fallback for normal therapeutic replies."""
 
-    If the crisis gate flagged ambiguity, start with a safety-oriented clarifying question.
+    if state.get("session_stage") == "closing":
+        return (
+            "It sounds like the most important thing from this conversation is that what you’re carrying has felt heavy, "
+            "and you’ve started putting a little more shape around what you need. If it helps, the next step is to stay "
+            "with one small thing that felt most grounding or clarifying today. We can pick this up again whenever you want."
+        )
+    return "I’m here with you. Tell me a bit more about what feels hardest right now."
+
+
+def _detect_support_modalities(state: AgentState) -> tuple[Modality, ...]:
+    """Select support modalities from lightweight heuristics."""
+
+    history_text = " ".join(turn.get("content", "") for turn in state["history"][-6:])
+    text = f"{history_text} {state['message']}".lower()
+
+    if any(word in text for word in ("grief", "loss", "died", "funeral", "bereavement")):
+        return ("motivational_interviewing", "grief_support")
+    return ("motivational_interviewing",)
+
+
+async def run_therapeutic_response(
+    state: AgentState,
+    *,
+    llm_client: BaseLLMClient | None = None,
+) -> AgentState:
+    """Return a supportive therapeutic response.
+
+    Args:
+        state: Shared agent state for the current turn.
+        llm_client: Optional provider-backed client for text generation.
+
+    Returns:
+        The updated agent state with a therapeutic reply.
     """
 
     crisis = state["crisis"]
-    state["response_kind"] = ResponseKind.THERAPEUTIC
+    state["response_type"] = ResponseKind.THERAPEUTIC
 
     if crisis.needs_clarification:
-        state["response_text"] = _select_clarification_message(state)
+        state["mode"] = "safety_check"
+        state["response_text"] = _select_safety_check_message(state)
         return state
 
-    state["response_text"] = (
-        "I’m here with you. Tell me a bit more about what feels hardest right now."
-    )
+    state["mode"] = "support"
+    modalities = _detect_support_modalities(state)
+
+    if llm_client is not None:
+        try:
+            state["response_text"] = await llm_client.generate_text(
+                prompt=build_therapeutic_response_prompt(state),
+                system_instruction=build_therapeutic_system_prompt(
+                    modalities=modalities,
+                ),
+                temperature=0.4,
+            )
+            return state
+        except Exception:
+            # Fall back cleanly so one provider failure does not break the local workflow.
+            pass
+
+    state["response_text"] = _fallback_supportive_response(state)
     return state

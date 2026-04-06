@@ -23,16 +23,40 @@ class AgentState(TypedDict):
 
     # Prior turns that may be injected into the model context for continuity.
     history: list[dict[str, str]]
+    # Full durable transcript for rebuilding the next turn's session context.
+    transcript: NotRequired[list[dict[str, str]]]
     # Scratch space for retrieved facts or interim context once memory exists.
     working_memory: list[str]
+    # Rolling summary used to keep the session coherent as history grows.
+    session_summary: str
+    # Current user concerns that should stay salient across turns.
+    active_concerns: list[str]
+    # Unresolved threads the agent should avoid dropping.
+    open_loops: list[str]
+    # Best-effort guess at what the user wants from the current session.
+    current_goal: str | None
+    # Soft steering signal for the overall shape of the current session.
+    session_intent: NotRequired[str | None]
+    # Tracks whether the current intent came from explicit user language or inference.
+    session_intent_source: NotRequired[str | None]
+    # Structured session progression signal for shaping the next response.
+    session_stage: NotRequired[str]
+    # Tracks whether the current stage came from deterministic logic or LLM refinement.
+    session_stage_source: NotRequired[str | None]
+    # Short rationale for debugging and evals.
+    session_stage_reason: NotRequired[str]
+    # Count of user turns including the current inbound message.
+    turn_count: int
 
     # Safety decision must live in state so every downstream node can respect it.
     crisis: CrisisAssessment
 
     # Records which high-level path the graph decided to take.
     route: NotRequired[str]
+    # Tracks the active non-crisis response mode inside the therapeutic path.
+    mode: NotRequired[str]
     # Makes the output type explicit before the final response is returned.
-    response_kind: NotRequired[ResponseKind]
+    response_type: NotRequired[ResponseKind]
     # Holds the generated text from the chosen response node.
     response_text: NotRequired[str]
 

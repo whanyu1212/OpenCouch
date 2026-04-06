@@ -11,7 +11,7 @@ async def test_routes_clear_imminent_risk_to_crisis() -> None:
     )
 
     assert result.crisis.level == 3
-    assert result.response_kind == ResponseKind.CRISIS
+    assert result.response_type == ResponseKind.CRISIS
     assert result.crisis.needs_crisis_response
 
 
@@ -22,7 +22,7 @@ async def test_routes_clear_ideation_to_crisis() -> None:
     )
 
     assert result.crisis.level == 2
-    assert result.response_kind == ResponseKind.CRISIS
+    assert result.response_type == ResponseKind.CRISIS
 
 
 @pytest.mark.asyncio
@@ -32,7 +32,7 @@ async def test_routes_ambiguous_language_to_clarifying_question() -> None:
     )
 
     assert result.crisis.level == 1
-    assert result.response_kind == ResponseKind.THERAPEUTIC
+    assert result.response_type == ResponseKind.THERAPEUTIC
     assert result.crisis.needs_clarification
     assert (
         "hurting yourself" in result.response_text
@@ -41,13 +41,13 @@ async def test_routes_ambiguous_language_to_clarifying_question() -> None:
 
 
 @pytest.mark.asyncio
-async def test_high_distress_clarification_uses_distress_template() -> None:
+async def test_high_distress_safety_check_uses_distress_template() -> None:
     result = await run_agent(
         AgentInput(message="I feel completely hopeless and trapped.")
     )
 
     assert result.crisis.level == 1
-    assert result.response_kind == ResponseKind.THERAPEUTIC
+    assert result.response_type == ResponseKind.THERAPEUTIC
     assert "check on your safety" in result.response_text
 
 
@@ -56,7 +56,7 @@ async def test_does_not_overtrigger_common_idiom() -> None:
     result = await run_agent(AgentInput(message="Work is killing me lately."))
 
     assert result.crisis.level == 0
-    assert result.response_kind == ResponseKind.THERAPEUTIC
+    assert result.response_type == ResponseKind.THERAPEUTIC
 
 
 def test_uses_recent_user_history_for_context() -> None:

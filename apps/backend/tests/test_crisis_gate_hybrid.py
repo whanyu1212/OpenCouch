@@ -17,8 +17,14 @@ class FakeStructuredResponse(BaseModel):
 
 
 class FakeLLMClient(BaseLLMClient):
-    def __init__(self, response: FakeStructuredResponse) -> None:
+    def __init__(
+        self,
+        response: FakeStructuredResponse,
+        *,
+        raise_on_structured: bool = False,
+    ) -> None:
         self.response = response
+        self.raise_on_structured = raise_on_structured
         self.structured_calls = 0
         self.last_prompt: str | None = None
         self.last_system_instruction: str | None = None
@@ -43,6 +49,8 @@ class FakeLLMClient(BaseLLMClient):
         self.structured_calls += 1
         self.last_prompt = prompt
         self.last_system_instruction = system_instruction
+        if self.raise_on_structured:
+            raise RuntimeError("Simulated structured generation failure")
         return response_schema(**self.response.model_dump())
 
 
@@ -160,7 +168,7 @@ async def test_hybrid_gate_passes_history_into_llm_prompt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clarification_from_llm_routes_to_semi_dynamic_template() -> None:
+async def test_safety_check_from_llm_routes_to_semi_dynamic_template() -> None:
     state = build_initial_state(
         AgentInput(message="I feel completely hopeless and trapped.")
     )
@@ -180,3 +188,27 @@ async def test_clarification_from_llm_routes_to_semi_dynamic_template() -> None:
     assert state["route"] == "therapeutic"
     assert state["crisis"].needs_clarification is True
     assert "check on your safety" in state["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_gate_falls_back_to_deterministic_when_llm_fails() -> None:
+    state = build_initial_state(
+        AgentInput(message="I feel completely hopeless and trapped.")
+    )
+    llm_client = FakeLLMClient(
+        FakeStructuredResponse(
+            level=0,
+            confidence="low",
+            reason="Should never be used.",
+            needs_crisis_response=False,
+            needs_clarification=False,
+        ),
+        raise_on_structured=True,
+    )
+
+    state = await run_crisis_gate(state, llm_client=llm_client)
+
+    assert llm_client.structured_calls == 1
+    assert state["crisis"].level == 1
+    assert state["crisis"].needs_clarification is True
+    assert state["route"] == "therapeutic"
