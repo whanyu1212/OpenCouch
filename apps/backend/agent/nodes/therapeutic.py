@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from agent.models import ResponseKind
 from agent.prompts import (
     build_therapeutic_response_prompt,
@@ -50,17 +52,6 @@ def _fallback_supportive_response(state: AgentState) -> str:
     return "I’m here with you. Tell me a bit more about what feels hardest right now."
 
 
-def _detect_support_modalities(state: AgentState) -> tuple[Modality, ...]:
-    """Select support modalities from lightweight heuristics."""
-
-    history_text = " ".join(turn.get("content", "") for turn in state["history"][-6:])
-    text = f"{history_text} {state['message']}".lower()
-
-    if any(word in text for word in ("grief", "loss", "died", "funeral", "bereavement")):
-        return ("motivational_interviewing", "grief_support")
-    return ("motivational_interviewing",)
-
-
 async def run_therapeutic_response(
     state: AgentState,
     *,
@@ -85,7 +76,10 @@ async def run_therapeutic_response(
         return state
 
     state["mode"] = "support"
-    modalities = _detect_support_modalities(state)
+    modalities = cast(
+        tuple[Modality, ...],
+        tuple(state.get("active_modalities", ["motivational_interviewing"])),
+    )
 
     if llm_client is not None:
         try:

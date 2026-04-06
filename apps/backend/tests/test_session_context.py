@@ -4,17 +4,39 @@ from agent.prompts.builders import format_session_context
 
 
 def test_build_initial_state_populates_session_context_and_trims_history() -> None:
+    """Initial state building should derive context fields and trim history."""
+
     history = [
         Message(role=MessageRole.USER, content="I'm new here."),
         Message(role=MessageRole.ASSISTANT, content="What feels most important today?"),
-        Message(role=MessageRole.USER, content="Work has been overwhelming and I feel drained."),
+        Message(
+            role=MessageRole.USER,
+            content="Work has been overwhelming and I feel drained.",
+        ),
         Message(role=MessageRole.ASSISTANT, content="That sounds exhausting."),
-        Message(role=MessageRole.USER, content="I can't switch off after work and my sleep is getting worse."),
-        Message(role=MessageRole.ASSISTANT, content="When did that start feeling most intense?"),
-        Message(role=MessageRole.USER, content="A couple of months ago, and I keep spiraling at night."),
-        Message(role=MessageRole.ASSISTANT, content="What do you notice right before the spiral starts?"),
-        Message(role=MessageRole.USER, content="Usually after messages from my manager."),
-        Message(role=MessageRole.ASSISTANT, content="That helps narrow the trigger a little."),
+        Message(
+            role=MessageRole.USER,
+            content="I can't switch off after work and my sleep is getting worse.",
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content="When did that start feeling most intense?",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="A couple of months ago, and I keep spiraling at night.",
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content="What do you notice right before the spiral starts?",
+        ),
+        Message(
+            role=MessageRole.USER, content="Usually after messages from my manager."
+        ),
+        Message(
+            role=MessageRole.ASSISTANT,
+            content="That helps narrow the trigger a little.",
+        ),
     ]
 
     state = build_initial_state(
@@ -34,12 +56,20 @@ def test_build_initial_state_populates_session_context_and_trims_history() -> No
 
 
 def test_format_session_context_includes_structured_fields() -> None:
+    """Formatted session context should surface the core structured fields."""
+
     state = build_initial_state(
         AgentInput(
             message="Can you help me understand why this keeps happening with work?",
             history=[
-                Message(role=MessageRole.USER, content="Work has been making me anxious for weeks."),
-                Message(role=MessageRole.ASSISTANT, content="What feels most stuck about it?"),
+                Message(
+                    role=MessageRole.USER,
+                    content="Work has been making me anxious for weeks.",
+                ),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="What feels most stuck about it?",
+                ),
             ],
         )
     )
@@ -56,6 +86,8 @@ def test_format_session_context_includes_structured_fields() -> None:
 
 
 def test_build_initial_state_sets_explicit_session_intent() -> None:
+    """Explicit intent language should be captured during initial state building."""
+
     state = build_initial_state(
         AgentInput(message="I want to do a CBT thought record about this fear.")
     )

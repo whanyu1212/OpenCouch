@@ -13,6 +13,8 @@ class FakeStageResponse(BaseModel):
 
 
 class FakeStageLLMClient(BaseLLMClient):
+    """Fake provider client for hybrid session-stage tests."""
+
     def __init__(self, response: FakeStageResponse) -> None:
         self.response = response
         self.structured_calls = 0
@@ -24,6 +26,20 @@ class FakeStageLLMClient(BaseLLMClient):
         system_instruction: str | None = None,
         temperature: float = 0,
     ) -> str:
+        """Raise because text generation is unused in stage tests.
+
+        Args:
+            prompt: User/task prompt sent to the fake provider.
+            system_instruction: Optional system prompt sent to the fake provider.
+            temperature: Sampling temperature for generation.
+
+        Returns:
+            This function does not return a value.
+
+        Raises:
+            NotImplementedError: Always raised for this fake client path.
+        """
+
         raise NotImplementedError
 
     async def generate_structured(
@@ -34,12 +50,26 @@ class FakeStageLLMClient(BaseLLMClient):
         system_instruction: str | None = None,
         temperature: float = 0,
     ):
+        """Return the configured structured stage response.
+
+        Args:
+            prompt: User/task prompt sent to the fake provider.
+            response_schema: Structured schema requested by the caller.
+            system_instruction: Optional system prompt sent to the fake provider.
+            temperature: Sampling temperature for generation.
+
+        Returns:
+            A schema instance populated from the configured fake response.
+        """
+
         self.structured_calls += 1
         return response_schema(**self.response.model_dump())
 
 
 @pytest.mark.asyncio
 async def test_session_stage_defaults_to_opening_for_new_session() -> None:
+    """New sessions should default to the opening stage."""
+
     state = build_initial_state(AgentInput(message="Hi, I'm new here."))
 
     state = await update_session_stage(state)
@@ -50,11 +80,15 @@ async def test_session_stage_defaults_to_opening_for_new_session() -> None:
 
 @pytest.mark.asyncio
 async def test_session_stage_moves_to_closing_on_explicit_wrap_up_language() -> None:
+    """Explicit wrap-up language should move the session into closing."""
+
     state = build_initial_state(
         AgentInput(
             message="Before we wrap up, can you summarize this for me?",
             history=[
-                Message(role=MessageRole.USER, content="I've been overwhelmed all week."),
+                Message(
+                    role=MessageRole.USER, content="I've been overwhelmed all week."
+                ),
                 Message(role=MessageRole.ASSISTANT, content="That sounds exhausting."),
             ],
         )
@@ -68,12 +102,20 @@ async def test_session_stage_moves_to_closing_on_explicit_wrap_up_language() -> 
 
 @pytest.mark.asyncio
 async def test_session_stage_uses_llm_refinement_when_available() -> None:
+    """LLM refinement should be able to override the deterministic stage."""
+
     state = build_initial_state(
         AgentInput(
             message="That helped. What should I try this week?",
             history=[
-                Message(role=MessageRole.USER, content="I want to do CBT for this negative thought."),
-                Message(role=MessageRole.ASSISTANT, content="Let's work through a thought record together."),
+                Message(
+                    role=MessageRole.USER,
+                    content="I want to do CBT for this negative thought.",
+                ),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="Let's work through a thought record together.",
+                ),
             ],
         )
     )
@@ -93,6 +135,8 @@ async def test_session_stage_uses_llm_refinement_when_available() -> None:
 
 @pytest.mark.asyncio
 async def test_session_stage_stays_conservative_for_safety_check() -> None:
+    """Safety-sensitive turns should keep stage progression conservative."""
+
     state = build_initial_state(AgentInput(message="I feel hopeless and trapped."))
     state["crisis"] = CrisisAssessment(
         level=1,

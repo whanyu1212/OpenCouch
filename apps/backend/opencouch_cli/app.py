@@ -125,7 +125,9 @@ def render_header(mode: str, thread_id: str) -> None:
             expand=False,
         )
     )
-    console.print("[dim]slash commands: /help, /status, /history, /context, /reset, /clear, /mode, /exit[/dim]\n")
+    console.print(
+        "[dim]slash commands: /help, /status, /history, /context, /reset, /clear, /mode, /exit[/dim]\n"
+    )
 
 
 def render_response(response_text: str, *, is_crisis: bool) -> None:
@@ -139,7 +141,11 @@ def render_response(response_text: str, *, is_crisis: bool) -> None:
         None.
     """
 
-    title = "[bold red]Crisis Reply[/bold red]" if is_crisis else "[bold green]Support Reply[/bold green]"
+    title = (
+        "[bold red]Crisis Reply[/bold red]"
+        if is_crisis
+        else "[bold green]Support Reply[/bold green]"
+    )
     border_style = "red" if is_crisis else "green"
     console.print(Panel(response_text, title=title, border_style=border_style))
 
@@ -248,9 +254,14 @@ def render_help() -> None:
     table.add_row("/context", "Show the latest derived session context snapshot.")
     table.add_row("/reset", "Clear the conversation history.")
     table.add_row("/clear", "Clear the terminal and redraw the header.")
-    table.add_row("/mode <deterministic|hybrid|auto>", "Switch LLM resolution mode for future turns.")
+    table.add_row(
+        "/mode <deterministic|hybrid|auto>",
+        "Switch LLM resolution mode for future turns.",
+    )
     table.add_row("/exit", "End the session.")
-    console.print(Panel(table, title="[bold blue]Commands[/bold blue]", border_style="blue"))
+    console.print(
+        Panel(table, title="[bold blue]Commands[/bold blue]", border_style="blue")
+    )
     console.print()
 
 
@@ -264,7 +275,9 @@ def render_status(session: RunnerSession) -> None:
         None.
     """
 
-    turn_count = sum(1 for message in session.history if message.role == MessageRole.USER)
+    turn_count = sum(
+        1 for message in session.history if message.role == MessageRole.USER
+    )
     table = Table(show_header=False, box=None)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(style="white")
@@ -272,11 +285,17 @@ def render_status(session: RunnerSession) -> None:
     table.add_row("sqlite path", session.sqlite_path)
     table.add_row("requested mode", session.requested_mode)
     table.add_row("resolved mode", session.resolved_mode)
-    table.add_row("llm client", "enabled" if session.llm_client is not None else "disabled")
+    table.add_row(
+        "llm client", "enabled" if session.llm_client is not None else "disabled"
+    )
     table.add_row("turns", str(turn_count))
     table.add_row("messages", str(len(session.history)))
-    table.add_row("context snapshot", "available" if session.last_context is not None else "none")
-    console.print(Panel(table, title="[bold blue]Session Status[/bold blue]", border_style="blue"))
+    table.add_row(
+        "context snapshot", "available" if session.last_context is not None else "none"
+    )
+    console.print(
+        Panel(table, title="[bold blue]Session Status[/bold blue]", border_style="blue")
+    )
     console.print()
 
 
@@ -292,18 +311,26 @@ def render_history(session: RunnerSession, limit: int = 6) -> None:
     """
 
     if not session.history:
-        console.print(Panel("No conversation history yet.", title="[bold blue]History[/bold blue]", border_style="blue"))
+        console.print(
+            Panel(
+                "No conversation history yet.",
+                title="[bold blue]History[/bold blue]",
+                border_style="blue",
+            )
+        )
         console.print()
         return
 
-    recent = session.history[-max(1, limit):]
+    recent = session.history[-max(1, limit) :]
     table = Table(show_header=True, header_style="bold magenta", box=None)
     table.add_column("role", style="cyan", no_wrap=True)
     table.add_column("content", style="white")
     for message in recent:
         role = message.role.value
         table.add_row(role, message.content)
-    console.print(Panel(table, title="[bold blue]Recent History[/bold blue]", border_style="blue"))
+    console.print(
+        Panel(table, title="[bold blue]Recent History[/bold blue]", border_style="blue")
+    )
     console.print()
 
 
@@ -464,7 +491,9 @@ async def chat_loop(mode: str, *, thread_id: str, sqlite_path: str) -> None:
             if user_text.lower() in {"exit", "quit"}:
                 break
 
-            with console.status("[bold blue]Running graph...[/bold blue]", spinner="dots"):
+            with console.status(
+                "[bold blue]Running graph...[/bold blue]", spinner="dots"
+            ):
                 turn_result = await runtime.run_turn(
                     thread_id=session.thread_id,
                     message=user_text,

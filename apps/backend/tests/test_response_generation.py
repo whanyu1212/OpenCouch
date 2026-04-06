@@ -8,6 +8,8 @@ from services.llm.base import BaseLLMClient
 
 
 class FakeTextLLMClient(BaseLLMClient):
+    """Fake provider client for response-generation tests."""
+
     def __init__(
         self,
         *,
@@ -27,6 +29,20 @@ class FakeTextLLMClient(BaseLLMClient):
         system_instruction: str | None = None,
         temperature: float = 0,
     ) -> str:
+        """Return the configured text response or raise a fake failure.
+
+        Args:
+            prompt: User/task prompt sent to the fake provider.
+            system_instruction: Optional system prompt sent to the fake provider.
+            temperature: Sampling temperature for generation.
+
+        Returns:
+            The configured fake text response.
+
+        Raises:
+            RuntimeError: Raised when the fake client is configured to fail.
+        """
+
         self.text_calls += 1
         self.last_prompt = prompt
         self.last_system_instruction = system_instruction
@@ -42,12 +58,33 @@ class FakeTextLLMClient(BaseLLMClient):
         system_instruction: str | None = None,
         temperature: float = 0,
     ):
-        raise NotImplementedError("Structured generation is not used in text node tests.")
+        """Raise because structured generation is unused in these tests.
+
+        Args:
+            prompt: User/task prompt sent to the fake provider.
+            response_schema: Structured schema requested by the caller.
+            system_instruction: Optional system prompt sent to the fake provider.
+            temperature: Sampling temperature for generation.
+
+        Returns:
+            This function does not return a value.
+
+        Raises:
+            NotImplementedError: Always raised for this fake client path.
+        """
+
+        raise NotImplementedError(
+            "Structured generation is not used in text node tests."
+        )
 
 
 @pytest.mark.asyncio
 async def test_therapeutic_node_uses_llm_for_normal_support() -> None:
-    state = build_initial_state(AgentInput(message="I had a rough day and feel drained."))
+    """Therapeutic node should use the provider for ordinary support replies."""
+
+    state = build_initial_state(
+        AgentInput(message="I had a rough day and feel drained.")
+    )
     llm_client = FakeTextLLMClient(
         text_response="That sounds exhausting. It makes sense that you're feeling worn down after a day like that."
     )
@@ -63,6 +100,8 @@ async def test_therapeutic_node_uses_llm_for_normal_support() -> None:
 
 @pytest.mark.asyncio
 async def test_therapeutic_node_bypasses_llm_for_safety_check() -> None:
+    """Safety-check replies should bypass the provider and stay bounded."""
+
     state = build_initial_state(AgentInput(message="I feel hopeless and trapped."))
     state["crisis"] = CrisisAssessment(
         level=1,
@@ -82,6 +121,8 @@ async def test_therapeutic_node_bypasses_llm_for_safety_check() -> None:
 
 @pytest.mark.asyncio
 async def test_crisis_node_uses_llm_for_crisis_reply() -> None:
+    """Crisis node should use the provider when crisis generation is available."""
+
     state = build_initial_state(
         AgentInput(message="I've been thinking about ending it all.")
     )
@@ -105,11 +146,16 @@ async def test_crisis_node_uses_llm_for_crisis_reply() -> None:
     assert "reach out to a crisis hotline" in state["response_text"]
     assert llm_client.text_calls == 1
     assert llm_client.last_prompt is not None
-    assert "Detected clear self-harm or suicidal ideation language." in llm_client.last_prompt
+    assert (
+        "Detected clear self-harm or suicidal ideation language."
+        in llm_client.last_prompt
+    )
 
 
 @pytest.mark.asyncio
 async def test_crisis_node_falls_back_when_llm_generation_fails() -> None:
+    """Crisis node should fall back cleanly when provider generation fails."""
+
     state = build_initial_state(
         AgentInput(message="I have pills and I am going to take them tonight.")
     )

@@ -17,7 +17,13 @@ from agent.context import (
     trim_history,
     update_session_intent,
 )
-from agent.models import AgentInput, AgentOutput, Channel, CrisisAssessment, ResponseKind
+from agent.models import (
+    AgentInput,
+    AgentOutput,
+    Channel,
+    CrisisAssessment,
+    ResponseKind,
+)
 from agent.nodes.crisis_gate import run_crisis_gate
 from agent.nodes.session_stage import update_session_stage
 from agent.state import AgentState
@@ -72,10 +78,13 @@ def prepare_turn_state(state: AgentState) -> AgentState:
     state["current_goal"] = current_goal
     state["session_intent"] = session_intent
     state["session_intent_source"] = session_intent_source
-    state["turn_count"] = sum(1 for turn in transcript if turn.get("role") == "user") + 1
+    state["turn_count"] = (
+        sum(1 for turn in transcript if turn.get("role") == "user") + 1
+    )
     state["crisis"] = CrisisAssessment()
     state["route"] = "therapeutic"
     state["mode"] = "support"
+    state["active_modalities"] = []
     state["response_type"] = ResponseKind.THERAPEUTIC
     state["response_text"] = ""
     state["should_persist_memory"] = False
@@ -125,6 +134,7 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
         crisis=CrisisAssessment(),
         route="therapeutic",
         mode="support",
+        active_modalities=[],
         should_persist_memory=False,
     )
     return prepare_turn_state(state)

@@ -21,7 +21,11 @@ from agent.prompts.builders import (
 )
 from agent.prompts.catalog import Modality, ResponseMode
 from agent.prompts.core import build_core_system_prompt
-from agent.prompts.modes import build_mode_prompt, build_modality_prompt, build_system_prompt
+from agent.prompts.modes import (
+    build_mode_prompt,
+    build_modality_prompt,
+    build_system_prompt,
+)
 
 __all__ = [
     "Modality",

@@ -21,6 +21,9 @@ Modality = Literal[
     "motivational_interviewing",
     "cbt",
     "grief_support",
+    "interpersonal_therapy",
+    "act",
+    "dbt_skills",
 ]
 
 MODE_FILES: dict[ResponseMode, tuple[str, ...]] = {
@@ -43,15 +46,32 @@ MODALITY_FILES: dict[Modality, tuple[str, ...]] = {
     "motivational_interviewing": ("modalities/motivational_interviewing.md",),
     "cbt": ("modalities/cbt.md",),
     "grief_support": ("modalities/grief_support.md",),
+    "interpersonal_therapy": ("modalities/interpersonal_therapy.md",),
+    "act": ("modalities/act.md",),
+    "dbt_skills": ("modalities/dbt_skills.md",),
 }
 
 ALLOWED_MODALITIES: dict[ResponseMode, tuple[Modality, ...]] = {
-    "support": ("motivational_interviewing", "cbt", "grief_support", "pfa"),
+    "support": (
+        "motivational_interviewing",
+        "cbt",
+        "grief_support",
+        "pfa",
+        "interpersonal_therapy",
+        "act",
+        "dbt_skills",
+    ),
     "safety_check": ("pfa",),
     "crisis_response": ("pfa",),
     "orientation": ("motivational_interviewing",),
-    "reflection": ("motivational_interviewing", "grief_support", "cbt"),
-    "guided_exercise": ("cbt", "pfa"),
+    "reflection": (
+        "motivational_interviewing",
+        "grief_support",
+        "cbt",
+        "interpersonal_therapy",
+        "act",
+    ),
+    "guided_exercise": ("cbt", "pfa", "act", "dbt_skills"),
     "out_of_scope": (),
     "realignment": ("motivational_interviewing",),
     "crisis_classifier": (),

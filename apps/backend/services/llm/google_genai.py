@@ -7,11 +7,11 @@ from typing import cast
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
 
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
 DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
+
 
 class GeminiLLMClient(BaseLLMClient):
     """Google Gen AI implementation of `BaseLLMClient`."""

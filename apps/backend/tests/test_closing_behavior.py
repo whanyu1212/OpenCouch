@@ -10,9 +10,9 @@ from agent.prompts.builders import build_therapeutic_response_prompt
 
 @pytest.mark.asyncio
 async def test_support_fallback_changes_when_session_is_closing() -> None:
-    state = build_initial_state(
-        AgentInput(message="I think that's enough for today.")
-    )
+    """Support fallback should land gently when the session is closing."""
+
+    state = build_initial_state(AgentInput(message="I think that's enough for today."))
     state["session_stage"] = "closing"
 
     state = await run_therapeutic_response(state)
@@ -24,6 +24,8 @@ async def test_support_fallback_changes_when_session_is_closing() -> None:
 
 @pytest.mark.asyncio
 async def test_reflection_fallback_lands_gently_when_session_is_closing() -> None:
+    """Reflection fallback should summarize and land gently in closing."""
+
     state = build_initial_state(
         AgentInput(message="Before we wrap up, what pattern do you notice?")
     )
@@ -36,7 +38,11 @@ async def test_reflection_fallback_lands_gently_when_session_is_closing() -> Non
 
 
 @pytest.mark.asyncio
-async def test_guided_exercise_fallback_avoids_starting_full_new_exercise_when_closing() -> None:
+async def test_guided_exercise_fallback_avoids_starting_full_new_exercise_when_closing() -> (
+    None
+):
+    """Closing guided exercise fallback should avoid starting a new exercise."""
+
     state = build_initial_state(
         AgentInput(message="Can you give me one last exercise before we end?")
     )
@@ -49,12 +55,12 @@ async def test_guided_exercise_fallback_avoids_starting_full_new_exercise_when_c
 
 
 def test_closing_prompt_includes_stage_specific_guidance() -> None:
-    state = build_initial_state(
-        AgentInput(message="I think that's enough for today.")
-    )
+    """Closing prompts should include the closing guidance knowledge."""
+
+    state = build_initial_state(AgentInput(message="I think that's enough for today."))
     state["session_stage"] = "closing"
 
     prompt = build_therapeutic_response_prompt(state)
 
-    assert "Treat this as a closing-phase reply." in prompt
-    assert "Do not open a broad new exploration." in prompt
+    assert "Use this guidance when the session stage is `closing`" in prompt
+    assert "reopening a broad new line of inquiry" in prompt

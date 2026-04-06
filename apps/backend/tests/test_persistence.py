@@ -20,6 +20,17 @@ class FakeContextLLMClient(BaseLLMClient):
         system_instruction: str | None = None,
         temperature: float = 0,
     ) -> str:
+        """Return a fixed text response for runtime-context tests.
+
+        Args:
+            prompt: User/task prompt sent to the fake provider.
+            system_instruction: Optional system prompt sent to the fake provider.
+            temperature: Sampling temperature for generation.
+
+        Returns:
+            A fixed provider response string.
+        """
+
         self.text_calls += 1
         return "Context-injected reply"
 
@@ -31,6 +42,21 @@ class FakeContextLLMClient(BaseLLMClient):
         system_instruction: str | None = None,
         temperature: float = 0,
     ):
+        """Raise because structured generation is not used in this test.
+
+        Args:
+            prompt: User/task prompt sent to the fake provider.
+            response_schema: Structured schema requested by the caller.
+            system_instruction: Optional system prompt sent to the fake provider.
+            temperature: Sampling temperature for generation.
+
+        Returns:
+            This function does not return a value.
+
+        Raises:
+            NotImplementedError: Always raised for this fake client path.
+        """
+
         raise NotImplementedError
 
 
@@ -40,6 +66,9 @@ async def test_persistent_runtime_resumes_thread_state(tmp_path) -> None:
 
     Args:
         tmp_path: Pytest-provided temporary directory for the SQLite database.
+
+    Returns:
+        None.
     """
 
     sqlite_path = tmp_path / "threads.sqlite3"
@@ -76,6 +105,9 @@ async def test_persistent_runtime_can_reset_thread(tmp_path) -> None:
 
     Args:
         tmp_path: Pytest-provided temporary directory for the SQLite database.
+
+    Returns:
+        None.
     """
 
     sqlite_path = tmp_path / "threads.sqlite3"
@@ -101,6 +133,9 @@ async def test_persistent_runtime_uses_runtime_context_for_llm_client(tmp_path) 
 
     Args:
         tmp_path: Pytest-provided temporary directory for the SQLite database.
+
+    Returns:
+        None.
     """
 
     sqlite_path = tmp_path / "threads.sqlite3"

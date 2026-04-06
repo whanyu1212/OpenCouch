@@ -48,7 +48,9 @@ class PersistentAgentRuntime:
             sqlite_path: SQLite database path for LangGraph checkpoints.
         """
 
-        self.sqlite_path = Path(sqlite_path) if sqlite_path != ":memory:" else Path(":memory:")
+        self.sqlite_path = (
+            Path(sqlite_path) if sqlite_path != ":memory:" else Path(":memory:")
+        )
         self._saver_cm = None
         self._checkpointer: AsyncSqliteSaver | None = None
         self._graph: CompiledStateGraph | None = None
@@ -83,7 +85,9 @@ class PersistentAgentRuntime:
         """
 
         if self._checkpointer is None:
-            raise RuntimeError("PersistentAgentRuntime must be used inside 'async with'.")
+            raise RuntimeError(
+                "PersistentAgentRuntime must be used inside 'async with'."
+            )
 
     def _config_for_thread(self, thread_id: str) -> dict[str, dict[str, str]]:
         """Build the LangGraph config payload for one thread.

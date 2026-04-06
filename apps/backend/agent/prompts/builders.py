@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.prompts.catalog import Modality
+from agent.prompts.loader import compose_knowledge_sections
 from agent.prompts.modes import build_system_prompt
 from agent.state import AgentState
 
@@ -71,32 +72,11 @@ def format_stage_guidance(state: AgentState) -> str:
     """
 
     stage = state.get("session_stage")
+    paths = ["session_stages.md"]
     if stage == "closing":
-        return (
-            "Stage guidance:\n"
-            "- Treat this as a closing-phase reply.\n"
-            "- Briefly summarize the most important takeaway or shift from this session.\n"
-            "- Offer at most one concrete next step or thing to hold onto.\n"
-            "- Do not open a broad new exploration.\n"
-            "- End with a gentle landing rather than a big open-ended question."
-        )
-    if stage == "stabilizing":
-        return (
-            "Stage guidance:\n"
-            "- Help the user consolidate what is becoming clearer.\n"
-            "- Favor grounding, integration, or next-step planning over deeper excavation."
-        )
-    if stage == "deepening":
-        return (
-            "Stage guidance:\n"
-            "- It is appropriate to stay with emotional material or pattern exploration.\n"
-            "- Keep the reply contained and coherent rather than expanding too broadly."
-        )
-    return (
-        "Stage guidance:\n"
-        "- Treat this as an opening-phase reply.\n"
-        "- Orient, validate, and avoid jumping too fast into heavy structure."
-    )
+        paths.append("response_modes/closing_guidance.md")
+
+    return compose_knowledge_sections(*paths)
 
 
 def build_therapeutic_system_prompt(
@@ -310,8 +290,14 @@ def build_reflection_response_prompt(state: AgentState) -> str:
     )
 
 
-def build_guided_exercise_system_prompt() -> str:
+def build_guided_exercise_system_prompt(
+    *,
+    modalities: tuple[Modality, ...] = ("cbt",),
+) -> str:
     """Build the system prompt for guided exercise replies.
+
+    Args:
+        modalities: Optional modality overlays for guided exercise behavior.
 
     Returns:
         The system prompt for guided exercise replies.
@@ -319,7 +305,7 @@ def build_guided_exercise_system_prompt() -> str:
 
     return build_system_prompt(
         mode="guided_exercise",
-        modalities=("cbt",),
+        modalities=modalities,
     )
 
 

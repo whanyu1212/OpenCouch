@@ -1,4 +1,5 @@
 """Runner for long-session trajectory evaluation with the real thread runtime."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -24,13 +25,17 @@ from rich.table import Table
 from rich.text import Text
 from services.llm.base import BaseLLMClient
 
-DATASET_PATH = Path(__file__).resolve().parents[1] / "datasets" / "session_trajectory_long_v1.json"
+DATASET_PATH = (
+    Path(__file__).resolve().parents[1] / "datasets" / "session_trajectory_long_v1.json"
+)
 SQLITE_PATH = Path(__file__).resolve().parents[1] / ".session_trajectory_eval.sqlite3"
 console = Console()
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run long-session trajectory evaluation.")
+    parser = argparse.ArgumentParser(
+        description="Run long-session trajectory evaluation."
+    )
     parser.add_argument(
         "--mode",
         choices=["auto", "deterministic", "hybrid"],
@@ -74,37 +79,66 @@ def _resolve_llm_client(mode: str) -> tuple[BaseLLMClient | None, str]:
 def _check_state_expectations(expectation: dict, *, state: dict, output) -> list[str]:
     errors: list[str] = []
 
-    if "session_intent" in expectation and state.get("session_intent") != expectation["session_intent"]:
+    if (
+        "session_intent" in expectation
+        and state.get("session_intent") != expectation["session_intent"]
+    ):
         errors.append(
             f"expected session_intent={expectation['session_intent']}, got {state.get('session_intent')}"
         )
-    if "allowed_session_intents" in expectation and state.get("session_intent") not in expectation["allowed_session_intents"]:
+    if (
+        "allowed_session_intents" in expectation
+        and state.get("session_intent") not in expectation["allowed_session_intents"]
+    ):
         errors.append(
             f"expected session_intent in {expectation['allowed_session_intents']}, got {state.get('session_intent')}"
         )
-    if "session_intent_source" in expectation and state.get("session_intent_source") != expectation["session_intent_source"]:
+    if (
+        "session_intent_source" in expectation
+        and state.get("session_intent_source") != expectation["session_intent_source"]
+    ):
         errors.append(
             f"expected session_intent_source={expectation['session_intent_source']}, got {state.get('session_intent_source')}"
         )
-    if "session_stage" in expectation and state.get("session_stage") != expectation["session_stage"]:
+    if (
+        "session_stage" in expectation
+        and state.get("session_stage") != expectation["session_stage"]
+    ):
         errors.append(
             f"expected session_stage={expectation['session_stage']}, got {state.get('session_stage')}"
         )
-    if "allowed_session_stages" in expectation and state.get("session_stage") not in expectation["allowed_session_stages"]:
+    if (
+        "allowed_session_stages" in expectation
+        and state.get("session_stage") not in expectation["allowed_session_stages"]
+    ):
         errors.append(
             f"expected session_stage in {expectation['allowed_session_stages']}, got {state.get('session_stage')}"
         )
-    if "allowed_modes" in expectation and output.mode not in expectation["allowed_modes"]:
-        errors.append(f"expected mode in {expectation['allowed_modes']}, got {output.mode}")
-    if "response_type" in expectation and output.response_type.value != expectation["response_type"]:
+    if (
+        "allowed_modes" in expectation
+        and output.mode not in expectation["allowed_modes"]
+    ):
+        errors.append(
+            f"expected mode in {expectation['allowed_modes']}, got {output.mode}"
+        )
+    if (
+        "response_type" in expectation
+        and output.response_type.value != expectation["response_type"]
+    ):
         errors.append(
             f"expected response_type={expectation['response_type']}, got {output.response_type.value}"
         )
-    if "needs_clarification" in expectation and output.crisis.needs_clarification != expectation["needs_clarification"]:
+    if (
+        "needs_clarification" in expectation
+        and output.crisis.needs_clarification != expectation["needs_clarification"]
+    ):
         errors.append(
             f"expected needs_clarification={expectation['needs_clarification']}, got {output.crisis.needs_clarification}"
         )
-    if "needs_crisis_response" in expectation and output.crisis.needs_crisis_response != expectation["needs_crisis_response"]:
+    if (
+        "needs_crisis_response" in expectation
+        and output.crisis.needs_crisis_response != expectation["needs_crisis_response"]
+    ):
         errors.append(
             f"expected needs_crisis_response={expectation['needs_crisis_response']}, got {output.crisis.needs_crisis_response}"
         )
@@ -112,7 +146,9 @@ def _check_state_expectations(expectation: dict, *, state: dict, output) -> list
     return errors
 
 
-def _check_final_text_expectations(expectation: dict, *, response_text: str) -> list[str]:
+def _check_final_text_expectations(
+    expectation: dict, *, response_text: str
+) -> list[str]:
     errors: list[str] = []
     lowered = response_text.lower()
 
@@ -120,7 +156,10 @@ def _check_final_text_expectations(expectation: dict, *, response_text: str) -> 
         for phrase in expectation["must_not_include_any"]:
             if phrase.lower() in lowered:
                 errors.append(f"response included forbidden phrase: {phrase}")
-    if "max_question_marks" in expectation and response_text.count("?") > expectation["max_question_marks"]:
+    if (
+        "max_question_marks" in expectation
+        and response_text.count("?") > expectation["max_question_marks"]
+    ):
         errors.append(
             f"response had {response_text.count('?')} question marks, expected at most {expectation['max_question_marks']}"
         )
@@ -156,7 +195,16 @@ def _build_state_snapshot(state: dict, output) -> dict[str, Any]:
     }
 
 
-def _render_turn(case_id: str, turn_index: int, *, user_text: str, assistant_text: str, snapshot: dict, expectation: dict | None, errors: list[str]) -> None:
+def _render_turn(
+    case_id: str,
+    turn_index: int,
+    *,
+    user_text: str,
+    assistant_text: str,
+    snapshot: dict,
+    expectation: dict | None,
+    errors: list[str],
+) -> None:
     """Render one evaluated turn with conversation and state details.
 
     Args:
@@ -182,11 +230,20 @@ def _render_turn(case_id: str, turn_index: int, *, user_text: str, assistant_tex
     body.add_row("assistant", assistant_text)
     body.add_row("mode", snapshot["mode"] or "-")
     body.add_row("type", snapshot["response_type"])
-    body.add_row("intent", f"{snapshot['session_intent'] or '-'} ({snapshot['session_intent_source'] or 'none'})")
-    body.add_row("stage", f"{snapshot['session_stage'] or '-'} ({snapshot['session_stage_source'] or 'none'})")
+    body.add_row(
+        "intent",
+        f"{snapshot['session_intent'] or '-'} ({snapshot['session_intent_source'] or 'none'})",
+    )
+    body.add_row(
+        "stage",
+        f"{snapshot['session_stage'] or '-'} ({snapshot['session_stage_source'] or 'none'})",
+    )
     body.add_row("stage reason", snapshot["session_stage_reason"] or "-")
     body.add_row("goal", snapshot["current_goal"] or "-")
-    body.add_row("open loops", " | ".join(snapshot["open_loops"]) if snapshot["open_loops"] else "-")
+    body.add_row(
+        "open loops",
+        " | ".join(snapshot["open_loops"]) if snapshot["open_loops"] else "-",
+    )
     body.add_row(
         "safety",
         f"level={snapshot['crisis_level']} clarify={snapshot['needs_clarification']} crisis={snapshot['needs_crisis_response']}",
@@ -223,18 +280,29 @@ def _render_case_footer(case_id: str, failures: list[str]) -> None:
     """
 
     if failures:
-        console.print(Panel("\n".join(failures), title=f"[bold red]FAIL {case_id}[/bold red]", border_style="red"))
+        console.print(
+            Panel(
+                "\n".join(failures),
+                title=f"[bold red]FAIL {case_id}[/bold red]",
+                border_style="red",
+            )
+        )
     else:
         console.print(Panel(f"PASS {case_id}", border_style="green"))
 
 
-async def _evaluate_case(case: dict, *, llm_client: BaseLLMClient | None) -> dict[str, Any]:
+async def _evaluate_case(
+    case: dict, *, llm_client: BaseLLMClient | None
+) -> dict[str, Any]:
     thread_id = f"eval-{case['id']}-{uuid4().hex[:8]}"
     failures: list[str] = []
     turn_records: list[dict[str, Any]] = []
 
     async with PersistentAgentRuntime(SQLITE_PATH) as runtime:
-        checkpoint_map = {checkpoint["turn"]: checkpoint["expect"] for checkpoint in case.get("checkpoints", [])}
+        checkpoint_map = {
+            checkpoint["turn"]: checkpoint["expect"]
+            for checkpoint in case.get("checkpoints", [])
+        }
         last_result = None
 
         for turn_index, turn in enumerate(case["turns"], start=1):
@@ -261,7 +329,9 @@ async def _evaluate_case(case: dict, *, llm_client: BaseLLMClient | None) -> dic
                     "turn": turn_index,
                     "user": turn["user"],
                     "assistant": last_result.output.response_text,
-                    "snapshot": _build_state_snapshot(last_result.state, last_result.output),
+                    "snapshot": _build_state_snapshot(
+                        last_result.state, last_result.output
+                    ),
                     "expectation": expectation,
                     "errors": errors,
                 }

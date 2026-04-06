@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from agent.prompts.catalog import ALLOWED_MODALITIES, MODE_FILES, MODALITY_FILES, Modality, ResponseMode
+from agent.prompts.catalog import (
+    ALLOWED_MODALITIES,
+    MODE_FILES,
+    MODALITY_FILES,
+    Modality,
+    ResponseMode,
+)
 from agent.prompts.core import build_core_system_prompt
 from agent.prompts.loader import compose_knowledge_sections
 

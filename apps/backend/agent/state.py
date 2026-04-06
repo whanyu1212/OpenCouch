@@ -55,6 +55,8 @@ class AgentState(TypedDict):
     route: NotRequired[str]
     # Tracks the active non-crisis response mode inside the therapeutic path.
     mode: NotRequired[str]
+    # Active modality overlays selected for the current response node.
+    active_modalities: NotRequired[list[str]]
     # Makes the output type explicit before the final response is returned.
     response_type: NotRequired[ResponseKind]
     # Holds the generated text from the chosen response node.

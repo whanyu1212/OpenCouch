@@ -1,4 +1,5 @@
 """Runner for crisis gate evaluation."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -19,7 +20,9 @@ from agent.nodes.crisis_gate import run_crisis_gate
 from core.config import create_configured_llm_client
 from services.llm.base import BaseLLMClient
 
-DATASET_PATH = Path(__file__).resolve().parents[1] / "datasets" / "crisis_detection_v1.json"
+DATASET_PATH = (
+    Path(__file__).resolve().parents[1] / "datasets" / "crisis_detection_v1.json"
+)
 EvalMode = Literal["auto", "deterministic", "hybrid"]
 
 
@@ -54,7 +57,9 @@ def _resolve_llm_client(mode: EvalMode) -> tuple[BaseLLMClient | None, str]:
         return None, "deterministic"
 
 
-async def _evaluate_case(case: dict, llm_client: BaseLLMClient | None) -> tuple[bool, str | None]:
+async def _evaluate_case(
+    case: dict, llm_client: BaseLLMClient | None
+) -> tuple[bool, str | None]:
     state = build_initial_state(
         AgentInput(
             message=case["message"],

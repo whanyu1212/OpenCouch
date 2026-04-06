@@ -36,7 +36,11 @@ def _recent_modes_from_transcript(state: AgentState, *, limit: int = 4) -> list[
         if turn.get("role") != "assistant":
             continue
         content = turn.get("content", "").lower()
-        if "grounding" in content or "thought record" in content or "exercise" in content:
+        if (
+            "grounding" in content
+            or "thought record" in content
+            or "exercise" in content
+        ):
             modes.append("guided_exercise")
         elif "pattern i notice" in content or "pattern" in content:
             modes.append("reflection")
@@ -118,7 +122,11 @@ async def refine_session_stage_with_llm(
         ),
         temperature=0,
     )
-    stage = raw.stage if raw.stage in {"opening", "deepening", "stabilizing", "closing"} else "deepening"
+    stage = (
+        raw.stage
+        if raw.stage in {"opening", "deepening", "stabilizing", "closing"}
+        else "deepening"
+    )
     return stage, raw.reason
 
 

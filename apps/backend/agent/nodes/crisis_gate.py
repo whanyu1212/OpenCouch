@@ -50,9 +50,7 @@ AMBIGUOUS_PATTERNS = (
     r"\b(i want to disappear|i don't want to exist)\b",
 )
 
-DISTRESS_PATTERNS = (
-    r"\b(hopeless|empty|worthless|trapped|completely overwhelmed)\b",
-)
+DISTRESS_PATTERNS = (r"\b(hopeless|empty|worthless|trapped|completely overwhelmed)\b",)
 
 
 class CrisisAssessmentSchema(BaseModel):
@@ -83,7 +81,9 @@ def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
-def detect_crisis_override(state: AgentState) -> tuple[OverrideKind, CrisisAssessment] | None:
+def detect_crisis_override(
+    state: AgentState,
+) -> tuple[OverrideKind, CrisisAssessment] | None:
     """Return a hard override for obvious crisis-boundary cases.
 
     Args:
@@ -199,7 +199,9 @@ async def assess_crisis_risk_with_llm(
     )
 
     level = max(0, min(3, int(raw.level)))
-    confidence = raw.confidence if raw.confidence in {"low", "medium", "high"} else "medium"
+    confidence = (
+        raw.confidence if raw.confidence in {"low", "medium", "high"} else "medium"
+    )
 
     return CrisisAssessment(
         level=level,

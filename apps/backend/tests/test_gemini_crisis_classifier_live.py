@@ -24,6 +24,8 @@ pytestmark = [
 
 @pytest.mark.asyncio
 async def test_live_gemini_flags_clear_suicidal_ideation() -> None:
+    """Live Gemini classifier should flag clear suicidal ideation as crisis."""
+
     llm_client = create_llm_client(provider="gemini")
 
     result = await run_agent(
@@ -38,6 +40,8 @@ async def test_live_gemini_flags_clear_suicidal_ideation() -> None:
 
 @pytest.mark.asyncio
 async def test_live_gemini_does_not_treat_common_idiom_as_crisis() -> None:
+    """Live Gemini classifier should not overtrigger on common idioms."""
+
     llm_client = create_llm_client(provider="gemini")
 
     result = await run_agent(

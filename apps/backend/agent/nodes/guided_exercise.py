@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from agent.models import ResponseKind
 from agent.prompts import (
     build_guided_exercise_response_prompt,
     build_guided_exercise_system_prompt,
 )
+from agent.prompts.catalog import Modality
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
@@ -22,7 +25,9 @@ def _fallback_guided_exercise_response(state: AgentState) -> str:
         )
 
     message = state["message"].lower()
-    if any(term in message for term in ("breathe", "breathing", "calm down", "grounding")):
+    if any(
+        term in message for term in ("breathe", "breathing", "calm down", "grounding")
+    ):
         return (
             "Let's try one short grounding reset. Look around and name 5 things you can see, 4 things you can feel, "
             "3 things you can hear, 2 things you can smell, and 1 thing you can taste or imagine tasting. "
@@ -53,12 +58,18 @@ async def run_guided_exercise_response(
 
     state["response_type"] = ResponseKind.THERAPEUTIC
     state["mode"] = "guided_exercise"
+    modalities = cast(
+        tuple[Modality, ...],
+        tuple(state.get("active_modalities", ["cbt"])),
+    )
 
     if llm_client is not None:
         try:
             state["response_text"] = await llm_client.generate_text(
                 prompt=build_guided_exercise_response_prompt(state),
-                system_instruction=build_guided_exercise_system_prompt(),
+                system_instruction=build_guided_exercise_system_prompt(
+                    modalities=modalities
+                ),
                 temperature=0.3,
             )
             return state

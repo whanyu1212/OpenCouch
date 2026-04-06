@@ -11,53 +11,106 @@ MAX_OPEN_LOOPS = 3
 
 SESSION_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (
-        re.compile(r"\b(i want|let'?s|can we|help me)\b.*\b(cbt|thought record|reframe)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(i want|let'?s|can we|help me)\b.*\b(cbt|thought record|reframe)\b",
+            re.IGNORECASE,
+        ),
         "guided_cbt_work",
         "explicit",
     ),
     (
-        re.compile(r"\b(i want|let'?s|can we|help me)\b.*\b(grounding|breathe|breathing|calm down)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(i want|let'?s|can we|help me)\b.*\b(grounding|breathe|breathing|calm down)\b",
+            re.IGNORECASE,
+        ),
         "grounding_or_calm_down",
         "explicit",
     ),
     (
-        re.compile(r"\b(i want|let'?s|can we|help me)\b.*\b(reflect|reflection|patterns?|make sense)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(i want|let'?s|can we|help me)\b.*\b(reflect|reflection|patterns?|make sense)\b",
+            re.IGNORECASE,
+        ),
         "reflection_and_pattern_finding",
         "explicit",
     ),
     (
-        re.compile(r"\b(i just want to vent|just let me vent|i don't want advice)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(i just want to vent|just let me vent|i don't want advice)\b",
+            re.IGNORECASE,
+        ),
         "just_need_to_vent",
         "explicit",
     ),
     (
-        re.compile(r"\b(i don't need advice|don't need advice right now)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(i don't need advice|don't need advice right now)\b", re.IGNORECASE
+        ),
         "just_need_to_vent",
         "explicit",
     ),
     (
-        re.compile(r"\b(i want support|just support|talk this through|be heard)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(i want support|just support|talk this through|be heard)\b",
+            re.IGNORECASE,
+        ),
         "supportive_conversation",
         "explicit",
     ),
 )
 
 CONCERN_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("overwhelm or stress", (r"\boverwhelm", r"\bstress", r"\bburn(?:ed)? out", r"\bdrain(?:ed|ing)?")),
-    ("anxiety or rumination", (r"\banxious", r"\banxiety", r"\bruminat", r"\bcan't switch off", r"\bspiral")),
+    (
+        "overwhelm or stress",
+        (r"\boverwhelm", r"\bstress", r"\bburn(?:ed)? out", r"\bdrain(?:ed|ing)?"),
+    ),
+    (
+        "anxiety or rumination",
+        (r"\banxious", r"\banxiety", r"\bruminat", r"\bcan't switch off", r"\bspiral"),
+    ),
     ("grief or loss", (r"\bgrief", r"\bloss", r"\bdied", r"\bfuneral", r"\bbereave")),
-    ("self-worth or shame", (r"\bworthless", r"\bfailure", r"\bshame", r"\bguilt", r"\bnot enough")),
-    ("relationship strain", (r"\bpartner", r"\brelationship", r"\bfriend", r"\bfamily", r"\bargument")),
-    ("work or school pressure", (r"\bwork", r"\bjob", r"\bmanager", r"\bschool", r"\bclass", r"\bproject")),
-    ("sleep or exhaustion", (r"\bsleep", r"\binsomnia", r"\btired", r"\bexhaust", r"\brest")),
+    (
+        "self-worth or shame",
+        (r"\bworthless", r"\bfailure", r"\bshame", r"\bguilt", r"\bnot enough"),
+    ),
+    (
+        "relationship strain",
+        (r"\bpartner", r"\brelationship", r"\bfriend", r"\bfamily", r"\bargument"),
+    ),
+    (
+        "work or school pressure",
+        (r"\bwork", r"\bjob", r"\bmanager", r"\bschool", r"\bclass", r"\bproject"),
+    ),
+    (
+        "sleep or exhaustion",
+        (r"\bsleep", r"\binsomnia", r"\btired", r"\bexhaust", r"\brest"),
+    ),
 )
 
 GOAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bhelp me understand\b", re.IGNORECASE), "understand a recurring pattern"),
-    (re.compile(r"\bwhat patterns do you notice\b", re.IGNORECASE), "reflect on patterns"),
-    (re.compile(r"\bgrounding\b|\bcalm down\b|\bbreathing\b", re.IGNORECASE), "feel calmer right now"),
-    (re.compile(r"\bthought record\b|\breframe\b", re.IGNORECASE), "work through a structured exercise"),
-    (re.compile(r"\bhow does this work\b|\bwhat can you help with\b|\bnew here\b", re.IGNORECASE), "understand how to use OpenCouch"),
+    (
+        re.compile(r"\bhelp me understand\b", re.IGNORECASE),
+        "understand a recurring pattern",
+    ),
+    (
+        re.compile(r"\bwhat patterns do you notice\b", re.IGNORECASE),
+        "reflect on patterns",
+    ),
+    (
+        re.compile(r"\bgrounding\b|\bcalm down\b|\bbreathing\b", re.IGNORECASE),
+        "feel calmer right now",
+    ),
+    (
+        re.compile(r"\bthought record\b|\breframe\b", re.IGNORECASE),
+        "work through a structured exercise",
+    ),
+    (
+        re.compile(
+            r"\bhow does this work\b|\bwhat can you help with\b|\bnew here\b",
+            re.IGNORECASE,
+        ),
+        "understand how to use OpenCouch",
+    ),
 )
 
 OPEN_LOOP_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -79,7 +132,9 @@ def _user_turns(history: list[dict[str, str]]) -> list[str]:
     ]
 
 
-def trim_history(history: list[dict[str, str]], *, limit: int = MAX_HISTORY_TURNS) -> list[dict[str, str]]:
+def trim_history(
+    history: list[dict[str, str]], *, limit: int = MAX_HISTORY_TURNS
+) -> list[dict[str, str]]:
     """Trim serialized history to the most recent turns.
 
     Args:
@@ -150,7 +205,10 @@ def extract_open_loops(
         if not turn:
             continue
         lowered = turn.lower()
-        if any(pattern.search(lowered) for pattern in OPEN_LOOP_PATTERNS) or "?" in turn:
+        if (
+            any(pattern.search(lowered) for pattern in OPEN_LOOP_PATTERNS)
+            or "?" in turn
+        ):
             candidate = turn[:96].rstrip(" .!?")
             if candidate and candidate not in seen:
                 loops.append(candidate)
@@ -176,7 +234,9 @@ def infer_current_goal(
         A concise goal string when one is detectable.
     """
 
-    text = current_message.strip() or (_user_turns(history)[-1] if _user_turns(history) else "")
+    text = current_message.strip() or (
+        _user_turns(history)[-1] if _user_turns(history) else ""
+    )
     if not text:
         return None
 
@@ -223,7 +283,9 @@ def build_session_summary(
     if snippets:
         parts.append(f"Recent user themes: {' | '.join(snippets[-3:])}.")
 
-    return " ".join(parts) if parts else "New conversation with no prior session context."
+    return (
+        " ".join(parts) if parts else "New conversation with no prior session context."
+    )
 
 
 def infer_session_intent(
@@ -254,11 +316,23 @@ def infer_session_intent(
         return "guided_cbt_work", "inferred"
     if any(term in lowered for term in ("grounding", "breathing", "calm down")):
         return "grounding_or_calm_down", "inferred"
-    if any(term in lowered for term in ("pattern", "reflect", "make sense", "understand why i keep", "understanding why i keep")):
+    if any(
+        term in lowered
+        for term in (
+            "pattern",
+            "reflect",
+            "make sense",
+            "understand why i keep",
+            "understanding why i keep",
+        )
+    ):
         return "reflection_and_pattern_finding", "inferred"
     if "vent" in lowered:
         return "just_need_to_vent", "inferred"
-    if any(term in lowered for term in ("talk", "support", "listen", "rough day", "overwhelmed")):
+    if any(
+        term in lowered
+        for term in ("talk", "support", "listen", "rough day", "overwhelmed")
+    ):
         return "supportive_conversation", "inferred"
     return None, None
 
@@ -337,7 +411,10 @@ def infer_session_stage_deterministically(
         return "closing", "Detected explicit wrap-up language from the user."
 
     if needs_crisis_response or needs_clarification:
-        return previous_stage or "opening", "Safety-sensitive turn; keep ordinary stage progression conservative."
+        return (
+            previous_stage or "opening",
+            "Safety-sensitive turn; keep ordinary stage progression conservative.",
+        )
 
     intent_family = (
         "structured_work"
@@ -345,7 +422,9 @@ def infer_session_stage_deterministically(
         else "exploratory_support"
     )
 
-    if turn_count <= 2 and (not recent_modes or recent_modes[-1] in {"orientation", "support"}):
+    if turn_count <= 2 and (
+        not recent_modes or recent_modes[-1] in {"orientation", "support"}
+    ):
         return "opening", "Early turn count with orientation/support pattern."
 
     if any(
@@ -359,20 +438,44 @@ def infer_session_stage_deterministically(
             "what should i try this week",
         )
     ):
-        return "stabilizing", "User language suggests integration, grounding, or next-step planning."
+        return (
+            "stabilizing",
+            "User language suggests integration, grounding, or next-step planning.",
+        )
 
     if intent_family == "structured_work":
         if turn_count >= 3 and session_intent == "guided_cbt_work":
-            return "deepening", "Structured CBT intent with enough turns to move into active work."
+            return (
+                "deepening",
+                "Structured CBT intent with enough turns to move into active work.",
+            )
         if recent_modes and recent_modes[-1] == "guided_exercise":
-            return "deepening", "Structured-work intent with guided exercise in progress."
+            return (
+                "deepening",
+                "Structured-work intent with guided exercise in progress.",
+            )
         if previous_stage == "deepening":
-            return "deepening", "Preserving deepening stage for ongoing structured work."
+            return (
+                "deepening",
+                "Preserving deepening stage for ongoing structured work.",
+            )
     else:
-        if any(mode in {"reflection", "support"} for mode in recent_modes[-2:]) and turn_count >= 3:
-            return "deepening", "Reflective/supportive pattern suggests deeper exploration."
+        if (
+            any(mode in {"reflection", "support"} for mode in recent_modes[-2:])
+            and turn_count >= 3
+        ):
+            return (
+                "deepening",
+                "Reflective/supportive pattern suggests deeper exploration.",
+            )
 
     if previous_stage in {"deepening", "stabilizing"} and turn_count >= 6:
-        return "stabilizing", "Later session turn count with no stronger cue to deepen further."
+        return (
+            "stabilizing",
+            "Later session turn count with no stronger cue to deepen further.",
+        )
 
-    return previous_stage or "opening", "No stronger stage cue detected; preserving the current stage."
+    return (
+        previous_stage or "opening",
+        "No stronger stage cue detected; preserving the current stage.",
+    )

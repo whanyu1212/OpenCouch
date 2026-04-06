@@ -108,6 +108,8 @@ class OpenAILLMClient(BaseLLMClient):
 
         parsed = response.output_parsed
         if not isinstance(parsed, response_schema):
-            raise ValueError("OpenAI structured generation did not return parsed output.")
+            raise ValueError(
+                "OpenAI structured generation did not return parsed output."
+            )
 
         return cast(StructuredResponseT, parsed)

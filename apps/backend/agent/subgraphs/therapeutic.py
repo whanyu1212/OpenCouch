@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from agent.modality_selector import select_modalities_for_mode
 from agent.nodes.guided_exercise import run_guided_exercise_response
 from agent.nodes.orientation import run_orientation_response
 from agent.nodes.out_of_scope import run_out_of_scope_response
@@ -125,6 +126,7 @@ async def run_therapeutic_subgraph(
 
     mode = select_therapeutic_mode(state)
     state["mode"] = mode
+    state["active_modalities"] = list(select_modalities_for_mode(state, mode))
 
     if mode in {"support", "safety_check"}:
         return await run_therapeutic_response(state, llm_client=llm_client)
