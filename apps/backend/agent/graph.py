@@ -7,7 +7,11 @@ The initial execution path should stay small and explicit:
 - return a normalized output
 """
 
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
 from copy import deepcopy
+from dataclasses import dataclass
 
 from agent.context import (
     build_session_summary,
@@ -21,13 +25,21 @@ from agent.models import (
     AgentInput,
     AgentOutput,
     Channel,
+    ChunkEvent,
     CrisisAssessment,
+    DoneEvent,
+    ModeType,
     ResponseKind,
+    StatusEvent,
+    StreamEvent,
 )
+from pydantic import BaseModel
+
 from agent.nodes.crisis_gate import run_crisis_gate
 from agent.nodes.session_stage import update_session_stage
 from agent.state import AgentState
 from agent.subgraphs import run_crisis_subgraph, run_therapeutic_subgraph
+from agent.subgraphs.therapeutic import run_selected_therapeutic_mode
 from services.llm.base import BaseLLMClient
 
 
@@ -83,8 +95,11 @@ def prepare_turn_state(state: AgentState) -> AgentState:
     )
     state["crisis"] = CrisisAssessment()
     state["route"] = "therapeutic"
-    state["mode"] = "support"
+    state["mode"] = "supportive_conversation"
+    state["mode_type"] = ModeType.THERAPEUTIC
     state["active_modalities"] = []
+    state["semantic_signals"] = {}
+    state["response_guidance"] = ""
     state["response_type"] = ResponseKind.THERAPEUTIC
     state["response_text"] = ""
     state["should_persist_memory"] = False
@@ -116,8 +131,8 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
         installed_skills=list(agent_input.installed_skills),
         # Transcript keeps the full prior session so persistent threads can resume cleanly.
         transcript=[message.model_dump(mode="json") for message in agent_input.history],
-        # Empty until memory retrieval exists.
-        working_memory=[],
+        # Retrieved profile/graph memory for the current turn.
+        working_memory=list(agent_input.working_memory),
         # History/session fields are filled by `prepare_turn_state`.
         history=[],
         session_summary="",
@@ -133,8 +148,11 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
         # Turn-scoped fields are reset by `prepare_turn_state`.
         crisis=CrisisAssessment(),
         route="therapeutic",
-        mode="support",
+        mode="supportive_conversation",
+        mode_type=ModeType.THERAPEUTIC,
         active_modalities=[],
+        semantic_signals={},
+        response_guidance="",
         should_persist_memory=False,
     )
     return prepare_turn_state(state)
@@ -176,6 +194,8 @@ def state_to_output(state: AgentState) -> AgentOutput:
         # Crisis assessment is always returned so callers can inspect safety behavior.
         crisis=state["crisis"],
         mode=state.get("mode"),
+        mode_type=state.get("mode_type"),
+        mode_source=state.get("mode_source"),
         should_persist_memory=state.get("should_persist_memory", False),
     )
 
@@ -195,21 +215,149 @@ async def run_agent(
         The normalized public output for the completed turn.
     """
 
-    # Step 1: normalize input into graph state.
-    state = build_initial_state(agent_input)
-    # Step 2: run the hybrid crisis gate before normal conversation.
-    state = await run_crisis_gate(
-        state,
+    final_states: list[AgentState] = []
+    async for event in _run_turn_events(
+        build_initial_state(agent_input),
         llm_client=llm_client,
-    )
-    # Step 3: update the current session stage before choosing the response path.
+        state_sink=final_states,
+    ):
+        if isinstance(event, DoneEvent):
+            return event.output
+    raise RuntimeError("Turn runner completed without emitting a DoneEvent.")
+
+
+# ── Streaming infrastructure ──────────────────────────────────────────────────
+
+
+@dataclass
+class _CapturedCall:
+    """Records the arguments of a generate_text call for deferred streaming."""
+
+    prompt: str = ""
+    system_instruction: str | None = None
+    temperature: float = 0.0
+    was_called: bool = False
+
+
+class _CapturingLLMClient(BaseLLMClient):
+    """Proxy that captures generate_text args instead of calling the provider.
+
+    For generate_structured calls, delegates to the real client. For
+    generate_text calls, records the arguments and returns an empty string
+    so the response node completes normally without making an API call.
+    """
+
+    def __init__(self, real_client: BaseLLMClient) -> None:
+        self._real = real_client
+        self.captured = _CapturedCall()
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0,
+    ) -> str:
+        self.captured = _CapturedCall(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=temperature,
+            was_called=True,
+        )
+        return ""
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0,
+    ) -> AsyncIterator[str]:
+        yield ""
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[BaseModel],
+        system_instruction: str | None = None,
+        temperature: float = 0,
+    ) -> BaseModel:
+        return await self._real.generate_structured(
+            prompt=prompt,
+            response_schema=response_schema,
+            system_instruction=system_instruction,
+            temperature=temperature,
+        )
+
+
+async def _run_turn_events(
+    state: AgentState,
+    *,
+    llm_client: BaseLLMClient | None = None,
+    prepare_state: bool = False,
+    state_sink: list[AgentState] | None = None,
+) -> AsyncIterator[StreamEvent]:
+    """Run one full turn and yield status/chunk/done events."""
+
+    if prepare_state:
+        state = prepare_turn_state(state)
+
+    yield StatusEvent(stage="crisis_gate")
+    state = await run_crisis_gate(state, llm_client=llm_client)
+
+    yield StatusEvent(stage="session_stage")
     state = await update_session_stage(state, llm_client=llm_client)
-    # Step 4: dispatch into the appropriate subgraph based on the gate result.
-    if state["route"] == "crisis":
-        state = await run_crisis_subgraph(state, llm_client=llm_client)
+
+    route = state["route"]
+    yield StatusEvent(stage="response_generation", detail=f"route={route}")
+
+    if llm_client is not None:
+        capturing = _CapturingLLMClient(llm_client)
+        if route == "crisis":
+            state = await run_crisis_subgraph(state, llm_client=capturing)
+        else:
+            state = await run_therapeutic_subgraph(state, llm_client=capturing)
+
+        if capturing.captured.was_called:
+            chunks: list[str] = []
+            try:
+                async for chunk in llm_client.generate_text_stream(
+                    prompt=capturing.captured.prompt,
+                    system_instruction=capturing.captured.system_instruction,
+                    temperature=capturing.captured.temperature,
+                ):
+                    chunks.append(chunk)
+                    yield ChunkEvent(text=chunk)
+                state["response_text"] = "".join(chunks)
+            except Exception:
+                if route == "crisis":
+                    state = await run_crisis_subgraph(state, llm_client=None)
+                else:
+                    state = await run_selected_therapeutic_mode(state, llm_client=None)
     else:
-        state = await run_therapeutic_subgraph(state, llm_client=llm_client)
-    # Step 5: fold the completed turn back into durable history.
+        if route == "crisis":
+            state = await run_crisis_subgraph(state, llm_client=None)
+        else:
+            state = await run_therapeutic_subgraph(state, llm_client=None)
+
     state = finalize_turn_state(state)
-    # Step 6: convert internal state back into the public result shape.
-    return state_to_output(state)
+    if state_sink is not None:
+        state_sink.append(deepcopy(state))
+    yield DoneEvent(output=state_to_output(state))
+
+
+async def run_agent_stream(
+    agent_input: AgentInput,
+    *,
+    llm_client: BaseLLMClient | None = None,
+    state_sink: list[AgentState] | None = None,
+) -> AsyncIterator[StreamEvent]:
+    """Streaming variant of run_agent that yields events during execution."""
+
+    async for event in _run_turn_events(
+        build_initial_state(agent_input),
+        llm_client=llm_client,
+        state_sink=state_sink,
+    ):
+        yield event

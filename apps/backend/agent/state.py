@@ -6,7 +6,7 @@ tracks intermediate decisions between graph nodes.
 
 from typing import NotRequired, TypedDict
 
-from agent.models import Channel, CrisisAssessment, ResponseKind
+from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
 
 
 class AgentState(TypedDict):
@@ -55,8 +55,16 @@ class AgentState(TypedDict):
     route: NotRequired[str]
     # Tracks the active non-crisis response mode inside the therapeutic path.
     mode: NotRequired[str]
+    # Tracks whether the mode came from keyword, session_intent, llm, or default.
+    mode_source: NotRequired[str | None]
+    # Distinguishes operational routing states from therapeutic and crisis modes.
+    mode_type: NotRequired[ModeType]
     # Active modality overlays selected for the current response node.
     active_modalities: NotRequired[list[str]]
+    # Cached semantic interpretation shared by routing and prompt shaping.
+    semantic_signals: NotRequired[dict[str, bool]]
+    # Turn-specific prompt shaping guidance derived after mode selection.
+    response_guidance: NotRequired[str]
     # Makes the output type explicit before the final response is returned.
     response_type: NotRequired[ResponseKind]
     # Holds the generated text from the chosen response node.

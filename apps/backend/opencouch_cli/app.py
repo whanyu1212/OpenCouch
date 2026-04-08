@@ -13,10 +13,18 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from agent.persistence import DEFAULT_THREAD_DB_PATH, PersistentAgentRuntime
-from agent.models import Channel, Message, MessageRole
+from agent.models import (
+    Channel,
+    ChunkEvent,
+    DoneEvent,
+    Message,
+    MessageRole,
+    StatusEvent,
+)
 from agent.state import AgentState
 from core.config import create_configured_llm_client
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
@@ -153,6 +161,8 @@ def render_response(response_text: str, *, is_crisis: bool) -> None:
 def render_meta(
     *,
     mode: str | None,
+    mode_source: str | None,
+    mode_type: str | None,
     response_type: str,
     level: int,
     needs_clarification: bool,
@@ -163,6 +173,8 @@ def render_meta(
 
     Args:
         mode: Selected graph mode for the response.
+        mode_source: How the mode was selected (keyword/session_intent/llm/default).
+        mode_type: Higher-level category for the selected mode.
         response_type: High-level response type label.
         level: Crisis level selected by the gate.
         needs_clarification: Whether the gate requested a safety check.
@@ -173,17 +185,30 @@ def render_meta(
         None.
     """
 
+    if needs_crisis_response:
+        safety_status = "crisis"
+    elif needs_clarification:
+        safety_status = "check"
+    elif level >= 1:
+        safety_status = "distress"
+    else:
+        safety_status = "normal"
+
     table = Table(show_header=True, header_style="bold magenta", box=None)
     table.add_column("mode", style="green", no_wrap=True)
+    table.add_column("source", style="blue", no_wrap=True)
+    table.add_column("mode type", style="yellow", no_wrap=True)
     table.add_column("type", style="cyan", no_wrap=True)
-    table.add_column("level", justify="center", no_wrap=True)
+    table.add_column("safety", justify="center", no_wrap=True)
     table.add_column("clarify", justify="center", no_wrap=True)
     table.add_column("crisis", justify="center", no_wrap=True)
     table.add_column("reason", style="white")
     table.add_row(
         mode or "-",
+        mode_source or "-",
+        mode_type or "-",
         response_type,
-        str(level),
+        safety_status,
         "yes" if needs_clarification else "no",
         "yes" if needs_crisis_response else "no",
         reason,
@@ -217,7 +242,14 @@ def render_context(state: AgentState | None) -> None:
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(style="white")
     table.add_row("turn_count", str(state["turn_count"]))
+    table.add_row(
+        "working_memory",
+        " | ".join(state.get("working_memory", []))
+        if state.get("working_memory")
+        else "-",
+    )
     table.add_row("current_goal", state["current_goal"] or "-")
+    table.add_row("response_guidance", state.get("response_guidance") or "-")
     table.add_row(
         "active_concerns",
         ", ".join(state["active_concerns"]) if state["active_concerns"] else "-",
@@ -491,32 +523,79 @@ async def chat_loop(mode: str, *, thread_id: str, sqlite_path: str) -> None:
             if user_text.lower() in {"exit", "quit"}:
                 break
 
-            with console.status(
-                "[bold blue]Running graph...[/bold blue]", spinner="dots"
-            ):
-                turn_result = await runtime.run_turn(
+            accumulated_text = ""
+            final_output = None
+
+            _STAGE_LABELS = {
+                "crisis_gate": "safety check",
+                "session_stage": "reading context",
+                "response_generation": "generating",
+            }
+
+            with Live(console=console, refresh_per_second=15) as live:
+                async for event in runtime.run_turn_stream(
                     thread_id=session.thread_id,
                     message=user_text,
                     channel=Channel.TEST,
                     llm_client=session.llm_client,
+                ):
+                    if isinstance(event, StatusEvent):
+                        label = _STAGE_LABELS.get(event.stage, event.stage)
+                        live.update(Text(f"  ● {label}", style="dim"))
+
+                    elif isinstance(event, ChunkEvent):
+                        accumulated_text += event.text
+                        live.update(
+                            Panel(
+                                accumulated_text,
+                                border_style="green",
+                            )
+                        )
+
+                    elif isinstance(event, DoneEvent):
+                        final_output = event.output
+                        # Render the final panel as the last Live frame so it
+                        # stays on screen when Live exits — no duplicate render.
+                        is_crisis = final_output.response_type.value == "crisis"
+                        title = (
+                            "[bold red]Crisis Reply[/bold red]"
+                            if is_crisis
+                            else "[bold green]Support Reply[/bold green]"
+                        )
+                        border = "red" if is_crisis else "green"
+                        live.update(
+                            Panel(
+                                final_output.response_text,
+                                title=title,
+                                border_style=border,
+                            )
+                        )
+
+            if final_output is not None:
+                # If no chunks were streamed (deterministic path), the final
+                # panel was set in the DoneEvent handler above. For the
+                # non-streamed case, render_response was already called via
+                # live.update, so we skip the duplicate.
+                render_meta(
+                    mode=final_output.mode,
+                    mode_source=final_output.mode_source,
+                    mode_type=(
+                        final_output.mode_type.value
+                        if final_output.mode_type is not None
+                        else None
+                    ),
+                    response_type=final_output.response_type.value,
+                    level=final_output.crisis.level,
+                    needs_clarification=final_output.crisis.needs_clarification,
+                    needs_crisis_response=final_output.crisis.needs_crisis_response,
+                    reason=final_output.crisis.reason,
                 )
 
-            session.last_context = turn_result.state
-            session.history = turn_result.history
-
-            render_response(
-                turn_result.output.response_text,
-                is_crisis=turn_result.output.response_type.value == "crisis",
-            )
-            render_meta(
-                mode=turn_result.output.mode,
-                response_type=turn_result.output.response_type.value,
-                level=turn_result.output.crisis.level,
-                needs_clarification=turn_result.output.crisis.needs_clarification,
-                needs_crisis_response=turn_result.output.crisis.needs_crisis_response,
-                reason=turn_result.output.crisis.reason,
-            )
-            render_context(session.last_context)
+            # Refresh session state from the persisted checkpoint.
+            session.last_context = await runtime.get_state(session.thread_id)
+            session.history = await runtime.get_history(session.thread_id)
+            if session.last_context:
+                render_context(session.last_context)
 
 
 def main() -> int:

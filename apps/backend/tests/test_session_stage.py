@@ -42,6 +42,11 @@ class FakeStageLLMClient(BaseLLMClient):
 
         raise NotImplementedError
 
+    async def generate_text_stream(
+        self, *, prompt, system_instruction=None, temperature=0
+    ):
+        yield ""
+
     async def generate_structured(
         self,
         *,

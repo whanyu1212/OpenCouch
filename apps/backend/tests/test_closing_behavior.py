@@ -54,13 +54,13 @@ async def test_guided_exercise_fallback_avoids_starting_full_new_exercise_when_c
     assert "do not need to do a full exercise" in state["response_text"].lower()
 
 
-def test_closing_prompt_includes_stage_specific_guidance() -> None:
-    """Closing prompts should include the closing guidance knowledge."""
+def test_closing_prompt_includes_stage_aware_posture() -> None:
+    """Closing prompts should include closing-specific turn posture guidance."""
 
     state = build_initial_state(AgentInput(message="I think that's enough for today."))
     state["session_stage"] = "closing"
 
     prompt = build_therapeutic_response_prompt(state)
 
-    assert "Use this guidance when the session stage is `closing`" in prompt
-    assert "reopening a broad new line of inquiry" in prompt
+    assert "session is ending" in prompt.lower() or "closing" in prompt.lower()
+    assert "Turn posture:" in prompt

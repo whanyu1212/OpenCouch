@@ -51,13 +51,13 @@ def test_generic_system_prompt_composes_mode_and_modalities() -> None:
     """Generic system prompt builder should compose arbitrary overlays."""
 
     prompt = build_system_prompt(
-        mode="reflection",
-        modalities=("grief_support", "motivational_interviewing"),
+        mode="pattern_reflection",
+        modalities=("grief_support", "act"),
     )
 
-    assert "Reflection Mode" in prompt
+    assert "Pattern Reflection Mode" in prompt
     assert "Grief Support" in prompt
-    assert "Motivational Interviewing" in prompt
+    assert "Acceptance and Commitment Therapy" in prompt
 
 
 def test_new_modality_overlays_are_available_for_composition() -> None:
@@ -65,11 +65,23 @@ def test_new_modality_overlays_are_available_for_composition() -> None:
 
     prompt = build_system_prompt(
         mode="guided_exercise",
-        modalities=("act", "dbt_skills"),
+        modalities=("act", "pfa"),
     )
 
     assert "Acceptance and Commitment Therapy" in prompt
-    assert "DBT Skills" in prompt
+    assert "Psychological First Aid" in prompt
+
+
+def test_psychoeducation_mode_is_available_for_composition() -> None:
+    """Psychoeducation mode should compose its dedicated knowledge file."""
+
+    prompt = build_system_prompt(
+        mode="psychoeducation",
+        modalities=("act",),
+    )
+
+    assert "Psychoeducation Mode" in prompt
+    assert "Acceptance and Commitment Therapy" in prompt
 
 
 def test_invalid_modality_for_mode_raises() -> None:

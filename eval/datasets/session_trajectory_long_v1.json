@@ -19,7 +19,8 @@
           "session_intent": "guided_cbt_work",
           "session_intent_source": "explicit",
           "allowed_session_stages": ["opening", "deepening"],
-          "allowed_modes": ["guided_exercise"]
+          "allowed_modes": ["guided_exercise"],
+          "response_guidance_contains": "thought check or brief thought record"
         }
       },
       {
@@ -35,7 +36,7 @@
         "expect": {
           "session_intent": "guided_cbt_work",
           "session_stage": "closing",
-          "allowed_modes": ["guided_exercise", "reflection"],
+          "allowed_modes": ["guided_exercise", "pattern_reflection"],
           "response_type": "therapeutic"
         }
       }
@@ -43,7 +44,7 @@
     "final_expectations": {
       "session_intent": "guided_cbt_work",
       "session_stage": "closing",
-      "allowed_modes": ["guided_exercise", "reflection"],
+      "allowed_modes": ["guided_exercise", "pattern_reflection"],
       "max_question_marks": 1,
       "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
     }
@@ -67,7 +68,7 @@
         "expect": {
           "allowed_session_intents": ["supportive_conversation", "just_need_to_vent"],
           "session_stage": "opening",
-          "allowed_modes": ["support"]
+          "allowed_modes": ["supportive_conversation"]
         }
       },
       {
@@ -79,11 +80,19 @@
         }
       },
       {
+        "turn": 4,
+        "expect": {
+          "session_intent": "just_need_to_vent",
+          "allowed_modes": ["supportive_conversation"],
+          "response_guidance_contains": "Hold space"
+        }
+      },
+      {
         "turn": 8,
         "expect": {
           "allowed_session_intents": ["just_need_to_vent", "supportive_conversation"],
           "session_stage": "closing",
-          "allowed_modes": ["support"],
+          "allowed_modes": ["supportive_conversation"],
           "response_type": "therapeutic"
         }
       }
@@ -91,7 +100,7 @@
     "final_expectations": {
       "allowed_session_intents": ["just_need_to_vent", "supportive_conversation"],
       "session_stage": "closing",
-      "allowed_modes": ["support"],
+      "allowed_modes": ["supportive_conversation"],
       "max_question_marks": 1,
       "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
     }
@@ -160,7 +169,7 @@
         "turn": 1,
         "expect": {
           "session_intent": "reflection_and_pattern_finding",
-          "allowed_modes": ["reflection"],
+          "allowed_modes": ["pattern_reflection"],
           "session_stage": "opening"
         }
       },
@@ -169,14 +178,14 @@
         "expect": {
           "session_intent": "reflection_and_pattern_finding",
           "allowed_session_stages": ["deepening", "stabilizing"],
-          "allowed_modes": ["reflection"]
+          "allowed_modes": ["pattern_reflection"]
         }
       },
       {
         "turn": 8,
         "expect": {
           "session_stage": "closing",
-          "allowed_modes": ["reflection"],
+          "allowed_modes": ["pattern_reflection"],
           "response_type": "therapeutic"
         }
       }
@@ -184,9 +193,633 @@
     "final_expectations": {
       "session_intent": "reflection_and_pattern_finding",
       "session_stage": "closing",
-      "allowed_modes": ["reflection"],
+      "allowed_modes": ["pattern_reflection"],
       "max_question_marks": 1,
       "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "relational_pattern_reflection_session_with_role_strain_and_closing",
+    "description": "User explores relationship and role strain across a longer session; the graph should keep relational nuance in pattern-reflection guidance without a separate interpersonal modality.",
+    "turns": [
+      {"user": "I want help understanding why I keep feeling so alone in my relationship."},
+      {"user": "Lately I feel like I do all the emotional work and then tell myself I'm asking for too much."},
+      {"user": "It's not just my partner either. I do this with my family too."},
+      {"user": "Can you reflect back what pattern you see in that?"},
+      {"user": "That fits. I keep shrinking myself so other people stay comfortable."},
+      {"user": "I think part of this is that my role in my family has always been to keep the peace."},
+      {"user": "What should I pay attention to the next time I start doing that?"},
+      {"user": "I want to leave with one thing to remember instead of ten things."},
+      {"user": "Before we wrap up, can you help me hold onto the main point from today?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_intent": "reflection_and_pattern_finding",
+          "allowed_modes": ["pattern_reflection"],
+          "session_stage": "opening",
+          "response_guidance_contains": "communication patterns"
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "session_intent": "reflection_and_pattern_finding",
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["pattern_reflection"],
+          "response_guidance_contains": "communication patterns"
+        }
+      },
+      {
+        "turn": 9,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["pattern_reflection"],
+          "response_guidance_contains": "communication patterns",
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_intent": "reflection_and_pattern_finding",
+      "session_stage": "closing",
+      "allowed_modes": ["pattern_reflection"],
+      "response_guidance_contains": "communication patterns",
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "act_support_session_with_avoidance_and_closing",
+    "description": "User struggles with anxiety, rumination, and avoidance over a longer support session, then closes with one values-consistent takeaway.",
+    "turns": [
+      {"user": "I keep avoiding work tasks because I get anxious and start spiraling before I even begin."},
+      {"user": "Then I spend hours trying to control the feeling instead of doing anything."},
+      {"user": "The more I try to make the anxiety go away, the worse it gets."},
+      {"user": "I don't think I need a worksheet right now. I need help getting unstuck."},
+      {"user": "That feels right. I'm exhausted from fighting my own head all day."},
+      {"user": "What would it look like to take one small step even if the anxiety is still there?"},
+      {"user": "I think I could answer one email instead of trying to fix the whole week."},
+      {"user": "I want to leave with one sentence to remember when I start spiraling again."},
+      {"user": "Before we wrap up, can you help me put the main takeaway into words?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "allowed_modes": ["supportive_conversation"],
+          "session_stage": "opening",
+          "required_modalities": ["act"]
+        }
+      },
+      {
+        "turn": 6,
+        "expect": {
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["supportive_conversation"],
+          "required_modalities": ["act"]
+        }
+      },
+      {
+        "turn": 9,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["supportive_conversation"],
+          "required_modalities": ["act"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["supportive_conversation"],
+      "required_modalities": ["act"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more", "just think positive"]
+    }
+  },
+  {
+    "id": "stabilization_grounding_session_with_closing",
+    "description": "User enters emotionally flooded, triggers an initial safety check, then shifts into grounding support before closing. The merged stabilization overlay should show up as `pfa`.",
+    "turns": [
+      {"user": "I need help calming down right now because I feel completely overwhelmed."},
+      {"user": "My chest is tight and my thoughts are racing and I can't get them to slow down."},
+      {"user": "Can you give me one grounding thing to do instead of ten options?"},
+      {"user": "Okay, I'm doing that now."},
+      {"user": "That helped a little. I still feel shaky but less flooded."},
+      {"user": "What should I remember if this happens again later tonight?"},
+      {"user": "I don't want a big plan, just something simple I can actually use."},
+      {"user": "Before we wrap up, what's the one thing I should hold onto from this?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "allowed_session_intents": ["supportive_conversation", "grounding_or_calm_down"],
+          "allowed_modes": ["safety_check"],
+          "allowed_session_stages": ["opening", "deepening"],
+          "required_modalities": ["pfa"]
+        }
+      },
+      {
+        "turn": 3,
+        "expect": {
+          "session_intent": "grounding_or_calm_down",
+          "allowed_modes": ["safety_check"],
+          "required_modalities": ["pfa"]
+        }
+      },
+      {
+        "turn": 5,
+        "expect": {
+          "session_intent": "grounding_or_calm_down",
+          "allowed_session_stages": ["opening", "stabilizing"],
+          "allowed_modes": ["guided_exercise"],
+          "required_modalities": ["pfa"],
+          "response_guidance_contains": "grounding or regulation"
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["guided_exercise"],
+          "required_modalities": ["pfa"],
+          "response_guidance_contains": "grounding or regulation",
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_intent": "grounding_or_calm_down",
+      "session_stage": "closing",
+      "allowed_modes": ["guided_exercise"],
+      "required_modalities": ["pfa"],
+      "response_guidance_contains": "grounding or regulation",
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "psychoeducation_session_with_anxiety_explanation_and_closing",
+    "description": "User wants a mind-body explanation of anxiety across a longer session, then wraps up with one plain-language takeaway.",
+    "turns": [
+      {"user": "Can you explain why my body reacts like this when I get anxious?"},
+      {"user": "My chest gets tight and I start scanning for every possible thing that could go wrong."},
+      {"user": "Then I get scared that the reaction itself means something is seriously wrong with me."},
+      {"user": "That explanation helps. Can you say a little more about why it snowballs so fast?"},
+      {"user": "Okay, that makes sense. I still want something simple to remember when it starts."},
+      {"user": "I do not think I need an exercise right now, just a way to understand it without panicking more."},
+      {"user": "I want to leave with one sentence I can come back to."},
+      {"user": "Before we wrap up, can you put the main takeaway in plain language?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_intent": "psychoeducation",
+          "session_intent_source": "explicit",
+          "session_stage": "opening",
+          "allowed_modes": ["psychoeducation"],
+          "required_modalities": ["act"],
+          "response_guidance_contains": "normalizing explanation"
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "session_intent": "psychoeducation",
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["psychoeducation"],
+          "required_modalities": ["act"]
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_intent": "psychoeducation",
+          "session_stage": "closing",
+          "allowed_modes": ["psychoeducation"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_intent": "psychoeducation",
+      "session_stage": "closing",
+      "allowed_modes": ["psychoeducation"],
+      "required_modalities": ["act"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "strengths_based_support_session_with_progress_and_closing",
+    "description": "User reports progress in a difficult relationship conversation and wants help holding onto what went better without turning it into a lecture.",
+    "turns": [
+      {"user": "I actually handled a hard conversation with my sister better this time, and I want to talk it through."},
+      {"user": "Usually I shut down, but this time I stayed calmer and said what I needed."},
+      {"user": "Part of me keeps minimizing it because it was not perfect."},
+      {"user": "Can you reflect back what I did differently without making it cheesy?"},
+      {"user": "I think I gave myself a second before reacting, which almost never happens."},
+      {"user": "That feels true. I want to trust that this was not a fluke."},
+      {"user": "What should I remember from this the next time I start doubting myself?"},
+      {"user": "Before we wrap up, can you help me hold onto the main point?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "allowed_session_intents": ["supportive_conversation"],
+          "session_stage": "opening",
+          "allowed_modes": ["supportive_conversation"],
+          "response_guidance_contains": "reporting progress or a win"
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["supportive_conversation", "pattern_reflection"],
+          "response_guidance_contains": "strengths-aware"
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["supportive_conversation", "pattern_reflection"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["supportive_conversation", "pattern_reflection"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "behavioral_activation_session_with_low_energy_and_closing",
+    "description": "User feels drained and avoidant, asks for one realistic step, and carries a behavioral-activation thread through to closing.",
+    "turns": [
+      {"user": "What can I do right now to get moving again? I have been so drained that I keep avoiding basic tasks."},
+      {"user": "Even tiny things like showering or answering one email feel huge."},
+      {"user": "I do not think I need grounding. I need one realistic step, not a giant plan."},
+      {"user": "What would be a doable first move if my energy is this low?"},
+      {"user": "That feels more possible than trying to fix the whole day."},
+      {"user": "I could probably do one 10-minute task after lunch instead of trying to restart my whole life."},
+      {"user": "I want to leave with one simple thing to remember when I freeze like this."},
+      {"user": "Before we wrap up, can you summarize the main point in one sentence?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_stage": "opening",
+          "allowed_modes": ["guided_exercise"],
+          "required_modalities": ["cbt"],
+          "response_guidance_contains": "behavioral activation"
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["guided_exercise", "supportive_conversation"]
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["guided_exercise", "supportive_conversation", "pattern_reflection"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["guided_exercise", "supportive_conversation", "pattern_reflection"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "grief_support_session_with_anniversary_and_closing",
+    "description": "User is approaching a loss anniversary, moves through grief-focused support and reflection, and ends with one gentle takeaway.",
+    "turns": [
+      {"user": "Tomorrow is the anniversary of my dad's death and I do not really know how to carry it."},
+      {"user": "Part of me wants to keep busy and part of me wants to hide from everyone."},
+      {"user": "I feel guilty when I laugh or have a normal moment."},
+      {"user": "Can you reflect back what you notice about how I am holding this?"},
+      {"user": "That feels accurate. It really is both sadness and pressure to perform okay."},
+      {"user": "What should I remember when the wave hits tomorrow?"},
+      {"user": "I want to leave with one gentle thing to hold onto."},
+      {"user": "Before we wrap up, can you help me put the main takeaway into words?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_stage": "opening",
+          "allowed_modes": ["supportive_conversation"],
+          "required_modalities": ["grief_support"]
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["pattern_reflection"],
+          "required_modalities": ["grief_support"]
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["pattern_reflection", "supportive_conversation"],
+          "required_modalities": ["grief_support"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["pattern_reflection", "supportive_conversation"],
+      "required_modalities": ["grief_support"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "hold_space_venting_session_with_closing",
+    "description": "User comes in explicitly wanting to vent from turn 1, never asks for advice. Agent should stay in hold-space strategy throughout without pivoting to problem-solving.",
+    "turns": [
+      {"user": "I just want to vent. I don't want advice right now, I just need to say this out loud."},
+      {"user": "My partner forgot our anniversary again and acted like it was no big deal."},
+      {"user": "I spent weeks planning something nice and it's like none of it mattered."},
+      {"user": "I'm not even angry anymore. I'm just tired of being the only one who tries."},
+      {"user": "And the worst part is I can't even talk to my friends about it because they all think we're fine."},
+      {"user": "I don't need a solution. I just needed someone to hear this."},
+      {"user": "That actually feels a little lighter now."},
+      {"user": "Before we wrap up, what's the main thing from today?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_intent": "just_need_to_vent",
+          "session_intent_source": "explicit",
+          "session_stage": "opening",
+          "allowed_modes": ["supportive_conversation"],
+          "response_guidance_contains": "Hold space"
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "session_intent": "just_need_to_vent",
+          "allowed_session_stages": ["deepening", "opening"],
+          "allowed_modes": ["supportive_conversation"],
+          "response_guidance_contains": "Hold space"
+        }
+      },
+      {
+        "turn": 6,
+        "expect": {
+          "session_intent": "just_need_to_vent",
+          "allowed_modes": ["supportive_conversation"],
+          "response_guidance_contains": "Hold space"
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_intent": "just_need_to_vent",
+          "session_stage": "closing",
+          "allowed_modes": ["supportive_conversation"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_intent": "just_need_to_vent",
+      "session_stage": "closing",
+      "allowed_modes": ["supportive_conversation"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "have you tried", "one thing you could do"]
+    }
+  },
+  {
+    "id": "acceptance_exercise_session_with_rumination_and_closing",
+    "description": "User describes thought fusion and rumination, ACT modality selected, routes to guided exercise with acceptance focus.",
+    "turns": [
+      {"user": "I keep ruminating on this thought that I'm wasting my life and it won't leave me alone."},
+      {"user": "I've tried arguing with it but the more I fight it the louder it gets."},
+      {"user": "What can I do right now with this instead of fighting it?"},
+      {"user": "I don't want to analyze the thought. I want help stepping back from it."},
+      {"user": "Okay, I'm trying that now. Noticing the thought without fighting it feels different."},
+      {"user": "It's still there but it has less grip. That's a weird feeling."},
+      {"user": "What should I remember the next time this thought shows up?"},
+      {"user": "Before we wrap up, can you put the main takeaway in one sentence?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_stage": "opening",
+          "allowed_modes": ["supportive_conversation"],
+          "required_modalities": ["act"]
+        }
+      },
+      {
+        "turn": 3,
+        "expect": {
+          "allowed_modes": ["guided_exercise"],
+          "required_modalities": ["act"],
+          "response_guidance_contains": "acceptance or defusion"
+        }
+      },
+      {
+        "turn": 5,
+        "expect": {
+          "allowed_session_stages": ["opening", "deepening", "stabilizing"],
+          "allowed_modes": ["guided_exercise", "supportive_conversation"]
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["guided_exercise", "supportive_conversation"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["guided_exercise", "supportive_conversation"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "cognitive distortion", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "stress_psychoeducation_session_with_burnout_and_closing",
+    "description": "User describes chronic exhaustion and burnout, asks why they can't recover. Tests psychoeducation mode with stress_response topic.",
+    "turns": [
+      {"user": "Can you explain why I feel so burned out even on days when I don't do much?"},
+      {"user": "I get enough sleep but I wake up already exhausted and irritable."},
+      {"user": "It's been like this for months and I don't understand why rest isn't helping."},
+      {"user": "That explanation helps. Can you say more about why my body stays like this?"},
+      {"user": "That makes sense. I've been running on stress for so long I forgot what baseline feels like."},
+      {"user": "I do not think I need an exercise right now. I just want to understand what's happening."},
+      {"user": "I want to leave with one thing to keep in mind about this."},
+      {"user": "Before we wrap up, can you put the main point in plain language?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_intent": "psychoeducation",
+          "session_stage": "opening",
+          "allowed_modes": ["psychoeducation"],
+          "response_guidance_contains": "stress response"
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "session_intent": "psychoeducation",
+          "allowed_session_stages": ["deepening", "stabilizing"],
+          "allowed_modes": ["psychoeducation"]
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_intent": "psychoeducation",
+          "session_stage": "closing",
+          "allowed_modes": ["psychoeducation"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_intent": "psychoeducation",
+      "session_stage": "closing",
+      "allowed_modes": ["psychoeducation"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "cortisol", "HPA axis"]
+    }
+  },
+  {
+    "id": "mode_transition_support_to_exercise_with_closing",
+    "description": "User starts in emotional support, then mid-session asks for something concrete to try. Tests dynamic mode transition from supportive_conversation to guided_exercise.",
+    "turns": [
+      {"user": "I've been feeling really anxious all week and I just want to talk it through."},
+      {"user": "It's like a low hum in the background that never turns off."},
+      {"user": "I keep second-guessing every decision and then worrying about worrying."},
+      {"user": "No, I'm safe. I'm not thinking about hurting myself. I'm just tired of the anxiety."},
+      {"user": "Actually, can you help me calm down right now? I want a breathing exercise."},
+      {"user": "I'm doing the breathing now. It helps a little. The hum is quieter."},
+      {"user": "What should I try the next time the worry starts building?"},
+      {"user": "Before we wrap up, what's the one thing to remember?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "allowed_session_intents": ["supportive_conversation"],
+          "session_stage": "opening",
+          "allowed_modes": ["supportive_conversation"],
+          "required_modalities": ["act"]
+        }
+      },
+      {
+        "turn": 3,
+        "expect": {
+          "allowed_session_stages": ["opening", "deepening"],
+          "allowed_modes": ["supportive_conversation", "safety_check"]
+        }
+      },
+      {
+        "turn": 5,
+        "expect": {
+          "session_intent": "grounding_or_calm_down",
+          "session_intent_source": "explicit",
+          "allowed_modes": ["guided_exercise"],
+          "response_guidance_contains": "grounding or regulation"
+        }
+      },
+      {
+        "turn": 8,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["guided_exercise", "supportive_conversation"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["guided_exercise", "supportive_conversation"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "medication", "tell me a bit more"]
+    }
+  },
+  {
+    "id": "out_of_scope_boundary_and_recovery_with_closing",
+    "description": "User asks for a diagnosis, gets redirected with a clear boundary, then engages in normal support for the rest of the session.",
+    "turns": [
+      {"user": "Can you diagnose whether I have generalized anxiety disorder?"},
+      {"user": "Okay, I get it. I just feel anxious all the time and I want to understand it."},
+      {"user": "It shows up mostly as tightness in my chest and trouble sleeping."},
+      {"user": "I keep thinking something is wrong with me because this never goes away."},
+      {"user": "That actually helps to hear. I've been scaring myself about it."},
+      {"user": "What should I remember the next time I start catastrophizing about this?"},
+      {"user": "Before we wrap up, what's the main takeaway?"}
+    ],
+    "checkpoints": [
+      {
+        "turn": 1,
+        "expect": {
+          "session_stage": "opening",
+          "allowed_modes": ["out_of_scope"],
+          "response_guidance_contains": "Decline clearly"
+        }
+      },
+      {
+        "turn": 2,
+        "expect": {
+          "allowed_modes": ["supportive_conversation", "psychoeducation"],
+          "needs_crisis_response": false
+        }
+      },
+      {
+        "turn": 4,
+        "expect": {
+          "allowed_session_stages": ["opening", "deepening"],
+          "allowed_modes": ["supportive_conversation", "psychoeducation"]
+        }
+      },
+      {
+        "turn": 7,
+        "expect": {
+          "session_stage": "closing",
+          "allowed_modes": ["supportive_conversation", "psychoeducation", "pattern_reflection"],
+          "response_type": "therapeutic"
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_stage": "closing",
+      "allowed_modes": ["supportive_conversation", "psychoeducation", "pattern_reflection"],
+      "max_question_marks": 1,
+      "must_not_include_any": ["diagnose", "diagnosis", "medication", "generalized anxiety disorder"]
     }
   }
 ]

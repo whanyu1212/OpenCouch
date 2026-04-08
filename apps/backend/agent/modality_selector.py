@@ -3,107 +3,27 @@
 from __future__ import annotations
 
 from agent.prompts.catalog import Modality
+from agent.semantic_signals import get_semantic_signals
 from agent.state import AgentState
 
-RELATIONAL_TERMS = (
-    "relationship",
-    "partner",
-    "boyfriend",
-    "girlfriend",
-    "wife",
-    "husband",
-    "friend",
-    "friends",
-    "family",
-    "mother",
-    "father",
-    "parent",
-    "coworker",
-    "boss",
-    "roommate",
-    "breakup",
-    "divorce",
-    "lonely",
-    "alone",
-    "conflict",
-)
 
-GRIEF_TERMS = (
-    "grief",
-    "loss",
-    "died",
-    "death",
-    "funeral",
-    "bereavement",
-)
-
-ACT_TERMS = (
-    "anxious",
-    "anxiety",
-    "ruminating",
-    "rumination",
-    "spiral",
-    "spiraling",
-    "stuck",
-    "avoid",
-    "avoiding",
-    "avoidance",
-    "control",
-    "uncertainty",
-    "panic",
-)
-
-DISTRESS_SKILL_TERMS = (
-    "grounding",
-    "breathe",
-    "breathing",
-    "panic",
-    "overwhelmed",
-    "flooded",
-    "regulate",
-    "regulation",
-    "distress",
-    "calm down",
-)
-
-CBT_TERMS = (
-    "cbt",
-    "thought record",
-    "reframe",
-    "cognitive distortion",
-    "behavioral activation",
-    "problem solving",
-)
-
-
-def _combined_text(state: AgentState) -> str:
-    """Combine recent text and session context for modality selection.
+def _limit_modalities(
+    modalities: list[Modality],
+    *,
+    max_count: int,
+) -> tuple[Modality, ...]:
+    """Deduplicate modalities while keeping priority order bounded.
 
     Args:
-        state: Shared agent state for the current turn.
+        modalities: Ordered list of candidate modalities.
+        max_count: Maximum number of modalities to return.
 
     Returns:
-        Lowercased text used for lightweight modality heuristics.
+        A bounded tuple of unique modalities in priority order.
     """
 
-    history_text = " ".join(turn.get("content", "") for turn in state["history"][-6:])
-    concerns = " ".join(state.get("active_concerns", []))
-    goal = state.get("current_goal") or ""
-    return f"{history_text} {concerns} {goal} {state['message']}".lower()
-
-
-def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
-    """Return whether the given text contains any of the provided terms.
-
-    Args:
-        text: Lowercased text to inspect.
-        terms: Candidate substrings to match.
-
-    Returns:
-        True when any term is present.
-    """
-
-    return any(term in text for term in terms)
+    unique = tuple(dict.fromkeys(modalities))
+    return unique[:max_count]
 
 
 def select_modalities_for_mode(state: AgentState, mode: str) -> tuple[Modality, ...]:
@@ -117,53 +37,67 @@ def select_modalities_for_mode(state: AgentState, mode: str) -> tuple[Modality, 
         A tuple of modality overlays in priority order.
     """
 
-    text = _combined_text(state)
-    session_intent = state.get("session_intent")
+    signals = get_semantic_signals(state)
+    session_stage = state.get("session_stage")
 
-    if mode == "support":
-        modalities: list[Modality] = ["motivational_interviewing"]
-        if _contains_any(text, GRIEF_TERMS):
-            modalities.append("grief_support")
-        if _contains_any(text, RELATIONAL_TERMS):
-            modalities.append("interpersonal_therapy")
-        if session_intent == "guided_cbt_work" or _contains_any(text, CBT_TERMS):
-            modalities.append("cbt")
-        if session_intent == "grounding_or_calm_down" or _contains_any(text, ACT_TERMS):
-            modalities.append("act")
-        if _contains_any(text, DISTRESS_SKILL_TERMS):
-            modalities.append("dbt_skills")
-        if state["crisis"].level >= 1:
+    if mode == "supportive_conversation":
+        modalities: list[Modality] = []
+        if signals["safety_sensitive"]:
             modalities.append("pfa")
-        return tuple(dict.fromkeys(modalities))
-
-    if mode == "reflection":
-        modalities = ["motivational_interviewing"]
-        if _contains_any(text, GRIEF_TERMS):
+        if signals["has_grief_theme"]:
             modalities.append("grief_support")
-        if _contains_any(text, RELATIONAL_TERMS):
-            modalities.append("interpersonal_therapy")
-        if session_intent == "guided_cbt_work" or _contains_any(text, CBT_TERMS):
-            modalities.append("cbt")
-        if _contains_any(text, ACT_TERMS):
+        if signals["wants_grounding"] and session_stage in {"opening", "stabilizing"}:
+            modalities.append("pfa")
+        elif signals["has_anxiety_theme"]:
             modalities.append("act")
-        return tuple(dict.fromkeys(modalities))
+        if signals["wants_cbt"] and session_stage != "closing":
+            modalities.append("cbt")
+        return _limit_modalities(modalities, max_count=3)
+
+    if mode == "pattern_reflection":
+        modalities: list[Modality] = []
+        if signals["has_grief_theme"]:
+            modalities.append("grief_support")
+        if signals["wants_cbt"] and session_stage != "closing":
+            modalities.append("cbt")
+        elif signals["has_anxiety_theme"]:
+            modalities.append("act")
+        return _limit_modalities(modalities, max_count=3)
 
     if mode == "guided_exercise":
         modalities: list[Modality] = []
-        if session_intent == "guided_cbt_work" or _contains_any(text, CBT_TERMS):
+        if signals["wants_grounding"]:
+            modalities.append("pfa")
+            if signals["has_anxiety_theme"] and session_stage != "closing":
+                modalities.append("act")
+        elif signals["wants_behavioral_activation"]:
             modalities.append("cbt")
-        if session_intent == "grounding_or_calm_down" or _contains_any(
-            text, DISTRESS_SKILL_TERMS
-        ):
-            modalities.extend(("dbt_skills", "pfa"))
-        if _contains_any(text, ACT_TERMS):
+            if signals["has_anxiety_theme"]:
+                modalities.append("act")
+        elif signals["wants_cbt"]:
+            modalities.append("cbt")
+        elif signals["has_anxiety_theme"]:
             modalities.append("act")
         if not modalities:
             modalities.append("cbt")
-        return tuple(dict.fromkeys(modalities))
+        return _limit_modalities(modalities, max_count=3)
+
+    if mode == "psychoeducation":
+        modalities: list[Modality] = []
+        if signals["has_anxiety_theme"] or signals["wants_explanation"]:
+            modalities.append("act")
+        if signals["wants_cbt"]:
+            modalities.append("cbt")
+        if signals["safety_sensitive"]:
+            modalities.append("pfa")
+        if signals["has_grief_theme"]:
+            modalities.append("grief_support")
+        if not modalities:
+            modalities.append("cbt")
+        return _limit_modalities(modalities, max_count=3)
 
     if mode == "realignment":
-        return ("motivational_interviewing",)
+        return ()
 
     if mode == "safety_check":
         return ("pfa",)

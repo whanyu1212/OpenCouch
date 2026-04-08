@@ -85,6 +85,25 @@ def test_format_session_context_includes_structured_fields() -> None:
     assert "understand a recurring pattern" in context_block
 
 
+def test_format_session_context_includes_working_memory() -> None:
+    """Formatted session context should surface retrieved long-term memory."""
+
+    state = build_initial_state(
+        AgentInput(
+            message="I'm feeling anxious again.",
+            working_memory=[
+                "Support preference: Sometimes wants space before advice.",
+                "Recurring concern: anxiety or rumination",
+            ],
+        )
+    )
+
+    context_block = format_session_context(state)
+
+    assert "Long-term memory:" in context_block
+    assert "Support preference: Sometimes wants space before advice." in context_block
+
+
 def test_build_initial_state_sets_explicit_session_intent() -> None:
     """Explicit intent language should be captured during initial state building."""
 
@@ -94,3 +113,37 @@ def test_build_initial_state_sets_explicit_session_intent() -> None:
 
     assert state["session_intent"] == "guided_cbt_work"
     assert state["session_intent_source"] == "explicit"
+
+
+def test_meta_orientation_turn_does_not_pollute_session_context() -> None:
+    """Capability questions should not become concerns, goals, or open loops."""
+
+    state = build_initial_state(AgentInput(message="Hi, what can you do for me?"))
+
+    assert state["active_concerns"] == []
+    assert state["current_goal"] is None
+    assert state["open_loops"] == []
+    assert "Hi, what can you do for me" not in state["session_summary"]
+    assert state["session_intent"] is None
+
+
+def test_reflection_intent_stays_sticky_on_emotional_follow_up() -> None:
+    """Generic support language should not erase an ongoing reflection arc."""
+
+    state = build_initial_state(
+        AgentInput(
+            message="That sounds right, and it makes me sad to hear it that clearly.",
+            history=[
+                Message(
+                    role=MessageRole.USER,
+                    content="I want help understanding why I keep ending up in the same pattern.",
+                ),
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content="What pattern feels most present to you?",
+                ),
+            ],
+        )
+    )
+
+    assert state["session_intent"] == "reflection_and_pattern_finding"

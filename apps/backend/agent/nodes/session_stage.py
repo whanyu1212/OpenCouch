@@ -43,11 +43,11 @@ def _recent_modes_from_transcript(state: AgentState, *, limit: int = 4) -> list[
         ):
             modes.append("guided_exercise")
         elif "pattern i notice" in content or "pattern" in content:
-            modes.append("reflection")
+            modes.append("pattern_reflection")
         elif "i can help you talk through" in content:
             modes.append("orientation")
         else:
-            modes.append("support")
+            modes.append("supportive_conversation")
         if len(modes) >= limit:
             break
     return list(reversed(modes))

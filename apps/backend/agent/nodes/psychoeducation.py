@@ -1,4 +1,4 @@
-"""Guided exercise response node."""
+"""Psychoeducation response node."""
 
 from __future__ import annotations
 
@@ -9,23 +9,23 @@ from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
 
-async def run_guided_exercise_response(
+async def run_psychoeducation_response(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None = None,
 ) -> AgentState:
-    """Generate a guided-exercise reply.
+    """Generate a psychoeducation reply.
 
     Args:
         state: Shared agent state for the current turn.
         llm_client: Optional provider-backed client for text generation.
 
     Returns:
-        The updated agent state with a guided-exercise reply.
+        The updated agent state with a psychoeducation reply.
     """
 
     return await run_registered_therapeutic_mode_response(
         state,
-        mode="guided_exercise",
+        mode="psychoeducation",
         llm_client=llm_client,
     )

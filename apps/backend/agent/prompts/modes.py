@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent.prompts.catalog import (
     ALLOWED_MODALITIES,
+    MODE_BASELINE_FILES,
     MODE_FILES,
     MODALITY_FILES,
     Modality,
@@ -75,6 +76,9 @@ def build_system_prompt(
         build_core_system_prompt(),
         build_mode_prompt(mode),
     ]
+    baseline_paths = MODE_BASELINE_FILES.get(mode, ())
+    if baseline_paths:
+        parts.append(compose_knowledge_sections(*baseline_paths))
     if modalities:
         parts.append(build_modality_prompt(*modalities))
 

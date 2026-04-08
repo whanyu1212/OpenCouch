@@ -2,8 +2,9 @@
 
 import pytest
 
-from agent.models import Channel
+from agent.models import Channel, ModeType
 from agent.persistence import PersistentAgentRuntime
+from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
 
@@ -34,6 +35,15 @@ class FakeContextLLMClient(BaseLLMClient):
         self.text_calls += 1
         return "Context-injected reply"
 
+    async def generate_text_stream(
+        self, *, prompt, system_instruction=None, temperature=0
+    ):
+        yield await self.generate_text(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=temperature,
+        )
+
     async def generate_structured(
         self,
         *,
@@ -58,6 +68,35 @@ class FakeContextLLMClient(BaseLLMClient):
         """
 
         raise NotImplementedError
+
+
+class FakeGraphMemoryStore:
+    """Fake graph-memory adapter for persistence integration tests."""
+
+    def __init__(self) -> None:
+        self.retrieve_calls = 0
+        self.record_calls = 0
+        self.last_query: str | None = None
+
+    async def retrieve(
+        self,
+        *,
+        owner_id: str,
+        query: str,
+        limit: int = 4,
+    ) -> list[str]:
+        self.retrieve_calls += 1
+        self.last_query = query
+        return [f"graph memory for {owner_id}: anxiety gets worse at night"]
+
+    async def record_episode(
+        self,
+        *,
+        owner_id: str,
+        state: AgentState,
+    ) -> bool:
+        self.record_calls += 1
+        return True
 
 
 @pytest.mark.asyncio
@@ -86,7 +125,9 @@ async def test_persistent_runtime_resumes_thread_state(tmp_path) -> None:
         )
 
         assert first_turn.output.mode == "orientation"
-        assert second_turn.output.mode == "reflection"
+        assert first_turn.output.mode_type == ModeType.OPERATIONAL
+        assert second_turn.output.mode == "pattern_reflection"
+        assert second_turn.output.mode_type == ModeType.THERAPEUTIC
         assert len(second_turn.history) == 4
         assert second_turn.state["turn_count"] == 2
         assert len(second_turn.state["transcript"]) == 4
@@ -151,3 +192,121 @@ async def test_persistent_runtime_uses_runtime_context_for_llm_client(tmp_path) 
 
     assert result.output.response_text == "Context-injected reply"
     assert llm_client.text_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_retrieves_profile_memory_between_turns(
+    tmp_path,
+) -> None:
+    """Typed profile memory should be written after one turn and injected on the next."""
+
+    sqlite_path = tmp_path / "threads.sqlite3"
+
+    async with PersistentAgentRuntime(sqlite_path) as runtime:
+        first_turn = await runtime.run_turn(
+            thread_id="thread-memory",
+            message="I just want to vent. I don't want advice right now.",
+            channel=Channel.TEST,
+        )
+        second_turn = await runtime.run_turn(
+            thread_id="thread-memory",
+            message="Can you just stay with me for a moment?",
+            channel=Channel.TEST,
+        )
+
+    assert first_turn.output.should_persist_memory is True
+    assert any(
+        "Support preference: Sometimes wants space before advice." in entry
+        for entry in second_turn.state["working_memory"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_retrieves_graph_memory_between_turns(
+    tmp_path,
+) -> None:
+    """Injected graph-memory adapters should feed working_memory on each turn."""
+
+    sqlite_path = tmp_path / "threads.sqlite3"
+    graph_memory = FakeGraphMemoryStore()
+
+    async with PersistentAgentRuntime(
+        sqlite_path,
+        graph_memory_store=graph_memory,
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-graph-memory",
+            message="I'm feeling anxious again tonight.",
+            channel=Channel.TEST,
+        )
+
+    assert any(
+        "Related history: graph memory for thread-graph-memory: anxiety gets worse at night"
+        in entry
+        for entry in result.state["working_memory"]
+    )
+    assert graph_memory.retrieve_calls == 1
+    assert graph_memory.record_calls == 1
+    assert result.output.should_persist_memory is True
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_skips_graph_memory_for_orientation_turn(
+    tmp_path,
+) -> None:
+    """Orientation turns should not trigger graph-memory retrieval or writes."""
+
+    sqlite_path = tmp_path / "threads.sqlite3"
+    graph_memory = FakeGraphMemoryStore()
+
+    async with PersistentAgentRuntime(
+        sqlite_path,
+        graph_memory_store=graph_memory,
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-orientation-memory",
+            message="Hi, what can you do for me?",
+            channel=Channel.TEST,
+        )
+
+    assert result.output.mode == "orientation"
+    assert graph_memory.retrieve_calls == 0
+    assert graph_memory.record_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_builds_curated_graph_query_when_recall_is_needed(
+    tmp_path,
+) -> None:
+    """Recall-oriented turns should build a richer Graphiti query from prior state."""
+
+    sqlite_path = tmp_path / "threads.sqlite3"
+    graph_memory = FakeGraphMemoryStore()
+
+    async with PersistentAgentRuntime(
+        sqlite_path,
+        graph_memory_store=graph_memory,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-pattern-memory",
+            message="I've been anxious around my partner lately.",
+            channel=Channel.TEST,
+        )
+        result = await runtime.run_turn(
+            thread_id="thread-pattern-memory",
+            message="Why does this keep happening with us?",
+            channel=Channel.TEST,
+        )
+
+    assert any(
+        "Related history: graph memory for thread-pattern-memory: anxiety gets worse at night"
+        in entry
+        for entry in result.state["working_memory"]
+    )
+    assert graph_memory.retrieve_calls == 1
+    assert graph_memory.last_query is not None
+    assert (
+        "Current user message: Why does this keep happening with us?"
+        in graph_memory.last_query
+    )
+    assert "Active concerns:" in graph_memory.last_query

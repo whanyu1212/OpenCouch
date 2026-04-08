@@ -54,6 +54,11 @@ class FakeLLMClient(BaseLLMClient):
 
         raise NotImplementedError("Text generation is not used in crisis gate tests.")
 
+    async def generate_text_stream(
+        self, *, prompt, system_instruction=None, temperature=0
+    ):
+        yield ""
+
     async def generate_structured(
         self,
         *,

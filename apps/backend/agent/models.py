@@ -27,6 +27,12 @@ class ResponseKind(str, Enum):
     CRISIS = "crisis"
 
 
+class ModeType(str, Enum):
+    OPERATIONAL = "operational"
+    THERAPEUTIC = "therapeutic"
+    CRISIS = "crisis"
+
+
 # Represents one prior conversation turn in a validated, serializable form.
 class Message(BaseModel):
     role: MessageRole
@@ -49,6 +55,7 @@ class AgentInput(BaseModel):
     user_id: str | None = None
     session_id: str | None = None
     history: list[Message] = Field(default_factory=list)
+    working_memory: list[str] = Field(default_factory=list)
     installed_skills: list[str] = Field(default_factory=list)
 
 
@@ -58,4 +65,34 @@ class AgentOutput(BaseModel):
     response_type: ResponseKind
     crisis: CrisisAssessment
     mode: str | None = None
+    mode_type: ModeType | None = None
+    mode_source: str | None = None
     should_persist_memory: bool = False
+
+
+# ── Stream event types ────────────────────────────────────────────────────────
+
+
+class StatusEvent(BaseModel):
+    """Pipeline progress update emitted before response generation begins."""
+
+    type: Literal["status"] = "status"
+    stage: str
+    detail: str = ""
+
+
+class ChunkEvent(BaseModel):
+    """Incremental text chunk from response generation."""
+
+    type: Literal["chunk"] = "chunk"
+    text: str
+
+
+class DoneEvent(BaseModel):
+    """Terminal event carrying the complete agent output."""
+
+    type: Literal["done"] = "done"
+    output: AgentOutput
+
+
+StreamEvent = StatusEvent | ChunkEvent | DoneEvent

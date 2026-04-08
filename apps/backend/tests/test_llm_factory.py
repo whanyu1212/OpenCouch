@@ -33,8 +33,8 @@ def test_get_settings_uses_env_provider(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.llm_provider == "openai"
 
 
-def test_get_settings_defaults_to_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Settings should default to Gemini when no provider is configured.
+def test_get_settings_defaults_to_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings should default to OpenAI when no provider is configured.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture for environment overrides.
@@ -43,7 +43,7 @@ def test_get_settings_defaults_to_gemini(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
 
     settings = get_settings()
-    assert settings.llm_provider == "gemini"
+    assert settings.llm_provider == "openai"
 
 
 def test_create_configured_llm_client_uses_settings(

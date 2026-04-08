@@ -52,6 +52,14 @@ AMBIGUOUS_PATTERNS = (
 
 DISTRESS_PATTERNS = (r"\b(hopeless|empty|worthless|trapped|completely overwhelmed)\b",)
 
+SAFETY_DENIAL_PATTERNS = (
+    r"\b(not suicidal|not thinking about|not going to)\s+(hurt|harm|kill)",
+    r"\b(i'?m safe|i am safe|i'?m not unsafe)\b",
+    r"\b(no|not)\b.{0,20}\b(hurting myself|harming myself|killing myself|ending)",
+    r"\b(don'?t|do not)\s+(want to die|want to hurt myself|want to harm myself)\b",
+    r"\b(not thinking about)\s+(suicide|self[- ]harm|ending)",
+)
+
 
 class CrisisAssessmentSchema(BaseModel):
     """Structured schema for crisis-classification model output."""
@@ -81,10 +89,37 @@ def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pattern, text) for pattern in patterns)
 
 
+def _previous_mode_was_safety_check(state: AgentState) -> bool:
+    """Return whether the most recent assistant turn was a safety check."""
+
+    history = state.get("history", [])
+    # Walk backwards to find the last assistant turn's context.
+    # The mode is stored in state, not history, so we check if the prior
+    # conversation included a safety-check response pattern.
+    for turn in reversed(history[-4:]):
+        if turn.get("role") == "assistant":
+            content = turn.get("content", "").lower()
+            if any(
+                phrase in content
+                for phrase in (
+                    "feeling unsafe",
+                    "thinking about hurting yourself",
+                    "check on your safety",
+                    "check something important",
+                )
+            ):
+                return True
+            break
+    return False
+
+
 def detect_crisis_override(
     state: AgentState,
 ) -> tuple[OverrideKind, CrisisAssessment] | None:
     """Return a hard override for obvious crisis-boundary cases.
+
+    Handles both escalation overrides (imminent risk) and de-escalation
+    overrides (user denied risk after a safety check).
 
     Args:
         state: The current agent graph state.
@@ -95,6 +130,7 @@ def detect_crisis_override(
     """
 
     text = _combined_user_text(state)
+    current_message = state["message"].lower()
 
     if _matches_any(text, IDIOMATIC_SAFE_PATTERNS):
         return (
@@ -119,6 +155,33 @@ def detect_crisis_override(
                 needs_clarification=False,
             ),
         )
+
+    # De-escalation: if the previous turn was a safety check, check the
+    # current message in isolation (not accumulated history) for new signals.
+    if _previous_mode_was_safety_check(state):
+        has_new_crisis = _matches_any(
+            current_message, CLEAR_SELF_HARM_PATTERNS
+        ) or _matches_any(current_message, IMMINENT_PATTERNS)
+        has_new_ambiguous = _matches_any(current_message, AMBIGUOUS_PATTERNS)
+        has_denial = _matches_any(current_message, SAFETY_DENIAL_PATTERNS)
+
+        # If the user denied risk or the current message has no new crisis
+        # or ambiguous signals, accept the de-escalation and move on.
+        if has_denial or (not has_new_crisis and not has_new_ambiguous):
+            return (
+                "idiomatic_safe",
+                CrisisAssessment(
+                    level=0,
+                    confidence="high",
+                    reason=(
+                        "User denied risk after a safety check."
+                        if has_denial
+                        else "No new crisis signals after a safety check. Prior concern addressed."
+                    ),
+                    needs_crisis_response=False,
+                    needs_clarification=False,
+                ),
+            )
 
     return None
 

@@ -1,9 +1,12 @@
 import pytest
 
 from agent.graph import build_initial_state
-from agent.models import AgentInput, CrisisAssessment, ResponseKind
+from agent.models import AgentInput, CrisisAssessment, ModeType, ResponseKind
 from agent.nodes.crisis_response import run_crisis_response
+from agent.nodes.guided_exercise import run_guided_exercise_response
+from agent.nodes.psychoeducation import run_psychoeducation_response
 from agent.nodes.therapeutic import run_therapeutic_response
+from agent.prompts.builders import build_therapeutic_response_prompt
 from services.llm.base import BaseLLMClient
 
 
@@ -50,6 +53,15 @@ class FakeTextLLMClient(BaseLLMClient):
             raise RuntimeError("Simulated provider failure")
         return self.text_response
 
+    async def generate_text_stream(
+        self, *, prompt, system_instruction=None, temperature=0
+    ):
+        yield await self.generate_text(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=temperature,
+        )
+
     async def generate_structured(
         self,
         *,
@@ -92,6 +104,7 @@ async def test_therapeutic_node_uses_llm_for_normal_support() -> None:
     state = await run_therapeutic_response(state, llm_client=llm_client)
 
     assert state["response_type"] == ResponseKind.THERAPEUTIC
+    assert state["mode_type"] == ModeType.THERAPEUTIC
     assert state["response_text"].startswith("That sounds exhausting.")
     assert llm_client.text_calls == 1
     assert llm_client.last_prompt is not None
@@ -115,8 +128,111 @@ async def test_therapeutic_node_bypasses_llm_for_safety_check() -> None:
     state = await run_therapeutic_response(state, llm_client=llm_client)
 
     assert state["response_type"] == ResponseKind.THERAPEUTIC
+    assert state["mode_type"] == ModeType.OPERATIONAL
     assert "check on your safety" in state["response_text"]
     assert llm_client.text_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_therapeutic_node_holds_space_for_venting_intent() -> None:
+    """Venting intent should suppress fallback problem-solving behavior."""
+
+    state = build_initial_state(
+        AgentInput(message="I just want to vent. I don't want advice right now.")
+    )
+
+    state = await run_therapeutic_response(state)
+
+    assert state["mode_type"] == ModeType.THERAPEUTIC
+    assert "space to say it" in state["response_text"].lower()
+    assert "tell me a bit more" not in state["response_text"].lower()
+
+
+def test_therapeutic_prompt_includes_response_guidance_block() -> None:
+    """Therapeutic prompts should include the compiled response guidance."""
+
+    state = build_initial_state(
+        AgentInput(message="I just want to vent. I do not want advice right now.")
+    )
+    state["response_guidance"] = (
+        "User is venting or explicitly does not want advice. Hold space."
+    )
+
+    prompt = build_therapeutic_response_prompt(state)
+
+    assert "Turn-specific guidance:" in prompt
+    assert "Hold space" in prompt
+
+
+@pytest.mark.asyncio
+async def test_therapeutic_node_uses_strengths_based_fallback_for_progress_updates() -> (
+    None
+):
+    """Progress updates should trigger a strengths-based fallback shape."""
+
+    state = build_initial_state(
+        AgentInput(message="I actually handled it better this time and stayed calmer.")
+    )
+
+    state = await run_therapeutic_response(state)
+
+    assert state["mode_type"] == ModeType.THERAPEUTIC
+    assert "went differently this time" in state["response_text"].lower()
+    assert "capacity" in state["response_text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_therapeutic_node_uses_supportive_boundary_fallback_for_pet_task() -> (
+    None
+):
+    """Practical pet-medication tasks should not get procedural fallback advice."""
+
+    state = build_initial_state(
+        AgentInput(
+            message="My cat is unwell and I'm having trouble giving it medication.",
+        )
+    )
+
+    state = await run_therapeutic_response(state)
+
+    assert state["mode_type"] == ModeType.THERAPEUTIC
+    assert "practical animal-care steps" in state["response_text"].lower()
+    assert "bathroom" not in state["response_text"].lower()
+    assert "towel" not in state["response_text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_node_uses_behavioral_activation_fallback_for_stuckness() -> (
+    None
+):
+    """Stuck and avoidant language should trigger behavioral-activation fallback."""
+
+    state = build_initial_state(
+        AgentInput(message="I feel stuck, drained, and keep avoiding everything.")
+    )
+    state["active_modalities"] = ["cbt"]
+
+    state = await run_guided_exercise_response(state)
+
+    assert "5 to 10 minutes" in state["response_text"]
+    assert "not to fix everything" in state["response_text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_psychoeducation_node_uses_fallback_explanation_for_anxiety() -> None:
+    """Psychoeducation fallback should explain anxiety without diagnosing."""
+
+    state = build_initial_state(
+        AgentInput(
+            message="Can you explain why my body reacts like this when I get anxious?"
+        )
+    )
+
+    state = await run_psychoeducation_response(state)
+
+    assert state["mode"] == "psychoeducation"
+    assert state["mode_type"] == ModeType.THERAPEUTIC
+    assert "protect you" in state["response_text"].lower()
 
 
 @pytest.mark.asyncio
@@ -143,6 +259,8 @@ async def test_crisis_node_uses_llm_for_crisis_reply() -> None:
     state = await run_crisis_response(state, llm_client=llm_client)
 
     assert state["response_type"] == ResponseKind.CRISIS
+    assert state["mode"] == "crisis_response"
+    assert state["mode_type"] == ModeType.CRISIS
     assert "reach out to a crisis hotline" in state["response_text"]
     assert llm_client.text_calls == 1
     assert llm_client.last_prompt is not None
@@ -171,5 +289,7 @@ async def test_crisis_node_falls_back_when_llm_generation_fails() -> None:
     state = await run_crisis_response(state, llm_client=llm_client)
 
     assert state["response_type"] == ResponseKind.CRISIS
+    assert state["mode"] == "crisis_response"
+    assert state["mode_type"] == ModeType.CRISIS
     assert "emergency services" in state["response_text"]
     assert llm_client.text_calls == 1

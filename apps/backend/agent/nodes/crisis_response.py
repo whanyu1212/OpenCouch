@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.models import ResponseKind
+from agent.models import ModeType, ResponseKind
 from agent.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
@@ -45,6 +45,9 @@ async def run_crisis_response(
         The updated agent state with a crisis reply.
     """
 
+    state["mode"] = "crisis_response"
+    state["mode_type"] = ModeType.CRISIS
+    state["response_guidance"] = ""
     state["response_type"] = ResponseKind.CRISIS
 
     if llm_client is not None:

@@ -9,6 +9,17 @@ MAX_HISTORY_TURNS = 8
 MAX_ACTIVE_CONCERNS = 3
 MAX_OPEN_LOOPS = 3
 
+META_TURN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bhow does this work\b", re.IGNORECASE),
+    re.compile(r"\bwhat can you help with\b", re.IGNORECASE),
+    re.compile(r"\bwhat can you do(?: for me)?\b", re.IGNORECASE),
+    re.compile(r"\bhow can you help(?: me)?\b", re.IGNORECASE),
+    re.compile(r"\bwhat are you\b", re.IGNORECASE),
+    re.compile(r"\bwho are you\b", re.IGNORECASE),
+    re.compile(r"\bi'?m new here\b", re.IGNORECASE),
+    re.compile(r"\bfirst time here\b", re.IGNORECASE),
+)
+
 SESSION_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (
         re.compile(
@@ -57,6 +68,22 @@ SESSION_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], str, str], ...] = (
         "supportive_conversation",
         "explicit",
     ),
+    (
+        re.compile(
+            r"\b(explain|help me understand|what is|why does)\b.*\b(anxiety|panic|stress|body|nervous system|react like this)\b",
+            re.IGNORECASE,
+        ),
+        "psychoeducation",
+        "explicit",
+    ),
+    (
+        re.compile(
+            r"\b(explain|help me understand)\b.*\b(burned? out|exhaustion|overwhelm)\b",
+            re.IGNORECASE,
+        ),
+        "psychoeducation",
+        "explicit",
+    ),
 )
 
 CONCERN_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -75,7 +102,15 @@ CONCERN_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "relationship strain",
-        (r"\bpartner", r"\brelationship", r"\bfriend", r"\bfamily", r"\bargument"),
+        (
+            r"\bpartner",
+            r"\brelationship",
+            r"\bfriend",
+            r"\bfamily",
+            r"\bsister",
+            r"\bbrother",
+            r"\bargument",
+        ),
     ),
     (
         "work or school pressure",
@@ -106,6 +141,13 @@ GOAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
+            r"\b(explain|help me understand|what is|why does)\b.*\b(anxiety|panic|stress|body|nervous system|react like this)\b",
+            re.IGNORECASE,
+        ),
+        "understand what may be happening in mind and body",
+    ),
+    (
+        re.compile(
             r"\bhow does this work\b|\bwhat can you help with\b|\bnew here\b",
             re.IGNORECASE,
         ),
@@ -121,6 +163,13 @@ OPEN_LOOP_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bi want to figure out\b", re.IGNORECASE),
 )
 
+NEGATED_GROUNDING_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bdon't need grounding\b", re.IGNORECASE),
+    re.compile(r"\bdo not need grounding\b", re.IGNORECASE),
+    re.compile(r"\bdo not think i need grounding\b", re.IGNORECASE),
+    re.compile(r"\bi don't think i need grounding\b", re.IGNORECASE),
+)
+
 
 def _user_turns(history: list[dict[str, str]]) -> list[str]:
     """Return the user-authored contents from serialized history."""
@@ -130,6 +179,21 @@ def _user_turns(history: list[dict[str, str]]) -> list[str]:
         for turn in history
         if turn.get("role") == "user" and turn.get("content", "").strip()
     ]
+
+
+def _is_meta_turn(text: str) -> bool:
+    """Return whether a user turn is product-orientation rather than therapeutic."""
+
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return any(pattern.search(stripped) for pattern in META_TURN_PATTERNS)
+
+
+def _therapeutic_user_turns(history: list[dict[str, str]]) -> list[str]:
+    """Return user turns that should influence therapeutic session context."""
+
+    return [turn for turn in _user_turns(history) if not _is_meta_turn(turn)]
 
 
 def trim_history(
@@ -163,7 +227,10 @@ def extract_active_concerns(
         Up to three normalized concern labels.
     """
 
-    text = " ".join(_user_turns(history) + [current_message]).lower()
+    therapeutic_turns = _therapeutic_user_turns(history)
+    if current_message.strip() and not _is_meta_turn(current_message):
+        therapeutic_turns.append(current_message.strip())
+    text = " ".join(therapeutic_turns).lower()
     concerns: list[str] = []
 
     for label, patterns in CONCERN_PATTERNS:
@@ -175,12 +242,12 @@ def extract_active_concerns(
     if concerns:
         return concerns
 
-    recent_user_turns = _user_turns(history)[-2:]
-    if current_message.strip():
+    recent_user_turns = _therapeutic_user_turns(history)[-2:]
+    if current_message.strip() and not _is_meta_turn(current_message):
         recent_user_turns.append(current_message.strip())
 
     fallback = [turn[:80].rstrip(" .!?") for turn in recent_user_turns if turn]
-    return fallback[-MAX_ACTIVE_CONCERNS:] or ["general emotional support"]
+    return fallback[-MAX_ACTIVE_CONCERNS:]
 
 
 def extract_open_loops(
@@ -201,7 +268,11 @@ def extract_open_loops(
     loops: list[str] = []
     seen: set[str] = set()
 
-    for turn in _user_turns(history)[-6:] + [current_message.strip()]:
+    candidate_turns = _therapeutic_user_turns(history)[-6:]
+    if current_message.strip() and not _is_meta_turn(current_message):
+        candidate_turns.append(current_message.strip())
+
+    for turn in candidate_turns:
         if not turn:
             continue
         lowered = turn.lower()
@@ -234,13 +305,25 @@ def infer_current_goal(
         A concise goal string when one is detectable.
     """
 
+    if current_message.strip() and _is_meta_turn(current_message):
+        return None
+
+    therapeutic_turns = _therapeutic_user_turns(history)
     text = current_message.strip() or (
-        _user_turns(history)[-1] if _user_turns(history) else ""
+        therapeutic_turns[-1] if therapeutic_turns else ""
     )
     if not text:
         return None
 
+    blocked_goal = (
+        "feel calmer right now"
+        if any(pattern.search(text) for pattern in NEGATED_GROUNDING_PATTERNS)
+        else None
+    )
+
     for pattern, goal in GOAL_PATTERNS:
+        if goal == blocked_goal:
+            continue
         if pattern.search(text):
             return goal
 
@@ -269,8 +352,8 @@ def build_session_summary(
         A deterministic rolling session summary.
     """
 
-    recent_user_turns = _user_turns(history)[-3:]
-    if current_message.strip():
+    recent_user_turns = _therapeutic_user_turns(history)[-3:]
+    if current_message.strip() and not _is_meta_turn(current_message):
         recent_user_turns.append(current_message.strip())
 
     snippets = [turn[:90].rstrip(" .!?") for turn in recent_user_turns if turn]
@@ -306,15 +389,22 @@ def infer_session_intent(
     text = current_message.strip()
     if not text:
         return None, None
+    if _is_meta_turn(text):
+        return None, None
 
     for pattern, intent, source in SESSION_INTENT_PATTERNS:
         if pattern.search(text):
             return intent, source
 
     lowered = text.lower()
+    grounding_blocked = any(
+        pattern.search(text) for pattern in NEGATED_GROUNDING_PATTERNS
+    )
     if any(term in lowered for term in ("cbt", "thought record", "reframe")):
         return "guided_cbt_work", "inferred"
-    if any(term in lowered for term in ("grounding", "breathing", "calm down")):
+    if not grounding_blocked and any(
+        term in lowered for term in ("grounding", "breathing", "calm down")
+    ):
         return "grounding_or_calm_down", "inferred"
     if any(
         term in lowered
@@ -324,14 +414,54 @@ def infer_session_intent(
             "make sense",
             "understand why i keep",
             "understanding why i keep",
+            "what keeps happening",
+            "is there a theme",
+            "do you see a connection",
         )
     ):
         return "reflection_and_pattern_finding", "inferred"
+    if any(
+        term in lowered
+        for term in (
+            "what is anxiety",
+            "why does my body",
+            "why do i react like this",
+            "nervous system",
+            "stress response",
+            "what's happening in my body",
+            "how does anxiety work",
+            "how does stress work",
+            "what is burnout",
+        )
+    ):
+        return "psychoeducation", "inferred"
+    if "is it normal" in lowered and any(
+        term in lowered
+        for term in ("anxiety", "panic", "stress", "body", "shake", "shaking")
+    ):
+        return "psychoeducation", "inferred"
     if "vent" in lowered:
         return "just_need_to_vent", "inferred"
     if any(
         term in lowered
         for term in ("talk", "support", "listen", "rough day", "overwhelmed")
+    ):
+        return "supportive_conversation", "inferred"
+    if any(
+        term in lowered
+        for term in (
+            "anxious",
+            "anxiety",
+            "stressed",
+            "stress",
+            "drained",
+            "exhausted",
+            "tired",
+            "rest",
+            "lonely",
+            "upset",
+            "sad",
+        )
     ):
         return "supportive_conversation", "inferred"
     return None, None
@@ -364,8 +494,41 @@ def update_session_intent(
         return next_intent, next_source
     if existing_intent and existing_source == "explicit":
         return existing_intent, existing_source
+    if (
+        existing_intent
+        in {
+            "reflection_and_pattern_finding",
+            "psychoeducation",
+            "guided_cbt_work",
+            "grounding_or_calm_down",
+        }
+        and next_source == "inferred"
+        and next_intent == "supportive_conversation"
+    ):
+        return existing_intent, existing_source
+    if next_source == "inferred" and next_intent == "supportive_conversation":
+        for prior_turn in reversed(_therapeutic_user_turns(history)[-3:]):
+            prior_intent, prior_source = infer_session_intent(
+                history,
+                current_message=prior_turn,
+            )
+            if prior_intent in {
+                "reflection_and_pattern_finding",
+                "psychoeducation",
+                "guided_cbt_work",
+                "grounding_or_calm_down",
+            }:
+                return prior_intent, prior_source
     if next_intent is not None:
         return next_intent, next_source
+    if existing_intent is None:
+        for prior_turn in reversed(_user_turns(history)[-3:]):
+            prior_intent, prior_source = infer_session_intent(
+                history,
+                current_message=prior_turn,
+            )
+            if prior_intent is not None:
+                return prior_intent, prior_source
     return existing_intent, existing_source
 
 
@@ -423,7 +586,8 @@ def infer_session_stage_deterministically(
     )
 
     if turn_count <= 2 and (
-        not recent_modes or recent_modes[-1] in {"orientation", "support"}
+        not recent_modes
+        or recent_modes[-1] in {"orientation", "supportive_conversation"}
     ):
         return "opening", "Early turn count with orientation/support pattern."
 
@@ -461,7 +625,10 @@ def infer_session_stage_deterministically(
             )
     else:
         if (
-            any(mode in {"reflection", "support"} for mode in recent_modes[-2:])
+            any(
+                mode in {"pattern_reflection", "supportive_conversation"}
+                for mode in recent_modes[-2:]
+            )
             and turn_count >= 3
         ):
             return (
