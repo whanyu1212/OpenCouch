@@ -178,7 +178,7 @@ def render_header(mode: str, thread_id: str, memory_mode: str) -> None:
     )
     console.print(
         "[muted]slash commands:[/muted] [info]/help, /status, /history, /context, "
-        "/threads, /resume, /new, /reset, /clear, /mode, /exit[/info]\n"
+        "/memory, /threads, /resume, /new, /reset, /clear, /mode, /exit[/info]\n"
     )
 
 
@@ -391,6 +391,119 @@ def render_memory_status(runtime: PersistentAgentRuntime) -> None:
             box=box.ROUNDED,
         )
     )
+
+
+def render_memory_list(runtime: PersistentAgentRuntime) -> None:
+    """Render every semantic memory record in a browsable table.
+
+    Shipped in v0.3.1 as a dogfood-observability tool: without this,
+    answering "what did extraction actually write?" requires a probe
+    script. With it, operators can type ``/memory list`` at any point
+    in a session and see the evidence quotes, categories, and predicates
+    for each fact the extractor has landed.
+
+    Scope:
+    - Read-only. Mutation commands (``/memory forget``, ``/memory clear``)
+      are scoped to v0.9 alongside the full CLI memory suite.
+    - Semantic namespace only. Episodic lands in v0.4, procedural in
+      v0.7; when those namespaces start getting written, this function
+      will grow additional tables.
+    - Evidence quotes are truncated to 80 chars in the table and shown
+      in full in a follow-up details block only for records whose quote
+      is longer than 80 chars — keeps the happy path clean.
+    - Sorted by insertion order (the order records were written). When
+      v0.8's consolidation tier ships, this may change to sort by
+      last_referenced_at descending.
+
+    Args:
+        runtime: Active persistent runtime. Reads the memory_store via
+            its public property.
+    """
+
+    store = runtime.memory_store
+
+    # Gather all semantic records across every namespace. The store is
+    # namespaced by (user_id, kind), so we iterate every namespace that
+    # has kind == "semantic" and collect its records in insertion order.
+    semantic_records: list[tuple[str, dict[str, object]]] = []
+    for namespace in store.namespaces():
+        if len(namespace) < 2 or namespace[1] != "semantic":
+            continue
+        # bucket.records preserves insertion order (dict in Python 3.7+),
+        # so iterating gives us the chronological list.
+        bucket = store._buckets.get(namespace)  # noqa: SLF001 — debug tool
+        if bucket is None:
+            continue
+        for key, record in bucket.records.items():
+            semantic_records.append((key, record.value))
+
+    if not semantic_records:
+        console.print(
+            Panel(
+                "[muted]No semantic records in the store yet. The extractor "
+                "writes facts from concrete user statements; transient feelings, "
+                "questions, and small talk produce zero extractions by design. "
+                "Try mentioning a named person, a coping strategy, or a "
+                "recurring trigger to see the store populate.[/muted]",
+                title="[primary]Memory List (semantic)[/primary]",
+                border_style="panel",
+                box=box.ROUNDED,
+            )
+        )
+        console.print()
+        return
+
+    table = Table(
+        show_header=True,
+        header_style="primary",
+        box=box.SIMPLE_HEAVY,
+        show_lines=False,
+    )
+    table.add_column("#", style="muted", no_wrap=True, width=3)
+    table.add_column("category", style="accent", no_wrap=True)
+    table.add_column("predicate", style="info", no_wrap=True)
+    table.add_column("evidence quote", style="info")
+    table.add_column("conf", style="muted", no_wrap=True, width=6)
+
+    # Truncation threshold for the inline quote column. Longer quotes
+    # get shown in full below the table so the happy-path rendering
+    # stays compact and scannable.
+    quote_inline_limit = 80
+    long_quotes: list[tuple[int, str]] = []
+
+    for idx, (_key, value) in enumerate(semantic_records, start=1):
+        category = str(value.get("category", "?"))
+        predicate = str(value.get("predicate", "?"))
+        confidence = str(value.get("confidence", "?"))
+        quote = str(value.get("evidence_quote", ""))
+        if len(quote) > quote_inline_limit:
+            quote_display = quote[:quote_inline_limit].rstrip() + "…"
+            long_quotes.append((idx, quote))
+        else:
+            quote_display = quote
+        table.add_row(str(idx), category, predicate, quote_display, confidence)
+
+    console.print(
+        Panel(
+            table,
+            title=f"[primary]Memory List (semantic)[/primary] "
+            f"[muted]— {len(semantic_records)} record(s)[/muted]",
+            subtitle="[muted]what the extractor has written so far[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+
+    if long_quotes:
+        # Render full-length quotes below the table for any record whose
+        # evidence was truncated. This keeps the table scannable while
+        # still giving operators access to the verbatim text when they
+        # need it.
+        console.print()
+        console.print("[muted]Full quotes (truncated in the table above):[/muted]")
+        for idx, quote in long_quotes:
+            console.print(f"  [accent]#{idx}[/accent] [info]{quote}[/info]")
+    console.print()
     console.print()
 
 
@@ -410,6 +523,10 @@ def render_help() -> None:
     table.add_row("/context", "Show the latest derived session context snapshot.")
     table.add_row(
         "/memory status", "Show memory layer state (counts, mode, crisis log)."
+    )
+    table.add_row(
+        "/memory list",
+        "List every semantic fact the extractor has written this session.",
     )
     table.add_row("/threads [n]", "List persisted thread ids. Default: 12.")
     table.add_row("/resume <thread-id>", "Switch to an existing persisted thread.")
@@ -662,13 +779,19 @@ async def handle_command(
         return False
 
     if command == "/memory":
-        # v0.1 supports only `/memory status`. Future commands
-        # (list, forget, clear, recall, search) land in phase 2+.
+        # v0.3.1 supports `/memory status` and `/memory list`. The list
+        # command is a read-only dogfood tool added when the v0.3.1
+        # retrieval work shipped — without it, answering "what did
+        # extraction actually write?" required a probe script. Mutation
+        # commands (/memory forget, /memory clear) remain scoped to v0.9.
         if len(args) == 0 or args[0] == "status":
             render_memory_status(runtime)
             return True
+        if args[0] == "list":
+            render_memory_list(runtime)
+            return True
         render_info(
-            "Unknown /memory subcommand. Available in v0.1: status",
+            "Unknown /memory subcommand. Available in v0.3.1: status, list",
             style="warning",
         )
         return True

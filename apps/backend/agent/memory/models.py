@@ -178,6 +178,37 @@ class SemanticFact(BaseModel):
     user_visible: bool = True
 
 
+class ExtractionResult(BaseModel):
+    """The structured-output shape returned by the semantic extractor LLM.
+
+    The extractor LLM is given a turn and asked to produce zero or more
+    :class:`MemoryWrite` items worth persisting as long-term semantic
+    facts. Two design notes:
+
+    1. **Zero facts is the common case.** The system prompt enforces a
+       conservative stance — most turns (small talk, transient feelings,
+       ambiguous statements) produce an empty ``facts`` list. This is
+       by design; an aggressive extractor that saves every detail would
+       produce "creepy memory" failures that erode user trust.
+    2. **The ``reason`` field is always populated**, even on empty
+       extractions. It provides a human-readable breadcrumb that
+       explains why nothing was extracted (e.g., "small talk, no
+       extractable facts") or summarizes what was extracted (e.g.,
+       "extracted 2 relationship facts about user's sister"). The
+       reason is for logs and debugging, not for the user — it should
+       never be surfaced in response text.
+
+    The wrapper shape (vs. a plain ``list[MemoryWrite]``) makes the
+    empty case carry observability signal. Without it, zero-fact turns
+    would be indistinguishable from "the LLM returned nothing because
+    it got confused," and we'd lose the ability to tune the prompt
+    based on why extractions succeed or fail.
+    """
+
+    facts: list[MemoryWrite] = Field(default_factory=list)
+    reason: str = Field(min_length=1, max_length=240)
+
+
 # ─── §3. Episodic memory models ─────────────────────────────────────────────
 
 
@@ -593,6 +624,7 @@ __all__ = [
     "SemanticCategory",
     "MemoryWrite",
     "SemanticFact",
+    "ExtractionResult",
     # §3 episodic
     "MoodArc",
     "SessionArc",

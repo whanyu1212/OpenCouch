@@ -8,8 +8,11 @@ This module owns the entire agent execution surface in three layers:
 * **Graph assembly** — :func:`build_agent_workflow` constructs and compiles the
   LangGraph ``StateGraph`` that wires the full topology: load_memory →
   crisis_gate → (crisis_response + crisis_log | therapeutic_subgraph) →
-  extract_semantic_facts → END. Crisis-gate routing is encoded directly in
-  the node via :class:`langgraph.types.Command`, not via a conditional edge.
+  extract_semantic_facts → finalize_turn → END. Crisis-gate routing is
+  encoded directly in the node via :class:`langgraph.types.Command`, not
+  via a conditional edge. The terminal ``finalize_turn`` node appends the
+  assistant response to the transcript so the next turn's ``get_history``
+  call sees both sides of each exchange.
 * **Public entrypoints** — :func:`run_agent` is a one-shot convenience wrapper
   that compiles a fresh workflow, invokes it with sensible defaults, and
   returns a normalized ``AgentOutput``. For thread-persistent execution see
@@ -30,6 +33,7 @@ from agent.models import (
     AgentInput,
     AgentOutput,
     CrisisAssessment,
+    MessageRole,
     ModeType,
     ResponseKind,
 )
@@ -37,6 +41,7 @@ from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_response import run_crisis_response_node
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -48,17 +53,44 @@ from services.llm.base import BaseLLMClient
 
 
 def build_initial_state(agent_input: AgentInput) -> AgentState:
-    """Convert external input into the internal state dictionary."""
+    """Convert external input into the internal state dictionary.
 
-    transcript = [message.model_dump(mode="json") for message in agent_input.history]
+    Transcript handling: the prior exchanges from ``agent_input.history``
+    are serialized into the transcript, and then the **current user
+    message** is appended so downstream nodes see a transcript ending
+    in the user's latest turn. The assistant side is appended later by
+    :func:`agent.nodes.finalize_turn.run_finalize_turn_node` once the
+    response is ready. This split (user side at init, assistant side
+    at finalize) keeps transcript ownership clear and avoids the
+    phantom-assistant-turn bug that the pre-refactor ``load_memory_node``
+    introduced by trying to append both halves during a single step.
+
+    Routing and response scaffolds are left as empty/placeholder values
+    that the dispatcher and response nodes overwrite. They used to carry
+    misleading labels like ``memory_bootstrap`` and
+    ``startup_memory_bootstrap``, which showed up in CLI diagnostics
+    every turn even though they were never real states the graph
+    actually occupied. The current labels describe the genuine
+    pre-dispatch state: routing unresolved, no response generated yet.
+    """
+
+    prior_transcript = [
+        message.model_dump(mode="json") for message in agent_input.history
+    ]
+    current_user_turn = {
+        "role": MessageRole.USER.value,
+        "content": agent_input.message,
+    }
+    transcript_with_user = [*prior_transcript, current_user_turn]
+
     state = AgentState(
         message=agent_input.message,
         channel=agent_input.channel,
         user_id=agent_input.user_id,
         session_id=agent_input.session_id,
         installed_skills=list(agent_input.installed_skills),
-        history=list(transcript),
-        transcript=list(transcript),
+        history=list(transcript_with_user),
+        transcript=list(transcript_with_user),
         working_memory=list(agent_input.working_memory),
         memory={
             "summary": "",
@@ -71,22 +103,23 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
             "intent_source": None,
             "stage": "opening",
             "stage_source": "deterministic",
-            "stage_reason": "fresh_graph_memory_scaffold",
-            "turn_count": sum(1 for turn in transcript if turn.get("role") == "user")
-            + 1,
+            "stage_reason": "turn_start",
+            "turn_count": sum(
+                1 for turn in transcript_with_user if turn.get("role") == "user"
+            ),
             "is_guest": False,
         },
         crisis=CrisisAssessment(),
         routing={
-            "route": "load_memory_only",
-            "mode": "memory_bootstrap",
+            "route": "pending",
+            "mode": "pending",
             "mode_source": "graph_bootstrap",
             "mode_type": ModeType.OPERATIONAL,
             "active_modalities": [],
             "semantic_signals": {},
         },
         response={
-            "guidance": "startup_memory_bootstrap",
+            "guidance": "pending",
             "kind": ResponseKind.THERAPEUTIC,
             "text": "",
             "should_persist_memory": False,
@@ -126,14 +159,22 @@ def build_agent_workflow(
         START
           → load_memory_node
           → crisis_gate_node  (Command routes to one of the branches)
-          ├─ crisis_response_node → crisis_log_node → extract_semantic_facts_node → END
-          └─ therapeutic_subgraph → extract_semantic_facts_node → END
+          ├─ crisis_response_node → crisis_log_node → extract_semantic_facts_node
+          │                                             → finalize_turn_node → END
+          └─ therapeutic_subgraph → extract_semantic_facts_node
+                                      → finalize_turn_node → END
 
     The therapeutic subgraph is embedded as a single node compiled by
     :func:`agent.therapeutic.graph.build_therapeutic_subgraph`. Its
     internal structure (dispatcher + three mode nodes) is hidden from
     the parent topology, keeping the top-level graph small and
     inspectable in LangSmith.
+
+    ``finalize_turn_node`` is a small terminal step that appends the
+    assistant response to the transcript before END. It runs on both
+    branches via the converge-before-END structure, and pairs with
+    :func:`build_initial_state` (which appends the user message) to
+    keep transcript ownership explicit and out of the response nodes.
 
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
@@ -157,25 +198,26 @@ def build_agent_workflow(
     workflow.add_node("crisis_log_node", run_crisis_log_node)
     workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
     workflow.add_node("extract_semantic_facts_node", run_extract_semantic_facts_node)
+    workflow.add_node("finalize_turn_node", run_finalize_turn_node)
 
     # Spine: entry → memory load → crisis gate (which Command-routes).
     workflow.add_edge(START, "load_memory_node")
     workflow.add_edge("load_memory_node", "crisis_gate_node")
 
-    # Crisis branch: crisis_response → crisis_log → extract_facts → END.
+    # Crisis branch: crisis_response → crisis_log → extract_facts → finalize → END.
     # The crisis_log_node runs ONLY on the crisis branch (it's the
     # always-on safety audit trail, not a cross-cutting concern).
     workflow.add_edge("crisis_response_node", "crisis_log_node")
     workflow.add_edge("crisis_log_node", "extract_semantic_facts_node")
 
-    # Therapeutic branch: subgraph → extract_facts → END. The
-    # extract_semantic_facts_node is cross-cutting — it runs after
-    # either branch produces a response, so both branches terminate
-    # through it.
+    # Therapeutic branch: subgraph → extract_facts → finalize → END.
     workflow.add_edge("therapeutic_subgraph", "extract_semantic_facts_node")
 
-    # Shared terminal: extract_facts → END. Both branches converge here.
-    workflow.add_edge("extract_semantic_facts_node", END)
+    # Shared terminal: extract_facts → finalize_turn → END. Both branches
+    # converge through extract_facts (for semantic memory writes) and
+    # then through finalize_turn (for transcript append).
+    workflow.add_edge("extract_semantic_facts_node", "finalize_turn_node")
+    workflow.add_edge("finalize_turn_node", END)
 
     return workflow.compile(checkpointer=checkpointer)
 

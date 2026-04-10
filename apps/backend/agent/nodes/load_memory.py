@@ -1,30 +1,55 @@
-"""Load-memory node for the OpenCouch agent graph."""
+"""Load-memory node for the OpenCouch agent graph.
+
+This node runs on every turn as the spine's first step, immediately after
+``START``. Its only job is to retrieve relevant long-term memory for the
+**current user message** and publish it into ``working_memory`` so the
+downstream crisis gate and therapeutic nodes can read it.
+
+History / migration note (v0.3.1 → post-v0.3.1 cleanup):
+
+    Prior to the dogfood pass that caught the "Loaded 0 memory snippets"
+    bug, this node also wrote a deterministic bootstrap reply into the
+    transcript, clobbered the ``response`` slot, and overwrote
+    ``routing`` with a ``memory_bootstrap`` placeholder. All of that
+    behavior assumed the node ran once per session, which is wrong —
+    LangGraph runs it on every invocation because it lives on the
+    ``START → load_memory_node → crisis_gate_node`` spine. The result
+    was phantom "Persistent mode is active" assistant turns polluting
+    the transcript on every turn, and the dispatcher seeing stale
+    context.
+
+    The fix: strip this node down to pure retrieval. Transcript growth
+    happens elsewhere (the response nodes own their own appends); the
+    initial ``response`` / ``routing`` scaffolds live in
+    ``agent.graph.build_initial_state`` where they belong as one-time
+    defaults, not per-turn overwrites. The ``memory_bootstrap_reply``
+    helper was deleted with this refactor — nothing should ever show
+    that string to a user.
+
+Scope today:
+- Only the semantic namespace is queried. Episodic retrieval lands
+  with v0.4's session summarizer; procedural with v0.7.
+- Retrieval scoring is token-recall via ``store.asearch`` — see
+  ``agent/memory/store.py`` SEARCH_MATCH_THRESHOLD and the v0.3.1
+  status log entry in ROADMAP.md for the algorithm.
+- Incognito / guest mode skips retrieval entirely and returns an
+  empty working memory, matching the "we don't remember you" contract.
+"""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.models import MessageRole, ModeType, ResponseKind
+from agent.memory.text_tokens import tokenize_meaningful
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
-
-def memory_bootstrap_reply(is_guest_mode: bool) -> str:
-    """Return a deterministic scaffold reply for the bootstrap graph."""
-
-    if is_guest_mode:
-        return (
-            "Guest mode is active. I loaded no long-term memory, and this session will "
-            "not be remembered after you exit."
-        )
-    return (
-        "Persistent mode is active. I loaded your local memory context and will be able "
-        "to carry context across future sessions."
-    )
+logger = logging.getLogger(__name__)
 
 
 async def _retrieve_semantic_working_memory(
@@ -35,11 +60,15 @@ async def _retrieve_semantic_working_memory(
 ) -> list[str]:
     """Fetch the top semantic facts for this user and format them as strings.
 
-    v0.1 implementation: substring-match the current message against the
-    semantic namespace and return the formatted evidence quotes. This is
-    deliberately minimal — the richer hybrid retrieval (vector search +
-    graph expansion) lands in v0.3 when real semantic extraction starts
-    producing content worth searching.
+    Uses the v0.3.1 token-recall scorer in ``store.asearch``: the store
+    scores each record by the fraction of the query's meaningful tokens
+    (after stopword filtering) that appear in the record's haystack, and
+    returns results in score-descending order. The caller here just asks
+    for ``limit=5`` — any scoring changes happen at the store layer.
+
+    v0.4 will replace this with a hybrid retrieval that also pulls
+    episodic summaries; today it's semantic-only because episodic and
+    procedural namespaces are empty.
     """
 
     namespace = (owner_id, "semantic")
@@ -56,69 +85,71 @@ async def run_load_memory_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, Any]:
-    """Load memory snippets and return only the keys this node updated."""
+    """Retrieve relevant long-term memory for the current user message.
+
+    Returns a delta containing only ``working_memory`` and a new
+    ``memory.summary`` that reflects how many snippets were retrieved.
+    Does NOT touch ``transcript``, ``history``, ``response``, or
+    ``routing`` — those are owned by other parts of the graph and
+    writing them here causes the phantom-turn bug this refactor fixed.
+
+    Guest mode (``MemoryMode.INCOGNITO``) skips retrieval and returns
+    an empty working memory with a matching summary. This matches the
+    incognito contract: no reads from persistent storage, no trace of
+    prior sessions.
+
+    Observability: the summary string is structured to show all three
+    signals a dogfood operator needs to understand retrieval behavior:
+    (1) how many snippets hit for this query, (2) how many records
+    exist in the user's namespace at all, and (3) how many meaningful
+    tokens the query contributed after stopword filtering. This lets
+    you distinguish "empty store" from "below-threshold query" from
+    "no meaningful query" at a glance in the CLI Session Context panel.
+    An INFO log line captures the same signals for grep-based analysis.
+    """
 
     memory_store = runtime.context["memory_store"]
     memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
     is_guest_mode = memory_mode == MemoryMode.INCOGNITO
 
-    owner_id = state.get("user_id") or state.get("session_id") or "local-default"
-
-    # ── Step 1: Resolve working memory (skip retrieval entirely in guest mode) ─
     if is_guest_mode:
-        working_memory: list[str] = []
-    else:
-        working_memory = await _retrieve_semantic_working_memory(
-            memory_store,
-            owner_id=owner_id,
-            query=state["message"],
-        )
+        return {
+            "working_memory": [],
+            "memory": {
+                **state.get("memory", {}),
+                "summary": "Guest session without long-term memory.",
+            },
+        }
 
-    # ── Step 2: Append the inbound user turn + the deterministic bootstrap reply ─
-    response_text = memory_bootstrap_reply(is_guest_mode)
-    new_transcript = [
-        *state.get("transcript", []),
-        {"role": MessageRole.USER.value, "content": state["message"]},
-        {"role": MessageRole.ASSISTANT.value, "content": response_text},
-    ]
+    owner_id = state.get("user_id") or state.get("session_id") or "local-default"
+    namespace = (owner_id, "semantic")
+    store_size = memory_store.record_count(namespace)
+    query = state["message"]
+    meaningful_query_tokens = tokenize_meaningful(query)
 
-    summary = (
-        "Guest session without long-term memory."
-        if is_guest_mode
-        else f"Loaded {len(working_memory)} memory snippets from the unified store."
+    working_memory = await _retrieve_semantic_working_memory(
+        memory_store,
+        owner_id=owner_id,
+        query=query,
     )
 
-    # ── Step 3: Return only the keys this node updated ────────────────────
-    progress = state.get("progress", {})
+    summary = (
+        f"Retrieved {len(working_memory)} of {store_size} semantic record(s) "
+        f"(query had {len(meaningful_query_tokens)} meaningful token(s))."
+    )
+
+    logger.info(
+        "load_memory_node: hits=%d store_size=%d query_tokens=%d owner=%r",
+        len(working_memory),
+        store_size,
+        len(meaningful_query_tokens),
+        owner_id,
+    )
+
     return {
-        "history": list(new_transcript),
-        "transcript": new_transcript,
         "working_memory": list(working_memory),
         "memory": {
+            **state.get("memory", {}),
             "summary": summary,
-            "active_concerns": [],
-            "open_loops": [],
-            "current_goal": None,
-        },
-        "progress": {
-            **progress,
-            "stage": "opening",
-            "stage_source": "deterministic",
-            "stage_reason": "start_load_memory_end",
-            "is_guest": is_guest_mode,
-        },
-        "routing": {
-            "route": "load_memory_only",
-            "mode": "memory_bootstrap",
-            "mode_source": "graph_bootstrap",
-            "mode_type": ModeType.OPERATIONAL,
-            "active_modalities": [],
-            "semantic_signals": {},
-        },
-        "response": {
-            "guidance": "startup_memory_bootstrap",
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-            "should_persist_memory": bool(working_memory) and not is_guest_mode,
         },
     }
