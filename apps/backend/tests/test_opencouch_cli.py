@@ -25,6 +25,11 @@ class FakeRuntime:
             ],
         }
         self.thread_summaries = []
+        # v0.4: end_session tracking. Tests can set
+        # ``end_session_returns`` to control what the fake returns, and
+        # ``end_session_calls`` records invocations for assertions.
+        self.end_session_returns: object | None = None
+        self.end_session_calls: list[str] = []
 
     async def get_state(self, thread_id: str):
         return self.states.get(thread_id)
@@ -38,6 +43,17 @@ class FakeRuntime:
     async def reset_thread(self, thread_id: str) -> None:
         self.states.pop(thread_id, None)
         self.histories.pop(thread_id, None)
+
+    async def end_session(
+        self,
+        thread_id: str,
+        *,
+        llm_client=None,
+    ):
+        """v0.4 stub: record the call and return the canned result."""
+
+        self.end_session_calls.append(thread_id)
+        return self.end_session_returns
 
 
 def _session() -> RunnerSession:
@@ -244,5 +260,138 @@ async def test_memory_unknown_subcommand_warns(monkeypatch) -> None:
     assert should_continue is True
     assert any(
         style == "warning" and "Unknown /memory subcommand" in msg
+        for style, msg in info_messages
+    )
+
+
+# ─── v0.4 /end command and session summary ──────────────────────────────
+#
+# The /end command was rewired in v0.4 to trigger the session summarizer
+# via runtime.end_session() and render the resulting arc as a farewell
+# panel. These tests cover:
+#
+# 1. /end calls runtime.end_session with the active thread_id
+# 2. /end renders the summary when one is returned
+# 3. /end renders a plain farewell when the summarizer returns None
+# 4. /end returns False from handle_command (exits the loop)
+#
+# Rendering details aren't asserted on — the render functions are
+# monkey-patched, same pattern as the existing CLI tests.
+
+
+@pytest.mark.asyncio
+async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
+    """/end should invoke runtime.end_session(thread_id) and then
+    terminate the session by returning False from handle_command."""
+
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info", lambda message, style="panel": None
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.end_session_returns = None  # LLM judged too thin to summarize
+
+    should_continue = await handle_command("/end", session, runtime)
+
+    assert should_continue is False
+    assert runtime.end_session_calls == [session.thread_id]
+
+
+@pytest.mark.asyncio
+async def test_end_command_renders_summary_when_arc_returned(
+    monkeypatch,
+) -> None:
+    """When the summarizer returns a StoredSessionArc, the CLI should
+    render it via render_session_summary before the farewell."""
+
+    rendered_arcs: list[object] = []
+    farewell_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_session_summary",
+        lambda arc: rendered_arcs.append(arc),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": farewell_calls.append(message),
+    )
+
+    # Build a minimal "arc-like" sentinel object — the render function
+    # is patched out, so the actual shape doesn't matter for this test.
+    canned_arc = object()
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.end_session_returns = canned_arc
+
+    should_continue = await handle_command("/end", session, runtime)
+
+    assert should_continue is False
+    assert rendered_arcs == [canned_arc]
+    # The farewell still fires after the summary panel
+    assert len(farewell_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_end_command_skips_summary_render_when_none_returned(
+    monkeypatch,
+) -> None:
+    """When end_session returns None (incognito, no LLM, thin session,
+    or silent failure), render_session_summary should NOT be called.
+    Only the farewell is rendered."""
+
+    rendered_arcs: list[object] = []
+    farewell_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_session_summary",
+        lambda arc: rendered_arcs.append(arc),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": farewell_calls.append(message),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.end_session_returns = None
+
+    should_continue = await handle_command("/end", session, runtime)
+
+    assert should_continue is False
+    assert rendered_arcs == []  # no summary panel rendered
+    assert len(farewell_calls) == 1  # but farewell still fires
+
+
+@pytest.mark.asyncio
+async def test_end_command_degrades_on_runtime_exception(monkeypatch) -> None:
+    """If runtime.end_session raises an unexpected exception, the CLI
+    should catch it, render an info message, and still exit cleanly
+    rather than crashing the loop."""
+
+    async def _raising_end_session(thread_id, *, llm_client=None):
+        raise RuntimeError("simulated runtime crash")
+
+    info_messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": info_messages.append((style, message)),
+    )
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+
+    session = _session()
+    runtime = FakeRuntime()
+    # Replace the method on this instance
+    runtime.end_session = _raising_end_session  # type: ignore[method-assign]
+
+    should_continue = await handle_command("/end", session, runtime)
+
+    assert should_continue is False
+    # The error message should appear before the farewell
+    assert any(
+        style == "warning" and "Something went wrong" in msg
         for style, msg in info_messages
     )

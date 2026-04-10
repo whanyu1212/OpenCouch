@@ -5,10 +5,10 @@ use to read and write long-term memory. It fans out to the right backend
 based on the record namespace (semantic / episodic / procedural) and the
 active ``MemoryMode`` (incognito / local / synced).
 
-Phase 1 v0.3 scope:
+Phase 1 v0.4 scope:
 - In-memory backing only. No SQLite, no Postgres, no Graphiti. All data
   lives in a per-instance dict and is discarded when the instance is
-  garbage collected.
+  garbage collected. SQLite backing lands in v0.8.
 - **Token-recall search** against the serialized value of each record.
   This replaces v0.1's one-directional substring match, which failed on
   paraphrased queries (e.g. "tense with Sarah lately" wouldn't find a
@@ -28,9 +28,14 @@ Phase 1 v0.3 scope:
   is deterministic, cheap, and dramatically better than substring match
   for the paraphrase-heavy retrieval path, without introducing any
   embedding dependency or cold-start model load.
-- Only the semantic namespace is wired. Episodic and procedural reads
-  return empty; writes to those namespaces are accepted but stored in
-  the same underlying dict without special handling.
+- **Semantic** (v0.3) and **episodic** (v0.4) namespaces are now both
+  wired through the real extraction/retrieval path. The episodic
+  namespace stores one :class:`agent.memory.models.StoredSessionArc`
+  per session, written by the summarizer function at session end.
+  The store treats the two namespaces identically — the same put/get/
+  search interface serves both. Only the record shape inside ``value``
+  differs. Procedural reads still return empty (procedural memory
+  lands in v0.7).
 
 Design decisions:
 - The store is a **standalone class**, not a subclass of LangGraph's

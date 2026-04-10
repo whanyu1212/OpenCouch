@@ -158,11 +158,13 @@ class TestLoadMemoryNode:
             delta["working_memory"][0]
             == "Previously noted: I have a sister named Sarah"
         )
-        # Structured summary: hits / store size / query meaningful token count.
-        # Store has 1 record, query "Sarah" has 1 meaningful token, 1 hit.
+        # v0.4 structured summary: hits / store size / query token count
+        # for BOTH semantic and episodic namespaces. Store has 1 semantic
+        # record and 0 episodic, query "Sarah" has 1 meaningful token.
         assert (
             delta["memory"]["summary"]
-            == "Retrieved 1 of 1 semantic record(s) (query had 1 meaningful token(s))."
+            == "Retrieved 1 of 1 semantic + 0 of 0 episodic record(s) "
+            "(query had 1 meaningful token(s))."
         )
 
     @pytest.mark.asyncio
@@ -181,10 +183,12 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        # Empty store (0 records), 3 meaningful query tokens, 0 hits.
+        # Empty stores (0 semantic, 0 episodic), 3 meaningful query
+        # tokens, 0 hits on either namespace.
         assert (
             delta["memory"]["summary"]
-            == "Retrieved 0 of 0 semantic record(s) (query had 3 meaningful token(s))."
+            == "Retrieved 0 of 0 semantic + 0 of 0 episodic record(s) "
+            "(query had 3 meaningful token(s))."
         )
         # Specifically NOT the guest session string:
         assert "Guest session" not in delta["memory"]["summary"]
@@ -219,7 +223,7 @@ class TestLoadMemoryNode:
 
         # 0 hits, BUT store size is 2 — this is the discriminating line.
         assert delta["working_memory"] == []
-        assert "0 of 2 semantic record(s)" in delta["memory"]["summary"]
+        assert "0 of 2 semantic" in delta["memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_summary_reports_meaningful_token_count_after_stopword_filter(
@@ -265,7 +269,7 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        assert "0 of 1 semantic record(s)" in delta["memory"]["summary"]
+        assert "0 of 1 semantic" in delta["memory"]["summary"]
         assert "query had 0 meaningful token(s)" in delta["memory"]["summary"]
 
     @pytest.mark.asyncio
@@ -337,6 +341,365 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert len(delta["working_memory"]) == 1
+
+
+# ─── v0.4 episodic retrieval tests ──────────────────────────────────────
+#
+# Load-memory now queries both the semantic and episodic namespaces.
+# These tests cover the four retrieval behaviors:
+#
+# 1. Catch-up on first turn — the most recent episodic arc is pre-pended
+#    to working_memory regardless of query match.
+# 2. Query-based episodic retrieval on later turns — an arc must share
+#    meaningful tokens with the query to surface, same threshold as
+#    semantic retrieval.
+# 3. Merged output — semantic and episodic results appear in the same
+#    working_memory list with distinct prefixes.
+# 4. Summary string — the new format reports both counts separately
+#    and the INFO log mirrors the same structure.
+
+
+def _make_episodic_record_value(
+    *,
+    session_id: str = "prior-session-1",
+    summary: str = "User talked about work anxiety and an upcoming meeting.",
+    primary_themes: list[str] | None = None,
+    opened: str = "anxious",
+    closed: str = "calmer",
+) -> dict[str, Any]:
+    """Build a dict that matches the serialized StoredSessionArc shape.
+
+    We construct the dict directly rather than going through the pydantic
+    model to keep these tests focused on load_memory_node behavior.
+    The shape here mirrors what the summarizer actually writes via
+    ``stored_arc.model_dump(mode='json')``.
+    """
+
+    return {
+        "session_id": session_id,
+        "started_at": "2026-04-09T12:00:00Z",
+        "ended_at": "2026-04-09T12:30:00Z",
+        "duration_seconds": 1800,
+        "turn_count": 8,
+        "primary_themes": primary_themes or ["work stress"],
+        "summary": summary,
+        "mood_arc": {"opened": opened, "closed": closed},
+        "open_loops": [],
+        "resolved_threads": [],
+        "crisis_level_max": 0,
+        "id": "arc-test",
+        "owner_id": "thread-test",
+        "created_at": "2026-04-09T12:30:00Z",
+        "last_referenced_at": "2026-04-09T12:30:00Z",
+        "user_visible": True,
+    }
+
+
+def _single_turn_transcript(message: str = "I feel anxious") -> list[dict[str, str]]:
+    """Return a single-user-turn transcript — the ``is_first_turn`` trigger."""
+
+    return [{"role": MessageRole.USER.value, "content": message}]
+
+
+def _multi_turn_transcript() -> list[dict[str, str]]:
+    """Return a 4-turn transcript — past the first-turn catch-up window."""
+
+    return [
+        {"role": MessageRole.USER.value, "content": "hi"},
+        {"role": MessageRole.ASSISTANT.value, "content": "hey, what's up?"},
+        {"role": MessageRole.USER.value, "content": "I feel anxious"},
+        {"role": MessageRole.ASSISTANT.value, "content": "tell me more"},
+    ]
+
+
+class TestEpisodicRetrieval:
+    """Tests for v0.4's episodic branch of load_memory_node."""
+
+    @pytest.mark.asyncio
+    async def test_catch_up_fires_on_first_turn_regardless_of_query(
+        self,
+    ) -> None:
+        """On the first turn of a session (transcript has exactly one
+        entry — the current user turn), the most recent episodic arc
+        should be pre-pended to working_memory even if the query has
+        no token overlap with the summary. This is the 'last time we
+        talked…' context injection."""
+
+        store = OpenCouchMemoryStore()
+        namespace = ("thread-test", "episodic")
+        await store.aput(
+            namespace,
+            "arc-1",
+            _make_episodic_record_value(
+                summary="User talked about grief and sleep difficulties.",
+                primary_themes=["grief", "sleep"],
+            ),
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        # Query has ZERO token overlap with the stored summary
+        state = _make_state(
+            message="let's talk about something completely different",
+            transcript=_single_turn_transcript(
+                "let's talk about something completely different"
+            ),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert len(delta["working_memory"]) == 1
+        entry = delta["working_memory"][0]
+        assert entry.startswith("Last session")
+        assert "grief, sleep" in entry
+        assert "grief and sleep" in entry  # summary text
+
+    @pytest.mark.asyncio
+    async def test_catch_up_does_not_fire_on_later_turns(self) -> None:
+        """On turn 2+ of a session (transcript has >1 entries because
+        finalize_turn_node has appended an assistant reply), the catch-
+        up injection should NOT fire. Only query-matched arcs appear."""
+
+        store = OpenCouchMemoryStore()
+        namespace = ("thread-test", "episodic")
+        await store.aput(
+            namespace,
+            "arc-1",
+            _make_episodic_record_value(
+                summary="User talked about grief and sleep.",
+                primary_themes=["grief"],
+            ),
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        # Query has ZERO token overlap AND multi-turn transcript → miss
+        state = _make_state(
+            message="let's talk about something completely different",
+            transcript=_multi_turn_transcript(),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["working_memory"] == []
+        # And the summary should say 0 of 1 episodic (store has a record
+        # but it wasn't retrieved because catch-up didn't fire and the
+        # query didn't match)
+        assert "0 of 1 episodic" in delta["memory"]["summary"]
+
+    @pytest.mark.asyncio
+    async def test_query_based_episodic_retrieval_on_later_turns(self) -> None:
+        """On turn 2+, a query that shares meaningful tokens with an
+        episodic summary should retrieve it via the same token-recall
+        scorer used for semantic retrieval."""
+
+        store = OpenCouchMemoryStore()
+        namespace = ("thread-test", "episodic")
+        await store.aput(
+            namespace,
+            "arc-1",
+            _make_episodic_record_value(
+                summary="User talked about work anxiety and an upcoming meeting.",
+                primary_themes=["work stress"],
+            ),
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        # Query overlaps the summary on {work, anxiety, meeting} — should hit.
+        state = _make_state(
+            message="remind me what I said about work anxiety",
+            transcript=_multi_turn_transcript(),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert len(delta["working_memory"]) == 1
+        assert delta["working_memory"][0].startswith("Last session")
+
+    @pytest.mark.asyncio
+    async def test_catch_up_returns_most_recent_arc_when_multiple(self) -> None:
+        """When multiple episodic arcs exist, catch-up should return the
+        LAST one (insertion order, which matches chronological order
+        because the summarizer writes one arc per session at session end)."""
+
+        store = OpenCouchMemoryStore()
+        namespace = ("thread-test", "episodic")
+        # Write three arcs in chronological order
+        await store.aput(
+            namespace,
+            "arc-1",
+            _make_episodic_record_value(
+                session_id="session-1",
+                summary="Oldest session — talked about work stress.",
+                primary_themes=["work"],
+            ),
+        )
+        await store.aput(
+            namespace,
+            "arc-2",
+            _make_episodic_record_value(
+                session_id="session-2",
+                summary="Middle session — talked about family conflict.",
+                primary_themes=["family"],
+            ),
+        )
+        await store.aput(
+            namespace,
+            "arc-3",
+            _make_episodic_record_value(
+                session_id="session-3",
+                summary="Most recent session — talked about sleep problems.",
+                primary_themes=["sleep"],
+            ),
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(
+            message="hi",
+            transcript=_single_turn_transcript("hi"),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        # The catch-up entry should be the MOST RECENT arc (arc-3),
+        # not the oldest (arc-1). Because "hi" has no token overlap with
+        # any summary, catch-up is the only mechanism surfacing a record,
+        # so we can check the catch-up target directly.
+        assert len(delta["working_memory"]) == 1
+        catch_up_entry = delta["working_memory"][0]
+        assert "Most recent session" in catch_up_entry
+        assert "sleep" in catch_up_entry
+
+    @pytest.mark.asyncio
+    async def test_merged_working_memory_puts_episodic_first(self) -> None:
+        """When both semantic and episodic retrieval produce results,
+        the merged working_memory list should have episodic entries
+        first (they frame the context), then semantic entries."""
+
+        store = OpenCouchMemoryStore()
+        # One episodic arc
+        await store.aput(
+            ("thread-test", "episodic"),
+            "arc-1",
+            _make_episodic_record_value(
+                summary="User talked about sister Sarah visiting.",
+                primary_themes=["family"],
+            ),
+        )
+        # One semantic fact (same user, same topic — Sarah)
+        await store.aput(
+            ("thread-test", "semantic"),
+            "fact-1",
+            {"evidence_quote": "I have a sister named Sarah"},
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(
+            message="tell me about my sister Sarah",
+            transcript=_multi_turn_transcript(),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        # Both should surface — semantic via token-recall, episodic via
+        # query-based retrieval (not catch-up, since this is multi-turn).
+        assert len(delta["working_memory"]) == 2
+        # Episodic entry first
+        assert delta["working_memory"][0].startswith("Last session")
+        # Semantic entry second
+        assert delta["working_memory"][1].startswith("Previously noted")
+
+    @pytest.mark.asyncio
+    async def test_catch_up_deduplicates_against_query_match(self) -> None:
+        """If catch-up returns an arc AND the query-based path would
+        return the same arc, it should appear only once in working_memory.
+        The dedup compares the rendered string."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-test", "episodic"),
+            "arc-1",
+            _make_episodic_record_value(
+                summary="User talked about work anxiety.",
+                primary_themes=["work stress"],
+            ),
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        # First turn AND query overlaps the summary → both branches
+        # would return the same arc.
+        state = _make_state(
+            message="let me tell you about my work anxiety",
+            transcript=_single_turn_transcript("let me tell you about my work anxiety"),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        # Only one entry, even though both code paths matched
+        assert len(delta["working_memory"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_summary_includes_both_namespace_counts(self) -> None:
+        """The memory.summary string must report semantic and episodic
+        counts separately. This is the load-bearing dogfood observability
+        contract — operators need to tell which layer contributed."""
+
+        store = OpenCouchMemoryStore()
+        # 2 semantic facts, 1 episodic arc
+        await store.aput(
+            ("thread-test", "semantic"),
+            "fact-1",
+            {"evidence_quote": "I have a sister named Sarah"},
+        )
+        await store.aput(
+            ("thread-test", "semantic"),
+            "fact-2",
+            {"evidence_quote": "I use meditation for anxiety"},
+        )
+        await store.aput(
+            ("thread-test", "episodic"),
+            "arc-1",
+            _make_episodic_record_value(
+                summary="User talked about work pressure.",
+            ),
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(message="Sarah", transcript=_multi_turn_transcript())
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        summary_str = delta["memory"]["summary"]
+        # Semantic count: 2 in store, 1 hit on "Sarah" query
+        assert "1 of 2 semantic" in summary_str
+        # Episodic count: 1 in store, 0 hit (query doesn't match "work pressure"
+        # and this is not a first turn)
+        assert "0 of 1 episodic" in summary_str
+
+    @pytest.mark.asyncio
+    async def test_incognito_still_skips_episodic_retrieval(self) -> None:
+        """Incognito mode should skip BOTH the semantic and episodic
+        paths, matching the 'no memory' contract. Even if episodic
+        records exist in the store (e.g., from a prior non-incognito
+        session), they must not leak into an incognito session."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-test", "episodic"),
+            "arc-1",
+            _make_episodic_record_value(summary="User talked about X"),
+        )
+
+        runtime = _FakeRuntime(
+            {"memory_store": store, "memory_mode": MemoryMode.INCOGNITO}
+        )
+        state = _make_state(
+            message="hi",
+            transcript=_single_turn_transcript("hi"),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["working_memory"] == []
+        assert delta["memory"]["summary"] == "Guest session without long-term memory."
 
 
 # ─── finalize_turn_node tests ───────────────────────────────────────────

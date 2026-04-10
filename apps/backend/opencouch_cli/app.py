@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
+from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.persistence import (
     DEFAULT_THREAD_DB_PATH,
@@ -393,65 +394,47 @@ def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     )
 
 
-def render_memory_list(runtime: PersistentAgentRuntime) -> None:
-    """Render every semantic memory record in a browsable table.
+def _collect_records_by_kind(
+    runtime: PersistentAgentRuntime,
+    *,
+    kind: str,
+) -> list[tuple[str, dict[str, object]]]:
+    """Collect all records across every namespace with the given kind.
 
-    Shipped in v0.3.1 as a dogfood-observability tool: without this,
-    answering "what did extraction actually write?" requires a probe
-    script. With it, operators can type ``/memory list`` at any point
-    in a session and see the evidence quotes, categories, and predicates
-    for each fact the extractor has landed.
+    The store is namespaced by ``(user_id, kind)``, so this iterates
+    every namespace whose second tuple element matches ``kind`` and
+    returns the records in insertion order. Used by ``render_memory_list``
+    to gather semantic and episodic records separately.
 
-    Scope:
-    - Read-only. Mutation commands (``/memory forget``, ``/memory clear``)
-      are scoped to v0.9 alongside the full CLI memory suite.
-    - Semantic namespace only. Episodic lands in v0.4, procedural in
-      v0.7; when those namespaces start getting written, this function
-      will grow additional tables.
-    - Evidence quotes are truncated to 80 chars in the table and shown
-      in full in a follow-up details block only for records whose quote
-      is longer than 80 chars — keeps the happy path clean.
-    - Sorted by insertion order (the order records were written). When
-      v0.8's consolidation tier ships, this may change to sort by
-      last_referenced_at descending.
-
-    Args:
-        runtime: Active persistent runtime. Reads the memory_store via
-            its public property.
+    Reaches into the store's internal ``_buckets`` via the same
+    ``# noqa: SLF001`` pattern used by the v0.3.1 implementation — this
+    is a read-only debug tool, and adding a public "iterate all records"
+    method to the store just for this grows the public surface
+    unnecessarily.
     """
 
+    records: list[tuple[str, dict[str, object]]] = []
     store = runtime.memory_store
-
-    # Gather all semantic records across every namespace. The store is
-    # namespaced by (user_id, kind), so we iterate every namespace that
-    # has kind == "semantic" and collect its records in insertion order.
-    semantic_records: list[tuple[str, dict[str, object]]] = []
     for namespace in store.namespaces():
-        if len(namespace) < 2 or namespace[1] != "semantic":
+        if len(namespace) < 2 or namespace[1] != kind:
             continue
-        # bucket.records preserves insertion order (dict in Python 3.7+),
-        # so iterating gives us the chronological list.
         bucket = store._buckets.get(namespace)  # noqa: SLF001 — debug tool
         if bucket is None:
             continue
         for key, record in bucket.records.items():
-            semantic_records.append((key, record.value))
+            records.append((key, record.value))
+    return records
 
-    if not semantic_records:
-        console.print(
-            Panel(
-                "[muted]No semantic records in the store yet. The extractor "
-                "writes facts from concrete user statements; transient feelings, "
-                "questions, and small talk produce zero extractions by design. "
-                "Try mentioning a named person, a coping strategy, or a "
-                "recurring trigger to see the store populate.[/muted]",
-                title="[primary]Memory List (semantic)[/primary]",
-                border_style="panel",
-                box=box.ROUNDED,
-            )
-        )
-        console.print()
-        return
+
+def _render_semantic_records_table(
+    records: list[tuple[str, dict[str, object]]],
+) -> None:
+    """Render the semantic records as a table with a long-quote footer.
+
+    Extracted from ``render_memory_list`` so the episodic rendering can
+    use the same compact table pattern. The quote truncation limit and
+    the footer format are unchanged from v0.3.1.
+    """
 
     table = Table(
         show_header=True,
@@ -465,13 +448,10 @@ def render_memory_list(runtime: PersistentAgentRuntime) -> None:
     table.add_column("evidence quote", style="info")
     table.add_column("conf", style="muted", no_wrap=True, width=6)
 
-    # Truncation threshold for the inline quote column. Longer quotes
-    # get shown in full below the table so the happy-path rendering
-    # stays compact and scannable.
     quote_inline_limit = 80
     long_quotes: list[tuple[int, str]] = []
 
-    for idx, (_key, value) in enumerate(semantic_records, start=1):
+    for idx, (_key, value) in enumerate(records, start=1):
         category = str(value.get("category", "?"))
         predicate = str(value.get("predicate", "?"))
         confidence = str(value.get("confidence", "?"))
@@ -487,7 +467,7 @@ def render_memory_list(runtime: PersistentAgentRuntime) -> None:
         Panel(
             table,
             title=f"[primary]Memory List (semantic)[/primary] "
-            f"[muted]— {len(semantic_records)} record(s)[/muted]",
+            f"[muted]— {len(records)} record(s)[/muted]",
             subtitle="[muted]what the extractor has written so far[/muted]",
             border_style="panel",
             box=box.ROUNDED,
@@ -495,15 +475,233 @@ def render_memory_list(runtime: PersistentAgentRuntime) -> None:
     )
 
     if long_quotes:
-        # Render full-length quotes below the table for any record whose
-        # evidence was truncated. This keeps the table scannable while
-        # still giving operators access to the verbatim text when they
-        # need it.
         console.print()
         console.print("[muted]Full quotes (truncated in the table above):[/muted]")
         for idx, quote in long_quotes:
             console.print(f"  [accent]#{idx}[/accent] [info]{quote}[/info]")
     console.print()
+
+
+def _render_episodic_records_table(
+    records: list[tuple[str, dict[str, object]]],
+) -> None:
+    """Render the episodic session arcs as a table with a long-summary footer.
+
+    Shipped with v0.4 alongside the session summarizer. Each row shows
+    the session date, turn count, themes, mood arc (opened → closed),
+    crisis level (if any), and a truncated summary. Full summaries for
+    long arcs are rendered below the table, same pattern as the
+    semantic long-quote footer.
+    """
+
+    table = Table(
+        show_header=True,
+        header_style="primary",
+        box=box.SIMPLE_HEAVY,
+        show_lines=False,
+        expand=True,
+    )
+    table.add_column("#", style="muted", no_wrap=True, width=3)
+    table.add_column("date", style="muted", no_wrap=True, width=10)
+    table.add_column("turns", style="muted", no_wrap=True, width=5, justify="right")
+    table.add_column("themes", style="accent", no_wrap=False, max_width=20)
+    table.add_column("mood", style="info", no_wrap=False, max_width=22)
+    table.add_column("summary", style="info", ratio=1)
+
+    summary_inline_limit = 80
+    long_summaries: list[tuple[int, str]] = []
+
+    for idx, (_key, value) in enumerate(records, start=1):
+        # Date derived from ended_at — just the YYYY-MM-DD prefix.
+        ended_at = str(value.get("ended_at", ""))
+        date_display = ended_at[:10] if len(ended_at) >= 10 else "—"
+
+        turn_count = str(value.get("turn_count", "?"))
+
+        themes_list = value.get("primary_themes") or []
+        themes_display = (
+            ", ".join(str(t) for t in themes_list)  # type: ignore[union-attr]
+            if themes_list
+            else "—"
+        )
+
+        mood_arc = value.get("mood_arc") or {}
+        if isinstance(mood_arc, dict):
+            opened = str(mood_arc.get("opened", "?"))
+            closed = str(mood_arc.get("closed", "?"))
+            mood_display = f"{opened} → {closed}"
+        else:
+            mood_display = "—"
+
+        summary = str(value.get("summary", ""))
+        if len(summary) > summary_inline_limit:
+            summary_display = summary[:summary_inline_limit].rstrip() + "…"
+            long_summaries.append((idx, summary))
+        else:
+            summary_display = summary
+
+        # Crisis marker appended to the themes column when non-zero.
+        crisis_level = value.get("crisis_level_max", 0)
+        if isinstance(crisis_level, int) and crisis_level > 0:
+            themes_display = f"{themes_display} [warning]⚠{crisis_level}[/warning]"
+
+        table.add_row(
+            str(idx),
+            date_display,
+            turn_count,
+            themes_display,
+            mood_display,
+            summary_display,
+        )
+
+    console.print(
+        Panel(
+            table,
+            title=f"[primary]Memory List (episodic)[/primary] "
+            f"[muted]— {len(records)} session arc(s)[/muted]",
+            subtitle="[muted]what the summarizer has written per session[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+
+    if long_summaries:
+        console.print()
+        console.print("[muted]Full summaries (truncated in the table above):[/muted]")
+        for idx, summary in long_summaries:
+            console.print(f"  [accent]#{idx}[/accent] [info]{summary}[/info]")
+    console.print()
+
+
+def _render_memory_list_empty_state() -> None:
+    """Render the educational empty-state panel for `/memory list`.
+
+    Shown when both semantic and episodic namespaces are empty. The
+    message explains what each layer captures and when to expect
+    writes, so operators know this is expected behavior rather than
+    a bug — especially important when v0.3 conservative extraction
+    is rejecting most turns.
+    """
+
+    console.print(
+        Panel(
+            "[muted]No memory records in the store yet.\n\n"
+            "[accent]Semantic facts[/accent] [muted]are written when you state a "
+            "concrete persistent fact (a named person, a coping strategy, a "
+            "stated goal). Transient feelings, questions, and small talk are "
+            "skipped by design.\n\n"
+            "[accent]Episodic arcs[/accent] [muted]are written when you end a "
+            "session with [accent]/end[/accent] or confirm at [accent]/exit[/accent]. "
+            "One arc per completed session.\n\n"
+            "Try mentioning a named person, a coping strategy, or a recurring "
+            "trigger to see the semantic store populate. Type [accent]/end[/accent] "
+            "after a substantive conversation to see the episodic store populate.[/muted]",
+            title="[primary]Memory List[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+def render_memory_list(runtime: PersistentAgentRuntime) -> None:
+    """Render every memory record (semantic + episodic) in browsable tables.
+
+    Shipped in v0.3.1 as a semantic-only dogfood-observability tool.
+    Extended in v0.4 to render episodic session arcs in a second table
+    alongside the semantic facts. Without this, answering "what does
+    the agent remember about me?" requires a probe script.
+
+    Scope:
+    - Read-only. Mutation commands (``/memory forget``, ``/memory clear``)
+      are scoped to v0.9 alongside the full CLI memory suite.
+    - Semantic + episodic namespaces. Procedural lands in v0.7.
+    - Tables are rendered separately, not interleaved. Each has its own
+      panel and its own long-content footer. Empty namespaces are
+      suppressed (no empty table) unless BOTH are empty, in which case
+      a single educational empty-state panel is shown.
+    - Sorted by insertion order (the order records were written).
+
+    Args:
+        runtime: Active persistent runtime. Reads the memory_store via
+            its public property.
+    """
+
+    semantic_records = _collect_records_by_kind(runtime, kind="semantic")
+    episodic_records = _collect_records_by_kind(runtime, kind="episodic")
+
+    if not semantic_records and not episodic_records:
+        _render_memory_list_empty_state()
+        return
+
+    if semantic_records:
+        _render_semantic_records_table(semantic_records)
+
+    if episodic_records:
+        _render_episodic_records_table(episodic_records)
+
+    console.print()
+
+
+def render_session_summary(stored_arc: StoredSessionArc) -> None:
+    """Render a session summary panel after the summarizer writes an arc.
+
+    Shipped with v0.4 as the closing farewell when ``/end`` triggers the
+    session summarizer. Shows the user the exact summary that was saved,
+    so they know what will be remembered — and can correct it later
+    (via /memory forget in v0.9 or by telling the agent directly).
+
+    The summary display uses the structured fields from StoredSessionArc
+    rather than just the prose summary, because the structure IS the
+    signal: mood arc, themes, open loops, and crisis level all say
+    something about what the session was about beyond what the summary
+    paragraph captures.
+    """
+
+    table = Table(show_header=False, box=box.SIMPLE_HEAVY)
+    table.add_column(style="muted", no_wrap=True)
+    table.add_column(style="info")
+
+    # Summary text goes at the top — it's the main thing the user
+    # wants to see and confirm.
+    table.add_row("summary", stored_arc.summary)
+    table.add_row(
+        "themes",
+        ", ".join(stored_arc.primary_themes) if stored_arc.primary_themes else "—",
+    )
+    table.add_row(
+        "mood arc",
+        f"{stored_arc.mood_arc.opened} → {stored_arc.mood_arc.closed}",
+    )
+    table.add_row("turns", str(stored_arc.turn_count))
+    if stored_arc.duration_seconds > 0:
+        minutes = stored_arc.duration_seconds // 60
+        table.add_row("duration", f"~{minutes} minute(s)")
+    if stored_arc.crisis_level_max > 0:
+        table.add_row(
+            "crisis signal",
+            f"[warning]level {stored_arc.crisis_level_max}[/warning]",
+        )
+    if stored_arc.open_loops:
+        table.add_row(
+            "open loops",
+            "\n".join(f"• {loop}" for loop in stored_arc.open_loops),
+        )
+    if stored_arc.resolved_threads:
+        table.add_row(
+            "resolved",
+            "\n".join(f"• {item}" for item in stored_arc.resolved_threads),
+        )
+
+    console.print(
+        Panel(
+            table,
+            title="[primary]Session Summary[/primary] [muted]— saved to memory[/muted]",
+            subtitle="[muted]this is what I'll remember next time we talk[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
     console.print()
 
 
@@ -539,8 +737,14 @@ def render_help() -> None:
         "/mode <deterministic|hybrid|auto>",
         "Switch LLM resolution mode for future turns.",
     )
-    table.add_row("/end", "End the current session with a closing message.")
-    table.add_row("/exit", "End the session immediately.")
+    table.add_row(
+        "/end",
+        "End the session; summarize it and save the arc to episodic memory.",
+    )
+    table.add_row(
+        "/exit",
+        "End the session; prompt to save a summary before closing.",
+    )
     console.print(
         Panel(
             table,
@@ -739,6 +943,59 @@ async def switch_thread(
     return True
 
 
+async def _summarize_and_render(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+) -> None:
+    """Call the runtime's session summarizer and render the result.
+
+    Shared helper for the ``/end`` and ``/exit`` commands — both
+    trigger a session-end summary, but they have slightly different
+    UX paths (``/end`` is silent-then-farewell, ``/exit`` prompts
+    for consent first). Both end up here once the decision to
+    summarize is made.
+
+    When the summarizer returns a stored arc, we render it via
+    ``render_session_summary`` so the user sees exactly what got
+    saved. When it returns None — incognito mode, no LLM, or the LLM
+    judged the session too thin to summarize — we render a plain
+    farewell instead, with a reason-hinting line so the operator
+    knows why nothing was saved.
+
+    Failures inside the summarizer degrade silently (see
+    ``run_summarize_session`` for the contract); this wrapper does
+    NOT try to catch additional errors. A silent None return is
+    indistinguishable from "ran but nothing to save", which is the
+    right user-visible behavior.
+    """
+
+    try:
+        stored_arc = await runtime.end_session(
+            session.thread_id,
+            llm_client=session.llm_client,
+        )
+    except Exception:
+        # Belt-and-suspenders: the summarizer itself catches its own
+        # errors, but if something unexpected escapes we still want
+        # the /end flow to exit cleanly. Log to stderr via render_info
+        # rather than crashing the CLI.
+        render_info(
+            "Something went wrong while summarizing the session. Your "
+            f"conversation is still saved in thread {session.thread_id}.",
+            style="warning",
+        )
+        stored_arc = None
+
+    if stored_arc is not None:
+        render_session_summary(stored_arc)
+
+    render_info(
+        "Take care. We can pick this back up whenever you want. "
+        f"(Thread: {session.thread_id})",
+        style="success",
+    )
+
+
 async def handle_command(
     command_text: str,
     session: RunnerSession,
@@ -764,18 +1021,30 @@ async def handle_command(
     args = parts[1:]
 
     if command in {"/exit", "/quit"}:
+        # v0.4: offer to summarize the session before exiting. The user
+        # can decline (and then gets only the farewell); declining means
+        # the session's content is NOT saved to episodic memory. The
+        # prompt defaults to Y because saving a summary is the safer
+        # path — it's easier to /memory forget later than to reconstruct
+        # a lost summary.
+        save = Prompt.ask(
+            "[muted]Save a session summary before exiting?[/muted] [accent][Y/n][/accent]",
+            choices=["y", "n", ""],
+            default="y",
+            show_choices=False,
+            show_default=False,
+        )
+        if save.strip().lower() != "n":
+            await _summarize_and_render(session, runtime)
         return False
 
     if command == "/end":
-        # Soft session termination: print a farewell and exit the loop.
-        # In v0.4 this will also trigger summarize_session_node to write
-        # an episodic arc before exit. For now the farewell is the whole
-        # behavior.
-        render_info(
-            "Take care. We can pick this back up whenever you want. "
-            f"(Thread: {session.thread_id})",
-            style="success",
-        )
+        # v0.4: trigger the session summarizer before exiting. Unlike
+        # /exit this does NOT prompt — the user explicitly chose /end,
+        # which means they want to wrap up the session properly. The
+        # summarizer runs, the resulting arc is rendered as a farewell,
+        # and the loop exits.
+        await _summarize_and_render(session, runtime)
         return False
 
     if command == "/memory":

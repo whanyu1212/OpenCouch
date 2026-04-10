@@ -234,6 +234,16 @@ class SessionArc(BaseModel):
 
     The summary is 2-4 sentences. Longer summaries tend to lose focus
     and shorter ones lose meaningful detail.
+
+    **Note on crisis_level_max**: this field is NOT produced by the
+    summarizer LLM. It lives only on :class:`StoredSessionArc` and is
+    computed deterministically by :class:`PersistentAgentRuntime` from
+    the per-turn crisis gate verdicts observed during the session. The
+    crisis gate is the canonical source of truth for crisis severity,
+    and having the summarizer re-interpret the session would create
+    a drift risk between "what the gate decided per turn" and "what
+    the summarizer retroactively judged." See ROADMAP v0.4 status log
+    entry for the rationale.
     """
 
     session_id: str
@@ -253,14 +263,69 @@ class SessionArc(BaseModel):
     open_loops: list[str] = Field(default_factory=list)
     resolved_threads: list[str] = Field(default_factory=list)
 
+
+class StoredSessionArc(SessionArc):
+    """Stored shape of a SessionArc with memory-layer metadata added.
+
+    The base :class:`SessionArc` is the **LLM output shape** — what the
+    summarizer produces. ``StoredSessionArc`` is the **stored shape** —
+    what actually lives in the episodic namespace, with the store-layer
+    metadata (id, owner_id, created_at, last_referenced_at, visibility)
+    layered on top — PLUS the runtime-computed ``crisis_level_max``.
+
+    ``owner_id`` is load-bearing: the store is namespaced by
+    ``(owner_id, "episodic")``, so every episodic record has to know
+    which user it belongs to. Without it, the catch-up-at-startup path
+    in ``load_memory_node`` can't decide which user's most recent
+    summary to fetch.
+
+    ``crisis_level_max`` is the peak crisis-gate level observed across
+    all turns in the session, computed by
+    :class:`PersistentAgentRuntime` as ``max(crisis.level for each
+    turn)``. The field is populated during SessionArc → StoredSessionArc
+    promotion in :func:`agent.nodes.summarize_session.run_summarize_session`,
+    NOT by the LLM. See schema.yaml §2 namespaces.episodic and the v0.4
+    ROADMAP entry for why this is deterministic rather than LLM-judged.
+    """
+
+    id: str  # uuid7 string (uuid4 in Python < 3.14; see extract_facts)
+    owner_id: str
+    created_at: str  # ISO-8601; when the summary was written
+    last_referenced_at: str  # ISO-8601; bumped on retrieval
+    user_visible: bool = True
+
+    # Runtime-computed, not LLM-judged. See class docstring.
     crisis_level_max: Literal[0, 1, 2, 3] = 0
 
 
-class StoredSessionArc(SessionArc):
-    """Stored shape of a SessionArc with memory-layer metadata added."""
+class SummarizationResult(BaseModel):
+    """The structured-output shape returned by the session summarizer LLM.
 
-    id: str  # uuid7
-    user_visible: bool = True
+    Wraps a single :class:`SessionArc` (the summarizer produces one
+    arc per session, not a list like the extractor's ``ExtractionResult``)
+    plus a ``reason`` string analogous to the extractor's. Two design
+    notes mirror the extractor's design:
+
+    1. **None is a valid outcome.** Very short sessions, incognito
+       sessions, and sessions with only small talk may produce no arc
+       at all. The wrapper lets the LLM explain why nothing was
+       written without having to fabricate a meaningless summary.
+
+    2. **The ``reason`` field is always populated**, even when ``arc``
+       is ``None``. It's a free observability signal for prompt tuning,
+       emitted at INFO level by the summarizer function alongside the
+       extraction reason (see ``agent/nodes/summarize_session.py``).
+       The reason is for logs and debugging, not for the user.
+
+    The wrapper shape (vs. a bare ``SessionArc | None``) makes empty
+    outcomes carry signal. Without it, a zero-arc session would be
+    indistinguishable from "the LLM returned nothing because it got
+    confused," and we'd lose the ability to tune the prompt based on
+    why summarization succeeded or failed.
+    """
+
+    arc: SessionArc | None = None
+    reason: str = Field(min_length=1, max_length=240)
 
 
 # ─── §4. Procedural memory models ───────────────────────────────────────────
@@ -629,6 +694,7 @@ __all__ = [
     "MoodArc",
     "SessionArc",
     "StoredSessionArc",
+    "SummarizationResult",
     # §4 procedural
     "ProceduralRuleSource",
     "ProceduralRule",

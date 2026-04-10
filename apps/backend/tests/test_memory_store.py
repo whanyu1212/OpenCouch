@@ -17,7 +17,13 @@ from agent.memory.crisis_log import (
     InMemoryCrisisLogBackend,
     NullCrisisLogBackend,
 )
-from agent.memory.models import CrisisLogRecord
+from agent.memory.models import (
+    CrisisLogRecord,
+    MoodArc,
+    SessionArc,
+    StoredSessionArc,
+    SummarizationResult,
+)
 from agent.memory.store import OpenCouchMemoryStore, StoreRecord
 
 
@@ -429,6 +435,270 @@ async def test_memory_store_close_is_idempotent() -> None:
     store = OpenCouchMemoryStore()
     await store.aclose()
     await store.aclose()  # must not raise
+
+
+# ─── v0.4 episodic namespace model + store tests ────────────────────────
+#
+# These tests cover the Stage A scope of v0.4: the pydantic models for
+# session summaries (SessionArc, StoredSessionArc, MoodArc,
+# SummarizationResult) and their round-trip through the existing store
+# interface. The store itself is namespace-agnostic — it treats the
+# episodic namespace identically to semantic — so these tests verify
+# that the SHAPES land cleanly rather than any new store code.
+
+
+def _make_session_arc(
+    *,
+    session_id: str = "session-test",
+    started_at: str = "2026-04-10T12:00:00Z",
+    ended_at: str = "2026-04-10T12:30:00Z",
+    duration_seconds: int = 1800,
+    turn_count: int = 8,
+    primary_themes: list[str] | None = None,
+    summary: str = "User talked about work anxiety around an upcoming meeting.",
+    opened: str = "anxious",
+    closed: str = "calmer",
+    open_loops: list[str] | None = None,
+    resolved_threads: list[str] | None = None,
+) -> SessionArc:
+    """Build a SessionArc with sensible defaults for testing.
+
+    Note the ``primary_themes is None`` check rather than a falsy-default
+    — an explicit empty list ``[]`` should be respected (the test for
+    empty themes depends on this).
+
+    ``crisis_level_max`` is NOT a SessionArc field (v0.4 refactor).
+    Callers that need a non-zero crisis level on the STORED shape
+    should pass it directly to ``_make_stored_session_arc`` instead.
+    """
+
+    return SessionArc(
+        session_id=session_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=duration_seconds,
+        turn_count=turn_count,
+        primary_themes=(
+            primary_themes if primary_themes is not None else ["work stress"]
+        ),
+        summary=summary,
+        mood_arc=MoodArc(opened=opened, closed=closed),
+        open_loops=open_loops if open_loops is not None else [],
+        resolved_threads=resolved_threads if resolved_threads is not None else [],
+    )
+
+
+def _make_stored_session_arc(
+    *,
+    owner_id: str = "user-1",
+    record_id: str = "arc-1",
+    crisis_level_max: int = 0,
+    **kwargs,
+) -> StoredSessionArc:
+    """Build a StoredSessionArc with store-layer metadata populated.
+
+    ``crisis_level_max`` is a StoredSessionArc-only field (v0.4 refactor)
+    — it's runtime-computed from per-turn crisis gate verdicts, not
+    LLM-produced. Tests that want a non-zero level pass it here
+    directly; it's applied during the stored-shape promotion rather
+    than coming through the underlying SessionArc.
+    """
+
+    arc = _make_session_arc(**kwargs)
+    return StoredSessionArc(
+        **arc.model_dump(),
+        id=record_id,
+        owner_id=owner_id,
+        created_at="2026-04-10T12:30:00Z",
+        last_referenced_at="2026-04-10T12:30:00Z",
+        user_visible=True,
+        crisis_level_max=crisis_level_max,  # type: ignore[arg-type]
+    )
+
+
+class TestEpisodicModels:
+    """Unit tests for the v0.4 episodic pydantic models."""
+
+    def test_mood_arc_requires_opened_and_closed(self) -> None:
+        """MoodArc is a dead-simple pair of mood descriptor strings."""
+
+        arc = MoodArc(opened="anxious", closed="calmer")
+        assert arc.opened == "anxious"
+        assert arc.closed == "calmer"
+
+    def test_session_arc_round_trips_through_json(self) -> None:
+        """The SessionArc shape must be JSON-serializable for the store."""
+
+        arc = _make_session_arc()
+        dumped = arc.model_dump(mode="json")
+        restored = SessionArc.model_validate(dumped)
+        assert restored.session_id == arc.session_id
+        assert restored.summary == arc.summary
+        assert restored.mood_arc.opened == arc.mood_arc.opened
+        assert restored.primary_themes == arc.primary_themes
+
+    def test_stored_session_arc_adds_store_metadata(self) -> None:
+        """StoredSessionArc is SessionArc + id + owner_id + timestamps."""
+
+        stored = _make_stored_session_arc()
+        assert stored.id == "arc-1"
+        assert stored.owner_id == "user-1"
+        assert stored.created_at == "2026-04-10T12:30:00Z"
+        assert stored.last_referenced_at == "2026-04-10T12:30:00Z"
+        assert stored.user_visible is True
+        # Inherited fields from SessionArc still work:
+        assert stored.session_id == "session-test"
+        assert stored.turn_count == 8
+
+    def test_session_arc_rejects_too_many_primary_themes(self) -> None:
+        """primary_themes is capped at 3 entries to keep downstream
+        filtering and rendering predictable."""
+
+        with pytest.raises(ValueError):
+            _make_session_arc(
+                primary_themes=["a", "b", "c", "d"],  # 4 — should fail
+            )
+
+    def test_session_arc_allows_empty_primary_themes(self) -> None:
+        """Some sessions genuinely have no dominant theme (e.g., small
+        talk that produced no meaningful arc). Empty list is allowed."""
+
+        arc = _make_session_arc(primary_themes=[])
+        assert arc.primary_themes == []
+
+    def test_summarization_result_with_arc(self) -> None:
+        """The happy path: LLM returned a valid arc + a reason string."""
+
+        arc = _make_session_arc()
+        result = SummarizationResult(
+            arc=arc,
+            reason="summarized 8 turns into a work-anxiety arc",
+        )
+        assert result.arc is not None
+        assert result.arc.session_id == "session-test"
+        assert "work-anxiety" in result.reason
+
+    def test_summarization_result_with_no_arc(self) -> None:
+        """A session with nothing worth summarizing returns arc=None
+        with a reason explaining why. This is the analog of
+        ExtractionResult.facts == []."""
+
+        result = SummarizationResult(
+            arc=None,
+            reason="session too short (2 turns, small talk only)",
+        )
+        assert result.arc is None
+        assert "too short" in result.reason
+
+    def test_summarization_result_requires_reason(self) -> None:
+        """The reason field is always required, even when arc is None.
+        This is an observability contract: the LLM must explain itself."""
+
+        with pytest.raises(ValueError):
+            SummarizationResult(arc=None, reason="")  # empty reason rejected
+
+
+# ─── v0.4 episodic store round-trip tests ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_episodic_round_trips_through_store() -> None:
+    """A StoredSessionArc written via aput should come back via aget
+    with all its fields intact. The store is namespace-agnostic, so
+    this tests the serialize/deserialize round-trip for the new type."""
+
+    store = OpenCouchMemoryStore()
+    arc = _make_stored_session_arc(
+        owner_id="user-42",
+        record_id="arc-2026-04-10",
+        summary="Discussed work deadlines and upcoming supervisor meeting.",
+        primary_themes=["work stress", "performance anxiety"],
+        open_loops=["still need to prep slides"],
+        crisis_level_max=1,
+    )
+    namespace = ("user-42", "episodic")
+
+    await store.aput(namespace, arc.id, arc.model_dump(mode="json"))
+    record = await store.aget(namespace, arc.id)
+
+    assert record is not None
+    # Reconstruct the full pydantic model from the stored dict.
+    restored = StoredSessionArc.model_validate(record.value)
+    assert restored.session_id == arc.session_id
+    assert restored.summary == arc.summary
+    assert restored.primary_themes == ["work stress", "performance anxiety"]
+    assert restored.open_loops == ["still need to prep slides"]
+    assert restored.crisis_level_max == 1
+    assert restored.owner_id == "user-42"
+
+
+@pytest.mark.asyncio
+async def test_episodic_namespace_isolated_from_semantic() -> None:
+    """The episodic and semantic namespaces are separate buckets even
+    for the same user. A write to one must not appear in searches of
+    the other."""
+
+    store = OpenCouchMemoryStore()
+    # Semantic fact and episodic arc, same user
+    await store.aput(
+        ("user-1", "semantic"),
+        "fact-1",
+        {"evidence_quote": "I have a sister named Sarah"},
+    )
+    arc = _make_stored_session_arc(owner_id="user-1", record_id="arc-1")
+    await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
+
+    # Semantic namespace has 1 record, episodic has 1
+    assert store.record_count(("user-1", "semantic")) == 1
+    assert store.record_count(("user-1", "episodic")) == 1
+    assert store.record_count() == 2  # total across all namespaces
+
+
+@pytest.mark.asyncio
+async def test_episodic_asearch_uses_same_token_recall_scorer() -> None:
+    """The store's asearch method is namespace-agnostic, so token-recall
+    scoring works on episodic summaries identically to semantic facts.
+    A query that hits tokens in the summary text should surface the arc."""
+
+    store = OpenCouchMemoryStore()
+    arc = _make_stored_session_arc(
+        owner_id="user-1",
+        record_id="arc-1",
+        summary="User talked about work anxiety around an upcoming meeting.",
+    )
+    await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
+
+    # Query with tokens that overlap the summary.
+    # Meaningful query tokens: {work, anxiety, meeting}
+    # Haystack contains all three; recall = 3/3 = 1.0 → hit.
+    results = await store.asearch(
+        ("user-1", "episodic"),
+        query="tell me about work anxiety and the meeting",
+    )
+    assert len(results) == 1
+    assert results[0].key == "arc-1"
+
+
+@pytest.mark.asyncio
+async def test_episodic_asearch_respects_threshold() -> None:
+    """An off-topic query against episodic should miss, same as semantic.
+    This guards against "catch-up" logic accidentally leaking episodic
+    records into unrelated retrieval contexts."""
+
+    store = OpenCouchMemoryStore()
+    arc = _make_stored_session_arc(
+        owner_id="user-1",
+        record_id="arc-1",
+        summary="User discussed grief about a recent loss.",
+    )
+    await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
+
+    # Totally off-topic query, no meaningful overlap with "grief" or "loss".
+    results = await store.asearch(
+        ("user-1", "episodic"),
+        query="what movies should I watch this weekend",
+    )
+    assert results == []
 
 
 # ─── CrisisLogBackend tests ───────────────────────────────────────────────
