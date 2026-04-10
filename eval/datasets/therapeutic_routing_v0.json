@@ -1,0 +1,85 @@
+[
+  {
+    "id": "supportive_rough_day",
+    "history": [],
+    "message": "I had a really rough day at work today.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Complete self-report, no pattern language. Should fall through to the default supportive mode via the regex fallback."
+  },
+  {
+    "id": "supportive_short_self_report",
+    "history": [],
+    "message": "I feel overwhelmed.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Short self-report — the SELF_REPORT_PATTERNS guard should prevent this from routing to clarifying."
+  },
+  {
+    "id": "supportive_contracted_self_report",
+    "history": [],
+    "message": "I'm anxious about tomorrow.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Contracted self-report ('I'm'). Regression guard for the self-report regex bug caught in Stage G1."
+  },
+  {
+    "id": "reflective_why_keep",
+    "history": [],
+    "message": "Why do I keep ending up in the same fights with my sister?",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "Classic 'why do I keep' pattern question. High-precision reflective fast path."
+  },
+  {
+    "id": "reflective_every_time",
+    "history": [],
+    "message": "Every time I try to set a boundary with my mom, I end up feeling guilty.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'Every time I' pattern trigger — reflective fast path without using the word 'keep'."
+  },
+  {
+    "id": "clarifying_bare_acknowledge",
+    "history": [],
+    "message": "ok",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Truly sparse message, no self-report. Should route to clarifying to request context."
+  },
+  {
+    "id": "clarifying_confusion_marker",
+    "history": [],
+    "message": "What do you mean?",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Explicit confusion marker. Fast path to clarifying."
+  },
+  {
+    "id": "reflective_implicit_pattern",
+    "history": [
+      {"role": "user", "content": "I had another argument with my partner last night."},
+      {"role": "assistant", "content": "That sounds really hard."}
+    ],
+    "message": "It's like I can never say what I actually mean without it turning into a fight.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "llm",
+    "notes": "Implicit pattern recognition — the user is naming a recurring dynamic but doesn't use any of the regex keywords ('keep', 'always', 'every time'). Only the LLM path can catch this. If the dispatcher routes this to supportive, the LLM dispatcher is under-graded."
+  },
+  {
+    "id": "supportive_ambiguous_venting",
+    "history": [],
+    "message": "I just needed to get that off my chest.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Venting signal — the user wants to be heard, not probed. No pattern language, no confusion markers, not a self-report in the regex sense. LLM should recognize this as a supportive case."
+  },
+  {
+    "id": "clarifying_fragment_with_pronoun",
+    "history": [],
+    "message": "It just doesn't make sense to me.",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "llm",
+    "notes": "Ambiguous pronoun 'it' with no clear antecedent. A good dispatcher asks 'what doesn't make sense?'. Regex would likely route to supportive via fallback; LLM should pick clarifying."
+  }
+]

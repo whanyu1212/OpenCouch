@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from agent.memory.graph_store import GraphMemoryStore
-from agent.memory.profile_store import SqliteProfileMemoryStore
+from agent.memory.crisis_log import CrisisLogBackend
+from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
 from services.llm.base import BaseLLMClient
 
 
@@ -20,6 +21,13 @@ class WorkflowContext(TypedDict):
     """Runtime-only dependencies injected into the LangGraph workflow."""
 
     llm_client: BaseLLMClient | None
-    profile_memory_store: SqliteProfileMemoryStore
-    graph_memory_store: GraphMemoryStore
-    is_guest_mode: bool
+    # The unified memory store is the single entry point for long-term
+    # memory reads and writes. It fans out internally to the right
+    # namespace (semantic / episodic / procedural). See
+    # ``agent/memory/store.py``.
+    memory_store: OpenCouchMemoryStore
+    # The always-on crisis safety log. Writes regardless of memory_mode
+    # — see schema.yaml §2 namespaces.crisis_log for the privacy
+    # asymmetry rationale.
+    crisis_log_backend: CrisisLogBackend
+    memory_mode: MemoryMode

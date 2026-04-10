@@ -6,9 +6,10 @@ This module owns the entire agent execution surface in three layers:
   convert between the public ``AgentInput`` / ``AgentOutput`` contract and the
   internal grouped :class:`AgentState` shape used by the graph nodes.
 * **Graph assembly** — :func:`build_agent_workflow` constructs and compiles the
-  LangGraph ``StateGraph`` that wires ``load_memory -> crisis_gate ->
-  (crisis_response | END)`` together. Crisis-gate routing is encoded directly
-  in the node via :class:`langgraph.types.Command`, not via a conditional edge.
+  LangGraph ``StateGraph`` that wires the full topology: load_memory →
+  crisis_gate → (crisis_response + crisis_log | therapeutic_subgraph) →
+  extract_semantic_facts → END. Crisis-gate routing is encoded directly in
+  the node via :class:`langgraph.types.Command`, not via a conditional edge.
 * **Public entrypoints** — :func:`run_agent` is a one-shot convenience wrapper
   that compiles a fresh workflow, invokes it with sensible defaults, and
   returns a normalized ``AgentOutput``. For thread-persistent execution see
@@ -22,8 +23,9 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from agent.memory.graph_store import GraphMemoryStore, NullGraphMemoryStore
-from agent.memory.profile_store import SqliteProfileMemoryStore
+from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
 from agent.models import (
     AgentInput,
     AgentOutput,
@@ -32,10 +34,13 @@ from agent.models import (
     ResponseKind,
 )
 from agent.nodes.crisis_gate import run_crisis_gate_node
+from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_response import run_crisis_response_node
+from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from agent.therapeutic.graph import build_therapeutic_subgraph
 from services.llm.base import BaseLLMClient
 
 
@@ -116,6 +121,20 @@ def build_agent_workflow(
 ) -> CompiledStateGraph:
     """Compile the LangGraph workflow.
 
+    Topology::
+
+        START
+          → load_memory_node
+          → crisis_gate_node  (Command routes to one of the branches)
+          ├─ crisis_response_node → crisis_log_node → extract_semantic_facts_node → END
+          └─ therapeutic_subgraph → extract_semantic_facts_node → END
+
+    The therapeutic subgraph is embedded as a single node compiled by
+    :func:`agent.therapeutic.graph.build_therapeutic_subgraph`. Its
+    internal structure (dispatcher + three mode nodes) is hidden from
+    the parent topology, keeping the top-level graph small and
+    inspectable in LangSmith.
+
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
 
@@ -125,16 +144,38 @@ def build_agent_workflow(
 
     workflow = StateGraph(AgentState, context_schema=WorkflowContext)
 
+    # Build the therapeutic subgraph once per workflow compile. The
+    # subgraph shares AgentState with the parent, so no wrapper function
+    # is needed — LangGraph propagates state and runtime context
+    # automatically.
+    therapeutic_subgraph = build_therapeutic_subgraph()
+
+    # Register all top-level nodes.
     workflow.add_node("load_memory_node", run_load_memory_node)
     workflow.add_node("crisis_gate_node", run_crisis_gate_node)
     workflow.add_node("crisis_response_node", run_crisis_response_node)
+    workflow.add_node("crisis_log_node", run_crisis_log_node)
+    workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
+    workflow.add_node("extract_semantic_facts_node", run_extract_semantic_facts_node)
 
+    # Spine: entry → memory load → crisis gate (which Command-routes).
     workflow.add_edge(START, "load_memory_node")
     workflow.add_edge("load_memory_node", "crisis_gate_node")
-    # crisis_gate_node returns Command(update=..., goto=...) so its routing
-    # decision is encoded in the node itself — no conditional edge needed.
-    # The static edge below still fires when crisis_response_node completes.
-    workflow.add_edge("crisis_response_node", END)
+
+    # Crisis branch: crisis_response → crisis_log → extract_facts → END.
+    # The crisis_log_node runs ONLY on the crisis branch (it's the
+    # always-on safety audit trail, not a cross-cutting concern).
+    workflow.add_edge("crisis_response_node", "crisis_log_node")
+    workflow.add_edge("crisis_log_node", "extract_semantic_facts_node")
+
+    # Therapeutic branch: subgraph → extract_facts → END. The
+    # extract_semantic_facts_node is cross-cutting — it runs after
+    # either branch produces a response, so both branches terminate
+    # through it.
+    workflow.add_edge("therapeutic_subgraph", "extract_semantic_facts_node")
+
+    # Shared terminal: extract_facts → END. Both branches converge here.
+    workflow.add_edge("extract_semantic_facts_node", END)
 
     return workflow.compile(checkpointer=checkpointer)
 
@@ -146,16 +187,17 @@ async def run_agent(
     agent_input: AgentInput,
     *,
     llm_client: BaseLLMClient | None = None,
-    profile_memory_store: SqliteProfileMemoryStore | None = None,
-    graph_memory_store: GraphMemoryStore | None = None,
-    is_guest_mode: bool = True,
+    memory_store: OpenCouchMemoryStore | None = None,
+    crisis_log_backend: CrisisLogBackend | None = None,
+    memory_mode: MemoryMode = MemoryMode.INCOGNITO,
 ) -> AgentOutput:
     """Run the full compiled agent workflow end-to-end for one turn.
 
     Convenience entrypoint for callers (CLI scripts, tests, evals) that just
     want a one-shot ``AgentInput -> AgentOutput`` invocation. The compiled
     workflow handles routing through ``load_memory -> crisis_gate ->
-    (crisis_response | END)``.
+    (crisis_response + crisis_log | therapeutic_subgraph) ->
+    extract_semantic_facts -> END``.
 
     For thread-persistent execution with checkpointed state and a long-lived
     compiled graph, use :class:`agent.persistence.PersistentAgentRuntime`
@@ -166,27 +208,27 @@ async def run_agent(
         llm_client: Optional provider client used for LLM-backed gate and
             response nodes. When ``None`` the graph falls back to deterministic
             behavior.
-        profile_memory_store: Optional profile-memory store. Defaults to a
-            stub :class:`SqliteProfileMemoryStore` rooted at an in-memory path
-            so one-shot calls do not require disk I/O.
-        graph_memory_store: Optional graph-memory store. Defaults to
-            :class:`NullGraphMemoryStore`.
-        is_guest_mode: Whether the runtime should treat the session as
-            ephemeral (no long-term memory). Defaults to ``True`` so one-shot
-            calls do not accidentally pollute persistent stores.
+        memory_store: Optional unified memory store. Defaults to a fresh
+            in-memory :class:`OpenCouchMemoryStore`.
+        crisis_log_backend: Optional crisis log backend. Defaults to
+            :class:`InMemoryCrisisLogBackend`. Always-on regardless of
+            memory_mode.
+        memory_mode: Persistence tier for this turn. Defaults to
+            :attr:`MemoryMode.INCOGNITO` so one-shot calls do not accidentally
+            pollute persistent stores.
     """
 
     workflow = build_agent_workflow()
-    profile_store = profile_memory_store or SqliteProfileMemoryStore(":memory:")
-    graph_store = graph_memory_store or NullGraphMemoryStore()
+    store = memory_store or OpenCouchMemoryStore()
+    crisis_log = crisis_log_backend or InMemoryCrisisLogBackend()
 
     final_state = await workflow.ainvoke(
         build_initial_state(agent_input),
         context={
             "llm_client": llm_client,
-            "profile_memory_store": profile_store,
-            "graph_memory_store": graph_store,
-            "is_guest_mode": is_guest_mode,
+            "memory_store": store,
+            "crisis_log_backend": crisis_log,
+            "memory_mode": memory_mode,
         },
     )
     return state_to_output(final_state)

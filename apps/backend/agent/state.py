@@ -69,6 +69,13 @@ class ResponseState(TypedDict):
     inferred_location: NotRequired[str]
     # Search-derived crisis resources scoped to the inferred location.
     found_resources: NotRequired[list[dict[str, str]]]
+    # Set by the closing therapeutic mode as a hint to the runtime that it
+    # may want to shorten the inactivity timeout for this session. Does NOT
+    # directly terminate the session — session termination is runtime-owned.
+    closing_hint_shown: NotRequired[bool]
+    # Multi-turn exercise step counter for guided_exercise mode. Reset to
+    # None when the exercise is abandoned or completed.
+    exercise_step: NotRequired[int | None]
 
 
 class AgentState(TypedDict):

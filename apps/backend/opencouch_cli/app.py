@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
+from agent.memory.modes import MemoryMode
 from agent.persistence import (
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
@@ -335,6 +336,64 @@ def render_context(state: AgentState | None) -> None:
     console.print()
 
 
+def render_memory_status(runtime: PersistentAgentRuntime) -> None:
+    """Render the memory layer's current state.
+
+    Shows the memory mode, per-namespace record counts from the unified
+    memory store, and the crisis log record count. Placeholders are
+    included for fields that land in later phases (last consolidation
+    timestamp in phase 4, proactive recall toggle in phase 2+).
+
+    Args:
+        runtime: Active persistent runtime. Reads the memory_store and
+            crisis_log_backend via their public properties.
+
+    Returns:
+        None.
+    """
+
+    store = runtime.memory_store
+    crisis_log = runtime.crisis_log_backend
+
+    # Aggregate store record counts by namespace kind. Namespaces are
+    # (user_id, kind) tuples; group by the kind for a clean summary.
+    counts_by_kind: dict[str, int] = {"semantic": 0, "episodic": 0, "procedural": 0}
+    for namespace in store.namespaces():
+        if len(namespace) >= 2 and namespace[1] in counts_by_kind:
+            counts_by_kind[namespace[1]] += store.record_count(namespace)
+    total_records = store.record_count()
+
+    # Crisis log record count — always-on backend, independent of mode.
+    crisis_log_count = 0
+    record_count_fn = getattr(crisis_log, "record_count", None)
+    if callable(record_count_fn):
+        crisis_log_count = record_count_fn()
+
+    table = Table(show_header=False, box=box.SIMPLE_HEAVY)
+    table.add_column(style="muted", no_wrap=True)
+    table.add_column(style="info")
+    table.add_row("memory_mode", str(runtime.memory_mode))
+    table.add_row("semantic facts", str(counts_by_kind["semantic"]))
+    table.add_row("episodic arcs", str(counts_by_kind["episodic"]))
+    table.add_row("procedural rules", str(counts_by_kind["procedural"]))
+    table.add_row("total memory records", str(total_records))
+    table.add_row("crisis log events", str(crisis_log_count))
+    # Placeholders for fields that land in later phases — shown so the
+    # command shape stays stable as features are added.
+    table.add_row("last consolidation", "(phase 4)")
+    table.add_row("proactive recall", "(phase 2+)")
+    console.print(
+        Panel(
+            table,
+            title="[primary]Memory Status[/primary]",
+            subtitle="[muted]what the memory layer is holding[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
 def render_help() -> None:
     """Render the available slash commands.
 
@@ -349,6 +408,9 @@ def render_help() -> None:
     table.add_row("/status", "Show current mode and session stats.")
     table.add_row("/history [n]", "Show the last n transcript messages. Default: 6.")
     table.add_row("/context", "Show the latest derived session context snapshot.")
+    table.add_row(
+        "/memory status", "Show memory layer state (counts, mode, crisis log)."
+    )
     table.add_row("/threads [n]", "List persisted thread ids. Default: 12.")
     table.add_row("/resume <thread-id>", "Switch to an existing persisted thread.")
     table.add_row(
@@ -360,7 +422,8 @@ def render_help() -> None:
         "/mode <deterministic|hybrid|auto>",
         "Switch LLM resolution mode for future turns.",
     )
-    table.add_row("/exit", "End the session.")
+    table.add_row("/end", "End the current session with a closing message.")
+    table.add_row("/exit", "End the session immediately.")
     console.print(
         Panel(
             table,
@@ -586,6 +649,30 @@ async def handle_command(
     if command in {"/exit", "/quit"}:
         return False
 
+    if command == "/end":
+        # Soft session termination: print a farewell and exit the loop.
+        # In v0.4 this will also trigger summarize_session_node to write
+        # an episodic arc before exit. For now the farewell is the whole
+        # behavior.
+        render_info(
+            "Take care. We can pick this back up whenever you want. "
+            f"(Thread: {session.thread_id})",
+            style="success",
+        )
+        return False
+
+    if command == "/memory":
+        # v0.1 supports only `/memory status`. Future commands
+        # (list, forget, clear, recall, search) land in phase 2+.
+        if len(args) == 0 or args[0] == "status":
+            render_memory_status(runtime)
+            return True
+        render_info(
+            "Unknown /memory subcommand. Available in v0.1: status",
+            style="warning",
+        )
+        return True
+
     if command == "/help":
         render_help()
         return True
@@ -726,7 +813,12 @@ async def chat_loop(
     """
 
     llm_client, resolved_mode = resolve_llm_client(mode)
-    is_guest_mode = memory_mode == "guest"
+    # CLI uses the string labels "guest" and "persistent" for the user-facing
+    # mode. Translate to the graph-internal MemoryMode enum for the runtime.
+    runtime_memory_mode = (
+        MemoryMode.INCOGNITO if memory_mode == "guest" else MemoryMode.LOCAL
+    )
+    is_guest_mode = runtime_memory_mode == MemoryMode.INCOGNITO
     session = RunnerSession(
         requested_mode=mode,
         resolved_mode=resolved_mode,
@@ -738,7 +830,7 @@ async def chat_loop(
 
     async with PersistentAgentRuntime(
         sqlite_path,
-        guest_mode=is_guest_mode,
+        memory_mode=runtime_memory_mode,
     ) as runtime:
         session.history = await runtime.get_history(thread_id)
         session.last_context = await runtime.get_state(thread_id)

@@ -7,12 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
-from agent.memory.graph_store import (
-    GraphMemoryStore,
-    NullGraphMemoryStore,
-    create_graph_memory_store_from_env,
-)
-from agent.memory.profile_store import SqliteProfileMemoryStore
+from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
 from agent.models import (
     AgentInput,
     AgentOutput,
@@ -59,25 +56,37 @@ class ThreadSummary:
 
 
 class PersistentAgentRuntime:
-    """Thread-backed runtime with local guest or persistent memory mode."""
+    """Thread-backed runtime with incognito, local, or synced memory mode."""
 
     def __init__(
         self,
         sqlite_path: str | Path = DEFAULT_THREAD_DB_PATH,
         *,
-        graph_memory_store: GraphMemoryStore | None = None,
-        guest_mode: bool = False,
+        memory_store: OpenCouchMemoryStore | None = None,
+        crisis_log_backend: CrisisLogBackend | None = None,
+        memory_mode: MemoryMode = MemoryMode.LOCAL,
     ) -> None:
         """Initialize the runtime.
 
         Args:
             sqlite_path: SQLite database path for LangGraph checkpoints.
-            graph_memory_store: Optional graph-memory adapter for episodic retrieval.
-            guest_mode: When true, use ephemeral in-memory stores only.
+            memory_store: Optional unified memory store. Defaults to a
+                fresh in-memory :class:`OpenCouchMemoryStore`; phase 1
+                v0.1 only ships the in-memory backing, SQLite/Postgres
+                backings land in later phases.
+            crisis_log_backend: Optional crisis log backend. Defaults to
+                :class:`InMemoryCrisisLogBackend`. The crisis log is
+                always-on regardless of memory_mode (see schema.yaml §2
+                namespaces.crisis_log for the privacy asymmetry).
+            memory_mode: Persistence tier for the runtime. ``INCOGNITO``
+                uses ephemeral in-memory stores only; ``LOCAL`` persists
+                to the configured SQLite path; ``SYNCED`` is reserved
+                for a future remote backend.
         """
 
-        self.guest_mode = guest_mode
-        resolved_sqlite = ":memory:" if guest_mode else sqlite_path
+        self.memory_mode = memory_mode
+        is_incognito = memory_mode == MemoryMode.INCOGNITO
+        resolved_sqlite = ":memory:" if is_incognito else sqlite_path
         self.sqlite_path = (
             Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
         )
@@ -86,13 +95,11 @@ class PersistentAgentRuntime:
         self._checkpointer: AsyncSqliteSaver | None = None
         self._graph: CompiledStateGraph | None = None
 
-        profile_sqlite = ":memory:" if guest_mode else self.sqlite_path
-        self._profile_memory = SqliteProfileMemoryStore(profile_sqlite)
-        self._graph_memory = (
-            NullGraphMemoryStore()
-            if guest_mode
-            else (graph_memory_store or create_graph_memory_store_from_env())
-        )
+        # v0.1 uses in-memory backings regardless of mode. The mode flag
+        # currently affects only the LangGraph checkpointer sqlite path;
+        # SQLite-backed memory store + crisis log land in v0.8.
+        self._memory_store = memory_store or OpenCouchMemoryStore()
+        self._crisis_log_backend = crisis_log_backend or InMemoryCrisisLogBackend()
 
     async def __aenter__(self) -> PersistentAgentRuntime:
         """Open runtime resources."""
@@ -104,16 +111,13 @@ class PersistentAgentRuntime:
         self._saver_cm = AsyncSqliteSaver.from_conn_string(str(self.sqlite_path))
         self._checkpointer = await self._saver_cm.__aenter__()
         self._checkpointer.serde = serde
-        await self._profile_memory.initialize()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         """Close runtime resources."""
 
-        await self._profile_memory.close()
-        close_graph_memory = getattr(self._graph_memory, "close", None)
-        if callable(close_graph_memory):
-            await close_graph_memory()
+        await self._memory_store.aclose()
+        await self._crisis_log_backend.aclose()
         if self._saver_cm is not None:
             await self._saver_cm.__aexit__(exc_type, exc, tb)
 
@@ -124,6 +128,28 @@ class PersistentAgentRuntime:
             raise RuntimeError(
                 "PersistentAgentRuntime must be used inside 'async with'."
             )
+
+    @property
+    def memory_store(self) -> OpenCouchMemoryStore:
+        """Return the runtime's unified memory store.
+
+        Exposed for CLI and debug-tooling use (e.g. ``/memory status``).
+        The store is the same instance passed into node runtime contexts,
+        so reads reflect the current live state.
+        """
+
+        return self._memory_store
+
+    @property
+    def crisis_log_backend(self) -> CrisisLogBackend:
+        """Return the runtime's crisis log backend.
+
+        Exposed for CLI and debug-tooling use. The backend is the same
+        instance passed into node runtime contexts and is always-on
+        regardless of memory mode.
+        """
+
+        return self._crisis_log_backend
 
     def _config_for_thread(self, thread_id: str) -> dict[str, dict[str, str]]:
         """Build LangGraph config payload for one thread."""
@@ -139,9 +165,9 @@ class PersistentAgentRuntime:
 
         return {
             "llm_client": llm_client,
-            "profile_memory_store": self._profile_memory,
-            "graph_memory_store": self._graph_memory,
-            "is_guest_mode": self.guest_mode,
+            "memory_store": self._memory_store,
+            "crisis_log_backend": self._crisis_log_backend,
+            "memory_mode": self.memory_mode,
         }
 
     @staticmethod

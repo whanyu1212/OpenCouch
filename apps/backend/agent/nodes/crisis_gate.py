@@ -6,7 +6,6 @@ import logging
 import re
 from typing import Any, Literal
 
-from langgraph.graph import END
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import BaseModel
@@ -317,14 +316,14 @@ def _build_crisis_delta(
 async def run_crisis_gate_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
-) -> Command[Literal["crisis_response_node", "__end__"]]:
+) -> Command[Literal["crisis_response_node", "therapeutic_subgraph"]]:
     """Run the hybrid crisis gate (deterministic + optional LLM fallback).
 
     Returns a :class:`Command` that combines the assessment state update
     with the routing decision in a single step. Routes to the crisis
     response node when the assessment marks ``needs_crisis_response``;
-    otherwise terminates the turn at ``END`` (the therapeutic path is a
-    no-op until the rebuild adds therapeutic response nodes).
+    otherwise routes to the therapeutic subgraph which picks the right
+    response mode (supportive, reflective, or clarifying in v0.1).
     """
 
     llm_client = runtime.context.get("llm_client")
@@ -353,5 +352,9 @@ async def run_crisis_gate_node(
             assessment = normalize_crisis_assessment(deterministic)
 
     delta = _build_crisis_delta(state, assessment)
-    next_node = "crisis_response_node" if assessment.needs_crisis_response else END
+    next_node = (
+        "crisis_response_node"
+        if assessment.needs_crisis_response
+        else "therapeutic_subgraph"
+    )
     return Command(update=delta, goto=next_node)

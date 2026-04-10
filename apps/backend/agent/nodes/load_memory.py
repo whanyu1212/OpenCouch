@@ -6,11 +6,8 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.memory.graph_store import (
-    build_graph_memory_query,
-    should_retrieve_graph_memory,
-)
-from agent.memory.profile_store import compile_working_memory
+from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole, ModeType, ResponseKind
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -30,15 +27,40 @@ def memory_bootstrap_reply(is_guest_mode: bool) -> str:
     )
 
 
+async def _retrieve_semantic_working_memory(
+    store: OpenCouchMemoryStore,
+    *,
+    owner_id: str,
+    query: str,
+) -> list[str]:
+    """Fetch the top semantic facts for this user and format them as strings.
+
+    v0.1 implementation: substring-match the current message against the
+    semantic namespace and return the formatted evidence quotes. This is
+    deliberately minimal — the richer hybrid retrieval (vector search +
+    graph expansion) lands in v0.3 when real semantic extraction starts
+    producing content worth searching.
+    """
+
+    namespace = (owner_id, "semantic")
+    records = await store.asearch(namespace, query=query, limit=5)
+    formatted: list[str] = []
+    for record in records:
+        quote = record.value.get("evidence_quote")
+        if quote:
+            formatted.append(f"Previously noted: {quote}")
+    return formatted
+
+
 async def run_load_memory_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, Any]:
     """Load memory snippets and return only the keys this node updated."""
 
-    profile_memory_store = runtime.context["profile_memory_store"]
-    graph_memory_store = runtime.context["graph_memory_store"]
-    is_guest_mode = runtime.context.get("is_guest_mode", False)
+    memory_store = runtime.context["memory_store"]
+    memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
+    is_guest_mode = memory_mode == MemoryMode.INCOGNITO
 
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
@@ -46,18 +68,11 @@ async def run_load_memory_node(
     if is_guest_mode:
         working_memory: list[str] = []
     else:
-        profile_memories = await profile_memory_store.list_memories(owner_id)
-        graph_memories: list[str] = []
-        if should_retrieve_graph_memory(message=state["message"], prior_state=state):
-            graph_memories = await graph_memory_store.retrieve(
-                owner_id=owner_id,
-                query=build_graph_memory_query(
-                    message=state["message"],
-                    prior_state=state,
-                ),
-                limit=3,
-            )
-        working_memory = compile_working_memory(profile_memories, graph_memories)
+        working_memory = await _retrieve_semantic_working_memory(
+            memory_store,
+            owner_id=owner_id,
+            query=state["message"],
+        )
 
     # ── Step 2: Append the inbound user turn + the deterministic bootstrap reply ─
     response_text = memory_bootstrap_reply(is_guest_mode)
@@ -70,7 +85,7 @@ async def run_load_memory_node(
     summary = (
         "Guest session without long-term memory."
         if is_guest_mode
-        else f"Loaded {len(working_memory)} memory snippets from local stores."
+        else f"Loaded {len(working_memory)} memory snippets from the unified store."
     )
 
     # ── Step 3: Return only the keys this node updated ────────────────────
