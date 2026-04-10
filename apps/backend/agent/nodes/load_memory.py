@@ -50,6 +50,7 @@ log entry in ROADMAP.md for the algorithm details.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from langgraph.runtime import Runtime
@@ -216,8 +217,6 @@ async def run_load_memory_node(
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
     semantic_ns = (owner_id, "semantic")
     episodic_ns = (owner_id, "episodic")
-    semantic_store_size = await memory_store.arecord_count(semantic_ns)
-    episodic_store_size = await memory_store.arecord_count(episodic_ns)
     query = state["message"]
     meaningful_query_tokens = tokenize_meaningful(query)
 
@@ -227,6 +226,23 @@ async def run_load_memory_node(
     # have run in this session yet" — the trigger for catch-up injection.
     transcript = state.get("transcript", [])
     is_first_turn = len(transcript) == 1
+
+    # v0.8.1 observability: time the retrieval work so we have a
+    # per-turn latency signal to answer "is retrieval expensive
+    # enough to gate yet?" without committing to any gating
+    # strategy. The timer covers the store interactions
+    # (arecord_count + asearch on both namespaces) — i.e., the work
+    # a gating decision would actually avoid. Python-side token
+    # splitting happens before the timer starts and is microseconds
+    # anyway, so including it would just add noise. The current
+    # guidance (see the retrieval-gating discussion in the v0.8
+    # follow-up notes): revisit gating when dogfood p95 exceeds
+    # ~20ms per turn AND store_size consistently exceeds a few
+    # hundred records. Until then, "always on" is the right call.
+    retrieval_start = time.monotonic()
+
+    semantic_store_size = await memory_store.arecord_count(semantic_ns)
+    episodic_store_size = await memory_store.arecord_count(episodic_ns)
 
     # Episodic retrieval: catch-up on first turn + query-based matches.
     episodic_entries = await _retrieve_episodic_working_memory(
@@ -243,6 +259,8 @@ async def run_load_memory_node(
         query=query,
     )
 
+    retrieval_duration_ms = (time.monotonic() - retrieval_start) * 1000
+
     # Merge: episodic entries first (they're the "context prefix" that
     # frames the session), then semantic entries. Downstream response
     # nodes see the whole list and can reference either kind.
@@ -256,13 +274,14 @@ async def run_load_memory_node(
 
     logger.info(
         "load_memory_node: semantic=%d/%d episodic=%d/%d first_turn=%s "
-        "query_tokens=%d owner=%r",
+        "query_tokens=%d duration_ms=%.2f owner=%r",
         len(semantic_entries),
         semantic_store_size,
         len(episodic_entries),
         episodic_store_size,
         is_first_turn,
         len(meaningful_query_tokens),
+        retrieval_duration_ms,
         owner_id,
     )
 
