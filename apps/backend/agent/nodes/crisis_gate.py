@@ -1,63 +1,79 @@
-"""Hybrid crisis gate for the MVP agent.
-
-The design is intentionally split into three layers:
-- deterministic overrides for obvious boundary cases
-- optional LLM classification for the gray area
-- policy normalization to produce one final assessment
-"""
+"""Hybrid crisis gate node for the OpenCouch graph."""
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Literal
+from typing import Any, Literal
 
-from agent.models import CrisisAssessment
+from langgraph.graph import END
+from langgraph.runtime import Runtime
+from langgraph.types import Command
+from pydantic import BaseModel
+
+from agent.models import CrisisAssessment, ModeType, ResponseKind
 from agent.prompts import (
     build_crisis_classifier_prompt,
     build_crisis_classifier_system_prompt,
 )
+from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from pydantic import BaseModel
-
 from services.llm.base import BaseLLMClient
+
+logger = logging.getLogger(__name__)
 
 OverrideKind = Literal["imminent_risk", "idiomatic_safe"]
 
+# High-confidence immediate danger signals (plan/means/timing/finality).
 IMMINENT_PATTERNS = (
-    r"\b(plan to|going to|gonna|will)\s+(kill myself|end my life|hurt myself)\b",
-    r"\b(kill myself|end my life|hurt myself)\s+(tonight|today|right now|soon)\b",
-    r"\b(i have|got)\s+(pills|a gun|a rope|a knife)\b",
-    r"\b(tonight|today|right now)\b.*\b(kill myself|end my life|hurt myself)\b",
+    r"\b(?:tonight|today|right now|this (?:morning|afternoon|evening)|soon)\b.{0,35}\b(?:kill myself|end my life|end it|overdose|hang myself|jump)\b",
+    r"\b(?:plan to|going to|gonna|will)\s+(?:kill myself|end my life|hurt myself|overdose|jump)\b",
+    r"\b(?:have|got)\s+(?:a|the|my)?\s*(?:gun|rope|knife|pills?|razor|blade)\b.{0,35}\b(?:for|to)\b.{0,20}\b(?:myself|end it|kill myself)\b",
+    r"\b(?:this is my last|last message|goodbye everyone|you won't hear from me)\b",
+    r"\b(?:swallow|take)\b.{0,20}\b(?:all|whole bottle|entire bottle)\b.{0,20}\b(?:pills?|tablets?)\b",
 )
 
-IDIOMATIC_SAFE_PATTERNS = (
-    r"\bwork is killing me\b",
-    r"\bthis homework is killing me\b",
-    r"\bi could kill my\b",
-)
-
+# Explicit self-harm/suicidal language, including colloquialisms/evasion slang.
 CLEAR_SELF_HARM_PATTERNS = (
-    r"\b(kill myself|suicide|end my life|want to die)\b",
-    r"\b(hurt myself|self harm|self-harm|cutting again|been cutting)\b",
-    r"\b(don't want to be here anymore|nobody would miss me if i was gone)\b",
-    r"\b(thinking about ending it all|thinking about killing myself)\b",
+    r"\b(?:kill myself|k[i1]ll m(?:yself|y self)|suicid(?:e|al)|end my life|want to die|die by suicide)\b",
+    r"\b(?:hurt myself|harm myself|self[- ]?harm|cut(?:ting)? again|burn myself)\b",
+    r"\b(?:off myself|unalive myself|kms)\b",
+    r"\b(?:don't want to be here anymore|nobody would miss me if i was gone|better off dead)\b",
+    r"\b(?:go to sleep and (?:never|not) wake up|wish i didn't exist)\b",
+    # Suicidal ideation phrased as "ending it" or "wanting it to be over" — these
+    # are common evasions that omit the explicit "myself" object but signal the
+    # same ideation. Captured here so the deterministic tier flags them at L2.
+    r"\b(?:end(?:ing)? it(?: all)?|want it to be over|ready for it to end)\b",
 )
 
+# Possible risk language requiring clarification.
 AMBIGUOUS_PATTERNS = (
-    r"\b(wish i could disappear|wish i wasn't here|wish i could go away)\b",
-    r"\b(i can't do this anymore|i am done|i'm done|give up)\b",
-    r"\b(dark thoughts|not sure i can keep going)\b",
-    r"\b(i want to disappear|i don't want to exist)\b",
+    r"\b(?:wish i could disappear|wish i wasn't here|wish i could go away)\b",
+    r"\b(?:i can't do this anymore|i am done|i'm done|give up)\b",
+    r"\b(?:dark thoughts|not sure i can keep going|can't keep going)\b",
+    r"\b(?:i want to disappear|i don't want to exist)\b",
+    r"\b(?:better off without me|i'm a burden|everyone would be better without me)\b",
 )
 
-DISTRESS_PATTERNS = (r"\b(hopeless|empty|worthless|trapped|completely overwhelmed)\b",)
+# Severe distress without explicit self-harm.
+DISTRESS_PATTERNS = (
+    r"\b(?:hopeless|empty|worthless|trapped|completely overwhelmed|breaking point)\b",
+)
 
+# Benign hyperbole and idioms to prevent false positives.
+IDIOMATIC_SAFE_PATTERNS = (
+    r"\b(?:work|school|homework|deadlines?)\s+(?:is|are)\s+killing me\b",
+    r"\b(?:i'm|im)\s+dead(?:\s*$|\s+[😂🤣💀])",
+    r"\b(?:dead tired|dying of laughter|bored to death|to die for|killing it)\b",
+    r"\b(?:i could kill for)\b",
+)
+
+# Denials after a safety-check turn.
 SAFETY_DENIAL_PATTERNS = (
-    r"\b(not suicidal|not thinking about|not going to)\s+(hurt|harm|kill)",
-    r"\b(i'?m safe|i am safe|i'?m not unsafe)\b",
-    r"\b(no|not)\b.{0,20}\b(hurting myself|harming myself|killing myself|ending)",
-    r"\b(don'?t|do not)\s+(want to die|want to hurt myself|want to harm myself)\b",
-    r"\b(not thinking about)\s+(suicide|self[- ]harm|ending)",
+    r"\b(?:not suicidal|not thinking about(?:\s+self[- ]?harm|\s+suicide)?)\b",
+    r"\b(?:i'?m safe|i am safe|i would never do that|i won't do that)\b",
+    r"\b(?:just venting|figure of speech|didn't mean it literally)\b",
+    r"\b(?:no)\b.{0,25}\b(?:hurting myself|harming myself|killing myself|ending it)\b",
 )
 
 
@@ -76,7 +92,7 @@ def _combined_user_text(state: AgentState) -> str:
 
     recent_user_turns = [
         turn["content"]
-        for turn in state["history"][-4:]
+        for turn in state.get("history", [])[-6:]
         if turn.get("role") == "user" and turn.get("content")
     ]
     recent_user_turns.append(state["message"])
@@ -86,48 +102,36 @@ def _combined_user_text(state: AgentState) -> str:
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     """Return whether the text matches any pattern in the provided tuple."""
 
-    return any(re.search(pattern, text) for pattern in patterns)
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def _previous_mode_was_safety_check(state: AgentState) -> bool:
-    """Return whether the most recent assistant turn was a safety check."""
+    """Return whether the most recent assistant turn appears to be a safety check."""
 
     history = state.get("history", [])
-    # Walk backwards to find the last assistant turn's context.
-    # The mode is stored in state, not history, so we check if the prior
-    # conversation included a safety-check response pattern.
     for turn in reversed(history[-4:]):
-        if turn.get("role") == "assistant":
-            content = turn.get("content", "").lower()
-            if any(
-                phrase in content
-                for phrase in (
-                    "feeling unsafe",
-                    "thinking about hurting yourself",
-                    "check on your safety",
-                    "check something important",
-                )
-            ):
-                return True
-            break
+        if turn.get("role") != "assistant":
+            continue
+        content = turn.get("content", "").lower()
+        if any(
+            phrase in content
+            for phrase in (
+                "thinking about hurting yourself",
+                "thinking about harming yourself",
+                "are you safe right now",
+                "check on your safety",
+                "check something important",
+            )
+        ):
+            return True
+        break
     return False
 
 
 def detect_crisis_override(
     state: AgentState,
 ) -> tuple[OverrideKind, CrisisAssessment] | None:
-    """Return a hard override for obvious crisis-boundary cases.
-
-    Handles both escalation overrides (imminent risk) and de-escalation
-    overrides (user denied risk after a safety check).
-
-    Args:
-        state: The current agent graph state.
-
-    Returns:
-        A tuple of override kind and assessment when a hard override applies, or
-        `None` when the message should continue to a classifier or fallback path.
-    """
+    """Return hard overrides for obvious boundary cases."""
 
     text = _combined_user_text(state)
     current_message = state["message"].lower()
@@ -150,14 +154,12 @@ def detect_crisis_override(
             CrisisAssessment(
                 level=3,
                 confidence="high",
-                reason="Detected imminent self-harm language with plan, means, or timing.",
+                reason="Detected imminent self-harm language with plan, means, timing, or finality cues.",
                 needs_crisis_response=True,
                 needs_clarification=False,
             ),
         )
 
-    # De-escalation: if the previous turn was a safety check, check the
-    # current message in isolation (not accumulated history) for new signals.
     if _previous_mode_was_safety_check(state):
         has_new_crisis = _matches_any(
             current_message, CLEAR_SELF_HARM_PATTERNS
@@ -165,8 +167,6 @@ def detect_crisis_override(
         has_new_ambiguous = _matches_any(current_message, AMBIGUOUS_PATTERNS)
         has_denial = _matches_any(current_message, SAFETY_DENIAL_PATTERNS)
 
-        # If the user denied risk or the current message has no new crisis
-        # or ambiguous signals, accept the de-escalation and move on.
         if has_denial or (not has_new_crisis and not has_new_ambiguous):
             return (
                 "idiomatic_safe",
@@ -176,7 +176,7 @@ def detect_crisis_override(
                     reason=(
                         "User denied risk after a safety check."
                         if has_denial
-                        else "No new crisis signals after a safety check. Prior concern addressed."
+                        else "No new crisis signals after a safety check."
                     ),
                     needs_crisis_response=False,
                     needs_clarification=False,
@@ -187,14 +187,7 @@ def detect_crisis_override(
 
 
 def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
-    """Assess crisis risk using deterministic fallback rules.
-
-    Args:
-        state: The current agent graph state.
-
-    Returns:
-        A crisis assessment derived only from deterministic rules.
-    """
+    """Assess crisis risk using deterministic rules."""
 
     text = _combined_user_text(state)
 
@@ -216,7 +209,7 @@ def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
         return CrisisAssessment(
             level=1,
             confidence="medium",
-            reason="Detected ambiguous but concerning self-harm-adjacent language.",
+            reason="Detected ambiguous self-harm-adjacent language requiring clarification.",
             needs_crisis_response=False,
             needs_clarification=True,
         )
@@ -225,7 +218,7 @@ def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
         return CrisisAssessment(
             level=1,
             confidence="medium",
-            reason="Detected high-distress language without explicit self-harm signal.",
+            reason="Detected severe distress language without explicit self-harm signal.",
             needs_crisis_response=False,
             needs_clarification=True,
         )
@@ -233,7 +226,7 @@ def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
     return CrisisAssessment(
         level=0,
         confidence="high",
-        reason="No self-harm signal detected by deterministic fallback rules.",
+        reason="No self-harm signal detected by deterministic rules.",
         needs_crisis_response=False,
         needs_clarification=False,
     )
@@ -244,15 +237,7 @@ async def assess_crisis_risk_with_llm(
     *,
     llm_client: BaseLLMClient,
 ) -> CrisisAssessment:
-    """Assess crisis risk with a configured model client.
-
-    Args:
-        state: The current agent graph state.
-        llm_client: The provider-backed client used to make the structured model call.
-
-    Returns:
-        A crisis assessment derived from model output.
-    """
+    """Assess crisis risk with a structured LLM classifier."""
 
     raw = await llm_client.generate_structured(
         prompt=build_crisis_classifier_prompt(state),
@@ -276,14 +261,7 @@ async def assess_crisis_risk_with_llm(
 
 
 def normalize_crisis_assessment(assessment: CrisisAssessment) -> CrisisAssessment:
-    """Normalize crisis assessment fields into an internally consistent shape.
-
-    Args:
-        assessment: The raw crisis assessment.
-
-    Returns:
-        A normalized crisis assessment with bounded levels and consistent flags.
-    """
+    """Normalize crisis assessment fields into a consistent shape."""
 
     level = max(0, min(3, int(assessment.level)))
     confidence = (
@@ -292,10 +270,7 @@ def normalize_crisis_assessment(assessment: CrisisAssessment) -> CrisisAssessmen
         else "medium"
     )
     needs_crisis_response = assessment.needs_crisis_response or level >= 2
-
-    # If we are already in crisis-response territory, clarification can still be useful,
-    # but it should not weaken the urgency. Keep the flag, but the route will still be crisis.
-    needs_clarification = assessment.needs_clarification
+    needs_clarification = assessment.needs_clarification and not needs_crisis_response
 
     return CrisisAssessment(
         level=level,
@@ -306,64 +281,77 @@ def normalize_crisis_assessment(assessment: CrisisAssessment) -> CrisisAssessmen
     )
 
 
-def apply_crisis_result_to_state(
+def _build_crisis_delta(
     state: AgentState,
     assessment: CrisisAssessment,
-) -> AgentState:
-    """Write the final crisis decision back into graph state.
+) -> dict[str, Any]:
+    """Build the state-delta dict for one crisis-gate decision.
 
-    Args:
-        state: The current agent graph state.
-        assessment: The final normalized crisis assessment.
-
-    Returns:
-        The updated graph state.
+    Returns only the keys the gate updated: ``crisis``, ``routing``, and the
+    crisis-tagged ``response.kind`` so downstream nodes can rely on the
+    response slot already being marked.
     """
 
-    state["crisis"] = assessment
-    state["route"] = "crisis" if assessment.needs_crisis_response else "therapeutic"
-    return state
+    route = "crisis" if assessment.needs_crisis_response else "therapeutic"
+    routing = state.get("routing", {})
+    response = state.get("response", {})
+
+    return {
+        "crisis": assessment,
+        "routing": {
+            **routing,
+            "route": route,
+            "mode": "safety_check" if route == "crisis" else routing.get("mode"),
+            "mode_source": "crisis_gate",
+            "mode_type": ModeType.CRISIS
+            if route == "crisis"
+            else routing.get("mode_type"),
+        },
+        "response": {
+            **response,
+            "kind": ResponseKind.CRISIS if route == "crisis" else response.get("kind"),
+        },
+    }
 
 
-async def run_crisis_gate(
+async def run_crisis_gate_node(
     state: AgentState,
-    *,
-    llm_client: BaseLLMClient | None = None,
-) -> AgentState:
-    """Run the hybrid crisis gate.
+    runtime: Runtime[WorkflowContext],
+) -> Command[Literal["crisis_response_node", "__end__"]]:
+    """Run the hybrid crisis gate (deterministic + optional LLM fallback).
 
-    Args:
-        state: The current agent graph state.
-        llm_client: Optional provider-backed client for nuanced classification.
-
-    Returns:
-        The updated graph state with crisis fields and route populated.
-
-    Notes:
-        Flow:
-        - apply deterministic override checks first
-        - otherwise use the configured LLM classifier when available
-        - otherwise fall back to deterministic assessment
-        - normalize the result and store it in graph state
+    Returns a :class:`Command` that combines the assessment state update
+    with the routing decision in a single step. Routes to the crisis
+    response node when the assessment marks ``needs_crisis_response``;
+    otherwise terminates the turn at ``END`` (the therapeutic path is a
+    no-op until the rebuild adds therapeutic response nodes).
     """
+
+    llm_client = runtime.context.get("llm_client")
 
     override = detect_crisis_override(state)
     if override is not None:
         _, override_assessment = override
-        return apply_crisis_result_to_state(
-            state,
-            normalize_crisis_assessment(override_assessment),
-        )
-
-    if llm_client is not None:
-        try:
-            assessment = await assess_crisis_risk_with_llm(state, llm_client=llm_client)
-        except Exception:
-            assessment = assess_crisis_risk_deterministically(state)
+        assessment = normalize_crisis_assessment(override_assessment)
     else:
-        assessment = assess_crisis_risk_deterministically(state)
+        deterministic = assess_crisis_risk_deterministically(state)
+        if deterministic.level >= 2:
+            assessment = normalize_crisis_assessment(deterministic)
+        elif llm_client is not None:
+            try:
+                llm_assessment = await assess_crisis_risk_with_llm(
+                    state, llm_client=llm_client
+                )
+                assessment = normalize_crisis_assessment(llm_assessment)
+            except Exception:
+                logger.warning(
+                    "Crisis LLM classifier failed; using deterministic fallback.",
+                    exc_info=True,
+                )
+                assessment = normalize_crisis_assessment(deterministic)
+        else:
+            assessment = normalize_crisis_assessment(deterministic)
 
-    return apply_crisis_result_to_state(
-        state,
-        normalize_crisis_assessment(assessment),
-    )
+    delta = _build_crisis_delta(state, assessment)
+    next_node = "crisis_response_node" if assessment.needs_crisis_response else END
+    return Command(update=delta, goto=next_node)

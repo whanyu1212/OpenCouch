@@ -16,7 +16,12 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.graph import build_initial_state
 from agent.models import AgentInput
-from agent.nodes.crisis_gate import run_crisis_gate
+from agent.nodes.crisis_gate import (
+    assess_crisis_risk_deterministically,
+    assess_crisis_risk_with_llm,
+    detect_crisis_override,
+    normalize_crisis_assessment,
+)
 from core.config import create_configured_llm_client
 from services.llm.base import BaseLLMClient
 
@@ -66,8 +71,25 @@ async def _evaluate_case(
             history=case["history"],
         )
     )
-    state = await run_crisis_gate(state, llm_client=llm_client)
-    assessment = state["crisis"]
+
+    # Drive the classifier helpers directly so the eval mirrors the node's
+    # internal decision tree without depending on its Command/Runtime wrapping.
+    override = detect_crisis_override(state)
+    if override is not None:
+        _, override_assessment = override
+        assessment = normalize_crisis_assessment(override_assessment)
+    else:
+        deterministic = assess_crisis_risk_deterministically(state)
+        if deterministic.level >= 2 or llm_client is None:
+            assessment = normalize_crisis_assessment(deterministic)
+        else:
+            try:
+                llm_assessment = await assess_crisis_risk_with_llm(
+                    state, llm_client=llm_client
+                )
+                assessment = normalize_crisis_assessment(llm_assessment)
+            except Exception:
+                assessment = normalize_crisis_assessment(deterministic)
 
     matched = (
         assessment.level == case["expected_level"]
