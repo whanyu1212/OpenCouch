@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ class BaseLLMClient(ABC):
         prompt: str,
         system_instruction: str | None = None,
         temperature: float = 0,
+        use_search: bool = False,
     ) -> str:
         """Generate a plain-text completion.
 
@@ -30,10 +32,33 @@ class BaseLLMClient(ABC):
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
             temperature: Sampling temperature for the request.
+            use_search: Whether to enable provider-native web search/grounding.
 
         Returns:
             The generated text response.
         """
+
+    @abstractmethod
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0,
+    ) -> AsyncIterator[str]:
+        """Generate a plain-text completion as a stream of string chunks.
+
+        Args:
+            prompt: The user or task prompt to send to the model.
+            system_instruction: Optional top-level instruction for model behavior.
+            temperature: Sampling temperature for the request.
+
+        Yields:
+            String chunks of the generated text as they arrive from the provider.
+        """
+        # This yield makes the method an async generator even though it is abstract.
+        # Concrete subclasses must override with their own streaming implementation.
+        yield ""  # pragma: no cover
 
     @abstractmethod
     async def generate_structured(

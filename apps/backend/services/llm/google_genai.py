@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from typing import cast
 
 from google import genai
@@ -48,6 +49,7 @@ class GeminiLLMClient(BaseLLMClient):
         prompt: str,
         system_instruction: str | None = None,
         temperature: float = 0,
+        use_search: bool = False,
     ) -> str:
         """Generate a plain-text response with Gemini.
 
@@ -55,6 +57,8 @@ class GeminiLLMClient(BaseLLMClient):
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
             temperature: Sampling temperature for the request.
+            use_search: When True, enables Google Search grounding so the model
+                can cite live web results (e.g. regional crisis hotlines).
 
         Returns:
             The generated text response.
@@ -62,7 +66,40 @@ class GeminiLLMClient(BaseLLMClient):
         Raises:
             ValueError: If Gemini returns an empty text payload.
         """
+        tools = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
         response = await self.client.aio.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=temperature,
+                tools=tools,
+            ),
+        )
+        text = response.text
+        if not text:
+            raise ValueError("Gemini text generation returned an empty response.")
+        return text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0,
+    ) -> AsyncIterator[str]:
+        """Stream a plain-text response from Gemini.
+
+        Args:
+            prompt: The user or task prompt to send to the model.
+            system_instruction: Optional top-level instruction for model behavior.
+            temperature: Sampling temperature for the request.
+
+        Yields:
+            String chunks of the generated text as they arrive.
+        """
+
+        response_stream = await self.client.aio.models.generate_content_stream(
             model=self.model,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -70,10 +107,9 @@ class GeminiLLMClient(BaseLLMClient):
                 temperature=temperature,
             ),
         )
-        text = response.text
-        if not text:
-            raise ValueError("Gemini text generation returned an empty response.")
-        return text
+        async for chunk in response_stream:
+            if chunk.text:
+                yield chunk.text
 
     async def generate_structured(
         self,

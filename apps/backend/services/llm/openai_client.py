@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from typing import cast
 
 from openai import AsyncOpenAI
 
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
-DEFAULT_OPENAI_MODEL = "gpt-5.4-nano"
+DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 
 
 class OpenAILLMClient(BaseLLMClient):
@@ -43,6 +44,7 @@ class OpenAILLMClient(BaseLLMClient):
         prompt: str,
         system_instruction: str | None = None,
         temperature: float = 0,
+        use_search: bool = False,
     ) -> str:
         """Generate a plain-text response with OpenAI.
 
@@ -50,6 +52,8 @@ class OpenAILLMClient(BaseLLMClient):
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
             temperature: Sampling temperature for the request.
+            use_search: Unused for the OpenAI provider; accepted for interface
+                compatibility with `BaseLLMClient`.
 
         Returns:
             The generated text response.
@@ -71,6 +75,38 @@ class OpenAILLMClient(BaseLLMClient):
         if not text:
             raise ValueError("OpenAI text generation returned an empty response.")
         return text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0,
+    ) -> AsyncIterator[str]:
+        """Stream a plain-text response from OpenAI.
+
+        Args:
+            prompt: The user or task prompt to send to the model.
+            system_instruction: Optional top-level instruction for model behavior.
+            temperature: Sampling temperature for the request.
+
+        Yields:
+            String chunks of the generated text as they arrive.
+        """
+
+        input_items = []
+        if system_instruction:
+            input_items.append({"role": "system", "content": system_instruction})
+        input_items.append({"role": "user", "content": prompt})
+
+        async with self.client.responses.stream(
+            model=self.model,
+            input=input_items,
+            temperature=temperature,
+        ) as stream:
+            async for event in stream:
+                if event.type == "response.output_text.delta":
+                    yield event.delta
 
     async def generate_structured(
         self,
