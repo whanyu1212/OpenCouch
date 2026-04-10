@@ -48,7 +48,7 @@ from agent.memory.extraction_prompts import (
 )
 from agent.memory.models import ExtractionResult, MemoryWrite, SemanticFact
 from agent.memory.modes import MemoryMode
-from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.store import MemoryStore
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
@@ -96,7 +96,7 @@ def _memory_write_to_semantic_fact(write: MemoryWrite) -> SemanticFact:
 
 
 async def _fetch_existing_user_records(
-    store: OpenCouchMemoryStore,
+    store: MemoryStore,
     *,
     owner_id: str,
 ) -> list[Any]:
@@ -119,7 +119,7 @@ async def _fetch_existing_user_records(
 
 
 async def _write_new_fact(
-    store: OpenCouchMemoryStore,
+    store: MemoryStore,
     *,
     owner_id: str,
     fact: SemanticFact,
@@ -140,7 +140,7 @@ async def _write_new_fact(
 
 
 async def _bump_last_referenced_at(
-    store: OpenCouchMemoryStore,
+    store: MemoryStore,
     *,
     matched_record: Any,
 ) -> None:

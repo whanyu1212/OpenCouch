@@ -276,7 +276,7 @@ class TestExtractFactsNodeUnit:
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta == {}
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_incognito_mode_skips_silently(self) -> None:
@@ -299,7 +299,7 @@ class TestExtractFactsNodeUnit:
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta == {}
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
         # LLM should NOT have been called (the early exit fires before it)
         assert fake.extraction_calls == 0
 
@@ -321,7 +321,7 @@ class TestExtractFactsNodeUnit:
 
         assert delta == {}
         assert fake.extraction_calls == 1
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_single_new_fact_writes_to_store(self) -> None:
@@ -340,7 +340,7 @@ class TestExtractFactsNodeUnit:
         await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         namespace = ("user-1", "semantic")
-        assert store.record_count(namespace) == 1
+        assert await store.arecord_count(namespace) == 1
         records = await store.asearch(namespace, query=None, limit=10)
         assert len(records) == 1
         assert records[0].value["evidence_quote"] == "my sister Sarah visited"
@@ -380,7 +380,7 @@ class TestExtractFactsNodeUnit:
 
         # Record count unchanged (still 1) — no new row was written.
         namespace = ("user-1", "semantic")
-        assert store.record_count(namespace) == 1
+        assert await store.arecord_count(namespace) == 1
 
         # But last_referenced_at has been bumped.
         updated = await store.aget(namespace, key=seed_fact.id)
@@ -431,7 +431,7 @@ class TestExtractFactsNodeUnit:
 
         namespace = ("user-1", "semantic")
         # Store now has 2 records: the seed + the novel fact
-        assert store.record_count(namespace) == 2
+        assert await store.arecord_count(namespace) == 2
 
     @pytest.mark.asyncio
     async def test_intra_batch_dedup(self) -> None:
@@ -461,7 +461,7 @@ class TestExtractFactsNodeUnit:
         # First candidate writes; second should dedup against the first
         # via the intra-batch append-to-existing-records pattern.
         namespace = ("user-1", "semantic")
-        assert store.record_count(namespace) == 1
+        assert await store.arecord_count(namespace) == 1
 
     @pytest.mark.asyncio
     async def test_llm_failure_logs_warning_and_skips(
@@ -482,7 +482,7 @@ class TestExtractFactsNodeUnit:
             delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta == {}
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
         assert any("structured-output call failed" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
@@ -551,7 +551,7 @@ class TestExtractFactsEndToEnd:
         # Extraction ran and wrote one record
         assert fake.extraction_calls == 1
         namespace = ("user-e2e", "semantic")
-        assert store.record_count(namespace) == 1
+        assert await store.arecord_count(namespace) == 1
 
     @pytest.mark.asyncio
     async def test_extraction_skipped_in_incognito_end_to_end(self) -> None:
@@ -576,7 +576,7 @@ class TestExtractFactsEndToEnd:
 
         # Crisis gate and dispatcher still called the LLM, but extraction didn't
         assert fake.extraction_calls == 0
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_extraction_skipped_when_no_llm_client_end_to_end(self) -> None:
@@ -593,7 +593,7 @@ class TestExtractFactsEndToEnd:
             memory_mode=MemoryMode.LOCAL,
         )
 
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_extraction_on_crisis_path_does_not_run(self) -> None:
@@ -630,9 +630,9 @@ class TestExtractFactsEndToEnd:
         )
 
         # Extraction node ran but returned empty → no writes
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
         # Crisis log DID get written
-        assert crisis_log.record_count() == 1
+        assert await crisis_log.arecord_count() == 1
 
 
 # ─── 4. Regression guard on the dedup threshold constant ────────────────

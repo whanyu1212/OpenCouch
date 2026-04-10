@@ -1,50 +1,63 @@
 """Unified memory store for the OpenCouch agent.
 
-The ``OpenCouchMemoryStore`` is the single entry point the agent's nodes
-use to read and write long-term memory. It fans out to the right backend
-based on the record namespace (semantic / episodic / procedural) and the
-active ``MemoryMode`` (incognito / local / synced).
+The :class:`MemoryStore` protocol is the interface the agent's nodes
+use to read and write long-term memory. Two concrete implementations
+satisfy it:
 
-Phase 1 v0.4 scope:
-- In-memory backing only. No SQLite, no Postgres, no Graphiti. All data
-  lives in a per-instance dict and is discarded when the instance is
-  garbage collected. SQLite backing lands in v0.8.
-- **Token-recall search** against the serialized value of each record.
-  This replaces v0.1's one-directional substring match, which failed on
-  paraphrased queries (e.g. "tense with Sarah lately" wouldn't find a
-  stored "I have a sister named Sarah" because the query isn't a
-  substring of the haystack). The v0.3.1 scorer uses the shared
-  tokenizer from :mod:`agent.memory.text_tokens` and computes
-  ``|query_tokens ∩ haystack_tokens| / |query_tokens|`` after filtering
-  stopwords from the query side. A record counts as a match when that
-  recall ratio meets :data:`SEARCH_MATCH_THRESHOLD`.
-- Results are returned in **score-descending order** (highest recall
-  first), with insertion order as a deterministic tiebreaker. Callers
-  that relied on pure insertion-order behavior should be aware of the
-  change; in practice the only caller (``load_memory_node``) wants
-  best-match-first anyway.
-- This is still a placeholder for the real text-embedding-3-small
-  pathway that lands alongside the SQLite backend in v0.8. Token-recall
-  is deterministic, cheap, and dramatically better than substring match
-  for the paraphrase-heavy retrieval path, without introducing any
-  embedding dependency or cold-start model load.
-- **Semantic** (v0.3) and **episodic** (v0.4) namespaces are now both
-  wired through the real extraction/retrieval path. The episodic
-  namespace stores one :class:`agent.memory.models.StoredSessionArc`
-  per session, written by the summarizer function at session end.
-  The store treats the two namespaces identically — the same put/get/
-  search interface serves both. Only the record shape inside ``value``
-  differs. Procedural reads still return empty (procedural memory
-  lands in v0.7).
+- :class:`OpenCouchMemoryStore` (in-memory, dict-backed) — original
+  v0.1 scaffolding, fast and ephemeral. Used by unit tests and by
+  incognito-mode CLI sessions where nothing should persist.
+- :class:`agent.memory.sqlite_store.SqliteMemoryStore` (v0.8) —
+  aiosqlite-backed, durable across process restarts. Used by
+  persistent-mode CLI sessions so that semantic facts and episodic
+  arcs survive ``/exit`` + restart.
+
+Both implementations fan out records by namespace (semantic /
+episodic / procedural) via a ``(user_id, kind)`` tuple. The in-memory
+version keeps per-namespace dicts; the SQLite version keeps a single
+``memory_records`` table with ``namespace_kind`` as a discriminator
+column and an index on ``(owner_id, namespace_kind)``.
+
+Phase 1 v0.8 scope (for this file):
+- :class:`MemoryStore` protocol ships alongside the existing
+  :class:`OpenCouchMemoryStore`. The protocol captures the async
+  interface (``aput``, ``aget``, ``asearch``, ``adelete``, ``aclose``)
+  plus the debug helpers the CLI uses (``record_count``,
+  ``namespaces``). Both concrete classes satisfy it structurally.
+- Token-recall search behavior is unchanged. :class:`SqliteMemoryStore`
+  runs the same Python-side scoring loop used by
+  :class:`OpenCouchMemoryStore` — the only difference is where the
+  rows come from (SQL query vs dict iteration). See the
+  :data:`SEARCH_MATCH_THRESHOLD` comment below for the scorer rationale.
+- Incognito mode still uses :class:`OpenCouchMemoryStore` (the runtime
+  picks the implementation based on mode).
+
+Token-recall scoring details (v0.3.1, still current):
+- Uses the shared tokenizer from :mod:`agent.memory.text_tokens` and
+  computes ``|query_tokens ∩ haystack_tokens| / |query_tokens|`` after
+  filtering stopwords from the query side. A record counts as a match
+  when that recall ratio meets :data:`SEARCH_MATCH_THRESHOLD`.
+- Results are returned in score-descending order with insertion order
+  as a deterministic tiebreaker. Callers that relied on pure
+  insertion-order behavior should be aware of the change; in practice
+  the only caller (``load_memory_node``) wants best-match-first anyway.
+- Still a placeholder for the real text-embedding-3-small pathway
+  that lands after v0.8. Token-recall is deterministic, cheap, and
+  dramatically better than substring match for the paraphrase-heavy
+  retrieval path, without introducing any embedding dependency or
+  cold-start model load.
+- **Semantic** (v0.3) and **episodic** (v0.4) namespaces are both
+  wired through the real extraction/retrieval path. Procedural reads
+  still return empty (procedural memory lands in v0.7).
 
 Design decisions:
-- The store is a **standalone class**, not a subclass of LangGraph's
-  ``BaseStore``. The full ``BaseStore`` batch-op dispatcher is more
-  scaffolding than v0.1 needs; phase 3 will revisit whether to inherit
-  or write an adapter when graph memory lands.
-- Namespaces are represented as tuples (``(user_id, kind)``) matching the
-  LangGraph convention, so a future migration to ``BaseStore`` is a
-  straightforward adapter rather than a redesign.
+- The store is a **standalone class hierarchy**, not a subclass of
+  LangGraph's ``BaseStore``. The full ``BaseStore`` batch-op dispatcher
+  is more scaffolding than phase 1 needs; phase 3 will revisit whether
+  to inherit or write an adapter when graph memory lands.
+- Namespaces are represented as tuples (``(user_id, kind)``) matching
+  the LangGraph convention, so a future migration to ``BaseStore`` is
+  a straightforward adapter rather than a redesign.
 - The store exposes a small async interface: ``aput``, ``aget``,
   ``asearch``, ``adelete``, ``aclose``. No sync variants. Agent nodes
   always run in async context so there's no caller that needs sync.
@@ -53,7 +66,7 @@ Design decisions:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from agent.memory.text_tokens import tokenize, tokenize_meaningful
 
@@ -118,13 +131,123 @@ class _NamespaceBucket:
     records: dict[str, StoreRecord] = field(default_factory=dict)
 
 
-class OpenCouchMemoryStore:
-    """In-memory store with a namespace-aware put/get/search interface.
+@runtime_checkable
+class MemoryStore(Protocol):
+    """The async memory-store interface both implementations satisfy.
 
-    This is the v0.1 scaffolding — it proves the wiring and the node
-    interface without committing to any persistence backend. The shape
-    of the public methods is designed so that swapping in a SQLite-backed
-    or Postgres-backed implementation later is a drop-in replacement.
+    Added in v0.8 alongside the SQLite-backed implementation. Before
+    v0.8, :class:`OpenCouchMemoryStore` was the only implementation and
+    callers typed their store parameters as that concrete class. v0.8
+    adds :class:`agent.memory.sqlite_store.SqliteMemoryStore` as a
+    sibling — same interface, SQLite-backed persistence — so the
+    runtime can swap implementations without the callers needing to
+    know which one they're holding.
+
+    The protocol mirrors the existing OpenCouchMemoryStore surface
+    exactly, because OpenCouchMemoryStore was the reference
+    implementation. Any method added to both concrete classes should
+    be added here first.
+
+    Design notes:
+    - **``@runtime_checkable``** so ``isinstance(store, MemoryStore)``
+      works for debug tools and tests. The runtime cost is small and
+      it makes the protocol more useful for assertion-style checks.
+    - **No class-level state in the protocol** — concrete classes
+      manage their own lifecycle (in-memory dict vs SQLite connection).
+    - **Names match the concrete method names** rather than being
+      renamed for protocol-style brevity (``put`` vs ``aput``), so
+      callers can substitute the type annotation without having to
+      adjust call sites.
+
+    When this protocol grows, keep two rules in mind:
+    1. Any method added here MUST be implemented by both concrete
+       classes before the protocol signature ships, or runtime callers
+       that duck-type against the protocol will get AttributeError.
+    2. The protocol should only capture the methods nodes and runtime
+       code actually USE. Internal debug helpers (e.g.,
+       ``record_count``) that aren't part of the node interface don't
+       need to be in the protocol — they can live on the concrete
+       classes only.
+    """
+
+    async def aput(
+        self,
+        namespace: Namespace,
+        key: str,
+        value: dict[str, Any],
+    ) -> None:
+        """Store a record under ``(namespace, key)``."""
+        ...
+
+    async def aget(
+        self,
+        namespace: Namespace,
+        key: str,
+    ) -> StoreRecord | None:
+        """Fetch one record by its ``(namespace, key)``."""
+        ...
+
+    async def asearch(
+        self,
+        namespace: Namespace,
+        *,
+        query: str | None = None,
+        limit: int = 10,
+    ) -> list[StoreRecord]:
+        """Search for records within ``namespace`` matching ``query``."""
+        ...
+
+    async def adelete(
+        self,
+        namespace: Namespace,
+        key: str,
+    ) -> bool:
+        """Delete a record by ``(namespace, key)``."""
+        ...
+
+    async def aclose(self) -> None:
+        """Release any resources held by the store."""
+        ...
+
+    async def arecord_count(self, namespace: Namespace | None = None) -> int:
+        """Return the total number of records, optionally filtered by namespace.
+
+        Included in the protocol because the CLI ``/memory status`` and
+        ``/memory list`` commands both read it. Async because the
+        SQLite-backed implementation needs to share the aiosqlite
+        connection — a sync version would either open a second
+        connection (breaking ``:memory:`` databases) or block the
+        event loop.
+
+        The ``a`` prefix matches the other async methods; the in-memory
+        implementation just doesn't need to await anything but
+        still has to be declared ``async`` to satisfy the protocol.
+        """
+        ...
+
+    async def anamespaces(self) -> list[Namespace]:
+        """Return every namespace that currently contains at least one record.
+
+        Same async rationale as :meth:`arecord_count`.
+        """
+        ...
+
+
+class OpenCouchMemoryStore:
+    """In-memory implementation of the :class:`MemoryStore` protocol.
+
+    This is the original v0.1 scaffolding — dict-backed, fast, and
+    ephemeral. Records live in a per-instance dict keyed by namespace
+    and are discarded when the instance is garbage collected.
+
+    As of v0.8 this is no longer the only implementation. A sibling
+    :class:`agent.memory.sqlite_store.SqliteMemoryStore` provides the
+    same interface with SQLite-backed persistence. The runtime can
+    accept either one through the :class:`MemoryStore` protocol type
+    annotation. Tests and unit-test fixtures should prefer this
+    in-memory version because it has no connection lifecycle and no
+    I/O overhead; production runtime uses the SQLite version so
+    session arcs and semantic facts survive CLI restarts.
 
     The store is **not** thread-safe. Each runtime instance should own
     its own store; do not share a single instance across runtimes or
@@ -290,14 +413,16 @@ class OpenCouchMemoryStore:
         self._closed = True
         self._buckets.clear()
 
-    # ── Debug / observability helpers (not part of the node interface) ───
+    # ── Debug / observability helpers ────────────────────────────────────
 
-    def record_count(self, namespace: Namespace | None = None) -> int:
+    async def arecord_count(self, namespace: Namespace | None = None) -> int:
         """Return the total number of records, optionally filtered by namespace.
 
-        Used by ``/memory status`` CLI command and by tests. NOT part of
-        the public node interface — nodes should use ``asearch`` with
-        ``query=None`` if they need to enumerate.
+        Used by ``/memory status`` and ``/memory list`` CLI commands
+        and by tests. NOT part of the graph-node interface — nodes
+        should use ``asearch`` with ``query=None`` if they need to
+        enumerate. Async to match the SQLite implementation's
+        connection-sharing contract (see :class:`MemoryStore` protocol).
         """
 
         if self._closed:
@@ -307,8 +432,12 @@ class OpenCouchMemoryStore:
             return len(bucket.records) if bucket is not None else 0
         return sum(len(b.records) for b in self._buckets.values())
 
-    def namespaces(self) -> list[Namespace]:
-        """Return every namespace that currently contains at least one record."""
+    async def anamespaces(self) -> list[Namespace]:
+        """Return every namespace that currently contains at least one record.
+
+        Async to match the SQLite implementation's connection-sharing
+        contract (see :class:`MemoryStore` protocol).
+        """
 
         if self._closed:
             return []

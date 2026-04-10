@@ -28,7 +28,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
-from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
     AgentInput,
     AgentOutput,
@@ -229,7 +229,7 @@ async def run_agent(
     agent_input: AgentInput,
     *,
     llm_client: BaseLLMClient | None = None,
-    memory_store: OpenCouchMemoryStore | None = None,
+    memory_store: MemoryStore | None = None,
     crisis_log_backend: CrisisLogBackend | None = None,
     memory_mode: MemoryMode = MemoryMode.INCOGNITO,
 ) -> AgentOutput:

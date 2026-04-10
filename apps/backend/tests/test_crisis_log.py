@@ -124,7 +124,7 @@ class TestCrisisLogNode:
         delta = await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta == {}  # no state changes; side effect only
-        assert backend.record_count() == 1
+        assert await backend.arecord_count() == 1
 
     @pytest.mark.asyncio
     async def test_record_fields_match_state(self) -> None:
@@ -224,7 +224,7 @@ class TestCrisisLogNode:
         delta = await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta == {}
-        assert backend.record_count() == 0
+        assert await backend.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_backend_failure_is_logged_but_does_not_crash(
@@ -265,7 +265,7 @@ class TestCrisisLogEndToEnd:
         )
 
         assert result.response_type == ResponseKind.CRISIS
-        assert backend.record_count() == 1
+        assert await backend.arecord_count() == 1
 
     @pytest.mark.asyncio
     async def test_therapeutic_turn_does_not_write_to_crisis_log(self) -> None:
@@ -278,7 +278,7 @@ class TestCrisisLogEndToEnd:
         )
 
         assert result.response_type == ResponseKind.THERAPEUTIC
-        assert backend.record_count() == 0
+        assert await backend.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_crisis_record_carries_the_classifier_level(self) -> None:

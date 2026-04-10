@@ -187,13 +187,22 @@ async def test_threads_command_uses_runtime_listing(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_list_command_dispatches_render(monkeypatch) -> None:
-    """/memory list should route to render_memory_list with the runtime."""
+    """/memory list should route to render_memory_list with the runtime.
+
+    v0.8: ``render_memory_list`` became async because the store's
+    ``arecord_count`` / ``anamespaces`` helpers went async to support
+    the SQLite-backed implementation. The test's monkey-patch
+    substitute has to be an awaitable callable — sync lambdas don't
+    satisfy that contract anymore."""
 
     captured: dict[str, object] = {}
 
+    async def _fake_render_memory_list(runtime_arg):
+        captured["runtime"] = runtime_arg
+
     monkeypatch.setattr(
         "opencouch_cli.app.render_memory_list",
-        lambda runtime: captured.update({"runtime": runtime}),
+        _fake_render_memory_list,
     )
 
     session = _session()
@@ -215,13 +224,17 @@ async def test_memory_status_still_dispatches_render_status(monkeypatch) -> None
     render_list_calls: list[object] = []
     render_status_calls: list[object] = []
 
+    async def _fake_render_memory_list(runtime_arg):
+        render_list_calls.append(runtime_arg)
+
+    async def _fake_render_memory_status(runtime_arg):
+        render_status_calls.append(runtime_arg)
+
     monkeypatch.setattr(
-        "opencouch_cli.app.render_memory_list",
-        lambda runtime: render_list_calls.append(runtime),
+        "opencouch_cli.app.render_memory_list", _fake_render_memory_list
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_memory_status",
-        lambda runtime: render_status_calls.append(runtime),
+        "opencouch_cli.app.render_memory_status", _fake_render_memory_status
     )
 
     session = _session()
@@ -243,14 +256,17 @@ async def test_memory_unknown_subcommand_warns(monkeypatch) -> None:
 
     info_messages: list[tuple[str, str]] = []
 
+    async def _noop_async(runtime_arg):
+        return None
+
     monkeypatch.setattr(
         "opencouch_cli.app.render_info",
         lambda message, style="panel": info_messages.append((style, message)),
     )
-    # Also stub the known handlers so a misdispatch would be visible
-    # as an unexpected call instead of a test failure on Rich output.
-    monkeypatch.setattr("opencouch_cli.app.render_memory_list", lambda runtime: None)
-    monkeypatch.setattr("opencouch_cli.app.render_memory_status", lambda runtime: None)
+    # Stub the known async handlers so a misdispatch is visible as an
+    # unexpected call rather than blowing up on Rich output.
+    monkeypatch.setattr("opencouch_cli.app.render_memory_list", _noop_async)
+    monkeypatch.setattr("opencouch_cli.app.render_memory_status", _noop_async)
 
     session = _session()
     runtime = FakeRuntime()
@@ -395,3 +411,128 @@ async def test_end_command_degrades_on_runtime_exception(monkeypatch) -> None:
         style == "warning" and "Something went wrong" in msg
         for style, msg in info_messages
     )
+
+
+# ─── v0.8 /memory list rendering — object column ──────────────────────
+#
+# The v0.8 dogfood surfaced a rendering gap: when a single turn
+# produced two semantic facts with identical evidence quotes but
+# different objects (e.g., "I take fluoxetine and vyvanse daily"
+# → one USES fact per medication), the table showed two rows that
+# looked identical because the object.identifier wasn't displayed.
+# These tests pin the fix: the semantic records table now includes
+# an ``object`` column surfacing ``object.identifier``, so duplicate-
+# looking quotes can be told apart.
+
+
+def test_format_entity_identifier_extracts_identifier_field() -> None:
+    """The helper should return the ``identifier`` field from a
+    serialized EntityRef dict."""
+
+    from opencouch_cli.app import _format_entity_identifier
+
+    entity = {"type": "Person", "identifier": "Sarah"}
+    assert _format_entity_identifier(entity) == "Sarah"
+
+
+def test_format_entity_identifier_returns_placeholder_for_missing_field() -> None:
+    """When the identifier is missing, the helper should return ``'?'``
+    rather than raising. Defensive against schema drift."""
+
+    from opencouch_cli.app import _format_entity_identifier
+
+    assert _format_entity_identifier({"type": "Person"}) == "?"
+    assert _format_entity_identifier({"identifier": ""}) == "?"
+    assert _format_entity_identifier({}) == "?"
+
+
+def test_format_entity_identifier_returns_placeholder_for_wrong_shape() -> None:
+    """When the value isn't a dict at all, the helper should return
+    ``'?'`` rather than crashing. Also defensive."""
+
+    from opencouch_cli.app import _format_entity_identifier
+
+    assert _format_entity_identifier(None) == "?"
+    assert _format_entity_identifier("not-a-dict") == "?"
+    assert _format_entity_identifier(42) == "?"
+
+
+def test_render_semantic_records_table_shows_object_column(capsys) -> None:
+    """The rendered table must include an ``object`` column header
+    AND the object identifier for each record. This is the
+    regression guard for the v0.8 dogfood rendering fix — if a
+    future refactor drops the column or the per-row lookup, this
+    test catches it."""
+
+    from opencouch_cli.app import _render_semantic_records_table
+
+    records = [
+        (
+            "fact-fluoxetine",
+            {
+                "category": "context",
+                "subject": {"type": "User", "identifier": "user"},
+                "predicate": "USES",
+                "object": {"type": "CopingStrategy", "identifier": "fluoxetine"},
+                "evidence_quote": "I take fluoxetine and vyvanse daily",
+                "confidence": "high",
+            },
+        ),
+        (
+            "fact-vyvanse",
+            {
+                "category": "context",
+                "subject": {"type": "User", "identifier": "user"},
+                "predicate": "USES",
+                "object": {"type": "CopingStrategy", "identifier": "vyvanse"},
+                "evidence_quote": "I take fluoxetine and vyvanse daily",
+                "confidence": "high",
+            },
+        ),
+    ]
+
+    _render_semantic_records_table(records)
+    captured = capsys.readouterr()
+
+    # The column header must appear
+    assert "object" in captured.out
+    # Both object identifiers must appear as row values — this is
+    # the regression guard for the v0.8 dogfood fix
+    assert "fluoxetine" in captured.out
+    assert "vyvanse" in captured.out
+    # And the evidence quote still appears. Rich wraps long quotes
+    # across multiple lines inside the column cell, so we can't
+    # assert the full phrase as a single substring. Assert that
+    # all the distinctive tokens appear somewhere in the output,
+    # which is enough to confirm the quote didn't get dropped.
+    assert "daily" in captured.out  # the last token of the quote
+
+
+def test_render_semantic_records_table_shows_placeholder_for_missing_object(
+    capsys,
+) -> None:
+    """When a record has a missing or malformed object field,
+    the table should render ``'?'`` rather than crashing or
+    leaving a blank column."""
+
+    from opencouch_cli.app import _render_semantic_records_table
+
+    records = [
+        (
+            "fact-malformed",
+            {
+                "category": "context",
+                "predicate": "USES",
+                # object field missing entirely
+                "evidence_quote": "malformed record",
+                "confidence": "low",
+            },
+        ),
+    ]
+
+    _render_semantic_records_table(records)
+    captured = capsys.readouterr()
+
+    # The row should render with a '?' in the object column
+    assert "malformed record" in captured.out
+    assert "?" in captured.out

@@ -13,7 +13,7 @@ from typing import TypedDict
 
 from agent.memory.crisis_log import CrisisLogBackend
 from agent.memory.modes import MemoryMode
-from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.store import MemoryStore
 from services.llm.base import BaseLLMClient
 
 
@@ -23,9 +23,12 @@ class WorkflowContext(TypedDict):
     llm_client: BaseLLMClient | None
     # The unified memory store is the single entry point for long-term
     # memory reads and writes. It fans out internally to the right
-    # namespace (semantic / episodic / procedural). See
-    # ``agent/memory/store.py``.
-    memory_store: OpenCouchMemoryStore
+    # namespace (semantic / episodic / procedural). Typed as the
+    # protocol so either implementation can be injected —
+    # :class:`OpenCouchMemoryStore` for in-memory (tests, incognito)
+    # or :class:`SqliteMemoryStore` for persistent (v0.8+, local mode).
+    # See ``agent/memory/store.py`` for the protocol definition.
+    memory_store: MemoryStore
     # The always-on crisis safety log. Writes regardless of memory_mode
     # — see schema.yaml §2 namespaces.crisis_log for the privacy
     # asymmetry rationale.

@@ -11,7 +11,9 @@ from agent.graph import build_agent_workflow, build_initial_state, state_to_outp
 from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
-from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
     AgentInput,
     AgentOutput,
@@ -31,6 +33,14 @@ from services.llm.base import BaseLLMClient
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_THREAD_DB_PATH = BACKEND_ROOT / ".opencouch_threads.sqlite3"
+# v0.8: SQLite file paths for the memory store and crisis log.
+# Kept separate from the thread checkpointer file so LangGraph owns
+# its schema and we own ours — no cross-table coupling or shared-
+# transaction surprises when LangGraph bumps its schema. Named
+# consistently as ``.opencouch_*.sqlite3`` so all three OpenCouch-
+# owned SQLite files sit together in ``apps/backend/``.
+DEFAULT_MEMORY_DB_PATH = BACKEND_ROOT / ".opencouch_memory.sqlite3"
+DEFAULT_CRISIS_LOG_DB_PATH = BACKEND_ROOT / ".opencouch_crisis.sqlite3"
 ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "Channel"),
     ("agent.models", "CrisisAssessment"),
@@ -65,36 +75,84 @@ class ThreadSummary:
 
 
 class PersistentAgentRuntime:
-    """Thread-backed runtime with incognito, local, or synced memory mode."""
+    """Thread-backed runtime with incognito, local, or synced memory mode.
+
+    v0.8 changed the default storage layer. Prior to v0.8, every mode
+    used in-memory backings regardless of the ``memory_mode`` flag —
+    the mode only affected the LangGraph conversation checkpointer's
+    SQLite path. Now all three storage layers (thread checkpoint,
+    memory store, crisis log) have mode-aware defaults:
+
+    - ``INCOGNITO`` → every layer uses ``:memory:`` SQLite (or the
+      in-memory sibling class for the memory store / crisis log).
+      Nothing touches disk. Closes the incognito privacy contract.
+    - ``LOCAL`` / ``SYNCED`` → thread checkpointer uses
+      :data:`DEFAULT_THREAD_DB_PATH`, memory store uses
+      :data:`DEFAULT_MEMORY_DB_PATH`, crisis log uses
+      :data:`DEFAULT_CRISIS_LOG_DB_PATH`. All three are file-backed
+      and survive CLI restarts.
+
+    Explicit overrides still work for tests: if the caller passes
+    ``memory_store=OpenCouchMemoryStore()`` or a specific
+    ``crisis_log_backend``, the runtime uses that instance and
+    doesn't open a SQLite connection for that layer. The existing
+    test fixtures that construct in-memory backings directly
+    continue to work unchanged.
+    """
 
     def __init__(
         self,
         sqlite_path: str | Path = DEFAULT_THREAD_DB_PATH,
         *,
-        memory_store: OpenCouchMemoryStore | None = None,
+        memory_store: MemoryStore | None = None,
         crisis_log_backend: CrisisLogBackend | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
+        memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
+        crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
     ) -> None:
         """Initialize the runtime.
 
         Args:
             sqlite_path: SQLite database path for LangGraph checkpoints.
-            memory_store: Optional unified memory store. Defaults to a
-                fresh in-memory :class:`OpenCouchMemoryStore`; phase 1
-                v0.1 only ships the in-memory backing, SQLite/Postgres
-                backings land in later phases.
-            crisis_log_backend: Optional crisis log backend. Defaults to
-                :class:`InMemoryCrisisLogBackend`. The crisis log is
-                always-on regardless of memory_mode (see schema.yaml §2
-                namespaces.crisis_log for the privacy asymmetry).
+                Forced to ``:memory:`` in incognito mode.
+            memory_store: Optional unified memory store. If None, the
+                runtime picks an implementation based on ``memory_mode``:
+                :class:`OpenCouchMemoryStore` for INCOGNITO,
+                :class:`SqliteMemoryStore` for LOCAL/SYNCED. Tests that
+                want an explicit in-memory store can pass one directly
+                to bypass the mode-based selection.
+            crisis_log_backend: Optional crisis log backend. Same
+                mode-based selection as ``memory_store``:
+                :class:`InMemoryCrisisLogBackend` for INCOGNITO,
+                :class:`SqliteCrisisLogBackend` for LOCAL/SYNCED. The
+                crisis log is always-on regardless of memory_mode (see
+                schema.yaml §2 namespaces.crisis_log for the privacy
+                asymmetry), but the *backend* still follows the mode:
+                incognito means no crisis events hit disk; local means
+                they do. Tests can override with NullCrisisLogBackend
+                or a mock to assert specific behaviors.
             memory_mode: Persistence tier for the runtime. ``INCOGNITO``
                 uses ephemeral in-memory stores only; ``LOCAL`` persists
-                to the configured SQLite path; ``SYNCED`` is reserved
-                for a future remote backend.
+                to the configured SQLite paths; ``SYNCED`` is reserved
+                for a future remote backend and currently behaves the
+                same as LOCAL.
+            memory_sqlite_path: SQLite database path for the memory
+                store. Only used when ``memory_mode`` is LOCAL/SYNCED
+                and the caller didn't pass an explicit ``memory_store``.
+                Defaults to :data:`DEFAULT_MEMORY_DB_PATH`.
+            crisis_log_sqlite_path: SQLite database path for the crisis
+                log. Only used when ``memory_mode`` is LOCAL/SYNCED and
+                the caller didn't pass an explicit
+                ``crisis_log_backend``. Defaults to
+                :data:`DEFAULT_CRISIS_LOG_DB_PATH`.
         """
 
         self.memory_mode = memory_mode
         is_incognito = memory_mode == MemoryMode.INCOGNITO
+
+        # Thread checkpointer path: incognito forces :memory: so the
+        # LangGraph checkpointer doesn't leak conversation state to
+        # disk. Non-incognito uses the caller-provided path.
         resolved_sqlite = ":memory:" if is_incognito else sqlite_path
         self.sqlite_path = (
             Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
@@ -104,11 +162,26 @@ class PersistentAgentRuntime:
         self._checkpointer: AsyncSqliteSaver | None = None
         self._graph: CompiledStateGraph | None = None
 
-        # v0.1 uses in-memory backings regardless of mode. The mode flag
-        # currently affects only the LangGraph checkpointer sqlite path;
-        # SQLite-backed memory store + crisis log land in v0.8.
-        self._memory_store = memory_store or OpenCouchMemoryStore()
-        self._crisis_log_backend = crisis_log_backend or InMemoryCrisisLogBackend()
+        # v0.8: pick memory store + crisis log backend based on mode
+        # and whether the caller passed an explicit override. The
+        # mode-based defaults give persistent-mode CLI sessions real
+        # disk backing without requiring the caller to construct
+        # SqliteMemoryStore themselves; the override path lets tests
+        # pass in in-memory instances directly.
+        if memory_store is not None:
+            # Explicit override — trust the caller.
+            self._memory_store = memory_store
+        elif is_incognito:
+            self._memory_store = OpenCouchMemoryStore()
+        else:
+            self._memory_store = SqliteMemoryStore(memory_sqlite_path)
+
+        if crisis_log_backend is not None:
+            self._crisis_log_backend = crisis_log_backend
+        elif is_incognito:
+            self._crisis_log_backend = InMemoryCrisisLogBackend()
+        else:
+            self._crisis_log_backend = SqliteCrisisLogBackend(crisis_log_sqlite_path)
 
         # v0.4: per-process tracking of when each thread's current session
         # began. Used by the session summarizer to populate started_at on
@@ -137,7 +210,22 @@ class PersistentAgentRuntime:
         self._max_crisis_levels: dict[str, int] = {}
 
     async def __aenter__(self) -> PersistentAgentRuntime:
-        """Open runtime resources."""
+        """Open runtime resources.
+
+        Only opens the LangGraph thread checkpointer connection
+        eagerly — the memory store and crisis log backends (whether
+        in-memory or SQLite) open their own resources lazily on first
+        async method call. This asymmetry exists because the LangGraph
+        checkpointer was designed with explicit ``__aenter__`` /
+        ``__aexit__`` semantics, while the v0.8 SQLite stores use
+        lazy connection initialization to keep ``__init__`` cheap
+        and to support sync test fixtures that construct instances
+        without an event loop.
+
+        The practical effect is the same: by the time the runtime is
+        usable (inside the ``async with`` block), all three storage
+        layers are ready to accept reads and writes.
+        """
 
         if self.sqlite_path != Path(":memory:"):
             self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,12 +253,15 @@ class PersistentAgentRuntime:
             )
 
     @property
-    def memory_store(self) -> OpenCouchMemoryStore:
+    def memory_store(self) -> MemoryStore:
         """Return the runtime's unified memory store.
 
         Exposed for CLI and debug-tooling use (e.g. ``/memory status``).
         The store is the same instance passed into node runtime contexts,
-        so reads reflect the current live state.
+        so reads reflect the current live state. Typed as the
+        :class:`MemoryStore` protocol so callers don't depend on
+        whether the runtime is holding the in-memory or SQLite
+        implementation.
         """
 
         return self._memory_store

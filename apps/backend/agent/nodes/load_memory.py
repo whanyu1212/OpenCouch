@@ -55,7 +55,7 @@ from typing import Any
 from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
-from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _retrieve_semantic_working_memory(
-    store: OpenCouchMemoryStore,
+    store: MemoryStore,
     *,
     owner_id: str,
     query: str,
@@ -111,7 +111,7 @@ def _format_episodic_entry(record_value: dict[str, Any]) -> str | None:
 
 
 async def _retrieve_episodic_working_memory(
-    store: OpenCouchMemoryStore,
+    store: MemoryStore,
     *,
     owner_id: str,
     query: str,
@@ -216,8 +216,8 @@ async def run_load_memory_node(
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
     semantic_ns = (owner_id, "semantic")
     episodic_ns = (owner_id, "episodic")
-    semantic_store_size = memory_store.record_count(semantic_ns)
-    episodic_store_size = memory_store.record_count(episodic_ns)
+    semantic_store_size = await memory_store.arecord_count(semantic_ns)
+    episodic_store_size = await memory_store.arecord_count(episodic_ns)
     query = state["message"]
     meaningful_query_tokens = tokenize_meaningful(query)
 

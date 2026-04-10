@@ -61,7 +61,7 @@ from agent.memory.models import (
     SummarizationResult,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.store import MemoryStore
 from agent.memory.summarization_prompts import (
     build_summarization_system_prompt,
     build_summarization_user_prompt,
@@ -115,7 +115,7 @@ def _session_arc_to_stored(
 
 
 async def _write_session_arc(
-    store: OpenCouchMemoryStore,
+    store: MemoryStore,
     *,
     owner_id: str,
     stored_arc: StoredSessionArc,
@@ -140,7 +140,7 @@ async def run_summarize_session(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-    memory_store: OpenCouchMemoryStore,
+    memory_store: MemoryStore,
     memory_mode: MemoryMode,
     session_id: str,
     started_at: str,

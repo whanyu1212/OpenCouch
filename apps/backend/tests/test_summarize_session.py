@@ -247,7 +247,7 @@ class TestSummarizerEarlyExits:
         )
 
         assert result is None
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
     async def test_incognito_mode_returns_none(self) -> None:
@@ -274,7 +274,7 @@ class TestSummarizerEarlyExits:
         )
 
         assert result is None
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
         # Critical: the LLM should NOT have been called — we skip before
         # making the expensive API call.
         assert fake.summarization_calls == 0
@@ -322,7 +322,7 @@ class TestSummarizerHappyPath:
         assert fake.summarization_calls == 1
 
         # Verify the record actually landed in the store
-        assert store.record_count(("user-42", "episodic")) == 1
+        assert await store.arecord_count(("user-42", "episodic")) == 1
         records = await store.asearch(("user-42", "episodic"), query=None)
         assert len(records) == 1
         assert records[0].value["summary"] == result.summary
@@ -352,7 +352,7 @@ class TestSummarizerHappyPath:
         )
 
         assert result is None
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
         assert fake.summarization_calls == 1  # LLM WAS called — it just returned None
 
     @pytest.mark.asyncio
@@ -409,7 +409,7 @@ class TestSummarizerHappyPath:
 
         assert result is not None
         assert result.owner_id == "session-abc"
-        assert store.record_count(("session-abc", "episodic")) == 1
+        assert await store.arecord_count(("session-abc", "episodic")) == 1
 
 
 # ─── 4. Failure-mode tests ─────────────────────────────────────────────
@@ -444,7 +444,7 @@ class TestSummarizerFailureModes:
             )
 
         assert result is None
-        assert store.record_count() == 0
+        assert await store.arecord_count() == 0
         assert any(
             "LLM structured-output call failed" in r.message for r in caplog.records
         )
@@ -478,7 +478,7 @@ class TestSummarizerFailureModes:
 
         # Still wrote the arc despite the bad timestamps
         assert result is not None
-        assert store.record_count() == 1
+        assert await store.arecord_count() == 1
         # And logged the warning
         assert any("could not parse" in r.message for r in caplog.records)
 

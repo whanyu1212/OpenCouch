@@ -15,6 +15,8 @@ from uuid import uuid4
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.persistence import (
+    DEFAULT_CRISIS_LOG_DB_PATH,
+    DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
     ThreadSummary,
@@ -99,6 +101,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--sqlite-path",
         default=str(DEFAULT_THREAD_DB_PATH),
         help="SQLite path for LangGraph thread checkpoints.",
+    )
+    parser.add_argument(
+        "--memory-sqlite-path",
+        default=str(DEFAULT_MEMORY_DB_PATH),
+        help=(
+            "SQLite path for the memory store (semantic facts + episodic "
+            "arcs). Only used in persistent mode. v0.8+."
+        ),
+    )
+    parser.add_argument(
+        "--crisis-log-sqlite-path",
+        default=str(DEFAULT_CRISIS_LOG_DB_PATH),
+        help=(
+            "SQLite path for the crisis log (safety audit trail). Only "
+            "used in persistent mode. v0.8+."
+        ),
     )
     parser.add_argument(
         "--memory-mode",
@@ -337,13 +355,19 @@ def render_context(state: AgentState | None) -> None:
     console.print()
 
 
-def render_memory_status(runtime: PersistentAgentRuntime) -> None:
+async def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     """Render the memory layer's current state.
 
     Shows the memory mode, per-namespace record counts from the unified
     memory store, and the crisis log record count. Placeholders are
     included for fields that land in later phases (last consolidation
     timestamp in phase 4, proactive recall toggle in phase 2+).
+
+    Async as of v0.8 because the memory store's ``arecord_count`` and
+    ``anamespaces`` methods are async to support the SQLite
+    implementation's connection-sharing contract. The crisis log's
+    ``record_count`` is still sync — that's a different backend that
+    will get its own async refactor in v0.8 Stage C.
 
     Args:
         runtime: Active persistent runtime. Reads the memory_store and
@@ -359,16 +383,21 @@ def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     # Aggregate store record counts by namespace kind. Namespaces are
     # (user_id, kind) tuples; group by the kind for a clean summary.
     counts_by_kind: dict[str, int] = {"semantic": 0, "episodic": 0, "procedural": 0}
-    for namespace in store.namespaces():
+    for namespace in await store.anamespaces():
         if len(namespace) >= 2 and namespace[1] in counts_by_kind:
-            counts_by_kind[namespace[1]] += store.record_count(namespace)
-    total_records = store.record_count()
+            counts_by_kind[namespace[1]] += await store.arecord_count(namespace)
+    total_records = await store.arecord_count()
 
     # Crisis log record count — always-on backend, independent of mode.
+    # v0.8: the crisis log backend's record_count went async alongside
+    # the memory store's, so the defensive ``getattr`` pattern now
+    # looks for ``arecord_count`` and awaits it. Any backend that
+    # doesn't implement the protocol method (e.g. a mock or stub)
+    # falls through to the 0 default.
     crisis_log_count = 0
-    record_count_fn = getattr(crisis_log, "record_count", None)
-    if callable(record_count_fn):
-        crisis_log_count = record_count_fn()
+    arecord_count_fn = getattr(crisis_log, "arecord_count", None)
+    if callable(arecord_count_fn):
+        crisis_log_count = await arecord_count_fn()
 
     table = Table(show_header=False, box=box.SIMPLE_HEAVY)
     table.add_column(style="muted", no_wrap=True)
@@ -394,7 +423,7 @@ def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     )
 
 
-def _collect_records_by_kind(
+async def _collect_records_by_kind(
     runtime: PersistentAgentRuntime,
     *,
     kind: str,
@@ -406,24 +435,45 @@ def _collect_records_by_kind(
     returns the records in insertion order. Used by ``render_memory_list``
     to gather semantic and episodic records separately.
 
-    Reaches into the store's internal ``_buckets`` via the same
-    ``# noqa: SLF001`` pattern used by the v0.3.1 implementation — this
-    is a read-only debug tool, and adding a public "iterate all records"
-    method to the store just for this grows the public surface
-    unnecessarily.
+    v0.8 rewrite: previously reached into ``store._buckets`` directly,
+    which only worked for :class:`OpenCouchMemoryStore`. Now uses
+    ``asearch(ns, query=None, limit=<large>)`` which is part of the
+    :class:`MemoryStore` protocol and works for both the in-memory
+    and SQLite implementations. The ``query=None`` branch returns all
+    records in insertion order, which is exactly what the CLI wants
+    for a chronological listing.
     """
 
     records: list[tuple[str, dict[str, object]]] = []
     store = runtime.memory_store
-    for namespace in store.namespaces():
+    for namespace in await store.anamespaces():
         if len(namespace) < 2 or namespace[1] != kind:
             continue
-        bucket = store._buckets.get(namespace)  # noqa: SLF001 — debug tool
-        if bucket is None:
-            continue
-        for key, record in bucket.records.items():
-            records.append((key, record.value))
+        # limit=1000 is a defensive cap; for v0.8 we don't expect
+        # any single user to have more records than this, and if
+        # they do the CLI would need pagination anyway (v0.9 work).
+        namespace_records = await store.asearch(namespace, query=None, limit=1000)
+        for record in namespace_records:
+            records.append((record.key, record.value))
     return records
+
+
+def _format_entity_identifier(entity: object) -> str:
+    """Return the ``identifier`` field of a serialized :class:`EntityRef`.
+
+    The stored record's ``subject`` and ``object`` fields are dicts
+    with ``type`` and ``identifier`` keys (from
+    ``EntityRef.model_dump()``). This helper extracts the identifier
+    for table rendering, falling back to ``"?"`` when the shape is
+    wrong or the identifier is missing. Defensive against schema
+    drift and malformed records.
+    """
+
+    if isinstance(entity, dict):
+        identifier = entity.get("identifier")
+        if identifier:
+            return str(identifier)
+    return "?"
 
 
 def _render_semantic_records_table(
@@ -432,8 +482,20 @@ def _render_semantic_records_table(
     """Render the semantic records as a table with a long-quote footer.
 
     Extracted from ``render_memory_list`` so the episodic rendering can
-    use the same compact table pattern. The quote truncation limit and
-    the footer format are unchanged from v0.3.1.
+    use the same compact table pattern.
+
+    v0.8 addition: the table now includes an ``object`` column
+    showing the identifier field of each record's ``object``
+    (the target of the predicate — e.g., the named person for a
+    ``KNOWS`` fact, the coping strategy for a ``USES`` fact). This
+    closes a rendering gap surfaced during v0.8 dogfood: when a
+    single turn produces two facts with identical evidence quotes
+    but different objects (e.g., "I take fluoxetine and vyvanse
+    daily" → one USES fact per medication), the old table showed
+    two rows that looked identical. Adding the object column makes
+    the distinction visible. The subject column is intentionally
+    omitted because in practice it's almost always the user; showing
+    it would add visual noise without distinguishing signal.
     """
 
     table = Table(
@@ -445,6 +507,7 @@ def _render_semantic_records_table(
     table.add_column("#", style="muted", no_wrap=True, width=3)
     table.add_column("category", style="accent", no_wrap=True)
     table.add_column("predicate", style="info", no_wrap=True)
+    table.add_column("object", style="accent", no_wrap=False, max_width=22)
     table.add_column("evidence quote", style="info")
     table.add_column("conf", style="muted", no_wrap=True, width=6)
 
@@ -454,6 +517,7 @@ def _render_semantic_records_table(
     for idx, (_key, value) in enumerate(records, start=1):
         category = str(value.get("category", "?"))
         predicate = str(value.get("predicate", "?"))
+        object_identifier = _format_entity_identifier(value.get("object"))
         confidence = str(value.get("confidence", "?"))
         quote = str(value.get("evidence_quote", ""))
         if len(quote) > quote_inline_limit:
@@ -461,7 +525,14 @@ def _render_semantic_records_table(
             long_quotes.append((idx, quote))
         else:
             quote_display = quote
-        table.add_row(str(idx), category, predicate, quote_display, confidence)
+        table.add_row(
+            str(idx),
+            category,
+            predicate,
+            object_identifier,
+            quote_display,
+            confidence,
+        )
 
     console.print(
         Panel(
@@ -604,13 +675,14 @@ def _render_memory_list_empty_state() -> None:
     console.print()
 
 
-def render_memory_list(runtime: PersistentAgentRuntime) -> None:
+async def render_memory_list(runtime: PersistentAgentRuntime) -> None:
     """Render every memory record (semantic + episodic) in browsable tables.
 
     Shipped in v0.3.1 as a semantic-only dogfood-observability tool.
     Extended in v0.4 to render episodic session arcs in a second table
-    alongside the semantic facts. Without this, answering "what does
-    the agent remember about me?" requires a probe script.
+    alongside the semantic facts. Async as of v0.8 because record
+    collection now goes through the async ``MemoryStore`` protocol
+    methods so it works with the SQLite-backed implementation.
 
     Scope:
     - Read-only. Mutation commands (``/memory forget``, ``/memory clear``)
@@ -627,8 +699,8 @@ def render_memory_list(runtime: PersistentAgentRuntime) -> None:
             its public property.
     """
 
-    semantic_records = _collect_records_by_kind(runtime, kind="semantic")
-    episodic_records = _collect_records_by_kind(runtime, kind="episodic")
+    semantic_records = await _collect_records_by_kind(runtime, kind="semantic")
+    episodic_records = await _collect_records_by_kind(runtime, kind="episodic")
 
     if not semantic_records and not episodic_records:
         _render_memory_list_empty_state()
@@ -1054,10 +1126,10 @@ async def handle_command(
         # extraction actually write?" required a probe script. Mutation
         # commands (/memory forget, /memory clear) remain scoped to v0.9.
         if len(args) == 0 or args[0] == "status":
-            render_memory_status(runtime)
+            await render_memory_status(runtime)
             return True
         if args[0] == "list":
-            render_memory_list(runtime)
+            await render_memory_list(runtime)
             return True
         render_info(
             "Unknown /memory subcommand. Available in v0.3.1: status, list",
@@ -1191,6 +1263,8 @@ async def chat_loop(
     thread_id: str,
     sqlite_path: str,
     memory_mode: str,
+    memory_sqlite_path: str = str(DEFAULT_MEMORY_DB_PATH),
+    crisis_log_sqlite_path: str = str(DEFAULT_CRISIS_LOG_DB_PATH),
 ) -> None:
     """Run the interactive CLI loop.
 
@@ -1199,6 +1273,11 @@ async def chat_loop(
         thread_id: Stable thread identifier for the local conversation.
         sqlite_path: SQLite file used for persisted thread checkpoints.
         memory_mode: Local memory mode ("guest" or "persistent").
+        memory_sqlite_path: v0.8 SQLite path for the memory store
+            (semantic + episodic records). Only used in persistent
+            mode; incognito ignores it and uses in-memory backing.
+        crisis_log_sqlite_path: v0.8 SQLite path for the crisis log.
+            Same persistence semantics as the memory path.
 
     Returns:
         None.
@@ -1223,6 +1302,8 @@ async def chat_loop(
     async with PersistentAgentRuntime(
         sqlite_path,
         memory_mode=runtime_memory_mode,
+        memory_sqlite_path=memory_sqlite_path,
+        crisis_log_sqlite_path=crisis_log_sqlite_path,
     ) as runtime:
         session.history = await runtime.get_history(thread_id)
         session.last_context = await runtime.get_state(thread_id)
@@ -1345,6 +1426,8 @@ def main() -> int:
     args = build_parser().parse_args()
     thread_id = args.thread_id or generate_thread_id()
     sqlite_path = str(Path(args.sqlite_path).expanduser())
+    memory_sqlite_path = str(Path(args.memory_sqlite_path).expanduser())
+    crisis_log_sqlite_path = str(Path(args.crisis_log_sqlite_path).expanduser())
     memory_mode = resolve_memory_mode(args.memory_mode)
     asyncio.run(
         chat_loop(
@@ -1352,6 +1435,8 @@ def main() -> int:
             thread_id=thread_id,
             sqlite_path=sqlite_path,
             memory_mode=memory_mode,
+            memory_sqlite_path=memory_sqlite_path,
+            crisis_log_sqlite_path=crisis_log_sqlite_path,
         )
     )
     return 0

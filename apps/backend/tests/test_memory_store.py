@@ -408,10 +408,10 @@ async def test_memory_store_record_count_tracks_total_and_per_namespace() -> Non
     await store.aput(("user-1", "semantic"), "b", {"v": 2})
     await store.aput(("user-1", "episodic"), "c", {"v": 3})
 
-    assert store.record_count() == 3
-    assert store.record_count(("user-1", "semantic")) == 2
-    assert store.record_count(("user-1", "episodic")) == 1
-    assert store.record_count(("user-2", "semantic")) == 0
+    assert await store.arecord_count() == 3
+    assert await store.arecord_count(("user-1", "semantic")) == 2
+    assert await store.arecord_count(("user-1", "episodic")) == 1
+    assert await store.arecord_count(("user-2", "semantic")) == 0
 
 
 @pytest.mark.asyncio
@@ -649,9 +649,9 @@ async def test_episodic_namespace_isolated_from_semantic() -> None:
     await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
 
     # Semantic namespace has 1 record, episodic has 1
-    assert store.record_count(("user-1", "semantic")) == 1
-    assert store.record_count(("user-1", "episodic")) == 1
-    assert store.record_count() == 2  # total across all namespaces
+    assert await store.arecord_count(("user-1", "semantic")) == 1
+    assert await store.arecord_count(("user-1", "episodic")) == 1
+    assert await store.arecord_count() == 2  # total across all namespaces
 
 
 @pytest.mark.asyncio
@@ -776,7 +776,7 @@ async def test_crisis_log_record_count() -> None:
     """record_count should report the total across all days."""
 
     backend = InMemoryCrisisLogBackend()
-    assert backend.record_count() == 0
+    assert await backend.arecord_count() == 0
 
     await backend.aappend(
         _crisis_record(record_id="a", detected_at="2026-04-10T11:00:00Z")
@@ -785,7 +785,7 @@ async def test_crisis_log_record_count() -> None:
         _crisis_record(record_id="b", detected_at="2026-04-11T11:00:00Z")
     )
 
-    assert backend.record_count() == 2
+    assert await backend.arecord_count() == 2
 
 
 @pytest.mark.asyncio
@@ -810,5 +810,5 @@ async def test_null_crisis_log_backend_is_a_silent_noop() -> None:
     await backend.aappend(_crisis_record(record_id="b"))
 
     assert await backend.alist_by_date(date(2026, 4, 10)) == []
-    assert backend.record_count() == 0
+    assert await backend.arecord_count() == 0
     await backend.aclose()  # must not raise
