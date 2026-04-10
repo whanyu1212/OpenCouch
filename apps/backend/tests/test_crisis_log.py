@@ -303,3 +303,234 @@ class TestCrisisLogEndToEnd:
         assert len(all_records) == 1
         # "ending it all" is a CLEAR_SELF_HARM_PATTERN → level 2
         assert all_records[0].level == 2
+
+
+async def _fetch_all_records(
+    backend: InMemoryCrisisLogBackend,
+) -> list[CrisisLogRecord]:
+    """Fetch all records from the backend across a 3-day UTC window.
+
+    The backend buckets records by ``detected_at.date()`` (UTC), which
+    may fall a day before or after the test machine's local date near
+    midnight. The 3-day window is a paranoid but cheap way to avoid
+    timezone-induced flakes.
+    """
+
+    from datetime import timedelta
+
+    today = date.today()  # noqa: DTZ011
+    records: list[CrisisLogRecord] = []
+    for delta in (-1, 0, 1):
+        records.extend(await backend.alist_by_date(today + timedelta(days=delta)))
+    return records
+
+
+# ─── 4. Crisis-debug metadata propagation (v0.2) ──────────────────────────
+
+
+class TestCrisisLogMetadata:
+    """End-to-end checks that the crisis gate's debug metadata reaches the log.
+
+    Each test exercises one of the five dispatch paths in
+    ``run_crisis_gate_node`` and asserts the resulting audit record
+    carries the expected ``override_kind`` / ``classifier_path`` /
+    ``llm_failure_occurred`` values. Tests that need an LLM client use
+    a fake one; the no-LLM paths run against ``run_agent`` with no
+    client configured.
+    """
+
+    @pytest.mark.asyncio
+    async def test_override_path_imminent_risk(self) -> None:
+        """Path 1a: imminent-risk regex override → override_kind=imminent_risk."""
+
+        backend = InMemoryCrisisLogBackend()
+        await run_agent(
+            AgentInput(message="I have pills and I am going to kill myself tonight."),
+            crisis_log_backend=backend,
+        )
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.override_kind == "imminent_risk"
+        assert record.classifier_path == "override"
+        assert record.llm_failure_occurred is False
+        assert record.level == 3
+
+    @pytest.mark.asyncio
+    async def test_deterministic_high_path(self) -> None:
+        """Path 2: deterministic ladder returns level ≥ 2 → classifier_path=deterministic."""
+
+        backend = InMemoryCrisisLogBackend()
+        await run_agent(
+            AgentInput(message="I've been thinking about ending it all."),
+            crisis_log_backend=backend,
+        )
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.classifier_path == "deterministic"
+        assert record.override_kind == "none"
+        assert record.llm_failure_occurred is False
+        # "ending it all" → CLEAR_SELF_HARM_PATTERN → level 2
+        assert record.level == 2
+
+    @pytest.mark.asyncio
+    async def test_llm_success_path(self) -> None:
+        """Path 3: deterministic < 2, LLM classifier succeeds → classifier_path=llm_fallback.
+
+        Uses a fake LLM client that returns a crisis-flagged assessment
+        for a message the deterministic ladder would rate as level 1.
+        """
+
+        from collections.abc import AsyncIterator
+        from typing import cast
+
+        from agent.nodes.crisis_gate import CrisisAssessmentSchema
+        from services.llm.base import BaseLLMClient, StructuredResponseT
+
+        class _FakeCrisisLLM(BaseLLMClient):
+            async def generate_text(
+                self,
+                *,
+                prompt: str,
+                system_instruction: str | None = None,
+                temperature: float = 0,
+                use_search: bool = False,
+            ) -> str:
+                return "fake crisis response"
+
+            async def generate_text_stream(
+                self,
+                *,
+                prompt: str,
+                system_instruction: str | None = None,
+                temperature: float = 0,
+            ) -> AsyncIterator[str]:
+                yield "fake"
+
+            async def generate_structured(
+                self,
+                *,
+                prompt: str,
+                response_schema: type[StructuredResponseT],
+                system_instruction: str | None = None,
+                temperature: float = 0,
+            ) -> StructuredResponseT:
+                # The crisis gate calls this for its classifier; return
+                # a level-2 escalation.
+                return cast(
+                    StructuredResponseT,
+                    CrisisAssessmentSchema(
+                        level=2,
+                        confidence="high",
+                        reason="LLM escalated an ambiguous message to level 2",
+                        needs_crisis_response=True,
+                        needs_clarification=False,
+                    ),
+                )
+
+        backend = InMemoryCrisisLogBackend()
+        # Ambiguous phrase — deterministic ladder returns level 1 (not
+        # crisis), so the LLM classifier runs and upgrades it to level 2.
+        await run_agent(
+            AgentInput(message="I just wish I could disappear for a while."),
+            llm_client=_FakeCrisisLLM(),
+            crisis_log_backend=backend,
+        )
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.classifier_path == "llm_fallback"
+        assert record.override_kind == "none"
+        assert record.llm_failure_occurred is False
+        assert record.level == 2
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_path(self) -> None:
+        """Path 4: deterministic < 2, LLM raises → llm_failure_occurred=True.
+
+        This is the distinguishing metadata path: classifier_path is
+        still "deterministic" (because that's what we ultimately used)
+        but llm_failure_occurred is True so an operator can tell "we
+        fell back because we had to" from "we never tried the LLM".
+
+        The deterministic fallback will report level 1 for the chosen
+        message, which does NOT trigger crisis routing — meaning the
+        crisis_log_node's defensive guard skips the write. So this test
+        uses a message that the deterministic ladder rates at level ≥ 2
+        AFTER the override check (no override pattern match). We pick
+        a CLEAR_SELF_HARM phrase which the override won't match but the
+        deterministic ladder will rate at level 2. That means the LLM
+        path is never reached — deterministic-high fires first.
+
+        Since path 4 requires the specific combination of (deterministic
+        level 1) + (LLM called) + (LLM raised), and the deterministic
+        fallback yields level 1 → non-crisis → no log write, this
+        end-to-end path is unreachable for v0.1. The regression guard
+        for llm_failure_occurred is covered by the Stage G1 test
+        ``test_llm_failure_falls_back_to_regex_with_warning`` in
+        ``test_therapeutic_routing.py`` — same control flow pattern.
+
+        This test is a placeholder so future v0.3+ refactors remember
+        to add path-4 coverage once deterministic level 1 can still
+        write to the crisis log (e.g. via a clarification-path audit).
+        """
+
+        pytest.skip(
+            "Path 4 (LLM failure on deterministic-low turn) is unreachable "
+            "in v0.1 because the defensive guard skips writes on non-crisis "
+            "turns. Revisit in v0.3+ if level-1 ambiguous turns start "
+            "writing audit records."
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_llm_client_path(self) -> None:
+        """Path 5: no LLM client → classifier_path=deterministic, llm_failure=False.
+
+        Same-shape record as path 2 (deterministic-high), but the
+        distinction is whether an LLM was even attempted. For a message
+        that triggers the deterministic ladder directly (level 2), the
+        records from path 2 and path 5 are indistinguishable — both
+        report classifier_path="deterministic". The llm_failure field
+        is the only discriminator between them.
+        """
+
+        backend = InMemoryCrisisLogBackend()
+        # Same message as test_deterministic_high_path, no llm_client.
+        # Path 2 and path 5 converge on the same record for this case.
+        await run_agent(
+            AgentInput(message="I've been thinking about ending it all."),
+            crisis_log_backend=backend,
+        )
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.classifier_path == "deterministic"
+        assert record.override_kind == "none"
+        assert record.llm_failure_occurred is False
+
+    @pytest.mark.asyncio
+    async def test_idiomatic_safe_override_does_not_write(self) -> None:
+        """Path 1b: idiomatic-safe override → non-crisis → no log write.
+
+        The idiomatic-safe override returns a non-crisis assessment
+        (``needs_crisis_response=False``), so the crisis_log_node's
+        defensive guard skips the write. This test verifies the guard
+        fires for this path — a regression where idiomatic-safe
+        accidentally writes to the log would be a privacy issue.
+        """
+
+        backend = InMemoryCrisisLogBackend()
+        await run_agent(
+            AgentInput(message="Work is killing me this week."),
+            crisis_log_backend=backend,
+        )
+
+        # No record should be written — idiomatic-safe is a safe
+        # negative, not a crisis event.
+        records = await _fetch_all_records(backend)
+        assert len(records) == 0

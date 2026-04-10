@@ -2,6 +2,7 @@
 
 from typing import NotRequired, TypedDict
 
+from agent.memory.models import CrisisClassifierPath, CrisisOverrideKind
 from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
 
 
@@ -52,6 +53,20 @@ class RoutingState(TypedDict):
     active_modalities: NotRequired[list[str]]
     # Cached semantic interpretation shared by routing and prompt shaping.
     semantic_signals: NotRequired[dict[str, bool]]
+
+    # ── Crisis debug metadata (v0.2) ─────────────────────────────────────
+    # These three fields are written by ``run_crisis_gate_node`` on the
+    # crisis branch and read by ``run_crisis_log_node`` so the audit
+    # record accurately reflects which code path produced the
+    # classification. They're prefixed ``crisis_`` to make ownership
+    # unambiguous and prevent collisions with any future therapeutic
+    # classifier metadata.
+    #
+    # All three are NotRequired — non-crisis turns leave them unset,
+    # and the log node's fallback path reads defaults if missing.
+    crisis_override_kind: NotRequired[CrisisOverrideKind]
+    crisis_classifier_path: NotRequired[CrisisClassifierPath]
+    crisis_llm_failure_occurred: NotRequired[bool]
 
 
 class ResponseState(TypedDict):

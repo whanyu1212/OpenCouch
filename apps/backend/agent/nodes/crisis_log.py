@@ -75,24 +75,41 @@ async def run_crisis_log_node(
 
     backend = runtime.context["crisis_log_backend"]
 
-    # Classifier metadata → structured record. The override_kind /
-    # classifier_path fields aren't currently tracked in state; v0.2
-    # can surface them from the crisis gate. For now we record
-    # "none" + "deterministic" as reasonable defaults that won't mislead
-    # an operator reading the log — if the LLM path was used, the
-    # classifier path is still "deterministic" from this node's
-    # perspective because we can't tell from state alone.
+    # Read the crisis debug metadata from routing state. The crisis gate
+    # writes these three fields in its delta for every crisis-path turn
+    # (see ``agent/nodes/crisis_gate.py`` — the five dispatch paths each
+    # set all three before falling through to ``_build_crisis_delta``).
+    #
+    # Missing-field defaults exist as a backward-compat safety net for
+    # partial-state test fixtures. If a field is missing in production,
+    # it means the crisis gate regressed and a new path was added
+    # without setting the metadata. We log a debug breadcrumb so the
+    # regression leaves a trace in the audit log.
+    routing = state.get("routing", {})
+    override_kind = routing.get("crisis_override_kind", "none")
+    classifier_path = routing.get("crisis_classifier_path", "deterministic")
+    llm_failure_occurred = routing.get("crisis_llm_failure_occurred", False)
+
+    if "crisis_classifier_path" not in routing:
+        # Breadcrumb for regressions: if a production crisis turn ever
+        # hits this debug line, the crisis gate is missing metadata for
+        # one of its dispatch paths.
+        logger.debug(
+            "crisis_log_node: no classifier_path in routing state; "
+            "using backward-compat default 'deterministic'"
+        )
+
     record = CrisisLogRecord(
         id=str(uuid4()),
         session_id_opaque=_hash_session_id(state.get("session_id")),
         user_id_or_null=state.get("user_id"),
         detected_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         level=crisis.level,  # type: ignore[arg-type]
-        override_kind="none",
-        classifier_path="deterministic",
+        override_kind=override_kind,
+        classifier_path=classifier_path,
         reason=crisis.reason or "",
         response_node_completed=True,
-        llm_failure_occurred=False,
+        llm_failure_occurred=llm_failure_occurred,
     )
 
     try:

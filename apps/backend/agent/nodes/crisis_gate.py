@@ -283,12 +283,22 @@ def normalize_crisis_assessment(assessment: CrisisAssessment) -> CrisisAssessmen
 def _build_crisis_delta(
     state: AgentState,
     assessment: CrisisAssessment,
+    *,
+    override_kind: Literal["imminent_risk", "idiomatic_safe", "none"],
+    classifier_path: Literal["deterministic", "llm_fallback", "override"],
+    llm_failure_occurred: bool,
 ) -> dict[str, Any]:
     """Build the state-delta dict for one crisis-gate decision.
 
-    Returns only the keys the gate updated: ``crisis``, ``routing``, and the
-    crisis-tagged ``response.kind`` so downstream nodes can rely on the
-    response slot already being marked.
+    Returns only the keys the gate updated: ``crisis``, ``routing`` (with
+    the crisis debug-metadata fields so ``crisis_log_node`` can record an
+    accurate audit trail), and the crisis-tagged ``response.kind`` so
+    downstream nodes can rely on the response slot already being marked.
+
+    The three debug-metadata kwargs are required (not defaulted) so each
+    call site in :func:`run_crisis_gate_node` has to think explicitly
+    about which code path it's on. Missing metadata would silently
+    corrupt the safety audit log.
     """
 
     route = "crisis" if assessment.needs_crisis_response else "therapeutic"
@@ -305,6 +315,12 @@ def _build_crisis_delta(
             "mode_type": ModeType.CRISIS
             if route == "crisis"
             else routing.get("mode_type"),
+            # Crisis debug metadata — read by crisis_log_node for the
+            # audit record. Always populated on crisis-gate runs so the
+            # audit trail reflects the actual code path taken.
+            "crisis_override_kind": override_kind,
+            "crisis_classifier_path": classifier_path,
+            "crisis_llm_failure_occurred": llm_failure_occurred,
         },
         "response": {
             **response,
@@ -328,30 +344,58 @@ async def run_crisis_gate_node(
 
     llm_client = runtime.context.get("llm_client")
 
+    # Debug metadata tracked across the decision tree. Every path below
+    # MUST set all three before reaching _build_crisis_delta so the
+    # safety audit log reflects the actual code path taken.
+    override_kind: Literal["imminent_risk", "idiomatic_safe", "none"] = "none"
+    classifier_path: Literal["deterministic", "llm_fallback", "override"]
+    llm_failure_occurred = False
+
     override = detect_crisis_override(state)
     if override is not None:
-        _, override_assessment = override
+        # Path 1: deterministic override — "imminent_risk" or "idiomatic_safe"
+        override_kind_detected, override_assessment = override
+        override_kind = override_kind_detected
+        classifier_path = "override"
         assessment = normalize_crisis_assessment(override_assessment)
     else:
         deterministic = assess_crisis_risk_deterministically(state)
         if deterministic.level >= 2:
+            # Path 2: deterministic ladder returned high confidence — skip LLM
+            classifier_path = "deterministic"
             assessment = normalize_crisis_assessment(deterministic)
         elif llm_client is not None:
             try:
                 llm_assessment = await assess_crisis_risk_with_llm(
                     state, llm_client=llm_client
                 )
+                # Path 3: LLM classifier succeeded
+                classifier_path = "llm_fallback"
                 assessment = normalize_crisis_assessment(llm_assessment)
             except Exception:
+                # Path 4: LLM was called but raised — fall back to deterministic.
+                # Classifier_path stays "deterministic" because that's what
+                # we actually used; llm_failure_occurred distinguishes this
+                # case from path 5 where the LLM was never called.
                 logger.warning(
                     "Crisis LLM classifier failed; using deterministic fallback.",
                     exc_info=True,
                 )
+                classifier_path = "deterministic"
+                llm_failure_occurred = True
                 assessment = normalize_crisis_assessment(deterministic)
         else:
+            # Path 5: no LLM client available — deterministic only
+            classifier_path = "deterministic"
             assessment = normalize_crisis_assessment(deterministic)
 
-    delta = _build_crisis_delta(state, assessment)
+    delta = _build_crisis_delta(
+        state,
+        assessment,
+        override_kind=override_kind,
+        classifier_path=classifier_path,
+        llm_failure_occurred=llm_failure_occurred,
+    )
     next_node = (
         "crisis_response_node"
         if assessment.needs_crisis_response
