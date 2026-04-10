@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from agent.memory_graph import GraphMemoryStore
-from agent.memory_profile import SqliteProfileMemoryStore
+from agent.memory.graph_store import GraphMemoryStore
+from agent.memory.profile_store import SqliteProfileMemoryStore
 from services.llm.base import BaseLLMClient
 
 

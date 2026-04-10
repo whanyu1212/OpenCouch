@@ -22,8 +22,8 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from agent.memory_graph import GraphMemoryStore, NullGraphMemoryStore
-from agent.memory_profile import SqliteProfileMemoryStore
+from agent.memory.graph_store import GraphMemoryStore, NullGraphMemoryStore
+from agent.memory.profile_store import SqliteProfileMemoryStore
 from agent.models import (
     AgentInput,
     AgentOutput,

@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
-from agent.memory_graph import (
+from agent.memory.graph_store import (
     GraphMemoryStore,
     NullGraphMemoryStore,
     create_graph_memory_store_from_env,
 )
-from agent.memory_profile import SqliteProfileMemoryStore
+from agent.memory.profile_store import SqliteProfileMemoryStore
 from agent.models import (
     AgentInput,
     AgentOutput,

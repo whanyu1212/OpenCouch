@@ -6,8 +6,11 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.memory_graph import build_graph_memory_query, should_retrieve_graph_memory
-from agent.memory_profile import compile_working_memory
+from agent.memory.graph_store import (
+    build_graph_memory_query,
+    should_retrieve_graph_memory,
+)
+from agent.memory.profile_store import compile_working_memory
 from agent.models import MessageRole, ModeType, ResponseKind
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState

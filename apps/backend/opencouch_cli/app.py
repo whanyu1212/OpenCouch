@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 
-from agent.persistence import DEFAULT_THREAD_DB_PATH, PersistentAgentRuntime
+from agent.persistence import (
+    DEFAULT_THREAD_DB_PATH,
+    PersistentAgentRuntime,
+    ThreadSummary,
+)
 from agent.models import (
     Channel,
     ChunkEvent,
@@ -23,15 +27,31 @@ from agent.models import (
 )
 from agent.state import AgentState
 from core.config import create_configured_llm_client
+from rich import box
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+from rich.theme import Theme
 from services.llm.base import BaseLLMClient
 
-console = Console()
+CLI_THEME = Theme(
+    {
+        "primary": "bold #3d9990",
+        "accent": "bold #d78b5f",
+        "muted": "#838881",
+        "info": "#a8cdc9",
+        "success": "bold #65b8af",
+        "warning": "bold #f0ad7e",
+        "danger": "bold #e46e62",
+        "panel": "#2d7a74",
+    }
+)
+
+console = Console(theme=CLI_THEME)
 
 
 @dataclass(slots=True)
@@ -43,6 +63,7 @@ class RunnerSession:
     llm_client: BaseLLMClient | None
     thread_id: str
     sqlite_path: str
+    memory_mode: str
     history: list[Message] = field(default_factory=list)
     last_context: AgentState | None = None
 
@@ -77,6 +98,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_THREAD_DB_PATH),
         help="SQLite path for LangGraph thread checkpoints.",
     )
+    parser.add_argument(
+        "--memory-mode",
+        choices=["guest", "persistent", "ask"],
+        default="ask",
+        help="Local memory behavior: guest (ephemeral), persistent (SQLite), or ask at startup.",
+    )
     return parser
 
 
@@ -102,39 +129,55 @@ def resolve_llm_client(mode: str) -> tuple[BaseLLMClient | None, str]:
         return None, "deterministic"
 
 
-def render_header(mode: str, thread_id: str) -> None:
+def resolve_memory_mode(memory_mode: str) -> str:
+    """Resolve memory mode from CLI arg, prompting when needed."""
+
+    if memory_mode in {"guest", "persistent"}:
+        return memory_mode
+
+    console.print(
+        Panel(
+            "[info][1][/info] Guest Mode (private, in-memory only)\n"
+            "[info][2][/info] Persistent Mode (save local memory in SQLite)",
+            title="[primary]Choose Memory Mode[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    while True:
+        choice = Prompt.ask("[accent]select[/accent]", default="1").strip()
+        if choice == "1":
+            return "guest"
+        if choice == "2":
+            return "persistent"
+        render_info("Please choose 1 (guest) or 2 (persistent).", style="warning")
+
+
+def render_header(mode: str, thread_id: str, memory_mode: str) -> None:
     """Render the CLI header.
 
     Args:
         mode: Effective runtime mode for the current session.
         thread_id: Active persisted thread identifier.
+        memory_mode: Local memory mode (guest or persistent).
 
     Returns:
         None.
     """
 
-    subtitle = Text()
-    subtitle.append("mode: ", style="bold white")
-    subtitle.append(mode, style="bold cyan")
-    subtitle.append("  |  thread: ", style="dim")
-    subtitle.append(thread_id, style="bold white")
-    subtitle.append("  |  type ", style="dim")
-    subtitle.append("exit", style="bold")
-    subtitle.append(" or ", style="dim")
-    subtitle.append("quit", style="bold")
-    subtitle.append(" to stop", style="dim")
-
+    console.print(Rule("[primary]OpenCouch CLI[/primary]", style="panel"))
     console.print(
-        Panel(
-            subtitle,
-            title="[bold blue]OpenCouch[/bold blue]",
-            subtitle_align="left",
-            border_style="blue",
-            expand=False,
+        Text.from_markup(
+            f"[muted]mode:[/muted] [primary]{mode}[/primary]  [muted]|[/muted]  "
+            f"[muted]memory:[/muted] [accent]{memory_mode}[/accent]  [muted]|[/muted]  "
+            f"[muted]thread:[/muted] [info]{thread_id}[/info]  [muted]|[/muted]  "
+            "[muted]type[/muted] [accent]exit[/accent] [muted]or[/muted] "
+            "[accent]quit[/accent] [muted]to stop[/muted]"
         )
     )
     console.print(
-        "[dim]slash commands: /help, /status, /history, /context, /reset, /clear, /mode, /exit[/dim]\n"
+        "[muted]slash commands:[/muted] [info]/help, /status, /history, /context, "
+        "/threads, /resume, /new, /reset, /clear, /mode, /exit[/info]\n"
     )
 
 
@@ -150,12 +193,19 @@ def render_response(response_text: str, *, is_crisis: bool) -> None:
     """
 
     title = (
-        "[bold red]Crisis Reply[/bold red]"
+        "[danger]Crisis Reply[/danger]"
         if is_crisis
-        else "[bold green]Support Reply[/bold green]"
+        else "[success]Support Reply[/success]"
     )
-    border_style = "red" if is_crisis else "green"
-    console.print(Panel(response_text, title=title, border_style=border_style))
+    border_style = "danger" if is_crisis else "success"
+    console.print(
+        Panel(
+            response_text,
+            title=title,
+            border_style=border_style,
+            box=box.ROUNDED,
+        )
+    )
 
 
 def render_meta(
@@ -194,15 +244,15 @@ def render_meta(
     else:
         safety_status = "normal"
 
-    table = Table(show_header=True, header_style="bold magenta", box=None)
-    table.add_column("mode", style="green", no_wrap=True)
-    table.add_column("source", style="blue", no_wrap=True)
-    table.add_column("mode type", style="yellow", no_wrap=True)
-    table.add_column("type", style="cyan", no_wrap=True)
-    table.add_column("safety", justify="center", no_wrap=True)
+    table = Table(show_header=True, header_style="primary", box=box.SIMPLE_HEAVY)
+    table.add_column("mode", style="info", no_wrap=True)
+    table.add_column("source", style="muted", no_wrap=True)
+    table.add_column("mode type", style="info", no_wrap=True)
+    table.add_column("type", style="info", no_wrap=True)
+    table.add_column("safety", style="warning", no_wrap=True)
     table.add_column("clarify", justify="center", no_wrap=True)
     table.add_column("crisis", justify="center", no_wrap=True)
-    table.add_column("reason", style="white")
+    table.add_column("reason", style="muted")
     table.add_row(
         mode or "-",
         mode_source or "-",
@@ -213,7 +263,14 @@ def render_meta(
         "yes" if needs_crisis_response else "no",
         reason,
     )
-    console.print(table)
+    console.print(
+        Panel(
+            table,
+            title="[primary]Turn Diagnostics[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
     console.print()
 
 
@@ -230,41 +287,49 @@ def render_context(state: AgentState | None) -> None:
     if state is None:
         console.print(
             Panel(
-                "No session context yet. Send a message first.",
-                title="[bold blue]Session Context[/bold blue]",
-                border_style="blue",
+                "[muted]No session context yet. Send a message first.[/muted]",
+                title="[primary]Session Context[/primary]",
+                border_style="panel",
+                box=box.ROUNDED,
             )
         )
         console.print()
         return
 
-    table = Table(show_header=False, box=None)
-    table.add_column(style="cyan", no_wrap=True)
-    table.add_column(style="white")
-    table.add_row("turn_count", str(state["turn_count"]))
+    progress = state.get("progress", {})
+    memory = state.get("memory", {})
+    response_state = state.get("response", {})
+
+    table = Table(show_header=False, box=box.SIMPLE_HEAVY)
+    table.add_column(style="muted", no_wrap=True)
+    table.add_column(style="info")
+    table.add_row("turn_count", str(progress.get("turn_count", 0)))
     table.add_row(
         "working_memory",
         " | ".join(state.get("working_memory", []))
         if state.get("working_memory")
         else "-",
     )
-    table.add_row("current_goal", state["current_goal"] or "-")
-    table.add_row("response_guidance", state.get("response_guidance") or "-")
+    table.add_row("current_goal", memory.get("current_goal") or "-")
+    table.add_row("response_guidance", response_state.get("guidance") or "-")
+    active_concerns = memory.get("active_concerns") or []
     table.add_row(
         "active_concerns",
-        ", ".join(state["active_concerns"]) if state["active_concerns"] else "-",
+        ", ".join(active_concerns) if active_concerns else "-",
     )
+    open_loops = memory.get("open_loops") or []
     table.add_row(
         "open_loops",
-        " | ".join(state["open_loops"]) if state["open_loops"] else "-",
+        " | ".join(open_loops) if open_loops else "-",
     )
-    table.add_row("session_summary", state["session_summary"])
+    table.add_row("session_summary", memory.get("summary", ""))
     console.print(
         Panel(
             table,
-            title="[bold blue]Session Context[/bold blue]",
-            subtitle="[dim]what the graph is carrying forward[/dim]",
-            border_style="blue",
+            title="[primary]Session Context[/primary]",
+            subtitle="[muted]what the graph is carrying forward[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
         )
     )
     console.print()
@@ -277,13 +342,18 @@ def render_help() -> None:
         None.
     """
 
-    table = Table(show_header=True, header_style="bold blue", box=None)
-    table.add_column("command", style="cyan", no_wrap=True)
-    table.add_column("description", style="white")
+    table = Table(show_header=True, header_style="primary", box=box.SIMPLE_HEAVY)
+    table.add_column("command", style="accent", no_wrap=True)
+    table.add_column("description", style="info")
     table.add_row("/help", "Show available commands.")
     table.add_row("/status", "Show current mode and session stats.")
     table.add_row("/history [n]", "Show the last n transcript messages. Default: 6.")
     table.add_row("/context", "Show the latest derived session context snapshot.")
+    table.add_row("/threads [n]", "List persisted thread ids. Default: 12.")
+    table.add_row("/resume <thread-id>", "Switch to an existing persisted thread.")
+    table.add_row(
+        "/new [thread-id]", "Start a fresh thread without restarting the CLI."
+    )
     table.add_row("/reset", "Clear the conversation history.")
     table.add_row("/clear", "Clear the terminal and redraw the header.")
     table.add_row(
@@ -292,7 +362,12 @@ def render_help() -> None:
     )
     table.add_row("/exit", "End the session.")
     console.print(
-        Panel(table, title="[bold blue]Commands[/bold blue]", border_style="blue")
+        Panel(
+            table,
+            title="[primary]Commands[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
     )
     console.print()
 
@@ -310,9 +385,9 @@ def render_status(session: RunnerSession) -> None:
     turn_count = sum(
         1 for message in session.history if message.role == MessageRole.USER
     )
-    table = Table(show_header=False, box=None)
-    table.add_column(style="cyan", no_wrap=True)
-    table.add_column(style="white")
+    table = Table(show_header=False, box=box.SIMPLE_HEAVY)
+    table.add_column(style="muted", no_wrap=True)
+    table.add_column(style="info")
     table.add_row("thread id", session.thread_id)
     table.add_row("sqlite path", session.sqlite_path)
     table.add_row("requested mode", session.requested_mode)
@@ -326,7 +401,12 @@ def render_status(session: RunnerSession) -> None:
         "context snapshot", "available" if session.last_context is not None else "none"
     )
     console.print(
-        Panel(table, title="[bold blue]Session Status[/bold blue]", border_style="blue")
+        Panel(
+            table,
+            title="[primary]Session Status[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
     )
     console.print()
 
@@ -345,28 +425,34 @@ def render_history(session: RunnerSession, limit: int = 6) -> None:
     if not session.history:
         console.print(
             Panel(
-                "No conversation history yet.",
-                title="[bold blue]History[/bold blue]",
-                border_style="blue",
+                "[muted]No conversation history yet.[/muted]",
+                title="[primary]History[/primary]",
+                border_style="panel",
+                box=box.ROUNDED,
             )
         )
         console.print()
         return
 
     recent = session.history[-max(1, limit) :]
-    table = Table(show_header=True, header_style="bold magenta", box=None)
-    table.add_column("role", style="cyan", no_wrap=True)
-    table.add_column("content", style="white")
+    table = Table(show_header=True, header_style="primary", box=box.SIMPLE_HEAVY)
+    table.add_column("role", style="accent", no_wrap=True)
+    table.add_column("content", style="info")
     for message in recent:
         role = message.role.value
         table.add_row(role, message.content)
     console.print(
-        Panel(table, title="[bold blue]Recent History[/bold blue]", border_style="blue")
+        Panel(
+            table,
+            title="[primary]Recent History[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
     )
     console.print()
 
 
-def render_info(message: str, *, style: str = "blue") -> None:
+def render_info(message: str, *, style: str = "panel") -> None:
     """Render a lightweight informational panel.
 
     Args:
@@ -377,7 +463,41 @@ def render_info(message: str, *, style: str = "blue") -> None:
         None.
     """
 
-    console.print(Panel(message, border_style=style, expand=False))
+    console.print(Panel(message, border_style=style, expand=False, box=box.ROUNDED))
+    console.print()
+
+
+def render_threads(
+    threads: list[ThreadSummary],
+    *,
+    active_thread_id: str,
+) -> None:
+    """Render a compact table of persisted thread summaries."""
+
+    if not threads:
+        render_info("No persisted threads found.", style="warning")
+        return
+
+    table = Table(show_header=True, header_style="primary", box=box.SIMPLE_HEAVY)
+    table.add_column("thread id", style="info")
+    table.add_column("turns", style="muted", justify="right", no_wrap=True)
+    table.add_column("messages", style="muted", justify="right", no_wrap=True)
+    table.add_column("active", style="accent", no_wrap=True)
+    for thread in threads:
+        table.add_row(
+            thread.thread_id,
+            str(thread.turn_count),
+            str(thread.message_count),
+            "yes" if thread.thread_id == active_thread_id else "",
+        )
+    console.print(
+        Panel(
+            table,
+            title="[primary]Persisted Threads[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
     console.print()
 
 
@@ -396,6 +516,47 @@ def set_mode(session: RunnerSession, mode: str) -> None:
     session.requested_mode = mode
     session.resolved_mode = resolved_mode
     session.llm_client = llm_client
+
+
+def generate_thread_id() -> str:
+    """Generate a new local thread id for ad hoc CLI sessions."""
+
+    return f"local-{uuid4().hex[:12]}"
+
+
+async def switch_thread(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    *,
+    thread_id: str,
+    require_existing: bool,
+) -> bool:
+    """Switch the CLI session to another thread id.
+
+    Args:
+        session: Mutable CLI session state.
+        runtime: Persistent runtime backing the active SQLite store.
+        thread_id: Target thread identifier.
+        require_existing: Whether the target thread must already exist.
+
+    Returns:
+        `True` when the switch succeeded.
+    """
+
+    target_thread_id = thread_id.strip()
+    if not target_thread_id:
+        return False
+
+    state = await runtime.get_state(target_thread_id)
+    if require_existing and state is None:
+        return False
+    if not require_existing and state is not None:
+        return False
+
+    session.thread_id = target_thread_id
+    session.last_context = state
+    session.history = await runtime.get_history(target_thread_id)
+    return True
 
 
 async def handle_command(
@@ -439,7 +600,7 @@ async def handle_command(
             try:
                 limit = max(1, int(args[0]))
             except ValueError:
-                render_info("Usage: /history [count]", style="yellow")
+                render_info("Usage: /history [count]", style="warning")
                 return True
         render_history(session, limit=limit)
         return True
@@ -448,70 +609,152 @@ async def handle_command(
         render_context(session.last_context)
         return True
 
+    if command == "/threads":
+        limit = 12
+        if args:
+            try:
+                limit = max(1, int(args[0]))
+            except ValueError:
+                render_info("Usage: /threads [count]", style="warning")
+                return True
+        render_threads(
+            await runtime.list_threads(limit=limit),
+            active_thread_id=session.thread_id,
+        )
+        return True
+
+    if command == "/resume":
+        if len(args) != 1:
+            render_info("Usage: /resume <thread-id>", style="warning")
+            return True
+        thread_id = args[0]
+        if thread_id == session.thread_id:
+            render_info(f"Already on thread {thread_id}.", style="warning")
+            return True
+        if not await switch_thread(
+            session,
+            runtime,
+            thread_id=thread_id,
+            require_existing=True,
+        ):
+            render_info(
+                f"No persisted thread found for {thread_id}. Use /threads to inspect known ids.",
+                style="warning",
+            )
+            return True
+        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
+        render_info(
+            f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
+            style="success",
+        )
+        if session.history:
+            render_history(session, limit=len(session.history))
+        if session.last_context is not None:
+            render_context(session.last_context)
+        return True
+
+    if command == "/new":
+        if len(args) > 1:
+            render_info("Usage: /new [thread-id]", style="warning")
+            return True
+        thread_id = args[0] if args else generate_thread_id()
+        if thread_id == session.thread_id:
+            render_info(
+                "The requested thread id is already active. Choose a different id or use /reset.",
+                style="warning",
+            )
+            return True
+        if not await switch_thread(
+            session,
+            runtime,
+            thread_id=thread_id,
+            require_existing=False,
+        ):
+            render_info(
+                f"Thread {thread_id} already exists. Use /resume {thread_id} or choose another id.",
+                style="warning",
+            )
+            return True
+        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
+        render_info(f"Started new thread {session.thread_id}.", style="success")
+        return True
+
     if command == "/reset":
         await runtime.reset_thread(session.thread_id)
         session.history.clear()
         session.last_context = None
-        render_info("Persisted thread state cleared.", style="yellow")
+        render_info("Persisted thread state cleared.", style="warning")
         return True
 
     if command == "/clear":
         console.clear()
-        render_header(session.resolved_mode, session.thread_id)
+        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
         return True
 
     if command == "/mode":
         if len(args) != 1 or args[0] not in {"deterministic", "hybrid", "auto"}:
-            render_info("Usage: /mode <deterministic|hybrid|auto>", style="yellow")
+            render_info("Usage: /mode <deterministic|hybrid|auto>", style="warning")
             return True
         set_mode(session, args[0])
         render_info(
             f"Mode updated. requested={session.requested_mode}, resolved={session.resolved_mode}",
-            style="green" if session.llm_client is not None else "yellow",
+            style="success" if session.llm_client is not None else "warning",
         )
         return True
 
-    render_info(f"Unknown command: {command}. Try /help.", style="yellow")
+    render_info(f"Unknown command: {command}. Try /help.", style="warning")
     return True
 
 
-async def chat_loop(mode: str, *, thread_id: str, sqlite_path: str) -> None:
+async def chat_loop(
+    mode: str,
+    *,
+    thread_id: str,
+    sqlite_path: str,
+    memory_mode: str,
+) -> None:
     """Run the interactive CLI loop.
 
     Args:
         mode: Requested runtime mode for model resolution.
         thread_id: Stable thread identifier for the local conversation.
         sqlite_path: SQLite file used for persisted thread checkpoints.
+        memory_mode: Local memory mode ("guest" or "persistent").
 
     Returns:
         None.
     """
 
     llm_client, resolved_mode = resolve_llm_client(mode)
+    is_guest_mode = memory_mode == "guest"
     session = RunnerSession(
         requested_mode=mode,
         resolved_mode=resolved_mode,
         llm_client=llm_client,
         thread_id=thread_id,
-        sqlite_path=sqlite_path,
+        sqlite_path=":memory:" if is_guest_mode else sqlite_path,
+        memory_mode=memory_mode,
     )
 
-    async with PersistentAgentRuntime(sqlite_path) as runtime:
+    async with PersistentAgentRuntime(
+        sqlite_path,
+        guest_mode=is_guest_mode,
+    ) as runtime:
         session.history = await runtime.get_history(thread_id)
         session.last_context = await runtime.get_state(thread_id)
 
-        render_header(session.resolved_mode, session.thread_id)
+        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
         if session.history:
             render_info(
                 f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
-                style="green",
+                style="success",
             )
 
         while True:
             try:
-                user_text = Prompt.ask("[bold cyan]you[/bold cyan]").strip()
+                user_text = Prompt.ask("[accent]you[/accent]").strip()
             except (EOFError, KeyboardInterrupt):
-                console.print("\n[dim]session ended[/dim]")
+                console.print("\n[muted]session ended[/muted]")
                 break
 
             if not user_text:
@@ -523,10 +766,16 @@ async def chat_loop(mode: str, *, thread_id: str, sqlite_path: str) -> None:
             if user_text.lower() in {"exit", "quit"}:
                 break
 
+            console.print(Rule(style="panel"))
             accumulated_text = ""
             final_output = None
 
             _STAGE_LABELS = {
+                "load_memory": "loading memory",
+                "memory_profile_load": "loading profile memory",
+                "memory_graph_load": "querying graph memory",
+                "memory_profile_save": "saving profile memory",
+                "memory_graph_save": "writing graph memory",
                 "crisis_gate": "safety check",
                 "session_stage": "reading context",
                 "response_generation": "generating",
@@ -541,14 +790,17 @@ async def chat_loop(mode: str, *, thread_id: str, sqlite_path: str) -> None:
                 ):
                     if isinstance(event, StatusEvent):
                         label = _STAGE_LABELS.get(event.stage, event.stage)
-                        live.update(Text(f"  ● {label}", style="dim"))
+                        detail = f" ({event.detail})" if event.detail else ""
+                        live.update(Text(f"  ● {label}{detail}", style="muted"))
 
                     elif isinstance(event, ChunkEvent):
                         accumulated_text += event.text
                         live.update(
                             Panel(
                                 accumulated_text,
-                                border_style="green",
+                                title="[success]Assistant[/success]",
+                                border_style="success",
+                                box=box.ROUNDED,
                             )
                         )
 
@@ -558,16 +810,17 @@ async def chat_loop(mode: str, *, thread_id: str, sqlite_path: str) -> None:
                         # stays on screen when Live exits — no duplicate render.
                         is_crisis = final_output.response_type.value == "crisis"
                         title = (
-                            "[bold red]Crisis Reply[/bold red]"
+                            "[danger]Crisis Reply[/danger]"
                             if is_crisis
-                            else "[bold green]Support Reply[/bold green]"
+                            else "[success]Support Reply[/success]"
                         )
-                        border = "red" if is_crisis else "green"
+                        border = "danger" if is_crisis else "success"
                         live.update(
                             Panel(
                                 final_output.response_text,
                                 title=title,
                                 border_style=border,
+                                box=box.ROUNDED,
                             )
                         )
 
@@ -606,7 +859,15 @@ def main() -> int:
     """
 
     args = build_parser().parse_args()
-    thread_id = args.thread_id or f"local-{uuid4().hex[:12]}"
+    thread_id = args.thread_id or generate_thread_id()
     sqlite_path = str(Path(args.sqlite_path).expanduser())
-    asyncio.run(chat_loop(args.mode, thread_id=thread_id, sqlite_path=sqlite_path))
+    memory_mode = resolve_memory_mode(args.memory_mode)
+    asyncio.run(
+        chat_loop(
+            args.mode,
+            thread_id=thread_id,
+            sqlite_path=sqlite_path,
+            memory_mode=memory_mode,
+        )
+    )
     return 0
