@@ -24,6 +24,38 @@
     "notes": "Contracted self-report ('I'm'). Regression guard for the self-report regex bug caught in Stage G1."
   },
   {
+    "id": "supportive_contracted_ive",
+    "history": [],
+    "message": "I've been stressed lately.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Contracted 'I've' form — another SELF_REPORT_PATTERNS variant that should stay in supportive."
+  },
+  {
+    "id": "supportive_contracted_id",
+    "history": [],
+    "message": "I'd really rather not talk about it.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Contracted 'I'd' form. Short but a complete statement — should be supportive."
+  },
+  {
+    "id": "supportive_somatic_self_report",
+    "history": [],
+    "message": "My chest feels tight.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Somatic self-report (my <body part> feels/hurts). Should match SELF_REPORT_PATTERNS and route to supportive."
+  },
+  {
+    "id": "supportive_it_hurts",
+    "history": [],
+    "message": "It hurts so much.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Impersonal 'it hurts' form — short but a complete distress signal. Should route to supportive via SELF_REPORT_PATTERNS."
+  },
+  {
     "id": "reflective_why_keep",
     "history": [],
     "message": "Why do I keep ending up in the same fights with my sister?",
@@ -40,6 +72,38 @@
     "notes": "'Every time I' pattern trigger — reflective fast path without using the word 'keep'."
   },
   {
+    "id": "reflective_same_cycle",
+    "history": [],
+    "message": "I feel like I'm stuck in the same cycle with work again.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'Same cycle' pattern — both SAME_CYCLE and STUCK_IN_PATTERN regexes should match. Reflective fast path."
+  },
+  {
+    "id": "reflective_why_always",
+    "history": [],
+    "message": "Why does this always happen to me?",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'Why does this always happen' — second reflective pattern family (beyond 'why do I keep')."
+  },
+  {
+    "id": "reflective_i_notice",
+    "history": [],
+    "message": "I notice I keep avoiding hard conversations when they matter most.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'I notice I keep' — self-reflective pattern observation. Should match the notice-i-keep regex."
+  },
+  {
+    "id": "reflective_i_always",
+    "history": [],
+    "message": "I always end up apologizing first.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'I always ... end up' pattern. Reflective fast path via the generic i-always-doing regex."
+  },
+  {
     "id": "clarifying_bare_acknowledge",
     "history": [],
     "message": "ok",
@@ -54,6 +118,30 @@
     "expected_mode": "clarifying",
     "dispatch_tier": "regex",
     "notes": "Explicit confusion marker. Fast path to clarifying."
+  },
+  {
+    "id": "clarifying_huh",
+    "history": [],
+    "message": "Huh?",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Single-word confusion marker. Should match the ^huh$ pattern exactly."
+  },
+  {
+    "id": "clarifying_dont_understand",
+    "history": [],
+    "message": "I don't understand what you're getting at.",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Longer confusion marker via 'I don't understand'. Fast path to clarifying even though the message isn't short."
+  },
+  {
+    "id": "clarifying_short_sparse",
+    "history": [],
+    "message": "not really",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "2-word non-self-report sparse message. Should route to clarifying via the short-message heuristic."
   },
   {
     "id": "reflective_implicit_pattern",
@@ -81,5 +169,74 @@
     "expected_mode": "clarifying",
     "dispatch_tier": "llm",
     "notes": "Ambiguous pronoun 'it' with no clear antecedent. A good dispatcher asks 'what doesn't make sense?'. Regex would likely route to supportive via fallback; LLM should pick clarifying."
+  },
+  {
+    "id": "supportive_capability_greeting",
+    "history": [],
+    "message": "Hi, what can you do for me?",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Dogfood observation: this first-turn greeting currently routes to clarifying because it's short and has no self-report, but the intent is 'I'm reaching out for help' which is a supportive context. The LLM should recognize that a user greeting a mental-health agent with 'what can you do' is opening up, not requesting clarification. Expected-mode 'supportive' is a calibration target — if this fails on baseline, the tuning should fix it."
+  },
+  {
+    "id": "supportive_grief_statement",
+    "history": [],
+    "message": "My grandmother died last week.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Grief disclosure — high emotional content, warrants warm validation, NOT a clarifying probe. Short enough that the regex fallback MIGHT route to clarifying without the SELF_REPORT guard firing. LLM should reliably pick supportive."
+  },
+  {
+    "id": "supportive_gratitude",
+    "history": [
+      {"role": "user", "content": "I'm feeling really anxious about the interview."},
+      {"role": "assistant", "content": "Anxiety before a big moment is so common — can you tell me what part feels hardest right now?"}
+    ],
+    "message": "Thank you for that, it helps to talk it through.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Gratitude after a supportive exchange — should continue in supportive mode, not flip to clarifying. The LLM has history context showing this is a follow-up, not a fresh sparse message."
+  },
+  {
+    "id": "reflective_context_dependent",
+    "history": [
+      {"role": "user", "content": "I had another blowup at work today over nothing."},
+      {"role": "assistant", "content": "That sounds frustrating. What happened?"},
+      {"role": "user", "content": "My boss gave me feedback and I just lost it, same as last month."}
+    ],
+    "message": "I don't know why I keep doing this.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "llm",
+    "notes": "Multi-turn pattern context — 'why do I keep doing this' IS a regex trigger (reflective fast path), but the key is that the LLM with history would also pick reflective. This case should pass in BOTH regex and LLM modes. Bonus: validates that the regex fires even mid-session."
+  },
+  {
+    "id": "supportive_low_mood_report",
+    "history": [],
+    "message": "I'm feeling down these days.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Dogfood case from v0.4: low-mood self-report should route to supportive. 'I'm' contracted self-report should match SELF_REPORT_PATTERNS."
+  },
+  {
+    "id": "supportive_lack_of_motivation",
+    "history": [
+      {"role": "user", "content": "I'm feeling down these days."},
+      {"role": "assistant", "content": "I'm sorry to hear that. What's been weighing on you?"}
+    ],
+    "message": "lack of motivation to start the day and to complete things that i need to",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Dogfood case from v0.4/v0.8: the follow-up to 'I'm feeling down'. Not a self-report in the strict sense (no 'I feel/am/was' verb), but a substantive emotional disclosure continuing the prior turn. Should route to supportive. In regex mode this passes as supportive by default because word count (14) exceeds CLARIFYING_MAX_WORD_COUNT. LLM mode should also pick supportive because the history makes the context clear."
+  },
+  {
+    "id": "clarifying_ambiguous_yes",
+    "history": [
+      {"role": "user", "content": "I don't know if I should bring this up with my therapist next week."},
+      {"role": "assistant", "content": "What's making you hesitant?"}
+    ],
+    "message": "yes",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Single-word 'yes' in response to a clarifying question — itself needs another clarifying question because 'yes' doesn't answer what was asked. Short message, no self-report, should route to clarifying."
   }
 ]

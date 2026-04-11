@@ -26,16 +26,46 @@ OverrideKind = Literal["imminent_risk", "idiomatic_safe"]
 # High-confidence immediate danger signals (plan/means/timing/finality).
 IMMINENT_PATTERNS = (
     r"\b(?:tonight|today|right now|this (?:morning|afternoon|evening)|soon)\b.{0,35}\b(?:kill myself|end my life|end it|overdose|hang myself|jump)\b",
-    r"\b(?:plan to|going to|gonna|will)\s+(?:kill myself|end my life|hurt myself|overdose|jump)\b",
+    r"\b(?:plan to|going to|gonna|will)\s+(?:kill myself|end my life|hurt myself|harm myself|overdose|jump)\b",
     r"\b(?:have|got)\s+(?:a|the|my)?\s*(?:gun|rope|knife|pills?|razor|blade)\b.{0,35}\b(?:for|to)\b.{0,20}\b(?:myself|end it|kill myself)\b",
     r"\b(?:this is my last|last message|goodbye everyone|you won't hear from me)\b",
     r"\b(?:swallow|take)\b.{0,20}\b(?:all|whole bottle|entire bottle)\b.{0,20}\b(?:pills?|tablets?)\b",
+    # v0.5: "going to the bridge" + timing — location-based imminent signals.
+    # The original `plan to|going to` pattern required explicit self-harm verbs
+    # after it ("going to kill myself"), but "going to the bridge tonight" is
+    # just as urgent without using the literal words. Locations associated
+    # with suicide (bridge, roof, tracks, garage with car running) paired
+    # with timing (tonight, tomorrow, right now) are high-specificity
+    # imminent signals. Regression pin: level_3_bridge_tonight test case.
+    r"\b(?:going to|headed to|driving to|walking to)\s+(?:the\s+)?(?:bridge|roof|railroad|tracks|river)\b",
+    # v0.5: stockpiling + preparation language. "Saved up pills" + "wrote
+    # letters" / "goodbye letters" is a textbook imminent-preparation
+    # cluster per policy/crisis.md but wasn't captured in regex. This
+    # pattern catches the stockpile half; the preparation half is in the
+    # "last message / goodbye" pattern above. Regression pin:
+    # level_3_saved_up_pills.
+    r"\b(?:saved up|stockpil(?:ed|ing)|collected|got enough)\s+(?:the\s+|my\s+|enough\s+)*(?:pills?|meds|medication|tablets?|sleeping pills?)\b",
+    # v0.5: means + proximate timing, generalized form. Catches
+    # "gun tomorrow morning" and similar "means word + tomorrow/
+    # tonight/today/soon/this week" combinations. The `have/got` pattern
+    # above required a 'for/to myself' suffix which was too strict —
+    # most real imminent disclosures don't add that suffix, they just
+    # name the means and the time. Regression pin:
+    # level_3_tomorrow_morning_gun.
+    r"\b(?:gun|rope|knife|pills?|razor|blade|rifle|firearm|overdose)\b.{0,40}\b(?:tomorrow|tonight|today|this (?:morning|afternoon|evening|week)|soon|right now|when\b.{0,20}\bleaves?)\b",
+    r"\b(?:tomorrow|tonight|today|this (?:morning|afternoon|evening|week)|soon|right now)\b.{0,40}\b(?:gun|rope|knife|pills?|razor|blade|rifle|firearm|overdose)\b",
 )
 
 # Explicit self-harm/suicidal language, including colloquialisms/evasion slang.
 CLEAR_SELF_HARM_PATTERNS = (
     r"\b(?:kill myself|k[i1]ll m(?:yself|y self)|suicid(?:e|al)|end my life|want to die|die by suicide)\b",
-    r"\b(?:hurt myself|harm myself|self[- ]?harm|cut(?:ting)? again|burn myself)\b",
+    # v0.5: added gerund forms ("hurting myself", "harming myself") in
+    # addition to the bare infinitive. Same bug class as the dispatcher's
+    # Stage B "end up" / "ending up" gap. "I keep thinking about hurting
+    # myself" was silently falling through to level 0 because the regex
+    # only matched "hurt myself" exact. Regression pin:
+    # level_2_hurting_myself_thought.
+    r"\b(?:hurt(?:ing)? myself|harm(?:ing)? myself|self[- ]?harm|cut(?:ting)? again|burn(?:ing)? myself)\b",
     r"\b(?:off myself|unalive myself|kms)\b",
     r"\b(?:don't want to be here anymore|nobody would miss me if i was gone|better off dead)\b",
     r"\b(?:go to sleep and (?:never|not) wake up|wish i didn't exist)\b",
@@ -43,6 +73,18 @@ CLEAR_SELF_HARM_PATTERNS = (
     # are common evasions that omit the explicit "myself" object but signal the
     # same ideation. Captured here so the deterministic tier flags them at L2.
     r"\b(?:end(?:ing)? it(?: all)?|want it to be over|ready for it to end)\b",
+    # v0.5: "no reason to live" and close variants. This phrase is
+    # explicitly listed in policy/crisis.md as a warning sign but wasn't
+    # captured in regex. It's clearly level 2 content — stating there's
+    # no reason to live is an explicit suicidal ideation disclosure.
+    # Two sub-patterns:
+    #  1. Direct "no/any reason/point to live" (covers "no reason to live",
+    #     "don't see any reason to live", "there's no point in living").
+    #  2. "nothing to live for" and the bleak "can't see a future".
+    # Regression pin: level_2_no_reason_to_live_explicit ("I don't see any
+    # reason to live anymore") and the canonical "no reason to live".
+    r"\b(?:no|any)\s+(?:reason|point)\s+(?:to|in)\s+liv(?:e|ing)\b",
+    r"\b(?:nothing (?:left )?to live for|can't see a (?:future|reason))\b",
 )
 
 # Possible risk language requiring clarification.
@@ -52,6 +94,17 @@ AMBIGUOUS_PATTERNS = (
     r"\b(?:dark thoughts|not sure i can keep going|can't keep going)\b",
     r"\b(?:i want to disappear|i don't want to exist)\b",
     r"\b(?:better off without me|i'm a burden|everyone would be better without me)\b",
+    # v0.5: "no way out" is a trapped-feeling warning sign per
+    # policy/crisis.md but wasn't captured. "It feels like there's no way
+    # out of this" is ambiguous enough that we clarify rather than
+    # escalate to crisis response — but we must at least clarify.
+    # Regression pin: level_1_no_way_out.
+    r"\bno way out\b",
+    # v0.5: passive anhedonia with "no point" framing — "don't see the
+    # point in getting out of bed", "no point in (doing) anything". These
+    # are warning signs but without explicit self-harm they're level 1,
+    # not level 2. Regression pin: level_1_no_reason_to_wake_up.
+    r"\b(?:don't see the point|no point)\b.{0,30}\b(?:getting (?:out of )?bed|waking up|going on|anything|even trying)\b",
 )
 
 # Severe distress without explicit self-harm.

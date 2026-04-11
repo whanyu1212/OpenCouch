@@ -66,7 +66,13 @@ CLARIFYING_NODE = "clarifying_response_node"
 REFLECTIVE_PATTERNS: tuple[str, ...] = (
     r"\bwhy do(?:es)? (?:i|this|it) keep\b",
     r"\bwhy does (?:this|it) (?:keep|always) happen\b",
-    r"\bi (?:always|keep)\b.{0,20}\b(?:doing|saying|feeling|ending up)\b",
+    # "I always ... doing/saying/feeling/ending up/end up" — accepts
+    # both the present participle ("ending up apologizing") and the
+    # bare infinitive ("end up apologizing"). v0.5 eval surfaced that
+    # "I always end up apologizing first" wasn't matching because the
+    # original alternation only listed "ending up". Regression pin:
+    # the reflective_i_always test case in therapeutic_routing_v0.json.
+    r"\bi (?:always|keep)\b.{0,20}\b(?:doing|saying|feeling|ending up|end up)\b",
     r"\bevery time i\b",
     r"\bsame (?:thing|pattern|story|cycle)\b",
     r"\bthis (?:keeps|always) happen(?:ing|s)\b",
@@ -184,17 +190,24 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "The three modes are:\n"
         "- supportive: default warm validation. Use when the user is sharing "
         "feelings, venting, or describing a situation without asking a "
-        "pattern question. This is the most common mode.\n"
+        "pattern question. Also use for session-opening greetings and "
+        "general capability questions like 'Hi, what can you do for me?' — "
+        "these are warm-up signals from someone reaching out for help, not "
+        "literal requests for tool documentation. This is the most common "
+        "mode and the right default when in doubt.\n"
         "- reflective: pattern-naming and gentle probing. Use when the user "
         "is describing a recurring pattern, asking 'why does this keep "
         "happening?' type questions, or surfacing a theme. Only pick this "
         "mode when the user has ALREADY shown evidence of a pattern. Never "
         "introduce a pattern the user hasn't described.\n"
         "- clarifying: ask one focused question. Use only when the user's "
-        "message is genuinely too ambiguous or too sparse to respond to "
-        "meaningfully, AND the user is not reporting a feeling or state. "
-        "A short message like 'I feel sad' is a complete self-report and "
-        "should NOT route to clarifying.\n\n"
+        "message is genuinely too ambiguous to respond to meaningfully "
+        "(e.g., a bare 'ok' with no context, or an unclear pronoun reference "
+        "to something the conversation hasn't covered), AND the user is not "
+        "reporting a feeling or state. A short message like 'I feel sad' is "
+        "a complete self-report and should NOT route to clarifying. A "
+        "session-opening greeting is NOT clarifying territory — route those "
+        "to supportive.\n\n"
         "Pick one mode. Return your decision in the structured schema. "
         "Keep the reasoning to one short sentence — it's for debugging, "
         "not for the user."
