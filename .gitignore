@@ -214,6 +214,9 @@ __marimo__/
 # local learning and reference notes
 notes/
 
+# local living roadmap — maintained as a working doc but not tracked
+ROADMAP.md
+
 # local runtime and eval sqlite databases
 apps/backend/.opencouch_threads.sqlite3
 apps/backend/.opencouch_threads.sqlite3-shm

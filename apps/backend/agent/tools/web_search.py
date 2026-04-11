@@ -117,25 +117,118 @@ async def _lookup_resources(
     return _parse_resource_lines(raw, location=location)
 
 
+def _clean_field(raw_field: str) -> str:
+    """Normalize one pipe-separated field from the LLM's resource output.
+
+    Handles the formatting variations we see in the wild across providers:
+
+    - Markdown bold (``**Samaritans**`` → ``Samaritans``). OpenAI's
+      web_search tool emits markdown-formatted bold around field
+      values. Phone fields sometimes contain multiple ``**``-wrapped
+      numbers (``**0120-A**; **050-B** for IP phones``), so we strip
+      ALL ``**`` sequences from the field rather than just the ends.
+      There is no legitimate reason to keep markdown bold in a
+      structured phone/name/url field.
+    - Leading/trailing whitespace.
+
+    Returns the cleaned field; empty string if the field was empty or
+    contained only formatting characters.
+    """
+
+    # Strip markdown bold markers anywhere in the field, then collapse
+    # any whitespace runs created by the removal.
+    value = raw_field.replace("**", "")
+    return " ".join(value.split())
+
+
+def _clean_url_field(raw_field: str) -> str:
+    """Normalize the URL field, stripping OpenAI-style citation suffixes.
+
+    OpenAI's web_search tool appends a citation tag after the URL in
+    the form ``URL ([source.domain](url?utm_source=openai))``. The
+    extra syntax confuses downstream URL rendering without adding
+    information the CLI can use (the real URL is already the leading
+    value). Strip everything from the first space-then-paren onward.
+
+    Also handles markdown bold the same way as :func:`_clean_field`.
+
+    Ordering note: the citation tail is stripped FIRST, then the
+    markdown-bold cleanup runs. Reversing the order leaves inner
+    ``**`` sequences behind when the URL is wrapped in bold
+    (``**URL** ([citation]...)``), because the leading ``**`` gets
+    stripped but the trailing ``**`` is no longer at the end of the
+    string after the citation is cut.
+    """
+
+    # Step 1: strip the citation tail. Look for " (" — a space then
+    # an open paren — which is the OpenAI citation-prefix boundary.
+    # Non-OpenAI output without this pattern is unaffected because
+    # ``find`` returns -1.
+    value = raw_field.strip()
+    citation_start = value.find(" (")
+    if citation_start >= 0:
+        value = value[:citation_start].rstrip()
+
+    # Step 2: strip markdown-bold markers from both ends of the
+    # now-citation-free value.
+    return _clean_field(value)
+
+
 def _parse_resource_lines(raw: str, *, location: str) -> list[dict[str, str]]:
     """Parse ``Name | Phone | Website`` lines into structured resource dicts.
 
-    Lines that don't contain a ``|`` separator or have fewer than two fields
-    are silently dropped. Caps results at ``_MAX_RESOURCES``.
+    Lines that don't contain a ``|`` separator or have fewer than two
+    fields are silently dropped. Caps results at ``_MAX_RESOURCES``.
+
+    Handles two LLM output formats:
+    - Gemini's search-grounded output (plain pipe-separated lines)
+    - OpenAI's search-grounded output (markdown-bold fields with
+      citation suffixes, e.g., ``**Name** | **Phone** |
+      **URL** ([source.domain](url?utm_source=openai))``)
+
+    Both formats parse to the same normalized dict shape. See the
+    ``_clean_field`` and ``_clean_url_field`` helpers for the
+    formatting normalizations.
     """
     resources: list[dict[str, str]] = []
     for raw_line in raw.splitlines():
         line = raw_line.strip(_BULLET_CHARS)
         if "|" not in line:
             continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 2:
+        # Markdown tables bracket each row with a leading and trailing
+        # pipe: ``| Name | Phone | Website |``. If we split that on
+        # ``|`` we get empty strings at both ends. Strip them so the
+        # real columns land at indexes 0/1/2 as the plain format
+        # expects. This is a no-op for non-table output.
+        line = line.strip("|").strip()
+        raw_parts = line.split("|")
+        if len(raw_parts) < 2:
+            continue
+        name = _clean_field(raw_parts[0])
+        phone = _clean_field(raw_parts[1])
+        url = _clean_url_field(raw_parts[2]) if len(raw_parts) > 2 else ""
+        # Skip header rows like ``Name | Phone | Website`` and
+        # markdown table separators like ``--- | --- | ---``. Check
+        # both the name and phone fields because either can give us
+        # away. Also reject "no phone" placeholders that the model
+        # sometimes emits when it couldn't find a number — those
+        # rows are informational noise, not actionable resources.
+        phone_lower = phone.lower()
+        name_lower = name.lower()
+        if name_lower in ("name", "---"):
+            continue
+        if phone_lower in ("phone", "---", "number") or not phone:
+            continue
+        # Skip rows where the model explicitly notes the number
+        # couldn't be verified — these confuse the CLI's resource
+        # display because there's nothing to dial.
+        if "not verified" in phone_lower or "no phone" in phone_lower:
             continue
         resources.append(
             {
-                "name": parts[0] or "Crisis Line",
-                "phone": parts[1],
-                "url": parts[2] if len(parts) > 2 else "",
+                "name": name or "Crisis Line",
+                "phone": phone,
+                "url": url,
                 "region": location,
             }
         )

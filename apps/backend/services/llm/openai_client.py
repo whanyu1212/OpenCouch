@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-from typing import cast
+from typing import Any, cast
 
 from openai import AsyncOpenAI
 
@@ -48,12 +48,31 @@ class OpenAILLMClient(BaseLLMClient):
     ) -> str:
         """Generate a plain-text response with OpenAI.
 
+        When ``use_search=True``, the OpenAI hosted ``web_search`` tool
+        is attached to the Responses API call so the model can ground
+        its reply against live web results. This is the call path the
+        crisis resource lookup tool uses to find verified regional
+        hotlines.
+
+        Before v0.8, this client silently ignored ``use_search=True``
+        and documented the parameter as "unused for interface parity."
+        That was a real safety gap for the crisis resource lookup
+        path — the tool's system prompt told the model to "use your
+        web search capability" but the client never attached a search
+        tool, leaving the model free to produce results from training
+        data (sometimes accurate for well-known regions, sometimes
+        hallucinated for less-common ones). The v0.8 fix wires up
+        OpenAI's ``web_search`` tool so ``use_search=True`` does what
+        it says on the tin.
+
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
             temperature: Sampling temperature for the request.
-            use_search: Unused for the OpenAI provider; accepted for interface
-                compatibility with `BaseLLMClient`.
+            use_search: When True, attach OpenAI's hosted ``web_search``
+                tool so the model can ground its reply against live
+                web results. When False (the default), the call runs
+                without any tool attached.
 
         Returns:
             The generated text response.
@@ -61,16 +80,31 @@ class OpenAILLMClient(BaseLLMClient):
         Raises:
             ValueError: If OpenAI returns an empty text payload.
         """
-        input_items = []
+        input_items: list[dict[str, str]] = []
         if system_instruction:
             input_items.append({"role": "system", "content": system_instruction})
         input_items.append({"role": "user", "content": prompt})
 
-        response = await self.client.responses.create(
-            model=self.model,
-            input=input_items,
-            temperature=temperature,
-        )
+        # The Responses API accepts ``tools`` as an optional parameter.
+        # When absent, the call behaves exactly as before. When present,
+        # the model may route the call through the attached tool before
+        # producing its final text — but ``response.output_text`` still
+        # returns just the final user-visible text, so the caller
+        # contract stays the same.
+        #
+        # We only attach the tool list when ``use_search=True``; passing
+        # an empty list is a different code path in the SDK (it forces
+        # tools-enabled request shape with no tools available) and
+        # isn't what we want for the common no-search case.
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": input_items,
+            "temperature": temperature,
+        }
+        if use_search:
+            kwargs["tools"] = [{"type": "web_search"}]
+
+        response = await self.client.responses.create(**kwargs)
         text = response.output_text
         if not text:
             raise ValueError("OpenAI text generation returned an empty response.")
