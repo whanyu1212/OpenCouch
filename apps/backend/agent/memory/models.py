@@ -646,6 +646,72 @@ ConsolidationRunRecord.model_rebuild()
 # this file; nodes_sketch.py re-declares the same Literal for its own
 # routing annotations (which is fine — Literal equality is structural,
 # not nominal).
+#
+# ─── Mode expansion plan (captured during v0.6 planning) ────────────────────
+#
+# The six modes below are the MVP set: one named gesture per distinct
+# register the agent needs to operate in (validate, pattern-name,
+# explain, walk-through, wrap-up, clarify). They were chosen so each
+# mode has a gesture that wouldn't fold cleanly into any of the others.
+# Ship v0.6 with these six — do NOT add a seventh before real dogfood
+# exposes a gap, because adding a mode before you've felt the failure
+# it would have fixed is premature and risks overlap with existing
+# modes.
+#
+# Expected future additions, in the order we'll probably feel them:
+#
+#   1. `stabilizing` — the gap between crisis level 1 (hopeless /
+#      trapped / can't do this anymore) and crisis_response. Current
+#      level-1 turns land in `supportive` or `clarifying`, which is
+#      too passive for someone on the edge. Stabilizing acknowledges
+#      directly, offers ONE grounding move, names the option of
+#      reaching out for more support without alarming. Expected after
+#      v0.6 dogfood surfaces level-1-is-awkward cases.
+#
+#   2. `affirming` / `noticing_growth` — cross-session growth surfacing
+#      that needs memory access (semantic facts, episodic arcs) to
+#      notice change the user hasn't. Without this mode the memory
+#      layer feels invisible — users know things are remembered but
+#      rarely hear the system DO something useful with those memories.
+#      Expected around v0.7-v0.8 once memory actually informs responses.
+#
+#   3. `behavioral_activation` / `next_step` — forward-looking plan
+#      commitment. Collaborative, goal-oriented, helps the user land
+#      on ONE concrete thing to try before the next session. None of
+#      the current 6 are forward-looking in this way; reflective names
+#      patterns but doesn't build plans. Expected around v0.9+ once
+#      multi-session arcs are real.
+#
+#   4. `challenging` / `gentle_pushback` — the "I noticed you paused"
+#      move. Safety-adjacent (overused damages trust; underused makes
+#      the agent a yes-machine). Do NOT add before phase 2 — LLMs
+#      over-challenge by default and we need real tuning data before
+#      wiring this up.
+#
+#   5. `minimal_acknowledgment` — sometimes the right response is one
+#      line, not a paragraph. Might be a length dial inside `supportive`
+#      rather than a new mode; worth revisiting architecturally when
+#      we know more.
+#
+# ─── Architectural limit ────────────────────────────────────────────────────
+#
+# Stop adding modes somewhere around 10-12 total. Past that point:
+#   - The dispatcher starts making classification errors on adjacent
+#     modes (the 28-case v0.5 dataset would need to explode to cover
+#     the combinatorics).
+#   - Users stop being able to feel the difference between adjacent
+#     modes.
+#   - You're not adding genuinely distinct gestures — you're slicing
+#     existing ones finer than the LLM can reliably distinguish.
+#
+# If you hit that wall, STOP ADDING MODES and revisit the architecture
+# instead: a flat one-of-N enum may need to be decomposed into
+# orthogonal dimensions (e.g., register × length × action × memory-
+# weight), where each "mode" becomes a point in that space rather
+# than a named cell. Not recommended for phase 1 — the flat enum is
+# simpler, more testable, and easier for the dispatcher to classify —
+# but flagged here so future-you knows the wall exists and doesn't
+# just keep adding cells to an enum that's outgrown itself.
 TherapeuticMode = Literal[
     "supportive",
     "reflective",
