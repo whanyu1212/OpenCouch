@@ -1,18 +1,21 @@
 """Therapeutic subgraph assembly.
 
 Builds the compiled ``StateGraph`` that wires the therapeutic dispatcher
-+ three mode nodes together. The parent graph (``agent/graph.py``)
-registers the result as a single node via ``add_node("therapeutic_subgraph",
++ mode nodes together. The parent graph (``agent/graph.py``) registers
+the result as a single node via ``add_node("therapeutic_subgraph",
 build_therapeutic_subgraph())``.
 
 Internal topology:
 
     START(subgraph)
       → therapeutic_dispatch_node
-        → Command(goto=<one of the three mode nodes>)
+        → Command(goto=<one of the mode nodes>)
       → [supportive_response_node
          | reflective_response_node
-         | clarifying_response_node]
+         | clarifying_response_node
+         | psychoeducation_response_node
+         | closing_response_node
+         | guided_exercise_response_node]
       → END(subgraph)
 
 The dispatcher returns ``Command(goto=...)`` rather than using a
@@ -21,10 +24,17 @@ Each mode node terminates at the subgraph's END; LangGraph propagates
 state and the runtime context into and out of the subgraph
 automatically because both the parent and subgraph share ``AgentState``.
 
-Phase 1 v0.1 scope: three modes (supportive, reflective, clarifying)
-with keyword-based dispatch. The other three modes (psychoeducation,
-guided_exercise, closing) land in v0.6 alongside the LLM-backed
-dispatcher in v0.5.
+Mode rollout history:
+- v0.1: supportive, reflective, clarifying (the MVP three)
+- v0.5: LLM-backed dispatcher added with tuned prompts
+- v0.6 Stage A: psychoeducation mode node wired up
+- v0.6 Stage B: closing mode node wired up (tonal only — session
+  termination and summarization remain runtime concerns)
+- v0.6 Stage C: guided_exercise mode node wired up. First
+  multi-turn mode in the codebase; tracks exercise state via
+  ``progress.exercise_type`` + ``progress.exercise_step``, and
+  the dispatcher gained an "active-exercise fast-path" that
+  keeps the mode engaged across turns without re-classifying.
 """
 
 from __future__ import annotations
@@ -35,12 +45,18 @@ from langgraph.graph.state import CompiledStateGraph
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.clarifying import run_clarifying_response_node
+from agent.therapeutic.closing import run_closing_response_node
 from agent.therapeutic.dispatcher import (
     CLARIFYING_NODE,
+    CLOSING_NODE,
+    GUIDED_EXERCISE_NODE,
+    PSYCHOEDUCATION_NODE,
     REFLECTIVE_NODE,
     SUPPORTIVE_NODE,
     run_therapeutic_dispatch_node,
 )
+from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+from agent.therapeutic.psychoeducation import run_psychoeducation_response_node
 from agent.therapeutic.reflective import run_reflective_response_node
 from agent.therapeutic.supportive import run_supportive_response_node
 
@@ -77,6 +93,9 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
     subgraph.add_node(SUPPORTIVE_NODE, run_supportive_response_node)
     subgraph.add_node(REFLECTIVE_NODE, run_reflective_response_node)
     subgraph.add_node(CLARIFYING_NODE, run_clarifying_response_node)
+    subgraph.add_node(PSYCHOEDUCATION_NODE, run_psychoeducation_response_node)
+    subgraph.add_node(CLOSING_NODE, run_closing_response_node)
+    subgraph.add_node(GUIDED_EXERCISE_NODE, run_guided_exercise_response_node)
 
     subgraph.add_edge(START, DISPATCH_NODE)
     # therapeutic_dispatch_node returns Command(goto=<mode>); no
@@ -84,5 +103,8 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
     subgraph.add_edge(SUPPORTIVE_NODE, END)
     subgraph.add_edge(REFLECTIVE_NODE, END)
     subgraph.add_edge(CLARIFYING_NODE, END)
+    subgraph.add_edge(PSYCHOEDUCATION_NODE, END)
+    subgraph.add_edge(CLOSING_NODE, END)
+    subgraph.add_edge(GUIDED_EXERCISE_NODE, END)
 
     return subgraph.compile()

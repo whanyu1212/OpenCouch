@@ -238,5 +238,127 @@
     "expected_mode": "clarifying",
     "dispatch_tier": "regex",
     "notes": "Single-word 'yes' in response to a clarifying question — itself needs another clarifying question because 'yes' doesn't answer what was asked. Short message, no self-report, should route to clarifying."
+  },
+  {
+    "id": "psychoeducation_anxiety_confusion",
+    "history": [],
+    "message": "My heart starts racing for no reason and then I convince myself something is really wrong with me. I don't get what's happening to me.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: anxiety-topic psychoeducation case. User is confused about a bodily reaction (racing heart + catastrophic thought loop) and explicitly asks for a frame ('I don't get what's happening to me'). Drawn from the good-example snippet in knowledge/response_modes/psychoeducation.md. NOTE: the original draft of this case ended with 'Why does this keep happening?' but that phrasing triggered reflective-mode classification because reflective's canonical trigger is 'why does this keep happening'. Swapped to 'I don't get what's happening to me' for cleaner signal — still confusion about a bodily reaction, but without the reflective-triggering tag."
+  },
+  {
+    "id": "psychoeducation_grief_confusion",
+    "history": [],
+    "message": "I was fine all week and then I walked past this restaurant we used to go to and I completely fell apart. I don't understand why that happened.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: grief-topic psychoeducation case. User is confused about a sudden wave of grief triggered by an environmental cue. 'I don't understand why' is the psychoeducation marker. This case is drawn from the good-example snippet in knowledge/response_modes/psychoeducation.md, so it should be a high-confidence route for the LLM. Regression guard: if this routes to supportive instead, the LLM has lost the 'confusion about reaction' signal."
+  },
+  {
+    "id": "psychoeducation_stress_confusion",
+    "history": [],
+    "message": "I don't even know why I'm so short with everyone lately. Nothing that bad is happening.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: stress-topic psychoeducation case. User is puzzled about their own irritability given that 'nothing bad is happening'. The knowledge file explicitly frames this as a stress-response normalization case ('the body can stay in a low-grade activation state even after the stressor is gone'). Another draw from the good-example snippet. The 'I don't even know why' framing is the psychoeducation tell."
+  },
+  {
+    "id": "psychoeducation_general_emotional_confusion",
+    "history": [],
+    "message": "I don't even know why I cried. It wasn't that big a deal.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: general emotional process psychoeducation case. User had a disproportionate emotional reaction and is puzzled by it — doesn't fit neatly into the anxiety/stress/grief branches. The knowledge file's 'general emotional process' topic branch handles exactly this. Third draw from the good-example snippet. Tests that the LLM routes to psychoeducation even when there's no specific topic keyword (no 'anxious', 'grief', 'stressed')."
+  },
+  {
+    "id": "supportive_expressing_not_asking",
+    "history": [],
+    "message": "I'm so angry right now. I could scream.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: boundary case between supportive and psychoeducation. User is EXPRESSING an emotion, not asking why they feel it. Per the knowledge file's 'Boundary with supportive mode' section, this should route to supportive even though the user is describing an intense reaction. If this routes to psychoeducation, the LLM has confused 'intense emotional state' with 'confusion about reaction'. Pin for the single biggest expected dispatcher drift point for psychoeducation."
+  },
+  {
+    "id": "closing_explicit_wind_down",
+    "history": [
+      {"role": "user", "content": "I've been feeling really stuck at work this week."},
+      {"role": "assistant", "content": "That sounds exhausting. What's been the hardest part?"},
+      {"role": "user", "content": "Just the feeling that nothing I do matters. But talking about it has helped a bit."},
+      {"role": "assistant", "content": "I'm glad naming it gave you some breathing room. It doesn't have to mean more than that tonight."}
+    ],
+    "message": "Thanks, I think I need to step away now. This really helped.",
+    "expected_mode": "closing",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: textbook closing trigger. User explicitly thanks + signals stepping away + names that the session was helpful. This is the canonical case from the good-example snippet in knowledge/response_modes/closing.md. If this routes to supportive, the LLM is missing the wind-down signal entirely."
+  },
+  {
+    "id": "closing_need_to_go",
+    "history": [
+      {"role": "user", "content": "My partner and I had another fight about chores last night."},
+      {"role": "assistant", "content": "That sounds draining — fights about small things often carry bigger weight underneath."},
+      {"role": "user", "content": "Yeah, I think it's about feeling unseen more than the dishes."},
+      {"role": "assistant", "content": "Naming that distinction matters. It gives you something to actually talk about with them later."}
+    ],
+    "message": "I should probably go, it's late. I'll come back to this.",
+    "expected_mode": "closing",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: closing via 'I should go' framing. User names the practical reason (it's late) and signals intent to return ('I'll come back to this'). The closing node should produce a warm wind-down that doesn't push back on the user's departure."
+  },
+  {
+    "id": "closing_with_open_loops",
+    "history": [
+      {"role": "user", "content": "My mom is sick, my rent went up, and my friend is ghosting me. I don't know where to start."},
+      {"role": "assistant", "content": "That's three genuinely heavy things at once. Which one is loudest right now?"},
+      {"role": "user", "content": "My mom, probably."},
+      {"role": "assistant", "content": "Makes sense. You don't have to solve any of it tonight — just naming the pile is real work."}
+    ],
+    "message": "I think I need to stop here. Thanks for listening.",
+    "expected_mode": "closing",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: closing with unresolved threads still in the air (mom sick, rent up, friend ghosting). The closing node should acknowledge the exit cleanly and MAY reference one of the open threads per the knowledge file's 'Respect open loops' pattern. Tests that closing handles unresolved state without trying to resolve it."
+  },
+  {
+    "id": "supportive_mid_conversation_thanks",
+    "history": [
+      {"role": "user", "content": "I've been having this recurring dream where I'm back in my childhood home."},
+      {"role": "assistant", "content": "That kind of dream can feel strange to wake up from. What's it like when you're in it?"}
+    ],
+    "message": "Thanks, that helps me think about it differently.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: CRITICAL boundary case. The user says 'thanks, that helps' MID-CONVERSATION — it's a polite acknowledgment of what the assistant just said, NOT a wind-down signal. The conversation is still actively flowing. Per the closing mode description in the dispatcher prompt, 'false-positive closings are user-trust-damaging', so this must route to supportive, not closing. If this routes to closing, the LLM has over-reached on wind-down cues. Pin for the biggest expected dispatcher drift point for closing."
+  },
+  {
+    "id": "guided_exercise_start_ground_me",
+    "history": [],
+    "message": "Can you walk me through a grounding exercise? I'm feeling really scattered.",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: textbook guided_exercise trigger. User explicitly asks for a structured grounding exercise. The phrase 'walk me through' + 'grounding exercise' is unambiguous. The mention of feeling scattered is distress context, not a supportive trigger — the explicit request for an exercise dominates."
+  },
+  {
+    "id": "guided_exercise_help_me_breathe",
+    "history": [],
+    "message": "I need to breathe. Can you help me with a breathing exercise?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: explicit breathing exercise request. 'I need to breathe' alone is ambiguous between expressing distress and requesting an exercise, but 'Can you help me with a breathing exercise' resolves it cleanly. Routes to guided_exercise. (The node will start its default exercise — 5-4-3-2-1 grounding — because Stage C only implements grounding; adding breath-specific exercises is a future-stage concern.)"
+  },
+  {
+    "id": "supportive_distress_not_request",
+    "history": [],
+    "message": "I can't calm down. Nothing is helping.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: CRITICAL boundary case for guided_exercise. The user is EXPRESSING distress ('I can't calm down') and frustration ('nothing is helping'), NOT asking for an exercise. The dispatcher prompt explicitly calls this out as a supportive case: 'The distinction is: is the user asking the agent to DO something structured with them, or sharing how they feel? Only the former is guided_exercise.' If this routes to guided_exercise, the LLM is confusing distress with a request for intervention. Pin for the biggest expected drift point for guided_exercise."
+  },
+  {
+    "id": "psychoeducation_vs_guided_exercise",
+    "history": [],
+    "message": "Why does grounding even work? I don't really get the point.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: boundary case between psychoeducation and guided_exercise. User asks ABOUT grounding (why does it work, what's the point) rather than asking TO DO grounding. This is a confusion about the mechanism, not a request for the intervention — psychoeducation territory, not guided_exercise. Tests the 'asking about mechanism' counter-example in the dispatcher prompt."
   }
 ]

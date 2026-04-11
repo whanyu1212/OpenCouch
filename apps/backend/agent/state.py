@@ -37,6 +37,28 @@ class SessionProgressState(TypedDict):
     # Whether the current runtime is in ephemeral guest mode.
     is_guest: NotRequired[bool]
 
+    # ── Multi-turn exercise state (v0.6 Stage C) ─────────────────────────
+    # When the guided_exercise mode node starts a multi-turn exercise, it
+    # writes the exercise identifier and current step index here. The
+    # dispatcher reads these fields on subsequent turns via a fast-path
+    # check: if ``exercise_type`` and ``exercise_step`` are both set, the
+    # dispatcher short-circuits to the guided_exercise node instead of
+    # re-classifying the message. This is how multi-turn exercise state
+    # persists across turns without requiring the LLM classifier to read
+    # prior history and infer "we're mid-exercise."
+    #
+    # Both fields are cleared (set to None) when the exercise completes
+    # naturally OR when the user exits mid-exercise. The guided_exercise
+    # node owns the lifecycle; the dispatcher only reads.
+    #
+    # v0.6 Stage C supports exactly one exercise type:
+    #   - "grounding_5_4_3_2_1" — the 5-4-3-2-1 sensory grounding exercise
+    # Future stages can add more exercise_type values without schema
+    # changes; the type is stored as a string so the schema doesn't need
+    # to enumerate every supported exercise at the TypedDict level.
+    exercise_type: NotRequired[str | None]
+    exercise_step: NotRequired[int | None]
+
 
 class RoutingState(TypedDict):
     """Routing and mode selection outputs for the current turn."""

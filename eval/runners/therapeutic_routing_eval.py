@@ -45,6 +45,9 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.dispatcher import (
     CLARIFYING_NODE,
+    CLOSING_NODE,
+    GUIDED_EXERCISE_NODE,
+    PSYCHOEDUCATION_NODE,
     REFLECTIVE_NODE,
     SUPPORTIVE_NODE,
     run_therapeutic_dispatch_node,
@@ -64,6 +67,9 @@ _NODE_TO_MODE = {
     SUPPORTIVE_NODE: "supportive",
     REFLECTIVE_NODE: "reflective",
     CLARIFYING_NODE: "clarifying",
+    PSYCHOEDUCATION_NODE: "psychoeducation",
+    CLOSING_NODE: "closing",
+    GUIDED_EXERCISE_NODE: "guided_exercise",
 }
 
 
