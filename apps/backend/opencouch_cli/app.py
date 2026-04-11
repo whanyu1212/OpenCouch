@@ -73,8 +73,47 @@ class RunnerSession:
     thread_id: str
     sqlite_path: str
     memory_mode: str
+    # v0.8 addition (pulled forward from v0.9 scope): optional stable
+    # owner identifier for long-term memory. When set via the
+    # ``--user-id`` flag, semantic / episodic / procedural memory
+    # writes are namespaced by this user_id rather than the
+    # thread_id, so switching threads preserves memory across
+    # sessions. When None (the default and the backward-compatible
+    # path), the CLI falls back to ``thread_id`` as the effective
+    # owner via :meth:`owner_id`.
+    user_id: str | None = None
     history: list[Message] = field(default_factory=list)
     last_context: AgentState | None = None
+
+    def owner_id(self) -> str:
+        """Return the effective owner identifier for memory operations.
+
+        Used as the ``user_id`` argument to procedural store helpers
+        (``aget_procedural_profile``, ``aset_proactive_recall``, etc.)
+        AND as the ``user_id`` passed into ``runtime.run_turn`` /
+        ``run_turn_stream`` so the graph's semantic and episodic
+        extraction nodes write under the same namespace.
+
+        Resolution precedence:
+        1. ``user_id`` if explicitly set (via ``--user-id`` flag)
+        2. ``thread_id`` as the backward-compatible fallback
+
+        Never returns None — every session has a thread_id, so the
+        fallback always produces a valid string. Callers don't need
+        to handle the null case.
+
+        Why this method exists at all: before v0.8, every CLI memory
+        call used ``session.thread_id`` directly, which meant each
+        thread was effectively its own user namespace. That made
+        cross-session memory persistence (the thing v0.4 episodic
+        and v0.8 SQLite were supposed to unlock) inaccessible to
+        CLI users unless they happened to reuse thread_ids. Adding
+        the indirection through ``owner_id()`` lets the ``--user-id``
+        flag decouple identity from thread without breaking any
+        existing call site's shape.
+        """
+
+        return self.user_id or self.thread_id
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,6 +140,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--thread-id",
         default=None,
         help="Stable thread identifier to resume a prior local conversation.",
+    )
+    parser.add_argument(
+        "--user-id",
+        default=None,
+        help=(
+            "Stable owner identifier for long-term memory (semantic facts, "
+            "episodic arcs, procedural rules). When set, memory writes are "
+            "namespaced by this user_id rather than the thread_id, so "
+            "switching threads preserves memory across sessions. Only "
+            "meaningful in persistent memory mode — guest mode has no "
+            "long-term storage to namespace. When omitted, falls back to "
+            "the thread_id for backward compatibility."
+        ),
     )
     parser.add_argument(
         "--sqlite-path",
@@ -178,28 +230,42 @@ def resolve_memory_mode(memory_mode: str) -> str:
         render_info("Please choose 1 (guest) or 2 (persistent).", style="warning")
 
 
-def render_header(mode: str, thread_id: str, memory_mode: str) -> None:
+def render_header(
+    mode: str,
+    thread_id: str,
+    memory_mode: str,
+    *,
+    user_id: str | None = None,
+) -> None:
     """Render the CLI header.
 
     Args:
         mode: Effective runtime mode for the current session.
         thread_id: Active persisted thread identifier.
         memory_mode: Local memory mode (guest or persistent).
+        user_id: Optional explicit owner identifier (set via
+            ``--user-id``). When set, the header shows a ``user:``
+            field so the operator can see at a glance which memory
+            namespace the session is writing to. When None, the
+            field is omitted (backward-compatible display).
 
     Returns:
         None.
     """
 
     console.print(Rule("[primary]OpenCouch CLI[/primary]", style="panel"))
-    console.print(
-        Text.from_markup(
-            f"[muted]mode:[/muted] [primary]{mode}[/primary]  [muted]|[/muted]  "
-            f"[muted]memory:[/muted] [accent]{memory_mode}[/accent]  [muted]|[/muted]  "
-            f"[muted]thread:[/muted] [info]{thread_id}[/info]  [muted]|[/muted]  "
-            "[muted]type[/muted] [accent]exit[/accent] [muted]or[/muted] "
-            "[accent]quit[/accent] [muted]to stop[/muted]"
-        )
+    header_parts = [
+        f"[muted]mode:[/muted] [primary]{mode}[/primary]",
+        f"[muted]memory:[/muted] [accent]{memory_mode}[/accent]",
+        f"[muted]thread:[/muted] [info]{thread_id}[/info]",
+    ]
+    if user_id:
+        header_parts.append(f"[muted]user:[/muted] [info]{user_id}[/info]")
+    header_parts.append(
+        "[muted]type[/muted] [accent]exit[/accent] [muted]or[/muted] "
+        "[accent]quit[/accent] [muted]to stop[/muted]"
     )
+    console.print(Text.from_markup("  [muted]|[/muted]  ".join(header_parts)))
     console.print(
         "[muted]slash commands:[/muted] [info]/help, /status, /history, /context, "
         "/memory, /threads, /resume, /new, /reset, /clear, /mode, /exit[/info]\n"
@@ -417,12 +483,21 @@ async def render_memory_status(
     # recall toggle row shows the real state. Also used to show the
     # per-thread rule count (which may differ from the store-wide
     # total when multiple threads share a store backend).
-    profile = await aget_procedural_profile(store, user_id=session.thread_id)
+    profile = await aget_procedural_profile(store, user_id=session.owner_id())
 
     table = Table(show_header=False, box=box.SIMPLE_HEAVY)
     table.add_column(style="muted", no_wrap=True)
     table.add_column(style="info")
     table.add_row("memory_mode", str(runtime.memory_mode))
+    # v0.8: surface the effective owner_id so the operator can see
+    # which namespace memory is being read from. When --user-id was
+    # set, the value comes from the flag. When not, it falls back
+    # to the thread_id (labeled as such for clarity).
+    owner = session.owner_id()
+    if session.user_id:
+        table.add_row("owner_id", f"{owner} (from --user-id)")
+    else:
+        table.add_row("owner_id", f"{owner} (from thread_id)")
     table.add_row("semantic facts", str(counts_by_kind["semantic"]))
     table.add_row("episodic arcs", str(counts_by_kind["episodic"]))
     table.add_row("procedural rules", str(counts_by_kind["procedural"]))
@@ -908,7 +983,7 @@ async def render_memory_recall_toggle(
     store = runtime.memory_store
     # Read current state first so we can detect no-op calls and
     # pick the right confirmation message.
-    current = await aget_procedural_profile(store, user_id=session.thread_id)
+    current = await aget_procedural_profile(store, user_id=session.owner_id())
     current_enabled = current.proactive_recall_enabled
 
     if enable and current_enabled:
@@ -926,7 +1001,7 @@ async def render_memory_recall_toggle(
         return
 
     # Actual state change. Write first, then confirm.
-    await aset_proactive_recall(store, user_id=session.thread_id, enabled=enable)
+    await aset_proactive_recall(store, user_id=session.owner_id(), enabled=enable)
 
     if enable:
         # Flipping OFF → ON. Show the first-run explanation per
@@ -1018,7 +1093,7 @@ async def render_memory_forget_rule(
         return
 
     store = runtime.memory_store
-    profile = await aget_procedural_profile(store, user_id=session.thread_id)
+    profile = await aget_procedural_profile(store, user_id=session.owner_id())
 
     if not profile.rules:
         render_info(
@@ -1063,7 +1138,7 @@ async def render_memory_forget_rule(
     # individual record delete, because procedural memory is stored
     # as a single profile document.
     profile.rules.pop(index_1based - 1)
-    await aput_procedural_profile(store, user_id=session.thread_id, profile=profile)
+    await aput_procedural_profile(store, user_id=session.owner_id(), profile=profile)
     render_info(
         f"Deleted rule #{index_1based}. "
         f"{len(profile.rules)} rule(s) remaining for this thread.",
@@ -1097,7 +1172,7 @@ async def render_memory_list_rules(
     """
 
     profile = await aget_procedural_profile(
-        runtime.memory_store, user_id=session.thread_id
+        runtime.memory_store, user_id=session.owner_id()
     )
 
     if not profile.rules:
@@ -1652,7 +1727,12 @@ async def handle_command(
                 style="warning",
             )
             return True
-        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
+        render_header(
+            session.resolved_mode,
+            session.thread_id,
+            session.memory_mode,
+            user_id=session.user_id,
+        )
         render_info(
             f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
             style="success",
@@ -1685,7 +1765,12 @@ async def handle_command(
                 style="warning",
             )
             return True
-        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
+        render_header(
+            session.resolved_mode,
+            session.thread_id,
+            session.memory_mode,
+            user_id=session.user_id,
+        )
         render_info(f"Started new thread {session.thread_id}.", style="success")
         return True
 
@@ -1698,7 +1783,12 @@ async def handle_command(
 
     if command == "/clear":
         console.clear()
-        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
+        render_header(
+            session.resolved_mode,
+            session.thread_id,
+            session.memory_mode,
+            user_id=session.user_id,
+        )
         return True
 
     if command == "/mode":
@@ -1720,6 +1810,7 @@ async def chat_loop(
     mode: str,
     *,
     thread_id: str,
+    user_id: str | None = None,
     sqlite_path: str,
     memory_mode: str,
     memory_sqlite_path: str = str(DEFAULT_MEMORY_DB_PATH),
@@ -1730,6 +1821,12 @@ async def chat_loop(
     Args:
         mode: Requested runtime mode for model resolution.
         thread_id: Stable thread identifier for the local conversation.
+        user_id: Optional stable owner identifier for long-term memory.
+            When set, memory writes are namespaced by this user_id
+            rather than the thread_id. See
+            :meth:`RunnerSession.owner_id` for the full resolution
+            rationale. When None, the CLI uses ``thread_id`` as the
+            effective owner (backward-compatible default).
         sqlite_path: SQLite file used for persisted thread checkpoints.
         memory_mode: Local memory mode ("guest" or "persistent").
         memory_sqlite_path: v0.8 SQLite path for the memory store
@@ -1749,6 +1846,12 @@ async def chat_loop(
         MemoryMode.INCOGNITO if memory_mode == "guest" else MemoryMode.LOCAL
     )
     is_guest_mode = runtime_memory_mode == MemoryMode.INCOGNITO
+    # In guest mode, --user-id is meaningless (no long-term storage to
+    # namespace). We don't reject it at the CLI layer because that would
+    # require a pre-parse check, but we do drop it from the session so
+    # owner_id() falls through to thread_id. This matches the "guest mode
+    # is ephemeral" contract documented in the flag's help text.
+    effective_user_id = None if is_guest_mode else user_id
     session = RunnerSession(
         requested_mode=mode,
         resolved_mode=resolved_mode,
@@ -1756,6 +1859,7 @@ async def chat_loop(
         thread_id=thread_id,
         sqlite_path=":memory:" if is_guest_mode else sqlite_path,
         memory_mode=memory_mode,
+        user_id=effective_user_id,
     )
 
     async with PersistentAgentRuntime(
@@ -1767,7 +1871,12 @@ async def chat_loop(
         session.history = await runtime.get_history(thread_id)
         session.last_context = await runtime.get_state(thread_id)
 
-        render_header(session.resolved_mode, session.thread_id, session.memory_mode)
+        render_header(
+            session.resolved_mode,
+            session.thread_id,
+            session.memory_mode,
+            user_id=session.user_id,
+        )
         if session.history:
             render_info(
                 f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
@@ -1808,6 +1917,7 @@ async def chat_loop(
             with Live(console=console, refresh_per_second=15) as live:
                 async for event in runtime.run_turn_stream(
                     thread_id=session.thread_id,
+                    user_id=session.owner_id(),
                     message=user_text,
                     channel=Channel.TEST,
                     llm_client=session.llm_client,
@@ -1892,6 +2002,7 @@ def main() -> int:
         chat_loop(
             args.mode,
             thread_id=thread_id,
+            user_id=args.user_id,
             sqlite_path=sqlite_path,
             memory_mode=memory_mode,
             memory_sqlite_path=memory_sqlite_path,

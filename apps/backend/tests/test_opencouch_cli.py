@@ -82,7 +82,7 @@ async def test_resume_command_switches_active_thread(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "opencouch_cli.app.render_header",
-        lambda mode, thread_id, memory_mode: events.append(
+        lambda mode, thread_id, memory_mode, **kwargs: events.append(
             ("header", f"{mode}:{thread_id}")
         ),
     )
@@ -125,7 +125,7 @@ async def test_new_command_generates_fresh_thread_state(monkeypatch) -> None:
     monkeypatch.setattr("opencouch_cli.app.generate_thread_id", lambda: "thread-c")
     monkeypatch.setattr(
         "opencouch_cli.app.render_header",
-        lambda mode, thread_id, memory_mode: events.append(
+        lambda mode, thread_id, memory_mode, **kwargs: events.append(
             ("header", f"{mode}:{thread_id}")
         ),
     )
@@ -973,3 +973,262 @@ async def test_memory_status_shows_recall_toggle_state(capsys) -> None:
     captured = capsys.readouterr()
     assert "proactive recall" in captured.out
     assert " on" in captured.out  # leading space disambiguates from "onset"
+
+
+# ─── v0.8: --user-id flag (pulled forward from v0.9) ──────────────────────
+#
+# These tests cover the RunnerSession.owner_id() helper and the end-to-end
+# "rules written under --user-id are visible across thread switches" flow.
+# The core invariant: before v0.8, every CLI memory call used
+# session.thread_id directly, so each thread was its own effective user
+# namespace. With the --user-id flag, users can switch threads without
+# losing their rules / facts / episodic arcs. The tests below verify
+# that decoupling actually works at the CLI layer.
+
+
+class TestSessionOwnerId:
+    """Unit tests for RunnerSession.owner_id() fallback precedence."""
+
+    def test_owner_id_falls_back_to_thread_id_when_user_id_none(self) -> None:
+        """Backward-compatible default: no --user-id → use thread_id."""
+
+        session = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-alpha",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+        )
+        assert session.user_id is None
+        assert session.owner_id() == "thread-alpha"
+
+    def test_owner_id_returns_user_id_when_set(self) -> None:
+        """Explicit --user-id overrides the thread_id fallback."""
+
+        session = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-alpha",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+        assert session.user_id == "alice"
+        assert session.owner_id() == "alice"
+
+    def test_owner_id_survives_thread_switch(self) -> None:
+        """Changing thread_id while user_id stays set continues to
+        return the user_id — the exact dogfood use case for the flag.
+
+        Regression guard: session.thread_id gets mutated by /resume
+        and /new commands. The owner_id() method must keep returning
+        the explicit user_id across those mutations, otherwise a
+        /resume would cause memory writes to jump namespaces
+        mid-session."""
+
+        session = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-alpha",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+        assert session.owner_id() == "alice"
+
+        # Simulate /resume switching to a different thread
+        session.thread_id = "thread-beta"
+        assert session.owner_id() == "alice"
+
+        # Simulate /new generating a fresh thread
+        session.thread_id = "thread-gamma"
+        assert session.owner_id() == "alice"
+
+
+class TestUserIdCommandIntegration:
+    """Integration tests: verify the /memory commands see rules scoped
+    to --user-id, not thread_id, when the flag is set.
+
+    These are the tests that prove cross-thread memory persistence
+    actually works. Write a rule under user_id=alice from thread-a,
+    switch to thread-b (same user), and /memory list rules should
+    still show the rule.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rules_written_with_user_id_survive_thread_switch(
+        self, capsys
+    ) -> None:
+        """Write a rule under --user-id=alice from one thread, switch
+        to a different thread (same user), and the rule is still
+        visible via /memory list rules.
+
+        This is the canonical 'multi-session dogfood unblock' test —
+        the thing that was impossible before the flag landed."""
+
+        from agent.memory.procedural import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+        )
+        from opencouch_cli.app import handle_command
+
+        runtime = FakeProceduralRuntime()
+
+        # Write a rule under user_id=alice (NOT thread-a)
+        await aadd_procedural_rule(
+            runtime.memory_store,
+            user_id="alice",
+            rule=build_procedural_rule(
+                rule_text="You prefer shorter responses.",
+                evidence=["Please keep it short"],
+            ),
+        )
+
+        # Session 1: thread-a, user_id=alice
+        session_a = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-a",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+        await handle_command("/memory list rules", session_a, runtime)
+        captured = capsys.readouterr()
+        assert "shorter" in captured.out
+        assert "1 rule(s)" in captured.out
+
+        # Session 2: thread-b, user_id=alice (same user, different thread)
+        session_b = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-b",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+        await handle_command("/memory list rules", session_b, runtime)
+        captured = capsys.readouterr()
+        # Same rule visible from the new thread — this is the unlock
+        assert "shorter" in captured.out
+        assert "1 rule(s)" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_rules_are_isolated_between_different_user_ids(self, capsys) -> None:
+        """User alice's rules must not appear in user bob's list even
+        if bob happens to reuse alice's thread_id. This is the
+        companion invariant to the cross-thread test above.
+
+        Regression guard for namespace isolation at the CLI layer.
+        If owner_id() accidentally fell back to thread_id when
+        user_id was set, bob would see alice's rules."""
+
+        from agent.memory.procedural import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+        )
+        from opencouch_cli.app import handle_command
+
+        runtime = FakeProceduralRuntime()
+
+        await aadd_procedural_rule(
+            runtime.memory_store,
+            user_id="alice",
+            rule=build_procedural_rule(
+                rule_text="You prefer shorter responses.",
+                evidence=["Please keep it short"],
+            ),
+        )
+
+        # Bob reuses thread-a but has a different user_id
+        session_bob = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-a",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="bob",
+        )
+        await handle_command("/memory list rules", session_bob, runtime)
+        captured = capsys.readouterr()
+
+        # Empty-state panel — bob has no rules. Note: the empty-state
+        # help text itself contains the example phrase "please keep
+        # responses shorter", so we can't use "shorter" as a negative
+        # assertion. Check for a substring that's unique to the real
+        # rule ("You prefer") and absent from the help text.
+        assert "No procedural rules" in captured.out
+        assert "You prefer" not in captured.out
+
+    @pytest.mark.asyncio
+    async def test_memory_status_shows_owner_id_source_when_flag_set(
+        self, capsys
+    ) -> None:
+        """The /memory status panel now shows an owner_id row
+        labeled with whether the value came from --user-id or fell
+        back to the thread_id. This is the dogfood observability
+        hook for confirming the flag took effect."""
+
+        from opencouch_cli.app import handle_command
+
+        runtime = FakeProceduralRuntime()
+
+        session = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-a",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+        await handle_command("/memory status", session, runtime)
+        captured = capsys.readouterr()
+
+        assert "owner_id" in captured.out
+        assert "alice" in captured.out
+        assert "from --user-id" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_memory_status_shows_owner_id_from_thread_when_no_flag(
+        self, capsys
+    ) -> None:
+        """When --user-id is not set, /memory status labels the
+        owner_id row as coming from the thread_id fallback."""
+
+        from opencouch_cli.app import handle_command
+
+        runtime = FakeProceduralRuntime()
+
+        session = _session()  # no user_id
+        await handle_command("/memory status", session, runtime)
+        captured = capsys.readouterr()
+
+        assert "owner_id" in captured.out
+        assert "from thread_id" in captured.out
+
+
+class TestParserUserIdFlag:
+    """Unit tests for the --user-id argparse flag."""
+
+    def test_user_id_flag_defaults_to_none(self) -> None:
+        """Without --user-id, the parsed value is None."""
+
+        from opencouch_cli.app import build_parser
+
+        args = build_parser().parse_args([])
+        assert args.user_id is None
+
+    def test_user_id_flag_captures_explicit_value(self) -> None:
+        """With --user-id, the parsed value is the provided string."""
+
+        from opencouch_cli.app import build_parser
+
+        args = build_parser().parse_args(["--user-id", "alice"])
+        assert args.user_id == "alice"
