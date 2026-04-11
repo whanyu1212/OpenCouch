@@ -161,9 +161,12 @@ class TestLoadMemoryNode:
         # v0.4 structured summary: hits / store size / query token count
         # for BOTH semantic and episodic namespaces. Store has 1 semantic
         # record and 0 episodic, query "Sarah" has 1 meaningful token.
+        # v0.7 Stage C: summary extended with procedural rule count and
+        # recall toggle state.
         assert (
             delta["memory"]["summary"]
-            == "Retrieved 1 of 1 semantic + 0 of 0 episodic record(s) "
+            == "Retrieved 1 of 1 semantic + 0 of 0 episodic record(s), "
+            "0 procedural rule(s), recall=off "
             "(query had 1 meaningful token(s))."
         )
 
@@ -183,11 +186,13 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        # Empty stores (0 semantic, 0 episodic), 3 meaningful query
-        # tokens, 0 hits on either namespace.
+        # Empty stores (0 semantic, 0 episodic, 0 procedural), 3 meaningful
+        # query tokens, 0 hits on any namespace. v0.7 Stage C: procedural
+        # rule count and recall toggle included in the summary.
         assert (
             delta["memory"]["summary"]
-            == "Retrieved 0 of 0 semantic + 0 of 0 episodic record(s) "
+            == "Retrieved 0 of 0 semantic + 0 of 0 episodic record(s), "
+            "0 procedural rule(s), recall=off "
             "(query had 3 meaningful token(s))."
         )
         # Specifically NOT the guest session string:
@@ -341,6 +346,220 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert len(delta["working_memory"]) == 1
+
+
+# ─── v0.7 Stage C procedural retrieval tests ───────────────────────────
+#
+# load_memory_node now also loads the user's procedural profile (rules
+# + recall toggle) and attaches it to state["memory"]. These fields are
+# STRUCTURALLY SEPARATE from working_memory because procedural rules
+# are directives (silent style shaping) rather than content to be
+# referenced — see the "Design call" notes in the Stage C plan.
+#
+# Coverage:
+# 1. Guest mode returns empty procedural state across the board
+# 2. Local mode with an empty profile returns empty rules + recall=False
+# 3. Local mode with a populated profile returns the full rule list
+# 4. Recall toggle propagates from profile to state
+# 5. Unrelated memory fields (summary, active_concerns, open_loops)
+#    are preserved across the delta merge
+# 6. Summary string format includes the procedural count
+
+
+class TestProceduralRetrieval:
+    """Tests for the Stage C procedural read path in load_memory_node."""
+
+    @pytest.mark.asyncio
+    async def test_guest_mode_returns_empty_procedural_state(self) -> None:
+        """Incognito mode must return empty procedural state.
+
+        Privacy contract: guest sessions never read from persistent
+        memory, so the procedural rules list must be empty and the
+        recall toggle must be False regardless of what might be
+        stored for the same owner_id in another context.
+        """
+
+        store = OpenCouchMemoryStore()
+        # Plant a rule in the store under the eval-user namespace — the
+        # guest-mode read must NOT return it.
+        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+
+        rule = build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        )
+        await aadd_procedural_rule(store, user_id="thread-test", rule=rule)
+
+        runtime = _FakeRuntime(
+            {"memory_store": store, "memory_mode": MemoryMode.INCOGNITO}
+        )
+        state = _make_state()
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        memory = delta["memory"]
+        assert memory["procedural_rules"] == []
+        assert memory["proactive_recall_enabled"] is False
+        # Verify the "guest session" summary is still produced
+        assert "Guest session" in memory["summary"]
+
+    @pytest.mark.asyncio
+    async def test_empty_profile_returns_empty_rules_and_recall_off(
+        self,
+    ) -> None:
+        """A user with no procedural record yet gets empty defaults.
+
+        The empty-default-on-miss behavior comes from Stage A's
+        ``aget_procedural_profile`` helper. This test pins that the
+        load_memory node propagates those defaults to state without
+        creating a stray record in the store.
+        """
+
+        store = OpenCouchMemoryStore()
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(message="hello")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        memory = delta["memory"]
+        assert memory["procedural_rules"] == []
+        assert memory["proactive_recall_enabled"] is False
+
+        # Verify the empty-default read did NOT persist a profile — the
+        # store should still have zero records.
+        assert await store.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_populated_profile_returns_all_rules(self) -> None:
+        """A user with rules gets the full rule list in state.
+
+        Pin: load is NOT query-based. All rules are returned on every
+        turn because rules are directives that apply unconditionally.
+        The test plants two rules and verifies both are in the delta
+        regardless of the current user message.
+        """
+
+        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+
+        store = OpenCouchMemoryStore()
+        first = build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        )
+        second = build_procedural_rule(
+            rule_text=("You've said meditation makes you more anxious."),
+            evidence=["Please don't suggest meditation again"],
+        )
+        await aadd_procedural_rule(store, user_id="thread-test", rule=first)
+        await aadd_procedural_rule(store, user_id="thread-test", rule=second)
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        # Query text is unrelated to either rule — load should still
+        # return both (non-query-based semantics).
+        state = _make_state(message="tell me about the weather today")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        memory = delta["memory"]
+        assert memory["procedural_rules"] == [
+            "You prefer shorter responses.",
+            "You've said meditation makes you more anxious.",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_recall_toggle_propagates_from_profile_to_state(self) -> None:
+        """The ``proactive_recall_enabled`` toggle is read from the profile
+        and attached to state without modification.
+
+        This is how Stage D's prompt builders will know whether to
+        emit the "do not proactively reference past sessions"
+        constraint. The load path is the only bridge between the
+        stored toggle and the prompt layer.
+        """
+
+        from agent.memory.procedural import aset_proactive_recall
+
+        store = OpenCouchMemoryStore()
+        await aset_proactive_recall(store, user_id="thread-test", enabled=True)
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state()
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["memory"]["proactive_recall_enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_delta_preserves_unrelated_memory_fields(self) -> None:
+        """The procedural fields are merged INTO the existing memory
+        dict, not replacing it. ``active_concerns``, ``open_loops``,
+        and ``current_goal`` must survive the delta.
+
+        Regression guard: the spread-then-update idiom must be
+        applied correctly in the node's return value.
+        """
+
+        store = OpenCouchMemoryStore()
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(
+            memory={
+                "summary": "prior summary",
+                "active_concerns": ["work stress"],
+                "open_loops": ["unresolved conflict with partner"],
+                "current_goal": "get through this week",
+            },
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        memory = delta["memory"]
+        # Preserved:
+        assert memory["active_concerns"] == ["work stress"]
+        assert memory["open_loops"] == ["unresolved conflict with partner"]
+        assert memory["current_goal"] == "get through this week"
+        # Overwritten (the node OWNS these four fields):
+        assert "prior summary" not in memory["summary"]  # new summary
+        assert memory["procedural_rules"] == []
+        assert memory["proactive_recall_enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_summary_string_reports_procedural_count_and_recall_state(
+        self,
+    ) -> None:
+        """The retrieval summary string must include procedural count
+        and recall toggle state for dogfood observability.
+
+        This is a format test — the exact wording is pinned so future
+        changes to the summary shape surface as a visible diff during
+        review. The dogfood operator's CLI panel depends on reading
+        this string, so drift would be a UX regression.
+        """
+
+        from agent.memory.procedural import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+            aset_proactive_recall,
+        )
+
+        store = OpenCouchMemoryStore()
+        await aadd_procedural_rule(
+            store,
+            user_id="thread-test",
+            rule=build_procedural_rule(
+                rule_text="You prefer shorter responses.",
+                evidence=["Please keep it short"],
+            ),
+        )
+        await aset_proactive_recall(store, user_id="thread-test", enabled=True)
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(message="hello")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        summary = delta["memory"]["summary"]
+        assert "1 procedural rule(s)" in summary
+        assert "recall=on" in summary
 
 
 # ─── v0.4 episodic retrieval tests ──────────────────────────────────────

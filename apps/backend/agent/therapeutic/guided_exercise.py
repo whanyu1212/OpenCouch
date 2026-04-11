@@ -600,7 +600,7 @@ async def _build_stuck_delta(
         try:
             response_text = await llm_client.generate_text(
                 prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
-                system_instruction=build_guided_exercise_system_prompt(),
+                system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
         except Exception:
@@ -637,7 +637,7 @@ async def _build_hold_delta(
         try:
             response_text = await llm_client.generate_text(
                 prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
-                system_instruction=build_guided_exercise_system_prompt(),
+                system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
         except Exception:
@@ -683,7 +683,7 @@ async def _build_advance_delta(
         try:
             response_text = await llm_client.generate_text(
                 prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
-                system_instruction=build_guided_exercise_system_prompt(),
+                system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
         except Exception:
@@ -725,7 +725,7 @@ async def _build_complete_delta(
         try:
             response_text = await llm_client.generate_text(
                 prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
-                system_instruction=build_guided_exercise_system_prompt(),
+                system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
         except Exception:

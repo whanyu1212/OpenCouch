@@ -35,12 +35,23 @@ catch-up entry regardless of query match. This gives the user the
 turn's prompt with catch-up text.
 
 Scope today:
-- Semantic namespace (v0.3): real extraction with hot-path dedup
+- Semantic namespace (v0.3): real extraction with hot-path dedup.
+  Loaded via token-recall scoring into ``working_memory`` as
+  ``"Previously noted: ..."`` entries.
 - Episodic namespace (v0.4): single session arc per completed session,
-  written by the summarizer function at session end
-- Procedural namespace (v0.7): not yet wired; reads return empty
-- Incognito / guest mode skips both retrieval paths and returns an
-  empty working memory, matching the "we don't remember you" contract.
+  written by the summarizer function at session end. Loaded via
+  token-recall scoring (with first-turn catch-up) into
+  ``working_memory`` as ``"Last session (...): ..."`` entries.
+- Procedural namespace (v0.7): style rules + recall toggle loaded
+  from the user's :class:`ProceduralProfile`. Attached to
+  ``state["memory"]["procedural_rules"]`` and
+  ``state["memory"]["proactive_recall_enabled"]`` — NOT mixed into
+  ``working_memory``. Rules are directives that shape response
+  style, not content to be referenced, so they go into a different
+  state field with a different prompt treatment in Stage D.
+- Incognito / guest mode skips all three retrieval paths and returns
+  empty results across the board, matching the "we don't remember
+  you" contract.
 
 Retrieval scoring is token-recall via ``store.asearch`` — see
 ``agent/memory/store.py`` SEARCH_MATCH_THRESHOLD and the v0.3.1 status
@@ -56,6 +67,7 @@ from typing import Any
 from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
+from agent.memory.procedural import aget_procedural_profile
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.runtime_context import WorkflowContext
@@ -171,34 +183,84 @@ async def _retrieve_episodic_working_memory(
     return formatted
 
 
+async def _retrieve_procedural_state(
+    store: MemoryStore,
+    *,
+    owner_id: str,
+) -> tuple[list[str], bool]:
+    """Load the user's procedural profile and return its surface fields.
+
+    Returns ``(rules, proactive_recall_enabled)``.
+
+    - ``rules`` is a list of raw rule texts, in the order they were
+      written. Rules are returned verbatim (second-person,
+      evidence-grounded) — no reformatting, no prefix. The Stage D
+      prompt builders apply the rendering ("You have the following
+      style rules from past conversations…") when they inject the
+      list into the system prompt.
+    - ``proactive_recall_enabled`` is the user's ``/memory recall``
+      toggle. Defaults to False for users with no profile yet,
+      matching the schema default.
+
+    Unlike semantic and episodic retrieval, procedural retrieval is
+    NOT query-based. The full rule set is always loaded — rules are
+    directives, and the agent needs to see all of them on every turn
+    to apply them consistently. See schema.yaml §6 retrieval for the
+    rationale (``procedural.enabled: true`` unconditionally).
+
+    The empty-default-on-miss behavior comes from ``aget_procedural_profile``
+    in ``agent/memory/procedural.py``: a user with no record yet gets
+    a fresh empty profile without a store write. The caller here
+    doesn't need to handle the ``None`` case.
+    """
+
+    profile = await aget_procedural_profile(store, user_id=owner_id)
+    rule_texts = [rule.rule for rule in profile.rules]
+    return rule_texts, profile.proactive_recall_enabled
+
+
 async def run_load_memory_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, Any]:
     """Retrieve relevant long-term memory for the current user message.
 
-    Returns a delta containing only ``working_memory`` and a new
-    ``memory.summary`` that reflects how many snippets were retrieved.
+    Returns a delta containing:
+    - ``working_memory`` — the merged semantic + episodic content list
+    - ``memory.summary`` — a human-readable retrieval summary
+    - ``memory.procedural_rules`` (v0.7) — raw procedural rule texts
+    - ``memory.proactive_recall_enabled`` (v0.7) — the recall toggle
+
     Does NOT touch ``transcript``, ``history``, ``response``, or
     ``routing`` — those are owned by other parts of the graph and
     writing them here causes the phantom-turn bug this refactor fixed.
 
     Guest mode (``MemoryMode.INCOGNITO``) skips retrieval and returns
-    an empty working memory with a matching summary. This matches the
-    incognito contract: no reads from persistent storage, no trace of
-    prior sessions.
+    empty values across all layers with a matching summary. This
+    matches the incognito contract: no reads from persistent storage,
+    no trace of prior sessions.
 
-    v0.4 added episodic retrieval. The working_memory list is now a
+    v0.4 added episodic retrieval. The ``working_memory`` list is a
     merged result: episodic entries first (catch-up and/or query-
     matched summaries), then semantic entries. Downstream response
     nodes can read the whole list without caring about the split;
     the two string prefixes (``"Last session"`` and ``"Previously
     noted"``) provide the visible distinction.
 
+    v0.7 Stage C added procedural retrieval as a SEPARATE state field.
+    Rules are directives (silent style shaping) rather than content to
+    reference, so they live on ``memory.procedural_rules`` and get
+    injected into the system prompt suffix by Stage D prompt builders.
+    The recall toggle lives alongside them on
+    ``memory.proactive_recall_enabled`` and governs whether the Stage D
+    prompt builders emit the "do not proactively reference past
+    sessions" constraint for semantic/episodic content.
+
     Observability: the summary string reports counts for each layer
-    separately plus the meaningful query token count. This lets a
-    dogfood operator distinguish "nothing stored yet" from "stored
-    but below threshold" across both namespaces at a glance.
+    separately plus the meaningful query token count and the recall
+    toggle state. This lets a dogfood operator distinguish "nothing
+    stored yet" from "stored but below threshold" across all layers
+    at a glance.
     """
 
     memory_store = runtime.context["memory_store"]
@@ -206,11 +268,16 @@ async def run_load_memory_node(
     is_guest_mode = memory_mode == MemoryMode.INCOGNITO
 
     if is_guest_mode:
+        # Incognito: skip all retrieval paths including procedural.
+        # Rules and the recall toggle are both empty — matches the
+        # "we don't remember you" contract.
         return {
             "working_memory": [],
             "memory": {
                 **state.get("memory", {}),
                 "summary": "Guest session without long-term memory.",
+                "procedural_rules": [],
+                "proactive_recall_enabled": False,
             },
         }
 
@@ -259,26 +326,43 @@ async def run_load_memory_node(
         query=query,
     )
 
+    # Procedural retrieval (v0.7 Stage C): always load the full rule set
+    # + the recall toggle. Procedural is NOT query-based — rules are
+    # directives that apply on every turn, and the agent needs to see
+    # all of them to apply them consistently. See schema.yaml §6
+    # retrieval.hot_path.procedural for the rationale.
+    procedural_rules, proactive_recall_enabled = await _retrieve_procedural_state(
+        memory_store,
+        owner_id=owner_id,
+    )
+
     retrieval_duration_ms = (time.monotonic() - retrieval_start) * 1000
 
     # Merge: episodic entries first (they're the "context prefix" that
     # frames the session), then semantic entries. Downstream response
-    # nodes see the whole list and can reference either kind.
+    # nodes see the whole list and can reference either kind. Procedural
+    # rules are NOT in working_memory — they live on memory.procedural_rules
+    # and get injected into the system prompt suffix by Stage D prompt
+    # builders, not referenced as content.
     working_memory = [*episodic_entries, *semantic_entries]
 
     summary = (
         f"Retrieved {len(semantic_entries)} of {semantic_store_size} semantic + "
-        f"{len(episodic_entries)} of {episodic_store_size} episodic record(s) "
+        f"{len(episodic_entries)} of {episodic_store_size} episodic record(s), "
+        f"{len(procedural_rules)} procedural rule(s), "
+        f"recall={'on' if proactive_recall_enabled else 'off'} "
         f"(query had {len(meaningful_query_tokens)} meaningful token(s))."
     )
 
     logger.info(
-        "load_memory_node: semantic=%d/%d episodic=%d/%d first_turn=%s "
-        "query_tokens=%d duration_ms=%.2f owner=%r",
+        "load_memory_node: semantic=%d/%d episodic=%d/%d procedural=%d "
+        "recall=%s first_turn=%s query_tokens=%d duration_ms=%.2f owner=%r",
         len(semantic_entries),
         semantic_store_size,
         len(episodic_entries),
         episodic_store_size,
+        len(procedural_rules),
+        "on" if proactive_recall_enabled else "off",
         is_first_turn,
         len(meaningful_query_tokens),
         retrieval_duration_ms,
@@ -290,5 +374,7 @@ async def run_load_memory_node(
         "memory": {
             **state.get("memory", {}),
             "summary": summary,
+            "procedural_rules": procedural_rules,
+            "proactive_recall_enabled": proactive_recall_enabled,
         },
     }

@@ -44,7 +44,7 @@ async def run_reflective_response_node(
         try:
             response_text = await llm_client.generate_text(
                 prompt=build_therapeutic_response_prompt(state, mode="reflective"),
-                system_instruction=build_reflective_system_prompt(),
+                system_instruction=build_reflective_system_prompt(state),
                 temperature=0.7,
             )
         except Exception:

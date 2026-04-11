@@ -21,6 +21,11 @@ from agent.persistence import (
     PersistentAgentRuntime,
     ThreadSummary,
 )
+from agent.memory.procedural import (
+    aget_procedural_profile,
+    aput_procedural_profile,
+    aset_proactive_recall,
+)
 from agent.models import (
     Channel,
     ChunkEvent,
@@ -355,13 +360,15 @@ def render_context(state: AgentState | None) -> None:
     console.print()
 
 
-async def render_memory_status(runtime: PersistentAgentRuntime) -> None:
+async def render_memory_status(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+) -> None:
     """Render the memory layer's current state.
 
     Shows the memory mode, per-namespace record counts from the unified
-    memory store, and the crisis log record count. Placeholders are
-    included for fields that land in later phases (last consolidation
-    timestamp in phase 4, proactive recall toggle in phase 2+).
+    memory store, the crisis log record count, and (v0.7) the
+    proactive-recall toggle state for the active thread.
 
     Async as of v0.8 because the memory store's ``arecord_count`` and
     ``anamespaces`` methods are async to support the SQLite
@@ -369,9 +376,16 @@ async def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     ``record_count`` is still sync — that's a different backend that
     will get its own async refactor in v0.8 Stage C.
 
+    v0.7 Stage E: the proactive-recall row now shows the actual toggle
+    state for the active thread. Previously it was a ``(phase 2+)``
+    placeholder. The thread_id is used as the owner key because the
+    CLI does not expose a ``--user-id`` flag yet (tracked in v0.9).
+
     Args:
         runtime: Active persistent runtime. Reads the memory_store and
             crisis_log_backend via their public properties.
+        session: Active CLI session. Used to identify the current
+            thread for per-user state lookups (recall toggle).
 
     Returns:
         None.
@@ -399,6 +413,12 @@ async def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     if callable(arecord_count_fn):
         crisis_log_count = await arecord_count_fn()
 
+    # v0.7: read the procedural profile for the active thread so the
+    # recall toggle row shows the real state. Also used to show the
+    # per-thread rule count (which may differ from the store-wide
+    # total when multiple threads share a store backend).
+    profile = await aget_procedural_profile(store, user_id=session.thread_id)
+
     table = Table(show_header=False, box=box.SIMPLE_HEAVY)
     table.add_column(style="muted", no_wrap=True)
     table.add_column(style="info")
@@ -408,10 +428,12 @@ async def render_memory_status(runtime: PersistentAgentRuntime) -> None:
     table.add_row("procedural rules", str(counts_by_kind["procedural"]))
     table.add_row("total memory records", str(total_records))
     table.add_row("crisis log events", str(crisis_log_count))
+    # v0.7 Stage E: real proactive-recall state from the profile.
+    recall_state = "on" if profile.proactive_recall_enabled else "off"
+    table.add_row("proactive recall", recall_state)
     # Placeholders for fields that land in later phases — shown so the
     # command shape stays stable as features are added.
     table.add_row("last consolidation", "(phase 4)")
-    table.add_row("proactive recall", "(phase 2+)")
     console.print(
         Panel(
             table,
@@ -644,6 +666,135 @@ def _render_episodic_records_table(
     console.print()
 
 
+def _render_procedural_rules_table(
+    rules: list[dict[str, object]],
+) -> None:
+    """Render the procedural rule list as a browsable table.
+
+    v0.7 Stage E addition. Unlike semantic facts (one record per
+    fact) and episodic arcs (one record per session), procedural
+    memory is stored as a single profile document per user with a
+    ``rules`` list. This renderer takes that list (serialized as
+    dicts from the store's JSON value column) and shows each rule
+    as a numbered row.
+
+    Columns:
+        #             — 1-indexed position (use with /memory forget rule <n>)
+        rule          — the rule text (second-person, evidence-grounded)
+        evidence      — the user quote(s) that triggered the rule,
+                        truncated inline with a long-evidence footer
+                        for entries that overflow
+        added         — YYYY-MM-DD date parsed from the added_at field
+        conf          — confidence level
+
+    Rules are shown in insertion order (the order the writer node
+    wrote them), matching how semantic facts and episodic arcs are
+    rendered.
+    """
+
+    table = Table(
+        show_header=True,
+        header_style="primary",
+        box=box.SIMPLE_HEAVY,
+        show_lines=False,
+        expand=True,
+    )
+    table.add_column("#", style="muted", no_wrap=True, width=3)
+    table.add_column("rule", style="info", ratio=2)
+    table.add_column("evidence", style="accent", ratio=1)
+    table.add_column("added", style="muted", no_wrap=True, width=10)
+    table.add_column("conf", style="muted", no_wrap=True, width=6)
+
+    evidence_inline_limit = 60
+    long_evidence: list[tuple[int, list[str]]] = []
+
+    for idx, rule_value in enumerate(rules, start=1):
+        rule_text = str(rule_value.get("rule", ""))
+        confidence = str(rule_value.get("confidence", "?"))
+
+        # Parse the added_at ISO timestamp to a YYYY-MM-DD prefix,
+        # same convention as the episodic table.
+        added_at = str(rule_value.get("added_at", ""))
+        added_display = added_at[:10] if len(added_at) >= 10 else "—"
+
+        # Evidence is a list[str] — join with " | " for display and
+        # truncate if it overflows. Keep the full value for the
+        # long-evidence footer.
+        evidence_list = rule_value.get("evidence") or []
+        if isinstance(evidence_list, list):
+            evidence_strs = [str(e) for e in evidence_list]
+        else:
+            evidence_strs = []
+        evidence_joined = " | ".join(evidence_strs) if evidence_strs else "—"
+        if len(evidence_joined) > evidence_inline_limit:
+            evidence_display = evidence_joined[:evidence_inline_limit].rstrip() + "…"
+            long_evidence.append((idx, evidence_strs))
+        else:
+            evidence_display = evidence_joined
+
+        table.add_row(
+            str(idx),
+            rule_text,
+            evidence_display,
+            added_display,
+            confidence,
+        )
+
+    console.print(
+        Panel(
+            table,
+            title=(
+                f"[primary]Memory List (procedural)[/primary] "
+                f"[muted]— {len(rules)} rule(s)[/muted]"
+            ),
+            subtitle=(
+                "[muted]style rules the writer has recorded from your "
+                "explicit requests[/muted]"
+            ),
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+
+    if long_evidence:
+        console.print()
+        console.print(
+            "[muted]Full evidence quotes (truncated in the table above):[/muted]"
+        )
+        for idx, evidence_strs in long_evidence:
+            console.print(f"  [accent]#{idx}[/accent]")
+            for quote in evidence_strs:
+                console.print(f"    [info]{quote}[/info]")
+    console.print()
+
+
+def _render_procedural_rules_empty_state() -> None:
+    """Empty-state panel for ``/memory list rules``.
+
+    Shown when the active thread has no procedural rules stored yet.
+    Educational: explains what rules are and how to get one written.
+    """
+
+    console.print(
+        Panel(
+            "[muted]No procedural rules for this thread yet.\n\n"
+            "[accent]Procedural rules[/accent] [muted]are style preferences the "
+            "agent has learned from your explicit requests — things like "
+            '[accent]"please keep responses shorter"[/accent][muted] or '
+            '[accent]"don\'t suggest meditation again"[/accent][muted]. They '
+            "shape how the agent responds across every turn, silently.\n\n"
+            "To get a rule written, tell the agent directly what you want "
+            "it to do differently. The writer is conservative — small talk "
+            "and passing comments don't produce rules. Only explicit "
+            "directives do.[/muted]",
+            title="[primary]Memory List (procedural)[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
 def _render_memory_list_empty_state() -> None:
     """Render the educational empty-state panel for `/memory list`.
 
@@ -687,7 +838,12 @@ async def render_memory_list(runtime: PersistentAgentRuntime) -> None:
     Scope:
     - Read-only. Mutation commands (``/memory forget``, ``/memory clear``)
       are scoped to v0.9 alongside the full CLI memory suite.
-    - Semantic + episodic namespaces. Procedural lands in v0.7.
+    - Semantic + episodic namespaces. Procedural rules are excluded
+      here (they have their own command: ``/memory list rules``)
+      because rules have a different storage shape — a single profile
+      document per user rather than one record per rule — and mixing
+      them into this renderer would require a third table inside the
+      same panel with awkward shape mismatches.
     - Tables are rendered separately, not interleaved. Each has its own
       panel and its own long-content footer. Empty namespaces are
       suppressed (no empty table) unless BOTH are empty, in which case
@@ -712,6 +868,248 @@ async def render_memory_list(runtime: PersistentAgentRuntime) -> None:
     if episodic_records:
         _render_episodic_records_table(episodic_records)
 
+    console.print()
+
+
+async def render_memory_recall_toggle(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+    *,
+    enable: bool,
+) -> None:
+    """Handle the ``/memory recall on|off`` command.
+
+    v0.7 Stage E. Toggles the ``proactive_recall_enabled`` flag on
+    the active thread's procedural profile and shows a confirmation
+    message. When flipping from OFF to ON, also renders the
+    first-run explanation from ``schema.yaml §6 retrieval
+    proactive_recall.opt_in_confirmation_example`` so the user
+    understands what changes.
+
+    Behavior:
+
+    - ``enable=True`` + current OFF → write + show explanation
+    - ``enable=True`` + current ON  → show "already on" message,
+      no write
+    - ``enable=False`` + current ON → write + brief confirmation
+    - ``enable=False`` + current OFF → show "already off" message,
+      no write
+
+    The thread_id is used as the owner key because the CLI does not
+    expose a ``--user-id`` flag yet (tracked in v0.9). Every thread
+    has its own independent recall preference.
+
+    Args:
+        runtime: Active persistent runtime, for the memory store.
+        session: Active CLI session, for the thread_id.
+        enable: Target state (True = on, False = off).
+    """
+
+    store = runtime.memory_store
+    # Read current state first so we can detect no-op calls and
+    # pick the right confirmation message.
+    current = await aget_procedural_profile(store, user_id=session.thread_id)
+    current_enabled = current.proactive_recall_enabled
+
+    if enable and current_enabled:
+        render_info(
+            "Proactive recall is already on for this thread.",
+            style="warning",
+        )
+        return
+
+    if not enable and not current_enabled:
+        render_info(
+            "Proactive recall is already off for this thread.",
+            style="warning",
+        )
+        return
+
+    # Actual state change. Write first, then confirm.
+    await aset_proactive_recall(store, user_id=session.thread_id, enabled=enable)
+
+    if enable:
+        # Flipping OFF → ON. Show the first-run explanation per
+        # schema.yaml §6 retrieval proactive_recall.opt_in_confirmation_example.
+        # This fires every time the user goes off→on, not just the
+        # very first time — simpler than tracking a "has seen
+        # explanation" flag and arguably better UX because users who
+        # rarely touch the feature get a refresher.
+        console.print(
+            Panel(
+                "[success]Proactive recall is now ON for this thread.[/success]\n\n"
+                "[info]I'll start bringing up things from our past conversations "
+                "when they seem relevant. For example, if we talked about your "
+                "work schedule yesterday, I might say "
+                '[accent]"last time you mentioned the morning standups have '
+                'been rough — how was today?"[/accent][info]\n\n'
+                "Style rules you've asked for are always applied silently "
+                "regardless of this toggle — that part doesn't change.\n\n"
+                "Type [accent]/memory recall off[/accent][info] any time to "
+                "switch this back.[/info]",
+                title="[primary]Proactive recall: ON[/primary]",
+                border_style="panel",
+                box=box.ROUNDED,
+            )
+        )
+        console.print()
+        return
+
+    # Flipping ON → OFF. Brief confirmation — no need for an
+    # explanation because "off" is the schema default, and users who
+    # flip off know why they're doing it.
+    console.print(
+        Panel(
+            "[success]Proactive recall is now OFF for this thread.[/success]\n\n"
+            "[info]I still remember what you tell me and use it to inform how "
+            "I respond, but I won't proactively reference past sessions or "
+            "earlier statements unless you ask me about them. Style rules "
+            "you've asked for are still applied — the toggle only affects "
+            "whether I mention past memory out loud.[/info]",
+            title="[primary]Proactive recall: OFF[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+async def render_memory_forget_rule(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+    *,
+    index_str: str,
+) -> None:
+    """Handle the ``/memory forget rule <n>`` command.
+
+    v0.7 Stage E. Deletes one procedural rule from the active
+    thread's profile by its 1-indexed position (the same index
+    that ``/memory list rules`` displays). Prompts for y/n
+    confirmation before deleting. The store write is atomic via the
+    profile-as-document shape — the rule is removed from the list
+    and the whole profile is written back.
+
+    Args:
+        runtime: Active persistent runtime, for the memory store.
+        session: Active CLI session, for the thread_id.
+        index_str: The raw argument the user typed after
+            ``/memory forget rule``. Parsed to an int here; invalid
+            or out-of-range inputs produce a warning without
+            touching the store.
+    """
+
+    # Parse the index. Accept 1-indexed input (matching the display
+    # convention of the other list commands) and convert to
+    # 0-indexed for the list slice below.
+    try:
+        index_1based = int(index_str)
+    except ValueError:
+        render_info(
+            f"Usage: /memory forget rule <n>  (got: {index_str!r})",
+            style="warning",
+        )
+        return
+
+    if index_1based < 1:
+        render_info(
+            f"Rule index must be 1 or greater (got: {index_1based}).",
+            style="warning",
+        )
+        return
+
+    store = runtime.memory_store
+    profile = await aget_procedural_profile(store, user_id=session.thread_id)
+
+    if not profile.rules:
+        render_info(
+            "No procedural rules to forget for this thread.",
+            style="warning",
+        )
+        return
+
+    if index_1based > len(profile.rules):
+        render_info(
+            f"Rule #{index_1based} does not exist "
+            f"(only {len(profile.rules)} rule(s) for this thread).",
+            style="warning",
+        )
+        return
+
+    # Show the rule being deleted + y/n prompt. Rules are short
+    # enough (≤280 chars) to inline in the prompt text.
+    target_rule = profile.rules[index_1based - 1]
+    console.print()
+    console.print(
+        Panel(
+            f"[info]{target_rule.rule}[/info]",
+            title=(f"[warning]Delete rule #{index_1based}?[/warning]"),
+            border_style="warning",
+            box=box.ROUNDED,
+        )
+    )
+    answer = Prompt.ask(
+        "[muted]Delete this rule?[/muted] [accent][y/N][/accent]",
+        choices=["y", "n", ""],
+        default="n",
+        show_choices=False,
+        show_default=False,
+    )
+    if answer.strip().lower() != "y":
+        render_info("Cancelled — no rules deleted.", style="info")
+        return
+
+    # Confirmed: remove the rule and write the profile back. This is
+    # a load → mutate → put round-trip against the profile, not an
+    # individual record delete, because procedural memory is stored
+    # as a single profile document.
+    profile.rules.pop(index_1based - 1)
+    await aput_procedural_profile(store, user_id=session.thread_id, profile=profile)
+    render_info(
+        f"Deleted rule #{index_1based}. "
+        f"{len(profile.rules)} rule(s) remaining for this thread.",
+        style="success",
+    )
+
+
+async def render_memory_list_rules(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+) -> None:
+    """Render the active thread's procedural rules in a browsable table.
+
+    v0.7 Stage E. Unlike ``render_memory_list`` which aggregates
+    semantic and episodic records across all threads stored in the
+    memory store, this function reads the procedural profile for the
+    CURRENT thread only. That's because rules are namespaced per
+    user, and in the CLI the thread_id is the effective user id.
+
+    Shows each rule with its index (usable with
+    ``/memory forget rule <n>``), the rule text, the evidence quote
+    that triggered it, the date it was added, and the confidence
+    level. Falls back to an educational empty-state panel when the
+    profile has no rules yet.
+
+    Args:
+        runtime: Active persistent runtime. Reads the memory_store
+            via its public property.
+        session: Active CLI session. Used to identify the current
+            thread for the per-user profile lookup.
+    """
+
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+
+    if not profile.rules:
+        _render_procedural_rules_empty_state()
+        return
+
+    # Serialize the pydantic ProceduralRule instances back to dicts
+    # so the renderer can use the same dict-based access pattern as
+    # the semantic/episodic renderers. The round-trip is cheap and
+    # keeps the renderer decoupled from the pydantic schema.
+    rule_dicts = [rule.model_dump(mode="json") for rule in profile.rules]
+    _render_procedural_rules_table(rule_dicts)
     console.print()
 
 
@@ -792,11 +1190,25 @@ def render_help() -> None:
     table.add_row("/history [n]", "Show the last n transcript messages. Default: 6.")
     table.add_row("/context", "Show the latest derived session context snapshot.")
     table.add_row(
-        "/memory status", "Show memory layer state (counts, mode, crisis log)."
+        "/memory status",
+        "Show memory layer state (counts, mode, crisis log, recall toggle).",
     )
     table.add_row(
         "/memory list",
-        "List every semantic fact the extractor has written this session.",
+        "List every semantic fact and episodic arc stored for this thread.",
+    )
+    table.add_row(
+        "/memory list rules",
+        "List the procedural style rules the writer has recorded for this thread.",
+    )
+    table.add_row(
+        "/memory recall on|off",
+        "Toggle whether the agent proactively references past memory "
+        "content in replies. Style rules are always applied regardless.",
+    )
+    table.add_row(
+        "/memory forget rule <n>",
+        "Delete one procedural rule by its 1-indexed position from /memory list rules.",
     )
     table.add_row("/threads [n]", "List persisted thread ids. Default: 12.")
     table.add_row("/resume <thread-id>", "Switch to an existing persisted thread.")
@@ -1120,19 +1532,66 @@ async def handle_command(
         return False
 
     if command == "/memory":
-        # v0.3.1 supports `/memory status` and `/memory list`. The list
-        # command is a read-only dogfood tool added when the v0.3.1
-        # retrieval work shipped — without it, answering "what did
-        # extraction actually write?" required a probe script. Mutation
-        # commands (/memory forget, /memory clear) remain scoped to v0.9.
+        # v0.3.1 added /memory status and /memory list.
+        # v0.7 adds /memory list rules, /memory recall on|off, and
+        # /memory forget rule <n>.
+        # Full /memory forget/clear suite for semantic + episodic is
+        # still scoped to v0.9.
         if len(args) == 0 or args[0] == "status":
-            await render_memory_status(runtime)
+            await render_memory_status(runtime, session)
             return True
         if args[0] == "list":
+            # /memory list               — semantic + episodic
+            # /memory list rules         — procedural rules for this thread
+            if len(args) >= 2 and args[1] == "rules":
+                await render_memory_list_rules(runtime, session)
+                return True
             await render_memory_list(runtime)
             return True
+        if args[0] == "recall":
+            # /memory recall on|off — toggle proactive recall for the
+            # active thread. When flipping off→on, the handler shows
+            # the first-run explanation from schema.yaml.
+            if len(args) < 2 or args[1] not in ("on", "off"):
+                render_info(
+                    "Usage: /memory recall on  |  /memory recall off",
+                    style="warning",
+                )
+                return True
+            await render_memory_recall_toggle(
+                runtime, session, enable=(args[1] == "on")
+            )
+            return True
+        if args[0] == "forget":
+            # /memory forget rule <n> — delete one procedural rule
+            # by its 1-indexed position. Prompts for y/n confirmation.
+            # /memory forget fact|session — v0.9 scope; show a
+            # helpful "not yet" message rather than a generic error.
+            if len(args) >= 2 and args[1] == "rule":
+                if len(args) < 3:
+                    render_info(
+                        "Usage: /memory forget rule <n>",
+                        style="warning",
+                    )
+                    return True
+                await render_memory_forget_rule(runtime, session, index_str=args[2])
+                return True
+            if len(args) >= 2 and args[1] in ("fact", "session"):
+                render_info(
+                    f"/memory forget {args[1]} is not yet available "
+                    "(scoped to v0.9). Rules can be deleted with "
+                    "/memory forget rule <n>.",
+                    style="warning",
+                )
+                return True
+            render_info(
+                "Usage: /memory forget rule <n>",
+                style="warning",
+            )
+            return True
         render_info(
-            "Unknown /memory subcommand. Available in v0.3.1: status, list",
+            "Unknown /memory subcommand. Available in v0.7: "
+            "status, list, list rules, recall on|off, forget rule <n>",
             style="warning",
         )
         return True

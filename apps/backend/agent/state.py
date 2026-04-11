@@ -18,6 +18,29 @@ class SessionMemoryState(TypedDict):
     # Best-effort guess at what the user wants from the current session.
     current_goal: str | None
 
+    # ── Procedural memory (v0.7 Stage C) ────────────────────────────────
+    # Rendered procedural rule strings loaded by ``load_memory_node`` at
+    # the start of each turn. Populated from the user's
+    # :class:`ProceduralProfile` via the helpers in
+    # ``agent/memory/procedural.py``.
+    #
+    # STRUCTURALLY SEPARATE from ``working_memory``. Procedural rules
+    # are CONSTRAINTS (silent style-shaping directives the response
+    # builders apply as a system-prompt suffix), not CONTENT (semantic
+    # facts and episodic summaries that the agent may or may not
+    # reference in its reply). The two need different prompt treatment
+    # in v0.7 Stage D — keeping them in different state fields prevents
+    # the stringly-typed-prefix-parsing drift that would happen if
+    # rules and content shared a flat list.
+    #
+    # ``proactive_recall_enabled`` is the user's ``/memory recall on|off``
+    # toggle. When False (the default), Stage D injects a "do not
+    # explicitly reference past sessions" constraint into the system
+    # prompt. When True, the constraint is relaxed. The field is
+    # NotRequired because incognito-mode sessions never populate it.
+    procedural_rules: NotRequired[list[str]]
+    proactive_recall_enabled: NotRequired[bool]
+
 
 class SessionProgressState(TypedDict):
     """Session-level progression and intent signals."""

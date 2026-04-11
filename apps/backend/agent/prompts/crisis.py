@@ -97,7 +97,35 @@ def _format_found_resources(resources: list[dict[str, str]]) -> str:
 
 
 def build_crisis_response_system_prompt() -> str:
-    """Build the system prompt for crisis replies."""
+    """Build the system prompt for crisis replies.
+
+    **v0.7 Stage D deliberate exception**: unlike the therapeutic-mode
+    system prompts, the crisis response prompt does NOT inject
+    procedural rules or the recall-toggle constraint. This is a
+    safety call:
+
+    1. Crisis responses have strict structural requirements (acknowledge
+       directly, name local resources, ask at most one safety question,
+       prioritize immediate safety). A user-written procedural rule
+       like "keep it shorter" or "be less emotional" or "don't ask
+       questions" could actively undermine those requirements. The
+       procedural writer is supposed to refuse safety-undermining
+       rule requests, but the crisis path should be belt-and-suspenders
+       immune to the writer's enforcement — a regression in writer
+       behavior must not degrade crisis handling.
+    2. The recall-toggle constraint governs whether the agent may
+       reference past sessions or past statements. Crisis mode should
+       not be citing "last session we talked about X" regardless of
+       the toggle state; that's the wrong register for a safety-
+       critical interaction. Omitting the constraint block here keeps
+       the crisis response prompt focused on safety and resources,
+       not on memory-interaction etiquette.
+
+    If a rule is safe and universal enough that it SHOULD apply to
+    crisis responses (e.g., "use shorter sentences"), it can be
+    baked into ``knowledge/response_modes/crisis_response.md`` rather
+    than threaded through user-writable procedural memory.
+    """
 
     return _compose(*_CRISIS_RESPONSE_KNOWLEDGE)
 

@@ -119,6 +119,114 @@ def _format_working_memory(state: AgentState) -> str:
     return f"\nRelevant context from past sessions:\n{joined}\n"
 
 
+# ─── v0.7 Stage D procedural + recall helpers ──────────────────────────────
+#
+# These two helpers produce the dynamic blocks that get appended to every
+# response-generator's system prompt. They read state directly and return
+# empty strings when the relevant state is absent, so the prompt gracefully
+# degrades to the static knowledge+instructions content when procedural
+# memory isn't populated.
+#
+# Design notes:
+#
+# 1. **Rules are always injected (when they exist).** The rules block is
+#    emitted whenever ``memory.procedural_rules`` is non-empty, regardless
+#    of the recall toggle. Rules are constraints; the agent must apply
+#    them on every response. This is the B1 interpretation locked during
+#    Stage D planning — rules are silent lint, not referenceable content.
+#
+# 2. **Rules are silent lint, not quotable content.** The block explicitly
+#    tells the model to follow the rules without narrating compliance,
+#    without quoting them, and without announcing that it's adjusting its
+#    behavior. This matches the failure-mode asymmetry we settled: a user
+#    who turned off proactive recall specifically to AVOID memory-narration
+#    should never hear the agent say "as per your earlier request..." even
+#    when recall is on.
+#
+# 3. **Recall toggle governs semantic/episodic only.** The constraint
+#    block's text is copied verbatim from schema.yaml §6 retrieval
+#    proactive_recall.enforcement — lines 549-559. When recall is off,
+#    the model is told to use retrieved memories for shaping but NOT to
+#    explicitly reference past sessions or statements. When recall is
+#    on, the constraint is relaxed. The constraint text deliberately
+#    refers to "past sessions or past statements" rather than "memory"
+#    in general — that's what keeps rules out of scope for this toggle.
+
+
+def _format_procedural_rules_block(state: AgentState) -> str:
+    """Format the user's procedural rules as a silent-constraint block.
+
+    Returns the empty string when no rules exist. When rules are present,
+    returns a prompt suffix that lists them with explicit instructions to
+    follow them silently — never quote, cite, or narrate compliance.
+
+    The block is unconditional with respect to the recall toggle. Rules
+    are applied on every response regardless of whether the user has
+    enabled or disabled proactive memory recall. See the module-level
+    comment above for the rationale (B1 interpretation).
+    """
+
+    memory = state.get("memory", {}) or {}
+    rules = memory.get("procedural_rules") or []
+    if not rules:
+        return ""
+
+    rule_lines = "\n".join(f"- {rule}" for rule in rules)
+    return (
+        "\n\n═══ Style rules from past conversations with this user ═══\n"
+        f"{rule_lines}\n"
+        "\n"
+        "Follow these rules silently. Do NOT quote them, cite them, or "
+        "narrate your compliance with them (e.g., never say 'as per your "
+        "earlier request...'). The user already knows they asked for "
+        "these; acknowledging them makes the interaction feel "
+        "customer-service-y. Just apply the rules as part of how you "
+        "respond."
+    )
+
+
+def _format_recall_toggle_constraint(state: AgentState) -> str:
+    """Format the recall-toggle constraint block for the system prompt.
+
+    Returns a prompt suffix whose content depends on
+    ``memory.proactive_recall_enabled``:
+
+    - **When False (default)**: tells the model to use retrieved memories
+      for silent shaping but NOT to explicitly reference past sessions or
+      past statements. This is the "invisible but effective" mode users
+      get when they turn off proactive recall.
+    - **When True**: relaxes the constraint so the model may reference
+      past memories sparingly when they add value to the current moment.
+
+    The constraint text is copied verbatim from schema.yaml §6 retrieval
+    proactive_recall.enforcement (lines 549-559). The constraint refers
+    specifically to "past sessions or past statements" — semantic facts
+    and episodic summaries — and does NOT govern procedural rules, which
+    are separately handled by :func:`_format_procedural_rules_block`.
+    """
+
+    memory = state.get("memory", {}) or {}
+    enabled = memory.get("proactive_recall_enabled", False)
+
+    if enabled:
+        # Recall ON: relaxed constraint.
+        return (
+            "\n\n═══ Memory reference guidance (proactive recall: ON) ═══\n"
+            "You may reference relevant past memories when it adds value "
+            "to the current moment, but do so sparingly and never for "
+            "emotionally charged topics without strong contextual fit."
+        )
+
+    # Recall OFF (default): silent-shaping constraint.
+    return (
+        "\n\n═══ Memory reference guidance (proactive recall: OFF) ═══\n"
+        "Use any retrieved memories to inform the warmth, pacing, and "
+        "content of your response, but do NOT explicitly reference past "
+        "sessions or past statements unless the user has just asked "
+        "about them."
+    )
+
+
 # ─── Mode instructions (appended to the system prompt) ──────────────────────
 #
 # These are the mode-specific behavioral instructions that shape HOW the
@@ -285,46 +393,75 @@ Guidelines:
 # ─── Public prompt builders ──────────────────────────────────────────────────
 
 
-def build_supportive_system_prompt() -> str:
-    """Build the system prompt for supportive-mode responses."""
+def _compose_system_prompt_with_state(
+    knowledge: str,
+    instructions: str,
+    state: AgentState,
+) -> str:
+    """Assemble a system prompt from static + dynamic parts.
+
+    The static parts are the knowledge-file composition and the
+    mode-specific instructions block. The dynamic parts are the
+    procedural rules block and the recall toggle constraint, both
+    read from state. See the module-level comment above
+    :func:`_format_procedural_rules_block` for the design notes.
+    """
+
+    rules_block = _format_procedural_rules_block(state)
+    recall_block = _format_recall_toggle_constraint(state)
+    return f"{knowledge}\n\n{instructions}{rules_block}{recall_block}"
+
+
+def build_supportive_system_prompt(state: AgentState) -> str:
+    """Build the system prompt for supportive-mode responses.
+
+    v0.7 Stage D: now takes ``state`` and injects the user's procedural
+    rules and recall-toggle constraint as suffix blocks. Callers must
+    pass the current graph state so the dynamic blocks can read
+    ``memory.procedural_rules`` and ``memory.proactive_recall_enabled``.
+    """
 
     knowledge = _compose(*_SUPPORTIVE_KNOWLEDGE)
-    return f"{knowledge}\n\n{_SUPPORTIVE_INSTRUCTIONS}"
+    return _compose_system_prompt_with_state(knowledge, _SUPPORTIVE_INSTRUCTIONS, state)
 
 
-def build_reflective_system_prompt() -> str:
+def build_reflective_system_prompt(state: AgentState) -> str:
     """Build the system prompt for reflective-mode responses."""
 
     knowledge = _compose(*_REFLECTIVE_KNOWLEDGE)
-    return f"{knowledge}\n\n{_REFLECTIVE_INSTRUCTIONS}"
+    return _compose_system_prompt_with_state(knowledge, _REFLECTIVE_INSTRUCTIONS, state)
 
 
-def build_clarifying_system_prompt() -> str:
+def build_clarifying_system_prompt(state: AgentState) -> str:
     """Build the system prompt for clarifying-mode responses."""
 
     knowledge = _compose(*_CLARIFYING_KNOWLEDGE)
-    return f"{knowledge}\n\n{_CLARIFYING_INSTRUCTIONS}"
+    return _compose_system_prompt_with_state(knowledge, _CLARIFYING_INSTRUCTIONS, state)
 
 
-def build_psychoeducation_system_prompt() -> str:
+def build_psychoeducation_system_prompt(state: AgentState) -> str:
     """Build the system prompt for psychoeducation-mode responses."""
 
     knowledge = _compose(*_PSYCHOEDUCATION_KNOWLEDGE)
-    return f"{knowledge}\n\n{_PSYCHOEDUCATION_INSTRUCTIONS}"
+    return _compose_system_prompt_with_state(
+        knowledge, _PSYCHOEDUCATION_INSTRUCTIONS, state
+    )
 
 
-def build_closing_system_prompt() -> str:
+def build_closing_system_prompt(state: AgentState) -> str:
     """Build the system prompt for closing-mode responses."""
 
     knowledge = _compose(*_CLOSING_KNOWLEDGE)
-    return f"{knowledge}\n\n{_CLOSING_INSTRUCTIONS}"
+    return _compose_system_prompt_with_state(knowledge, _CLOSING_INSTRUCTIONS, state)
 
 
-def build_guided_exercise_system_prompt() -> str:
+def build_guided_exercise_system_prompt(state: AgentState) -> str:
     """Build the system prompt for guided_exercise-mode responses."""
 
     knowledge = _compose(*_GUIDED_EXERCISE_KNOWLEDGE)
-    return f"{knowledge}\n\n{_GUIDED_EXERCISE_INSTRUCTIONS}"
+    return _compose_system_prompt_with_state(
+        knowledge, _GUIDED_EXERCISE_INSTRUCTIONS, state
+    )
 
 
 def build_therapeutic_response_prompt(state: AgentState, *, mode: str) -> str:

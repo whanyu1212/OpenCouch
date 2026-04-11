@@ -377,6 +377,62 @@ class ProceduralProfile(BaseModel):
     last_consolidated_at: str | None = None  # ISO-8601
 
 
+class ProceduralRuleDraft(BaseModel):
+    """LLM-output shape for a single procedural rule, pre-storage.
+
+    Parallels how :class:`MemoryWrite` is the LLM-output shape for
+    semantic facts and :class:`SemanticFact` is the stored shape. The
+    LLM produces a ``ProceduralRuleDraft`` with only the fields it
+    should own (rule text, evidence, confidence); the writer node
+    then promotes it to :class:`ProceduralRule` by adding the
+    store-metadata fields (``added_at`` timestamp, ``source``).
+
+    The promotion happens via :func:`agent.memory.procedural.build_procedural_rule`,
+    which centralizes the v0.7 defaults (``source="explicit_user"``,
+    ``confidence="high"`` unless overridden).
+
+    Why the split:
+
+    Forcing the LLM to produce ``added_at`` and ``source`` in its
+    structured output is noisy and error-prone. Those fields are
+    trivially computable by the node layer (now() and a constant
+    respectively), and keeping them out of the LLM's output schema
+    shrinks the hallucination surface. Same rationale as the
+    ``MemoryWrite`` / ``SemanticFact`` split.
+    """
+
+    rule: str = Field(min_length=1, max_length=280)
+    evidence: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = "high"
+
+
+class ProceduralExtractionResult(BaseModel):
+    """The structured-output shape returned by the procedural writer LLM.
+
+    Parallels :class:`ExtractionResult` for the semantic extractor.
+    The LLM is given the current user turn and asked to produce zero
+    or more :class:`ProceduralRuleDraft` items representing
+    user-initiated rule requests.
+
+    Design notes mirror the semantic extractor:
+
+    1. **Zero rules is the common case.** The system prompt enforces
+       conservative behavior — most turns (small talk, shared
+       feelings, topical conversation) produce no rules. Rules are
+       only written when the user explicitly asks the agent to
+       remember a style preference.
+    2. **The ``reason`` field is always populated**, even on empty
+       results. It provides a breadcrumb explaining why nothing was
+       written (e.g., "user shared a feeling, no style preference
+       stated") or summarizing what was written (e.g., "user asked
+       to stop being offered meditation"). The reason is for logs
+       and debugging, not user-facing.
+    """
+
+    rules: list[ProceduralRuleDraft] = Field(default_factory=list)
+    reason: str = Field(min_length=1, max_length=240)
+
+
 # ─── §5. Relationship models (RELATES_TO edges) ─────────────────────────────
 
 
@@ -765,6 +821,8 @@ __all__ = [
     "ProceduralRuleSource",
     "ProceduralRule",
     "ProceduralProfile",
+    "ProceduralRuleDraft",
+    "ProceduralExtractionResult",
     # §5 relationships
     "RelationshipKind",
     "FAMILY_KINDS",

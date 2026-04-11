@@ -227,8 +227,10 @@ async def test_memory_status_still_dispatches_render_status(monkeypatch) -> None
     async def _fake_render_memory_list(runtime_arg):
         render_list_calls.append(runtime_arg)
 
-    async def _fake_render_memory_status(runtime_arg):
-        render_status_calls.append(runtime_arg)
+    async def _fake_render_memory_status(runtime_arg, session_arg):
+        # v0.7 Stage E: render_memory_status gained a session parameter
+        # so the recall toggle row can be populated from the profile.
+        render_status_calls.append((runtime_arg, session_arg))
 
     monkeypatch.setattr(
         "opencouch_cli.app.render_memory_list", _fake_render_memory_list
@@ -536,3 +538,438 @@ def test_render_semantic_records_table_shows_placeholder_for_missing_object(
     # The row should render with a '?' in the object column
     assert "malformed record" in captured.out
     assert "?" in captured.out
+
+
+# ─── v0.7 Stage E: procedural CLI commands ─────────────────────────────────
+#
+# These tests cover the /memory list rules, /memory recall on|off, and
+# /memory forget rule <n> commands. Unlike the earlier CLI tests that
+# monkeypatch render functions, these tests use a real
+# OpenCouchMemoryStore so the round-trip through the procedural store
+# helpers is exercised end-to-end. The assertions check captured
+# console output rather than mocked call records — this catches bugs
+# in the renderers themselves, not just the dispatch layer.
+
+
+class FakeProceduralRuntime:
+    """Runtime stub with a real memory_store for procedural CLI tests.
+
+    Unlike the thread-management ``FakeRuntime`` above, this runtime
+    exposes a real ``OpenCouchMemoryStore`` so the /memory commands
+    that talk to the store (list rules, recall on/off, forget rule)
+    actually round-trip through the Stage A helper functions. The
+    store starts empty and each test writes to it via the helpers
+    before running the CLI command.
+
+    Also exposes ``crisis_log_backend`` and ``memory_mode`` because
+    ``render_memory_status`` reads those; they can be any non-None
+    value since the status command just renders their string form.
+    """
+
+    def __init__(self) -> None:
+        from agent.memory.store import OpenCouchMemoryStore
+
+        self.memory_store = OpenCouchMemoryStore()
+        self.crisis_log_backend = None
+        self.memory_mode = "persistent"
+
+
+@pytest.mark.asyncio
+async def test_memory_list_rules_empty_state(capsys) -> None:
+    """With no rules written yet, the empty-state panel renders."""
+
+    from agent.memory.modes import MemoryMode
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    runtime.memory_mode = MemoryMode.LOCAL
+    session = _session()
+
+    await handle_command("/memory list rules", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "No procedural rules for this thread yet" in captured.out
+    assert "Memory List (procedural)" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_list_rules_renders_populated_rules(capsys) -> None:
+    """A populated profile renders each rule in the table with its
+    index, rule text, evidence, date, and confidence."""
+
+    from agent.memory.modes import MemoryMode
+    from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    runtime.memory_mode = MemoryMode.LOCAL
+    session = _session()  # thread_id="thread-a"
+
+    # Write two rules via the Stage A helper path
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        ),
+    )
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="You've said meditation makes you more anxious.",
+            evidence=["Please don't suggest meditation again"],
+        ),
+    )
+
+    await handle_command("/memory list rules", session, runtime)
+    captured = capsys.readouterr()
+
+    # Both rules are rendered. Use short substrings that don't cross
+    # Rich's column-wrap line boundaries — the table wraps long text
+    # inside cells, so asserting on full rule phrases fails on
+    # multi-word rules.
+    assert "shorter" in captured.out
+    assert "meditation" in captured.out
+    # Evidence column content — "Please" and "keep" both land on
+    # the first line of the evidence cell even when the full quote
+    # wraps, so they're safe anchors.
+    assert "Please" in captured.out
+    # The panel title reports the count
+    assert "2 rule(s)" in captured.out
+    # The 1-indexed position column is visible
+    assert " 1 " in captured.out
+    assert " 2 " in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_list_rules_isolates_threads(capsys) -> None:
+    """Rules written for thread-a should not appear in thread-b's list.
+
+    Regression guard for namespace isolation at the CLI layer. The
+    profile is namespaced by thread_id, so a rule for thread-a must
+    not leak into a separate thread's view.
+    """
+
+    from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+
+    # Write a rule for thread-a only
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        ),
+    )
+
+    # List rules from thread-b's session — should be empty
+    session_b = RunnerSession(
+        requested_mode="deterministic",
+        resolved_mode="deterministic",
+        llm_client=None,
+        thread_id="thread-b",
+        sqlite_path="/tmp/test.sqlite3",
+        memory_mode="persistent",
+        history=[],
+    )
+    await handle_command("/memory list rules", session_b, runtime)
+    captured = capsys.readouterr()
+
+    # Empty-state panel, not the populated one
+    assert "No procedural rules" in captured.out
+    assert "You prefer shorter responses" not in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_on_from_off_writes_and_explains(capsys) -> None:
+    """Flipping OFF → ON writes the toggle and shows the first-run explanation."""
+
+    from agent.memory.procedural import aget_procedural_profile
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    # Sanity: starts OFF
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+    assert profile.proactive_recall_enabled is False
+
+    await handle_command("/memory recall on", session, runtime)
+    captured = capsys.readouterr()
+
+    # Profile was updated
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+    assert profile.proactive_recall_enabled is True
+
+    # First-run explanation content is present
+    assert "Proactive recall is now ON" in captured.out
+    # The example from schema.yaml opt_in_confirmation_example
+    assert "past conversations" in captured.out
+    # The reassurance that style rules are independent of the toggle
+    assert "Style rules" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_off_from_on_writes_confirmation(capsys) -> None:
+    """Flipping ON → OFF writes the toggle and shows the brief confirmation."""
+
+    from agent.memory.procedural import aget_procedural_profile, aset_proactive_recall
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    # Pre-set recall to ON so we can flip it off
+    await aset_proactive_recall(
+        runtime.memory_store, user_id=session.thread_id, enabled=True
+    )
+
+    await handle_command("/memory recall off", session, runtime)
+    captured = capsys.readouterr()
+
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+    assert profile.proactive_recall_enabled is False
+
+    assert "Proactive recall is now OFF" in captured.out
+    # Reassurance that memory still shapes responses silently
+    assert "I still remember" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_already_on_is_noop(capsys) -> None:
+    """Setting recall ON when already ON should produce a warning, no write."""
+
+    from agent.memory.procedural import aget_procedural_profile, aset_proactive_recall
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    # Pre-set recall to ON
+    await aset_proactive_recall(
+        runtime.memory_store, user_id=session.thread_id, enabled=True
+    )
+
+    await handle_command("/memory recall on", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "already on" in captured.out
+    # Profile still True — no write happened, but the state is unchanged
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+    assert profile.proactive_recall_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
+    """``/memory recall`` with no arg or a bad arg should show usage."""
+
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await handle_command("/memory recall", session, runtime)
+    captured = capsys.readouterr()
+    assert "Usage: /memory recall on" in captured.out
+
+    await handle_command("/memory recall maybe", session, runtime)
+    captured = capsys.readouterr()
+    assert "Usage: /memory recall on" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_rule_y_confirms_and_deletes(capsys, monkeypatch) -> None:
+    """A y/Y confirmation removes the rule from the profile."""
+
+    from agent.memory.procedural import (
+        aadd_procedural_rule,
+        aget_procedural_profile,
+        build_procedural_rule,
+    )
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    # Write two rules
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id=session.thread_id,
+        rule=build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        ),
+    )
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id=session.thread_id,
+        rule=build_procedural_rule(
+            rule_text="You've said meditation makes you more anxious.",
+            evidence=["Please don't suggest meditation again"],
+        ),
+    )
+
+    # Monkeypatch Prompt.ask to return 'y' without interactive input
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+
+    await handle_command("/memory forget rule 1", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "Deleted rule #1" in captured.out
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+    # Rule 1 (shorter responses) was removed, rule 2 (meditation)
+    # shifted into position 0.
+    assert len(profile.rules) == 1
+    assert "meditation" in profile.rules[0].rule
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_rule_n_cancels(capsys, monkeypatch) -> None:
+    """A 'n' or empty confirmation must NOT touch the profile."""
+
+    from agent.memory.procedural import (
+        aadd_procedural_rule,
+        aget_procedural_profile,
+        build_procedural_rule,
+    )
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id=session.thread_id,
+        rule=build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        ),
+    )
+
+    # Monkeypatch Prompt.ask to return '' (the default 'n')
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "")
+
+    await handle_command("/memory forget rule 1", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "Cancelled" in captured.out
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.thread_id
+    )
+    # Rule is still there
+    assert len(profile.rules) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_rule_out_of_range_warns(capsys) -> None:
+    """Deleting a rule that doesn't exist should produce a warning."""
+
+    from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id=session.thread_id,
+        rule=build_procedural_rule(
+            rule_text="You prefer shorter responses.",
+            evidence=["Please keep it short"],
+        ),
+    )
+
+    # Index 5 when only 1 rule exists
+    await handle_command("/memory forget rule 5", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "does not exist" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_rule_no_rules_warns(capsys) -> None:
+    """Forgetting a rule when the profile has none should produce a warning."""
+
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await handle_command("/memory forget rule 1", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "No procedural rules to forget" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_rule_bad_index_warns(capsys) -> None:
+    """A non-integer index should produce a usage warning, not crash."""
+
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await handle_command("/memory forget rule xyz", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "Usage: /memory forget rule <n>" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_fact_shows_not_yet_message(capsys) -> None:
+    """/memory forget fact is v0.9 scope; must show a clear 'not yet' message."""
+
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await handle_command("/memory forget fact 1", session, runtime)
+    captured = capsys.readouterr()
+
+    assert "not yet available" in captured.out
+    assert "v0.9" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_memory_status_shows_recall_toggle_state(capsys) -> None:
+    """/memory status should render the actual recall toggle state
+    (on or off) rather than a phase-2+ placeholder."""
+
+    from agent.memory.procedural import aset_proactive_recall
+    from opencouch_cli.app import handle_command
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    # Default state: OFF
+    await handle_command("/memory status", session, runtime)
+    captured = capsys.readouterr()
+    assert "proactive recall" in captured.out
+    assert "off" in captured.out
+    assert "(phase 2+)" not in captured.out
+
+    # Flip to ON and re-check
+    await aset_proactive_recall(
+        runtime.memory_store, user_id=session.thread_id, enabled=True
+    )
+    await handle_command("/memory status", session, runtime)
+    captured = capsys.readouterr()
+    assert "proactive recall" in captured.out
+    assert " on" in captured.out  # leading space disambiguates from "onset"

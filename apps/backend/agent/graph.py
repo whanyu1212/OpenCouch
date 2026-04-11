@@ -8,11 +8,12 @@ This module owns the entire agent execution surface in three layers:
 * **Graph assembly** — :func:`build_agent_workflow` constructs and compiles the
   LangGraph ``StateGraph`` that wires the full topology: load_memory →
   crisis_gate → (crisis_response + crisis_log | therapeutic_subgraph) →
-  extract_semantic_facts → finalize_turn → END. Crisis-gate routing is
-  encoded directly in the node via :class:`langgraph.types.Command`, not
-  via a conditional edge. The terminal ``finalize_turn`` node appends the
-  assistant response to the transcript so the next turn's ``get_history``
-  call sees both sides of each exchange.
+  extract_semantic_facts → extract_procedural_rules → finalize_turn → END.
+  Crisis-gate routing is encoded directly in the node via
+  :class:`langgraph.types.Command`, not via a conditional edge. The
+  terminal ``finalize_turn`` node appends the assistant response to the
+  transcript so the next turn's ``get_history`` call sees both sides of
+  each exchange.
 * **Public entrypoints** — :func:`run_agent` is a one-shot convenience wrapper
   that compiles a fresh workflow, invokes it with sensible defaults, and
   returns a normalized ``AgentOutput``. For thread-persistent execution see
@@ -41,6 +42,7 @@ from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_response import run_crisis_response_node
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.runtime_context import WorkflowContext
@@ -97,6 +99,13 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
             "active_concerns": [],
             "open_loops": [],
             "current_goal": None,
+            # v0.7 Stage C: procedural fields default to empty / recall off.
+            # load_memory_node overwrites these with the stored profile on
+            # every turn; the empty defaults here exist so that any code
+            # reading state["memory"] before load_memory_node has run sees
+            # a consistent shape rather than missing keys.
+            "procedural_rules": [],
+            "proactive_recall_enabled": False,
         },
         progress={
             "intent": None,
@@ -160,8 +169,10 @@ def build_agent_workflow(
           → load_memory_node
           → crisis_gate_node  (Command routes to one of the branches)
           ├─ crisis_response_node → crisis_log_node → extract_semantic_facts_node
+          │                                             → extract_procedural_rules_node
           │                                             → finalize_turn_node → END
           └─ therapeutic_subgraph → extract_semantic_facts_node
+                                      → extract_procedural_rules_node
                                       → finalize_turn_node → END
 
     The therapeutic subgraph is embedded as a single node compiled by
@@ -198,6 +209,9 @@ def build_agent_workflow(
     workflow.add_node("crisis_log_node", run_crisis_log_node)
     workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
     workflow.add_node("extract_semantic_facts_node", run_extract_semantic_facts_node)
+    workflow.add_node(
+        "extract_procedural_rules_node", run_extract_procedural_rules_node
+    )
     workflow.add_node("finalize_turn_node", run_finalize_turn_node)
 
     # Spine: entry → memory load → crisis gate (which Command-routes).
@@ -213,10 +227,15 @@ def build_agent_workflow(
     # Therapeutic branch: subgraph → extract_facts → finalize → END.
     workflow.add_edge("therapeutic_subgraph", "extract_semantic_facts_node")
 
-    # Shared terminal: extract_facts → finalize_turn → END. Both branches
-    # converge through extract_facts (for semantic memory writes) and
-    # then through finalize_turn (for transcript append).
-    workflow.add_edge("extract_semantic_facts_node", "finalize_turn_node")
+    # Shared terminal: extract_facts → extract_procedural_rules → finalize_turn
+    # → END. Both branches converge through the two side-effect writer nodes
+    # (semantic first, procedural second) before transcript finalization. The
+    # serial ordering is deliberate: parallel fan-out wouldn't help because
+    # both nodes run AFTER the response is composed (they don't affect user
+    # latency), and serial ordering gives deterministic log interleaving so
+    # dogfood traces are easier to read. Procedural writing is new in v0.7.
+    workflow.add_edge("extract_semantic_facts_node", "extract_procedural_rules_node")
+    workflow.add_edge("extract_procedural_rules_node", "finalize_turn_node")
     workflow.add_edge("finalize_turn_node", END)
 
     return workflow.compile(checkpointer=checkpointer)
@@ -239,7 +258,8 @@ async def run_agent(
     want a one-shot ``AgentInput -> AgentOutput`` invocation. The compiled
     workflow handles routing through ``load_memory -> crisis_gate ->
     (crisis_response + crisis_log | therapeutic_subgraph) ->
-    extract_semantic_facts -> END``.
+    extract_semantic_facts -> extract_procedural_rules -> finalize_turn
+    -> END``.
 
     For thread-persistent execution with checkpointed state and a long-lived
     compiled graph, use :class:`agent.persistence.PersistentAgentRuntime`
