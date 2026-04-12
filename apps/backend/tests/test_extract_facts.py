@@ -318,17 +318,24 @@ class TestExtractFactsNodeUnit:
 
     @pytest.mark.asyncio
     async def test_empty_extraction_no_writes(self) -> None:
-        """LLM returns empty facts → node logs reason, no writes."""
+        """LLM returns empty facts → node logs reason, no writes.
+
+        v0.8.2 note: the message must be longer or contain a word
+        outside the small-talk vocabulary, otherwise the pre-extractor
+        gate intercepts before the LLM call fires. "I feel okay today"
+        passes the gate (contains "feel" and "today" which are not in
+        the small-talk vocab) but the LLM still returns zero facts.
+        """
 
         store = OpenCouchMemoryStore()
         fake = _FakeExtractionLLM(
             extraction_result=ExtractionResult(
                 facts=[],
-                reason="small talk, nothing to extract",
+                reason="no persistent fact in this turn",
             )
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
-        state = _partial_state(message="thanks")
+        state = _partial_state(message="I feel okay today")
 
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
@@ -339,7 +346,7 @@ class TestExtractFactsNodeUnit:
         assert delta["diagnostics"]["semantic_writes"] == 0
         assert (
             delta["diagnostics"]["extract_facts_reason"]
-            == "small talk, nothing to extract"
+            == "no persistent fact in this turn"
         )
         assert fake.extraction_calls == 1
         assert await store.arecord_count() == 0

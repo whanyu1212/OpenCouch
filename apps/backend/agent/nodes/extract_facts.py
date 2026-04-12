@@ -239,6 +239,23 @@ async def run_extract_semantic_facts_node(
     embedding_provider = runtime.context.get("embedding_provider")
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
+    # v0.8.2: pre-extractor small-talk gate. Skip the LLM call
+    # entirely when the message is unambiguously small talk (short +
+    # all tokens in the small-talk vocabulary). Saves ~3-5s per turn
+    # on greetings and acknowledgments. Conservative by design —
+    # false negatives waste one LLM call, false positives silently
+    # lose memory. See ``agent/memory/small_talk_gate.py`` for the
+    # heuristic rationale.
+    from agent.memory.small_talk_gate import is_small_talk
+
+    if is_small_talk(state["message"]):
+        logger.debug(
+            "extract_semantic_facts_node: small-talk gate triggered; skipping "
+            "LLM call for message %r",
+            state["message"][:40],
+        )
+        return _diagnostics_delta(reason="skipped: small_talk_gate")
+
     # Turn index is 0-based; state["progress"]["turn_count"] counts user
     # turns including the current one (1-based), so we subtract 1.
     progress = state.get("progress", {})
