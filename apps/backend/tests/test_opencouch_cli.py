@@ -931,20 +931,10 @@ async def test_memory_forget_rule_bad_index_warns(capsys) -> None:
     assert "Usage: /memory forget rule <n>" in captured.out
 
 
-@pytest.mark.asyncio
-async def test_memory_forget_fact_shows_not_yet_message(capsys) -> None:
-    """/memory forget fact is v0.9 scope; must show a clear 'not yet' message."""
-
-    from opencouch_cli.app import handle_command
-
-    runtime = FakeProceduralRuntime()
-    session = _session()
-
-    await handle_command("/memory forget fact 1", session, runtime)
-    captured = capsys.readouterr()
-
-    assert "not yet available" in captured.out
-    assert "v0.9" in captured.out
+# Note: the pre-v0.9 placeholder test ``test_memory_forget_fact_shows_not_yet_message``
+# was removed in v0.9 when ``/memory forget fact`` shipped for real.
+# See ``TestMemoryForgetFact`` at the bottom of this file for the
+# replacement coverage of the real handler.
 
 
 @pytest.mark.asyncio
@@ -1232,3 +1222,1119 @@ class TestParserUserIdFlag:
 
         args = build_parser().parse_args(["--user-id", "alice"])
         assert args.user_id == "alice"
+
+
+class TestRenderContext:
+    """Tests for the v0.8 additions to ``render_context``.
+
+    The panel now shows procedural rules, the proactive-recall toggle,
+    and guided-exercise tracking fields alongside the pre-existing
+    memory/progress surface. We assert these by capturing the Rich
+    output stream and checking for substring markers.
+    """
+
+    def test_shows_procedural_rules_when_present(self, capsys) -> None:
+        """Procedural rules from memory.procedural_rules render as bullets."""
+
+        from opencouch_cli.app import render_context
+
+        state = {
+            "progress": {"turn_count": 3},
+            "memory": {
+                "summary": "s",
+                "current_goal": None,
+                "procedural_rules": [
+                    "You prefer short replies.",
+                    "Don't suggest meditation.",
+                ],
+                "proactive_recall_enabled": False,
+            },
+            "response": {"guidance": "-"},
+            "working_memory": [],
+        }
+        render_context(state)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+
+        assert "procedural_rules" in out
+        assert "You prefer short replies" in out
+        assert "Don't suggest meditation" in out
+
+    def test_shows_proactive_recall_toggle(self, capsys) -> None:
+        """The recall row shows on/off based on the memory field."""
+
+        from opencouch_cli.app import render_context
+
+        state = {
+            "progress": {"turn_count": 1},
+            "memory": {
+                "summary": "",
+                "current_goal": None,
+                "procedural_rules": [],
+                "proactive_recall_enabled": True,
+            },
+            "response": {"guidance": "-"},
+            "working_memory": [],
+        }
+        render_context(state)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+
+        assert "proactive_recall" in out
+        assert "on" in out
+
+    def test_shows_exercise_state_when_active(self, capsys) -> None:
+        """Guided exercise type + step render when routing carries them."""
+
+        from opencouch_cli.app import render_context
+
+        state = {
+            "progress": {"turn_count": 1},
+            "memory": {"summary": "", "current_goal": None},
+            "response": {"guidance": "-"},
+            "working_memory": [],
+            "routing": {
+                "exercise_type": "box_breathing",
+                "exercise_step": 3,
+            },
+        }
+        render_context(state)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+
+        assert "exercise" in out
+        assert "box_breathing" in out
+        assert "step 3" in out
+
+    def test_omits_exercise_row_when_inactive(self, capsys) -> None:
+        """No exercise_type → exercise row is absent (avoid clutter).
+
+        Rationale: exercises are episodic, most turns don't have one,
+        and showing an empty row on every turn would crowd the panel.
+        """
+
+        from opencouch_cli.app import render_context
+
+        state = {
+            "progress": {"turn_count": 1},
+            "memory": {"summary": "", "current_goal": None},
+            "response": {"guidance": "-"},
+            "working_memory": [],
+            "routing": {},
+        }
+        render_context(state)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+
+        # "exercise" should not appear when no exercise is active.
+        # We check with boundary to avoid accidental matches in help text
+        # or other labels that might contain the substring.
+        assert "exercise_type" not in out
+        # The routing-driven row title "exercise" followed by a mode
+        # string is absent — we settle for checking the type name
+        # doesn't leak through.
+        assert "box_breathing" not in out
+
+    def test_working_memory_renders_as_bullets_not_pipes(self, capsys) -> None:
+        """Multiple working_memory entries render as newline bullets.
+
+        Pre-v0.8 rendered them as ``a | b | c``; v0.8 shows ``• a``,
+        ``• b``, ``• c`` on separate lines so long entries wrap.
+        """
+
+        from opencouch_cli.app import render_context
+
+        state = {
+            "progress": {"turn_count": 1},
+            "memory": {"summary": "", "current_goal": None},
+            "response": {"guidance": "-"},
+            "working_memory": [
+                "Previously noted: I have a sister named Sarah.",
+                "Last session (grief): talked about my dog passing.",
+            ],
+        }
+        render_context(state)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+
+        # Bullet markers for each entry — the Rich table wraps the cell
+        # so we check for both entries independently.
+        assert "• Previously noted: I have a sister named Sarah" in out
+        assert "• Last session (grief): talked about my dog passing" in out
+
+
+class TestRenderStageTimings:
+    """Tests for the v0.8 ``_render_stage_timings`` helper."""
+
+    def test_empty_inputs_skip_panel_entirely(self, capsys) -> None:
+        """With no diagnostics and no deltas, the helper prints nothing."""
+
+        from opencouch_cli.app import _render_stage_timings
+
+        _render_stage_timings({}, {})
+        out = capsys.readouterr().out
+        assert out == ""
+
+    def test_stage_timings_table_shows_all_stages(self, capsys) -> None:
+        """A populated diagnostics dict renders a full timings row per stage."""
+
+        from opencouch_cli.app import _render_stage_timings
+
+        _render_stage_timings(
+            diagnostics={
+                "load_memory_ms": 1.23,
+                "crisis_gate_ms": 2.34,
+                "extract_facts_ms": 3.45,
+                "extract_procedural_ms": 4.56,
+                "turn_total_ms": 99.99,
+                "semantic_writes": 1,
+                "procedural_writes": 0,
+            },
+            memory_deltas={"semantic": 1, "episodic": 0, "procedural": 0},
+        )
+        out = capsys.readouterr().out
+
+        assert "load_memory" in out
+        assert "crisis_gate" in out
+        assert "extract_facts" in out
+        assert "extract_procedural" in out
+        assert "turn_total" in out
+        assert "1.23" in out
+        assert "2.34" in out
+        assert "99.99" in out
+
+    def test_missing_keys_render_as_dashes(self, capsys) -> None:
+        """A diagnostics dict missing a key shows ``-`` instead of crashing."""
+
+        from opencouch_cli.app import _render_stage_timings
+
+        _render_stage_timings(
+            diagnostics={"load_memory_ms": 5.0},
+            memory_deltas={},
+        )
+        out = capsys.readouterr().out
+
+        assert "5.00" in out
+        # Rows for missing stages still appear with "-" in the time column
+        assert "crisis_gate" in out
+        assert "extract_facts" in out
+
+
+class TestDebugStateCommand:
+    """Tests for the v0.8 ``/debug state`` command."""
+
+    @pytest.mark.asyncio
+    async def test_debug_state_prints_json(self, capsys) -> None:
+        """/debug state dumps the thread's state dict as JSON."""
+
+        runtime = FakeRuntime()
+        session = _session()
+
+        result = await handle_command("/debug state", session, runtime)
+
+        assert result is True
+        captured = capsys.readouterr().out
+        # The panel title should appear
+        assert "Debug State" in captured
+        # Expect the turn_count from our fake state to show up in JSON
+        assert '"turn_count": 2' in captured
+
+    @pytest.mark.asyncio
+    async def test_debug_state_handles_missing_state(self, capsys) -> None:
+        """When the thread has no state, the command prints a warning panel."""
+
+        runtime = FakeRuntime()
+        runtime.states.clear()  # Simulate fresh thread with no persisted state
+        session = _session()
+
+        result = await handle_command("/debug state", session, runtime)
+
+        assert result is True
+        captured = capsys.readouterr().out
+        assert "Debug State" in captured
+        assert "No state for this thread yet" in captured
+
+    @pytest.mark.asyncio
+    async def test_debug_requires_subcommand(self, capsys) -> None:
+        """`/debug` without `state` shows usage help."""
+
+        runtime = FakeRuntime()
+        session = _session()
+
+        result = await handle_command("/debug", session, runtime)
+
+        assert result is True
+        captured = capsys.readouterr().out
+        assert "Usage: /debug state" in captured
+
+    @pytest.mark.asyncio
+    async def test_debug_state_rejects_unknown_subcommand(self, capsys) -> None:
+        """`/debug unknown` shows the usage help, not a crash."""
+
+        runtime = FakeRuntime()
+        session = _session()
+
+        result = await handle_command("/debug somethingelse", session, runtime)
+
+        assert result is True
+        captured = capsys.readouterr().out
+        assert "Usage: /debug state" in captured
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# v0.9 privacy controls — /memory forget fact|session + /memory clear
+# ─────────────────────────────────────────────────────────────────────────
+#
+# The v0.9 privacy controls extend the existing rule-forget pattern to
+# semantic facts and episodic arcs, plus add a namespace-wipe command.
+# These tests cover:
+#
+# - Per-record forget: valid / empty / out-of-range / bad-int / decline /
+#   confirm paths for each of fact and session
+# - `/memory clear`: typed-confirmation contract, per-kind scoping,
+#   empty-store short-circuit, and cross-kind sweep for `clear all`
+# - `/memory list` subcommand filtering
+#
+# All tests use the FakeProceduralRuntime above (it already has a real
+# OpenCouchMemoryStore) + monkeypatched Prompt.ask to avoid interactive
+# stdin reads. The store is seeded directly via store.aput so the tests
+# don't depend on the extractor LLM pipeline.
+
+
+async def _seed_semantic_fact(
+    runtime: "FakeProceduralRuntime",
+    *,
+    owner_id: str,
+    key: str,
+    evidence_quote: str,
+    predicate: str = "KNOWS",
+    object_identifier: str = "Sarah",
+) -> None:
+    """Helper: write one semantic fact directly into the fake store.
+
+    Bypasses the extractor LLM pipeline so the forget tests can focus
+    on the delete path without needing a working extractor. The record
+    shape mimics what the real :func:`_memory_write_to_semantic_fact`
+    produces in ``agent/nodes/extract_facts.py``.
+    """
+
+    namespace = (owner_id, "semantic")
+    await runtime.memory_store.aput(
+        namespace,
+        key=key,
+        value={
+            "id": key,
+            "category": "relationship",
+            "subject": {"type": "user", "identifier": "me"},
+            "predicate": predicate,
+            "object": {"type": "person", "identifier": object_identifier},
+            "evidence_quote": evidence_quote,
+            "confidence": "high",
+            "source_session_id": "test",
+            "source_turn_index": 0,
+            "created_at": "2026-04-12T00:00:00Z",
+            "last_referenced_at": "2026-04-12T00:00:00Z",
+            "dormant_at": None,
+            "superseded_by": None,
+            "user_visible": True,
+        },
+    )
+
+
+async def _seed_episodic_arc(
+    runtime: "FakeProceduralRuntime",
+    *,
+    owner_id: str,
+    key: str,
+    summary: str,
+    themes: list[str] | None = None,
+) -> None:
+    """Helper: write one episodic session arc directly into the fake store."""
+
+    namespace = (owner_id, "episodic")
+    await runtime.memory_store.aput(
+        namespace,
+        key=key,
+        value={
+            "session_id": key,
+            "started_at": "2026-04-11T00:00:00Z",
+            "ended_at": "2026-04-11T00:15:00Z",
+            "duration_seconds": 900,
+            "turn_count": 5,
+            "summary": summary,
+            "primary_themes": themes or [],
+            "mood_arc": {"opened": "tense", "closed": "calmer"},
+            "open_loops": [],
+            "resolved_threads": [],
+            "crisis_level_max": 0,
+        },
+    )
+
+
+class TestMemoryForgetFact:
+    """Tests for the v0.9 ``/memory forget fact <n>`` command."""
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_y_confirms_and_deletes(
+        self, capsys, monkeypatch
+    ) -> None:
+        """A y confirmation removes the fact from the semantic namespace."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="my sister Sarah visited this weekend",
+            object_identifier="Sarah",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-2",
+            evidence_quote="I take fluoxetine daily",
+            predicate="USES",
+            object_identifier="fluoxetine",
+        )
+
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+
+        await handle_command("/memory forget fact 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Deleted fact #1" in captured
+        # fact-1 is gone, fact-2 remains
+        remaining = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "semantic")
+        )
+        assert remaining == 1
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_n_cancels(self, capsys, monkeypatch) -> None:
+        """A cancelled confirmation must NOT touch the store."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="my sister Sarah visited this weekend",
+        )
+
+        # Empty string is the default (declined) — matches the rule-forget pattern
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "")
+
+        await handle_command("/memory forget fact 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cancelled" in captured
+        remaining = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "semantic")
+        )
+        assert remaining == 1
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_empty_store_warns(self, capsys) -> None:
+        """Forgetting a fact when none exist produces a warning, not a crash."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory forget fact 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "No semantic facts to forget" in captured
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_out_of_range_warns(self, capsys) -> None:
+        """An index beyond the fact count produces a warning."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="seed",
+        )
+
+        await handle_command("/memory forget fact 5", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "does not exist" in captured
+        assert "only 1 fact(s)" in captured
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_bad_index_warns(self, capsys) -> None:
+        """Non-integer argument produces a usage warning, not a crash."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory forget fact xyz", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Usage: /memory forget fact" in captured
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_zero_index_warns(self, capsys) -> None:
+        """Zero is a common off-by-one mistake — warn explicitly."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory forget fact 0", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "1 or greater" in captured
+
+
+class TestMemoryForgetSession:
+    """Tests for the v0.9 ``/memory forget session <n>`` command."""
+
+    @pytest.mark.asyncio
+    async def test_forget_session_y_confirms_and_deletes(
+        self, capsys, monkeypatch
+    ) -> None:
+        """A y confirmation removes the arc from the episodic namespace."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await _seed_episodic_arc(
+            runtime,
+            owner_id=session.owner_id(),
+            key="arc-1",
+            summary="first session about work anxiety",
+            themes=["work stress"],
+        )
+        await _seed_episodic_arc(
+            runtime,
+            owner_id=session.owner_id(),
+            key="arc-2",
+            summary="second session about sleep",
+            themes=["sleep"],
+        )
+
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+
+        await handle_command("/memory forget session 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Deleted session #1" in captured
+        remaining = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "episodic")
+        )
+        assert remaining == 1
+
+    @pytest.mark.asyncio
+    async def test_forget_session_empty_store_warns(self, capsys) -> None:
+        """Empty episodic namespace produces a warning."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory forget session 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "No episodic sessions to forget" in captured
+
+    @pytest.mark.asyncio
+    async def test_forget_session_preview_shows_summary(
+        self, capsys, monkeypatch
+    ) -> None:
+        """The confirmation panel previews the summary so the user
+        knows which arc they're about to delete."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+        await _seed_episodic_arc(
+            runtime,
+            owner_id=session.owner_id(),
+            key="arc-1",
+            summary="Talked about sister Sarah's visit this weekend",
+            themes=["family"],
+        )
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "n")
+
+        await handle_command("/memory forget session 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        # Preview body includes the summary and themes
+        assert "Sarah" in captured
+        assert "family" in captured
+
+
+class TestMemoryClear:
+    """Tests for the v0.9 ``/memory clear <kind>`` command with typed
+    confirmation."""
+
+    @pytest.mark.asyncio
+    async def test_clear_facts_requires_typed_confirmation(
+        self, capsys, monkeypatch
+    ) -> None:
+        """'y' is NOT enough for clear — user must type the word 'clear'."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="seed",
+        )
+
+        # User types 'y' — should NOT delete anything
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+
+        await handle_command("/memory clear facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cancelled" in captured
+        remaining = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "semantic")
+        )
+        assert remaining == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_facts_with_typed_clear_proceeds(
+        self, capsys, monkeypatch
+    ) -> None:
+        """Typing the literal word 'clear' proceeds with deletion."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="seed",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-2",
+            evidence_quote="seed2",
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "clear"
+        )
+
+        await handle_command("/memory clear facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cleared" in captured
+        assert "facts: 2" in captured
+        remaining = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "semantic")
+        )
+        assert remaining == 0
+
+    @pytest.mark.asyncio
+    async def test_clear_rejects_uppercase_clear(self, capsys, monkeypatch) -> None:
+        """The typed confirmation is case-sensitive — 'CLEAR' is not 'clear'.
+
+        Intentional strictness: the whole point of the typed confirmation
+        is to prevent muscle-memory mistakes, and case-insensitive matching
+        would make it easier to accidentally confirm.
+        """
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="seed",
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "CLEAR"
+        )
+
+        await handle_command("/memory clear facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cancelled" in captured
+        remaining = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "semantic")
+        )
+        assert remaining == 1
+
+    @pytest.mark.asyncio
+    async def test_clear_all_wipes_three_namespaces(self, capsys, monkeypatch) -> None:
+        """`/memory clear all` sweeps facts, sessions, and rules in one op."""
+
+        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="fact seed",
+        )
+        await _seed_episodic_arc(
+            runtime,
+            owner_id=session.owner_id(),
+            key="arc-1",
+            summary="arc seed",
+        )
+        await aadd_procedural_rule(
+            runtime.memory_store,
+            user_id=session.owner_id(),
+            rule=build_procedural_rule(
+                rule_text="You prefer shorter responses.",
+                evidence=["Please keep it short"],
+            ),
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "clear"
+        )
+
+        await handle_command("/memory clear all", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cleared" in captured
+        # All three counters should show up
+        assert "facts: 1" in captured
+        assert "sessions: 1" in captured
+        assert "rules: 1" in captured
+
+        # And the store is actually empty
+        semantic_count = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "semantic")
+        )
+        episodic_count = await runtime.memory_store.arecord_count(
+            (session.owner_id(), "episodic")
+        )
+        from agent.memory.procedural import aget_procedural_profile
+
+        profile = await aget_procedural_profile(
+            runtime.memory_store, user_id=session.owner_id()
+        )
+        assert semantic_count == 0
+        assert episodic_count == 0
+        assert profile.rules == []
+
+    @pytest.mark.asyncio
+    async def test_clear_preserves_recall_toggle_when_clearing_rules(
+        self, capsys, monkeypatch
+    ) -> None:
+        """`/memory clear rules` wipes rules but leaves ``proactive_recall_enabled``
+        alone because it's a user preference, not content."""
+
+        from agent.memory.procedural import (
+            aadd_procedural_rule,
+            aget_procedural_profile,
+            aset_proactive_recall,
+            build_procedural_rule,
+        )
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await aadd_procedural_rule(
+            runtime.memory_store,
+            user_id=session.owner_id(),
+            rule=build_procedural_rule(
+                rule_text="You prefer shorter responses.",
+                evidence=["Please keep it short"],
+            ),
+        )
+        # Turn recall ON — this is the user preference we want to preserve
+        await aset_proactive_recall(
+            runtime.memory_store, user_id=session.owner_id(), enabled=True
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "clear"
+        )
+
+        await handle_command("/memory clear rules", session, runtime)
+
+        profile = await aget_procedural_profile(
+            runtime.memory_store, user_id=session.owner_id()
+        )
+        assert profile.rules == []
+        # Preference survived
+        assert profile.proactive_recall_enabled is True
+
+    @pytest.mark.asyncio
+    async def test_clear_empty_store_short_circuits_without_confirmation(
+        self, capsys, monkeypatch
+    ) -> None:
+        """No confirmation prompt when there's nothing to delete anyway.
+
+        This matters because an empty-store confirmation panel would be
+        a false-alarm — the user would think they're about to lose data
+        when nothing is actually at risk. The handler skips the prompt
+        and renders an info message instead.
+        """
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        # Track whether Prompt.ask was called
+        prompt_calls = []
+
+        def _track_prompt(*args, **kwargs):
+            prompt_calls.append((args, kwargs))
+            return ""
+
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", _track_prompt)
+
+        await handle_command("/memory clear facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Nothing to clear" in captured
+        assert len(prompt_calls) == 0, "Prompt.ask should not be called for empty store"
+
+    @pytest.mark.asyncio
+    async def test_clear_rejects_unknown_kind(self, capsys) -> None:
+        """`/memory clear whatever` shows the usage warning."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory clear whatever", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Usage: /memory clear" in captured
+
+    @pytest.mark.asyncio
+    async def test_clear_without_kind_shows_usage(self, capsys) -> None:
+        """`/memory clear` alone shows usage, not a crash."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory clear", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Usage: /memory clear" in captured
+
+
+class TestMemoryListSubcommands:
+    """Tests for the v0.9 ``/memory list facts|sessions`` subcommands."""
+
+    @pytest.mark.asyncio
+    async def test_list_facts_renders_semantic_only(self, capsys) -> None:
+        """`/memory list facts` shows semantic records, not episodic."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="my sister Sarah visited",
+        )
+        await _seed_episodic_arc(
+            runtime,
+            owner_id=session.owner_id(),
+            key="arc-1",
+            summary="unrelated session about sleep",
+            themes=["sleep"],
+        )
+
+        await handle_command("/memory list facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        # Semantic table title should appear
+        assert "Memory List (semantic)" in captured
+        # The semantic fact's evidence should appear
+        assert "Sarah" in captured
+        # The episodic arc should NOT appear in this filtered view
+        assert "Memory List (episodic)" not in captured
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_renders_episodic_only(self, capsys) -> None:
+        """`/memory list sessions` shows episodic records, not semantic."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-1",
+            evidence_quote="unrelated semantic fact",
+        )
+        await _seed_episodic_arc(
+            runtime,
+            owner_id=session.owner_id(),
+            key="arc-1",
+            summary="work anxiety session",
+            themes=["work stress"],
+        )
+
+        await handle_command("/memory list sessions", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Memory List (episodic)" in captured
+        # Substring rather than full phrase because Rich's table wraps
+        # long cells across multiple lines, breaking contiguous-match
+        # assertions. "work anxiety" appears on one line, "session"
+        # on the next.
+        assert "work anxiety" in captured
+        assert "Memory List (semantic)" not in captured
+
+    @pytest.mark.asyncio
+    async def test_list_facts_empty_renders_empty_state(self, capsys) -> None:
+        """Empty semantic store renders the educational empty-state panel."""
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+
+        await handle_command("/memory list facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "No memory records" in captured
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# v0.8.1 crisis log retention purge — /memory purge-crisis [days]
+# ─────────────────────────────────────────────────────────────────────────
+#
+# The CLI command wraps CrisisLogBackend.apurge_before with a typed
+# confirmation gate (same UX pattern as /memory clear). Backend-level
+# tests for apurge_before itself live in test_crisis_log.py and
+# test_sqlite_crisis_log.py — these tests cover the CLI path only:
+# argument parsing, cutoff computation, typed confirmation, and
+# result rendering.
+
+
+def _build_crisis_record_for_cli(
+    *,
+    record_id: str,
+    detected_at: str,
+):  # -> CrisisLogRecord (imported inside body to keep test module imports light)
+    from agent.memory.models import CrisisLogRecord
+
+    return CrisisLogRecord(
+        id=record_id,
+        session_id_opaque="sess-hashed",
+        user_id_or_null=None,
+        detected_at=detected_at,
+        level=1,
+        classifier_path="deterministic",
+        confidence="medium",
+        reason="cli purge test",
+        override_kind="none",
+        response_node_completed=True,
+        llm_failure_occurred=False,
+    )
+
+
+class FakeRuntimeWithCrisisLog:
+    """Runtime stub with a real in-memory crisis log backend.
+
+    ``FakeProceduralRuntime`` sets ``crisis_log_backend = None`` because
+    the procedural tests don't need it. The purge-crisis CLI tests do
+    need a real backend to assert delete behavior, so we use this
+    specialized stub instead. The ``memory_store`` is also a real
+    in-memory store in case a future test needs to assert that the
+    semantic/episodic data survives a crisis log purge (they're
+    independent backends so it should, but the stub is ready for that
+    pin).
+    """
+
+    def __init__(self) -> None:
+        from agent.memory.crisis_log import InMemoryCrisisLogBackend
+        from agent.memory.store import OpenCouchMemoryStore
+
+        self.memory_store = OpenCouchMemoryStore()
+        self.crisis_log_backend = InMemoryCrisisLogBackend()
+        self.memory_mode = "persistent"
+
+
+class TestMemoryPurgeCrisis:
+    """Tests for the v0.8.1 ``/memory purge-crisis [days]`` command."""
+
+    @pytest.mark.asyncio
+    async def test_purge_empty_log_short_circuits(self, capsys) -> None:
+        """An empty crisis log should render a friendly info message
+        without prompting for confirmation. No false-alarm panel for a
+        no-op purge."""
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+
+        await handle_command("/memory purge-crisis", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Crisis log is empty" in captured
+        # The scary panel should NOT have been rendered.
+        assert "This cannot be undone" not in captured
+
+    @pytest.mark.asyncio
+    async def test_purge_requires_typed_purge_confirmation(
+        self, capsys, monkeypatch
+    ) -> None:
+        """'y' is NOT enough — the user must type the word 'purge'."""
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+        # Seed one old record that would be purged if confirmed.
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(
+                record_id="old", detected_at="2020-01-01T10:00:00Z"
+            )
+        )
+
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+
+        await handle_command("/memory purge-crisis 30", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cancelled" in captured
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_purge_rejects_uppercase_purge(self, capsys, monkeypatch) -> None:
+        """Case-sensitive confirmation — 'PURGE' is not 'purge'.
+
+        Matches the typed-confirmation strictness of ``/memory clear``.
+        The whole point is to prevent muscle-memory mistakes; case-
+        insensitive matching would make muscle-memory easier.
+        """
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(
+                record_id="old", detected_at="2020-01-01T10:00:00Z"
+            )
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "PURGE"
+        )
+
+        await handle_command("/memory purge-crisis 30", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Cancelled" in captured
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_purge_typed_purge_deletes_old_records(
+        self, capsys, monkeypatch
+    ) -> None:
+        """Typing the literal 'purge' proceeds with deletion."""
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+        # Old record that should be purged.
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(
+                record_id="old1", detected_at="2020-01-01T10:00:00Z"
+            )
+        )
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(
+                record_id="old2", detected_at="2020-01-02T10:00:00Z"
+            )
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "purge"
+        )
+
+        await handle_command("/memory purge-crisis 30", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Purged 2 crisis record(s)" in captured
+        assert await runtime.crisis_log_backend.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_purge_preserves_recent_records(self, capsys, monkeypatch) -> None:
+        """A retention window of 10000 days should delete nothing —
+        ancient cutoffs preserve all realistic records. This pins the
+        cutoff computation (today - days) against an operator mistake
+        where an off-by-sign bug would accidentally delete everything."""
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+        # A record from yesterday. Whatever today is, yesterday is not
+        # 10000 days old, so the purge should preserve it.
+        from datetime import UTC, datetime, timedelta
+
+        yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(record_id="yesterday", detected_at=yesterday)
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "purge"
+        )
+
+        await handle_command("/memory purge-crisis 10000", session, runtime)
+
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_purge_rejects_invalid_day_count(self, capsys) -> None:
+        """A non-integer days argument should produce a usage warning."""
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+
+        await handle_command("/memory purge-crisis xyz", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "expected an integer" in captured
+
+    @pytest.mark.asyncio
+    async def test_purge_rejects_zero_days(self, capsys) -> None:
+        """Zero days is meaningless — warn instead of treating it as
+        'purge everything.'"""
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+        # Seed a record so the command doesn't short-circuit on empty.
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(
+                record_id="r1", detected_at="2026-04-10T10:00:00Z"
+            )
+        )
+
+        await handle_command("/memory purge-crisis 0", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "at least 1 day" in captured
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_purge_default_window_is_90_days(self, capsys, monkeypatch) -> None:
+        """Without an explicit days argument, the default is 90."""
+
+        from opencouch_cli.app import DEFAULT_CRISIS_RETENTION_DAYS
+
+        assert DEFAULT_CRISIS_RETENTION_DAYS == 90
+
+        runtime = FakeRuntimeWithCrisisLog()
+        session = _session()
+        await runtime.crisis_log_backend.aappend(
+            _build_crisis_record_for_cli(
+                record_id="r1", detected_at="2020-01-01T10:00:00Z"
+            )
+        )
+
+        monkeypatch.setattr(
+            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "purge"
+        )
+
+        await handle_command("/memory purge-crisis", session, runtime)
+        captured = capsys.readouterr().out
+
+        # The panel body should echo the 90-day window.
+        assert "90 day" in captured
+        # And the old record should be gone (2020-01-01 is well outside
+        # a 90-day window from any realistic test run date).
+        assert await runtime.crisis_log_backend.arecord_count() == 0

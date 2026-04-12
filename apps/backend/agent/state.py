@@ -1,6 +1,6 @@
 """Internal state container for the OpenCouch agent graph."""
 
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from agent.memory.models import CrisisClassifierPath, CrisisOverrideKind
 from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
@@ -167,3 +167,17 @@ class AgentState(TypedDict):
     crisis: CrisisAssessment
     routing: RoutingState
     response: ResponseState
+
+    # ── Per-turn diagnostics (v0.8 observability pass) ───────────────────
+    # Free-form dict nodes write into for CLI observability. Typical
+    # entries include per-stage timings (``load_memory_ms``,
+    # ``crisis_gate_ms``, ``extract_facts_ms``, etc.) and memory-write
+    # counters (``semantic_writes``, ``procedural_writes``). Not part
+    # of the stable schema — nodes add whatever keys help debug
+    # dogfood turns, and ``state_to_output`` copies the dict into
+    # ``AgentOutput.diagnostics`` so the CLI can render it.
+    #
+    # NotRequired because only the CLI reads it today; other callers
+    # (unit tests, eval runners) can leave it unset and everything
+    # downstream falls back to an empty dict via ``state.get``.
+    diagnostics: NotRequired[dict[str, Any]]

@@ -146,7 +146,7 @@ class TestEarlyExits:
 
     @pytest.mark.asyncio
     async def test_no_llm_client_skips_silently(self) -> None:
-        """Without an LLM client, the node returns {} with no writes."""
+        """Without an LLM client, the node returns a diagnostics-only delta."""
 
         store = OpenCouchMemoryStore()
         runtime = _MockRuntime(llm_client=None, memory_store=store)
@@ -154,7 +154,15 @@ class TestEarlyExits:
 
         delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        # v0.8 observability: the skip paths now return a diagnostics
+        # delta so the CLI can distinguish "wasn't run" from "ran and
+        # skipped silently" in the stage timings panel. The write
+        # count stays at zero and the reason names the early exit.
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert (
+            delta["diagnostics"]["extract_procedural_reason"]
+            == "skipped: no llm_client"
+        )
         # No record was written to the procedural namespace
         assert await store.arecord_count() == 0
 
@@ -190,7 +198,8 @@ class TestEarlyExits:
 
         delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["extract_procedural_reason"] == "skipped: incognito"
         assert await store.arecord_count() == 0
         assert fake.structured_calls == 0
 
@@ -203,7 +212,7 @@ class TestEmptyResult:
 
     @pytest.mark.asyncio
     async def test_empty_rules_no_writes(self) -> None:
-        """LLM returns empty rules → node returns {}, nothing persisted."""
+        """LLM returns empty rules → node emits diagnostics, nothing persisted."""
 
         store = OpenCouchMemoryStore()
         fake = _FakeProceduralLLM(
@@ -217,7 +226,14 @@ class TestEmptyResult:
 
         delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        # v0.8 observability: the empty-rules path flows the LLM's
+        # reason through the diagnostics so dashboards can see why a
+        # turn produced no rules (prompt drift detection).
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert (
+            delta["diagnostics"]["extract_procedural_reason"]
+            == "small talk, no style preference stated"
+        )
         assert fake.structured_calls == 1
         assert await store.arecord_count() == 0
 
@@ -261,8 +277,14 @@ class TestSingleRuleWrite:
 
         delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
-        # Node contract: empty state delta
-        assert delta == {}
+        # v0.8 observability: the happy path reports write count
+        # and reason in the diagnostics delta. The actual rule is a
+        # store side effect verified below.
+        assert delta["diagnostics"]["procedural_writes"] == 1
+        assert (
+            delta["diagnostics"]["extract_procedural_reason"]
+            == "user asked to stop being offered meditation"
+        )
         assert fake.structured_calls == 1
 
         # Profile contract: one rule persisted with the right shape
@@ -396,7 +418,8 @@ class TestFailureModes:
         ):
             delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["extract_procedural_reason"] == "skipped: llm error"
         assert await store.arecord_count() == 0
         assert any(
             "LLM structured-output call failed" in record.message
@@ -409,9 +432,14 @@ class TestFailureModes:
 
         Uses a valid LLM result and a valid store. The point of this
         test is simply to verify the happy path's return contract
-        (returns {}, not None, even on the writing success path).
+        (returns a dict, never None, never a propagated exception).
         The failure-isolation test above already covers the
         exception-swallowing behavior.
+
+        v0.8 observability: the node now returns a diagnostics dict
+        with at least the timing + write count + reason keys. The
+        test still asserts the "always a dict" contract, just with
+        a non-empty expected shape.
         """
 
         store = OpenCouchMemoryStore()
@@ -432,7 +460,8 @@ class TestFailureModes:
         delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
         assert isinstance(delta, dict)
-        assert delta == {}
+        assert "diagnostics" in delta
+        assert delta["diagnostics"]["procedural_writes"] == 1
 
 
 # ─── Preservation of unrelated state ──────────────────────────────────────

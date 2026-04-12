@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.memory.embeddings import (
+    EmbeddingProvider,
+    NullEmbeddingProvider,
+    create_configured_embedding_provider,
+)
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
@@ -109,6 +116,7 @@ class PersistentAgentRuntime:
         memory_mode: MemoryMode = MemoryMode.LOCAL,
         memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
         crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
+        embedding_provider: "EmbeddingProvider | None" = None,
     ) -> None:
         """Initialize the runtime.
 
@@ -182,6 +190,22 @@ class PersistentAgentRuntime:
             self._crisis_log_backend = InMemoryCrisisLogBackend()
         else:
             self._crisis_log_backend = SqliteCrisisLogBackend(crisis_log_sqlite_path)
+
+        # v0.8.1: embedding provider for hybrid retrieval. Resolution
+        # order: (1) explicit override, (2) NullEmbeddingProvider in
+        # incognito mode (no network calls, no embeddings to store),
+        # (3) configured provider (Gemini) if an API key is set,
+        # (4) NullEmbeddingProvider as the final fallback. The null
+        # fallback means the store's hybrid retrieval gracefully
+        # degrades to token-recall when no provider is available —
+        # same contract as the extractor nodes which silently skip
+        # when no LLM client is configured.
+        if embedding_provider is not None:
+            self._embedding_provider: EmbeddingProvider = embedding_provider
+        elif is_incognito:
+            self._embedding_provider = NullEmbeddingProvider()
+        else:
+            self._embedding_provider = create_configured_embedding_provider()
 
         # v0.4: per-process tracking of when each thread's current session
         # began. Used by the session summarizer to populate started_at on
@@ -294,19 +318,46 @@ class PersistentAgentRuntime:
             "memory_store": self._memory_store,
             "crisis_log_backend": self._crisis_log_backend,
             "memory_mode": self.memory_mode,
+            # v0.8.1: make the embedding provider visible to graph
+            # nodes via runtime.context. The extractor nodes read
+            # this to compute embeddings at write time; the
+            # load_memory node reads it to compute query embeddings
+            # for the hybrid retrieval path. Always present (even as
+            # NullEmbeddingProvider) so nodes don't need to guard
+            # against the key being missing from the dict.
+            "embedding_provider": self._embedding_provider,
         }
 
     @staticmethod
-    def _messages_from_transcript(transcript: list[dict[str, str]]) -> list[Message]:
-        """Materialize validated messages from a serialized transcript."""
+    def _messages_from_transcript(
+        transcript: list[dict[str, Any]],
+    ) -> list[Message]:
+        """Materialize validated messages from a serialized transcript.
+
+        v0.8 observability pass: the transcript dicts now carry an
+        optional ``mode`` field for assistant turns (written by
+        ``run_finalize_turn_node``). We forward it into the Message
+        pydantic model so the CLI's ``/history`` renderer can show
+        it next to each assistant reply. User turns leave ``mode``
+        unset, which we coerce to ``None``. Older checkpoints that
+        predate this field just see ``None`` from ``.get()`` and the
+        resulting Messages look identical to pre-v0.8 shape.
+
+        The dict type annotation is ``dict[str, Any]`` rather than
+        ``dict[str, str]`` because the ``mode`` field can be ``None``
+        in user turns. The previous stricter annotation was technically
+        wrong even before this change (LangGraph's JsonPlusSerializer
+        can round-trip non-string values), but no caller noticed.
+        """
 
         messages: list[Message] = []
         for turn in transcript:
             role = turn.get("role")
-            content = turn.get("content", "").strip()
+            content = (turn.get("content") or "").strip()
             if role not in {"system", "user", "assistant"} or not content:
                 continue
-            messages.append(Message(role=MessageRole(role), content=content))
+            mode = turn.get("mode") if role == "assistant" else None
+            messages.append(Message(role=MessageRole(role), content=content, mode=mode))
         return messages
 
     def _get_graph(self) -> CompiledStateGraph:
@@ -415,11 +466,27 @@ class PersistentAgentRuntime:
         )
         initial_state = build_initial_state(agent_input)
 
+        # v0.8 observability: time the whole turn for the CLI's
+        # post-turn diagnostics panel. The per-node timings are
+        # stamped into ``state["diagnostics"]`` inside each node,
+        # and we add the outer total here. They're added
+        # non-destructively by reading the final state's
+        # diagnostics dict and merging.
+        turn_start = time.monotonic()
         final_state = await graph.ainvoke(
             initial_state,
             config=self._config_for_thread(thread_id),
             context=self._context_for_turn(llm_client=llm_client),
         )
+        turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
+
+        # Stamp the outer total into the final state's diagnostics
+        # before we pass it to state_to_output. LangGraph returns a
+        # plain dict for final_state, so we mutate it in place
+        # rather than constructing a new one.
+        if "diagnostics" not in final_state or final_state["diagnostics"] is None:
+            final_state["diagnostics"] = {}
+        final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
 
         # v0.4: update the per-thread max crisis level so end_session
         # can pass it to the summarizer. The crisis gate writes a
@@ -518,6 +585,7 @@ class PersistentAgentRuntime:
             started_at=started_at,
             ended_at=ended_at,
             crisis_level_max=crisis_level_max,
+            embedding_provider=self._embedding_provider,
         )
 
         # Clear the start time and crisis level tracker regardless of
@@ -540,15 +608,122 @@ class PersistentAgentRuntime:
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Run one turn and yield minimal status + done events."""
+        """Run one turn and yield per-node status events + a terminal done event.
 
-        yield StatusEvent(stage="load_memory")
-        result = await self.run_turn(
-            thread_id=thread_id,
+        Streams the graph via ``astream(stream_mode=["updates", "values"])``
+        so that per-node progress and the accumulated final state come out
+        of a single pass. Each ``updates`` chunk is a ``{node_name: delta}``
+        dict emitted when that node finishes — we map the node name to the
+        CLI's stage label vocabulary (``load_memory``, ``crisis_gate``,
+        ``therapeutic``, etc.) and yield a :class:`StatusEvent`. Each
+        ``values`` chunk is the full merged state at that checkpoint —
+        we keep the most recent one as the final state.
+
+        Duplicates the session-tracking bookkeeping from :meth:`run_turn`
+        (session start stamp, max crisis level, turn-total timing) so
+        callers using ``run_turn_stream`` get the same side effects as
+        callers using ``run_turn``. The two paths converge on
+        ``state_to_output`` for the terminal output.
+
+        Why the per-node status labels don't exactly match node names:
+        the CLI's ``_STAGE_LABELS`` vocabulary predates the graph
+        refactor and uses short names like ``crisis_gate`` and
+        ``therapeutic``. Rather than rename either side, we translate
+        here. Unknown nodes fall through to the node name itself so
+        future additions still render readably in the Live display.
+        """
+
+        graph = self._get_graph()
+        history = await self.get_history(thread_id)
+
+        # v0.4: track session start on the first turn we see for this
+        # thread. Same logic as ``run_turn`` — see that method for the
+        # "one CLI = one session" definition.
+        if thread_id not in self._session_starts:
+            self._session_starts[thread_id] = _iso_now()
+
+        agent_input = AgentInput(
             message=message,
             channel=channel,
             user_id=user_id,
-            installed_skills=installed_skills,
-            llm_client=llm_client,
+            session_id=thread_id,
+            history=history,
+            working_memory=[],
+            installed_skills=list(installed_skills or []),
         )
-        yield DoneEvent(output=result.output)
+        initial_state = build_initial_state(agent_input)
+
+        # Map internal graph node names → CLI stage labels. Keeps the
+        # naming mismatch between graph internals and CLI vocabulary
+        # contained to a single source of truth. Therapeutic subgraph
+        # emits its own node updates from within the subgraph, but at
+        # the parent level it reports as ``therapeutic_subgraph`` — we
+        # surface that as ``therapeutic`` so the CLI label matches.
+        _NODE_TO_STAGE = {
+            "load_memory_node": "load_memory",
+            "crisis_gate_node": "crisis_gate",
+            "crisis_response_node": "crisis_response",
+            "crisis_log_node": "crisis_log",
+            "therapeutic_subgraph": "therapeutic",
+            "extract_semantic_facts_node": "extract_facts",
+            "extract_procedural_rules_node": "extract_procedural",
+            "finalize_turn_node": "finalize",
+        }
+
+        turn_start = time.monotonic()
+        final_state: AgentState | None = None
+
+        async for mode, payload in graph.astream(
+            initial_state,
+            config=self._config_for_thread(thread_id),
+            context=self._context_for_turn(llm_client=llm_client),
+            stream_mode=["updates", "values"],
+        ):
+            if mode == "updates":
+                # ``updates`` payloads are ``{node_name: delta}`` dicts,
+                # usually with a single key. Emit one StatusEvent per
+                # node completion. Unknown node names (e.g., therapeutic
+                # subgraph internals) fall through to the raw name.
+                for node_name in payload:
+                    stage = _NODE_TO_STAGE.get(node_name, node_name)
+                    yield StatusEvent(stage=stage)
+            elif mode == "values":
+                # ``values`` payloads carry the full accumulated state
+                # after each step. We hold onto the latest one and use
+                # it as the final state once the stream ends.
+                final_state = payload  # type: ignore[assignment]
+
+        turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
+
+        # Defensive guard: a graph that returns no values chunks (which
+        # would be a LangGraph bug, not a legitimate runtime state) would
+        # leave final_state as None. Fall back to reading the checkpoint
+        # directly so the caller still gets a DoneEvent rather than a
+        # crash deep in state_to_output.
+        if final_state is None:
+            fallback = await self.get_state(thread_id)
+            if fallback is None:
+                raise RuntimeError(
+                    "run_turn_stream: graph stream yielded no values chunks "
+                    "and no checkpoint was found for this thread."
+                )
+            final_state = fallback
+
+        # Stamp the outer turn-total into diagnostics. Mirrors run_turn.
+        if "diagnostics" not in final_state or final_state["diagnostics"] is None:
+            final_state["diagnostics"] = {}
+        final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
+
+        # v0.4: update max crisis level — same logic as run_turn.
+        turn_crisis = final_state.get("crisis")
+        turn_level = 0
+        if turn_crisis is not None:
+            turn_level = (
+                turn_crisis.level
+                if hasattr(turn_crisis, "level")
+                else int(turn_crisis.get("level", 0) or 0)
+            )
+        prior_max = self._max_crisis_levels.get(thread_id, 0)
+        self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
+
+        yield DoneEvent(output=state_to_output(final_state))

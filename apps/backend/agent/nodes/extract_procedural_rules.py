@@ -62,6 +62,7 @@ both are conservative-by-default. They differ in:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from langgraph.runtime import Runtime
@@ -86,8 +87,9 @@ async def run_extract_procedural_rules_node(
     """Write zero or more procedural rules from the current user turn.
 
     Runs after :func:`run_extract_semantic_facts_node` on both branches.
-    Returns an empty state delta; the writes are side effects on the
-    procedural namespace of the memory store.
+    Returns a state delta containing the per-turn diagnostics entry
+    (timing + write count). The actual rule writes are side effects
+    on the procedural namespace of the memory store.
 
     Silently skips when the runtime lacks an LLM client or is in
     incognito mode. All other failure modes (LLM errors, schema
@@ -95,19 +97,40 @@ async def run_extract_procedural_rules_node(
     with ``exc_info=True`` but never propagate.
     """
 
+    # v0.8 observability: time the full writer call and report
+    # write count via the diagnostics dict. Same shape as the
+    # semantic extractor's _diagnostics_delta helper.
+    start = time.monotonic()
+
+    def _diagnostics_delta(
+        *,
+        procedural_writes: int = 0,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Return a state delta carrying just the writer's diagnostics."""
+
+        return {
+            "diagnostics": {
+                **state.get("diagnostics", {}),
+                "extract_procedural_ms": round((time.monotonic() - start) * 1000, 2),
+                "procedural_writes": procedural_writes,
+                "extract_procedural_reason": reason,
+            }
+        }
+
     # ── Early exits ─────────────────────────────────────────────────────
     llm_client = runtime.context.get("llm_client")
     memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
 
     if llm_client is None:
         logger.debug("extract_procedural_rules_node: no llm_client; skipping")
-        return {}
+        return _diagnostics_delta(reason="skipped: no llm_client")
     if memory_mode == MemoryMode.INCOGNITO:
         logger.debug(
             "extract_procedural_rules_node: incognito mode; skipping (no "
             "writes to persistent memory in incognito)"
         )
-        return {}
+        return _diagnostics_delta(reason="skipped: incognito")
 
     store = runtime.context["memory_store"]
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
@@ -126,7 +149,7 @@ async def run_extract_procedural_rules_node(
             "failed; skipping rule writes for this turn.",
             exc_info=True,
         )
-        return {}
+        return _diagnostics_delta(reason="skipped: llm error")
 
     # Log the writer's reason regardless of whether rules were produced —
     # it's a free observability signal for prompt tuning. INFO level (not
@@ -141,7 +164,7 @@ async def run_extract_procedural_rules_node(
     )
 
     if not result.rules:
-        return {}
+        return _diagnostics_delta(reason=result.reason)
 
     # ── Per-draft write ────────────────────────────────────────────────
     # Each draft gets promoted to a ProceduralRule via build_procedural_rule
@@ -177,4 +200,7 @@ async def run_extract_procedural_rules_node(
         written,
         len(result.rules),
     )
-    return {}
+    return _diagnostics_delta(
+        procedural_writes=written,
+        reason=result.reason,
+    )

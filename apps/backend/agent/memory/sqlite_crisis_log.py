@@ -37,11 +37,14 @@ here from :mod:`agent.memory.sqlite_store`:
    at insert time and index it. This makes date lookups O(log n)
    instead of O(n).
 
-3. **Append-only from the agent's perspective.** No ``adelete`` /
-   ``aupdate`` methods. The retention purge path (90-day default)
-   is a separate concern deferred to a later release — it can
-   directly DELETE from the table when it ships, without needing
-   a new public method on the backend.
+3. **Append-only from the agent's perspective.** Graph nodes never
+   delete or update crisis records. v0.8.1 adds
+   :meth:`apurge_before` as a retention operation — it's on the
+   protocol so the runtime can call it polymorphically, but it's
+   invoked by the CLI (``/memory purge-crisis``) or by a future
+   scheduled cleanup job, not by any agent node. The SQLite path
+   runs a single ``DELETE WHERE detected_date < ?`` which uses
+   the existing ``idx_crisis_detected_date`` B-tree index.
 
 4. **aiosqlite directly, no ORM.** Same rationale as the memory
    store: aiosqlite is already in the dep tree via
@@ -298,6 +301,47 @@ class SqliteCrisisLogBackend:
         async with conn.execute("SELECT COUNT(*) FROM crisis_log") as cursor:
             row = await cursor.fetchone()
         return int(row[0]) if row else 0
+
+    async def apurge_before(self, cutoff: date) -> int:
+        """Delete all crisis records with ``detected_date < cutoff``.
+
+        v0.8.1 retention-purge implementation. Issues a single
+        ``DELETE WHERE detected_date < ?`` which uses the
+        ``idx_crisis_detected_date`` B-tree index for an O(log n)
+        lookup regardless of table size. Returns the number of
+        rows deleted so the caller (CLI command, scheduled job)
+        can report the purge outcome.
+
+        The boundary is **exclusive**: records on the cutoff date
+        itself are preserved. "Purge everything older than 90 days
+        ago" computed as ``today - 90 days`` cleanly keeps today's
+        and the past 89 days' records, removing only day 90 and
+        older. That's the intuitive semantics for retention windows.
+
+        Transactional: the DELETE runs inside the single aiosqlite
+        connection and is committed atomically. A partial failure
+        mid-purge would leave the table in a consistent state (some
+        rows deleted, some not), which is acceptable for a retention
+        operation — the next run picks up where this one left off
+        because the predicate is idempotent.
+
+        Closed backends return 0 without opening a connection,
+        matching the contract of :meth:`arecord_count`.
+        """
+
+        if self._closed:
+            return 0
+        conn = await self._ensure_connection()
+        cutoff_str = cutoff.isoformat()
+        cursor = await conn.execute(
+            """
+            DELETE FROM crisis_log
+            WHERE detected_date < ?
+            """,
+            (cutoff_str,),
+        )
+        await conn.commit()
+        return int(cursor.rowcount or 0)
 
     async def aclose(self) -> None:
         """Close the aiosqlite connection.

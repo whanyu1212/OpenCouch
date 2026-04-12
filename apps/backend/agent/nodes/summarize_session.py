@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from agent.memory.models import (
@@ -68,6 +69,9 @@ from agent.memory.summarization_prompts import (
 )
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
+
+if TYPE_CHECKING:
+    from agent.memory.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +123,8 @@ async def _write_session_arc(
     *,
     owner_id: str,
     stored_arc: StoredSessionArc,
+    embedding: list[float] | None = None,
+    embedding_model: str | None = None,
 ) -> None:
     """Persist a freshly-summarized StoredSessionArc to the episodic namespace.
 
@@ -126,6 +132,15 @@ async def _write_session_arc(
     around the single store call. A failure here is logged but never
     raised to the caller — a summarization failure must not break the
     session-end flow.
+
+    v0.8.1: accepts optional ``embedding`` and ``embedding_model``
+    kwargs matching the :class:`MemoryStore.aput` extension. When
+    provided, the summary arc is stored with its embedding attached
+    so the load_memory catch-up path can use hybrid retrieval to
+    surface relevant past sessions. When not provided (no embedding
+    provider, or the batch call failed), the arc is still written
+    but participates in retrieval via token-recall only — same
+    graceful-degradation pattern as the fact extractor.
     """
 
     namespace = (owner_id, "episodic")
@@ -133,6 +148,8 @@ async def _write_session_arc(
         namespace,
         key=stored_arc.id,
         value=stored_arc.model_dump(mode="json"),
+        embedding=embedding,
+        embedding_model=embedding_model,
     )
 
 
@@ -146,6 +163,7 @@ async def run_summarize_session(
     started_at: str,
     ended_at: str | None = None,
     crisis_level_max: int = 0,
+    embedding_provider: "EmbeddingProvider | None" = None,
 ) -> StoredSessionArc | None:
     """Summarize a completed session and write the arc to episodic memory.
 
@@ -282,11 +300,42 @@ async def run_summarize_session(
         )
         return None
 
+    # v0.8.1: compute an embedding for the summary so the arc
+    # participates in hybrid retrieval when the next session opens.
+    # The summary prose is the canonical document-side representation
+    # of an arc — it's what the load_memory catch-up path renders as
+    # "Last session (themes): <summary>" and what the user's next-
+    # session query would be trying to match semantically.
+    #
+    # Embedding failures degrade to None so a transient provider
+    # outage doesn't lose the arc — the store write still happens
+    # via the token-recall path. Same contract as the extract_facts
+    # embedding logic.
+    arc_embedding: list[float] | None = None
+    arc_embedding_model: str | None = None
+    if embedding_provider is not None:
+        try:
+            embeddings = await embedding_provider.aembed(
+                [stored_arc.summary],
+                task_type="RETRIEVAL_DOCUMENT",
+            )
+            arc_embedding = embeddings[0] if embeddings else None
+            if arc_embedding is not None:
+                arc_embedding_model = embedding_provider.model_name
+        except Exception:
+            logger.warning(
+                "run_summarize_session: embedding call failed; writing arc "
+                "without embedding for this session.",
+                exc_info=True,
+            )
+
     try:
         await _write_session_arc(
             memory_store,
             owner_id=owner_id,
             stored_arc=stored_arc,
+            embedding=arc_embedding,
+            embedding_model=arc_embedding_model,
         )
     except Exception:
         logger.warning(

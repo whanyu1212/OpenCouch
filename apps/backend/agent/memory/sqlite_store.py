@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import json
 import logging
+import struct
 from pathlib import Path
 
 import aiosqlite
@@ -77,6 +78,45 @@ from agent.memory.store import (
 from agent.memory.text_tokens import tokenize, tokenize_meaningful
 
 logger = logging.getLogger(__name__)
+
+
+def _encode_embedding(embedding: list[float] | None) -> bytes | None:
+    """Serialize a float embedding to a BLOB for SQLite storage.
+
+    v0.8.1 stores embeddings as raw little-endian ``float32`` arrays
+    via ``struct.pack``. Each float is 4 bytes so a 768-dim embedding
+    is 3,072 bytes — small enough that SQLite BLOB storage handles
+    it without row overflow, and cheap to decode.
+
+    Returns ``None`` when the input is None, so the caller can pass
+    the result directly to the ``INSERT`` statement and get a NULL
+    column value.
+
+    We chose ``struct.pack`` over ``numpy.tobytes`` because struct
+    is in the stdlib and avoids adding numpy as a runtime dependency
+    just for serialization. The decoding cost on the read path is
+    microseconds per vector at 768 dimensions.
+    """
+
+    if embedding is None:
+        return None
+    return struct.pack(f"<{len(embedding)}f", *embedding)
+
+
+def _decode_embedding(blob: bytes | None) -> list[float] | None:
+    """Deserialize a BLOB column into a float embedding.
+
+    Inverse of :func:`_encode_embedding`. Returns ``None`` for NULL
+    columns. Raises ``struct.error`` if the BLOB length isn't a
+    multiple of 4 bytes (which should never happen for well-formed
+    data but is a cheap sanity check).
+    """
+
+    if blob is None:
+        return None
+    count = len(blob) // 4
+    return list(struct.unpack(f"<{count}f", blob))
+
 
 # ─── Schema DDL ────────────────────────────────────────────────────────
 
@@ -108,9 +148,22 @@ CREATE TABLE IF NOT EXISTS memory_records (
     last_referenced_at TEXT NOT NULL,
     dormant_at TEXT,
     user_visible INTEGER NOT NULL DEFAULT 1,
+    embedding BLOB,
+    embedding_dim INTEGER,
+    embedding_model TEXT,
     UNIQUE (id, owner_id, namespace_kind)
 );
 """
+# v0.8.1 added three embedding columns (``embedding``, ``embedding_dim``,
+# ``embedding_model``). For fresh SQLite files the
+# ``CREATE TABLE IF NOT EXISTS`` above creates them in one shot. For
+# existing v0.8 SQLite files that already have the table without
+# these columns, ``_ensure_schema`` detects the missing columns and
+# runs ``ALTER TABLE ADD COLUMN`` migrations in-place. Adding a column
+# to an existing SQLite table is an O(1) metadata operation — no
+# table rewrite required. All three columns are nullable so
+# pre-v0.8.1 records naturally have NULL embeddings, which the
+# read path treats as "no embedding available, use token-recall only."
 # Schema notes:
 #
 # - ``insertion_order`` is an explicit INTEGER PRIMARY KEY AUTOINCREMENT
@@ -250,10 +303,52 @@ class SqliteMemoryStore:
 
     @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        """Run the schema DDL. Idempotent — safe to call repeatedly."""
+        """Run the schema DDL and any needed migrations.
+
+        Idempotent — safe to call repeatedly. The ``CREATE TABLE
+        IF NOT EXISTS`` in :data:`MEMORY_RECORDS_DDL` creates the
+        table with all columns for fresh databases. For existing
+        v0.8 databases that predate v0.8.1's embedding columns, the
+        migration block detects missing columns via
+        ``PRAGMA table_info`` and runs ``ALTER TABLE ADD COLUMN``
+        in-place.
+
+        SQLite's ``ALTER TABLE ADD COLUMN`` is an O(1) metadata
+        operation — no table rewrite — so the migration is cheap
+        even on large existing stores. All three embedding columns
+        are nullable so pre-v0.8.1 records naturally have NULL
+        embeddings and the read path treats them as "token-recall
+        only" without further fixup.
+        """
 
         for ddl in MEMORY_SCHEMA_DDL:
             await conn.execute(ddl)
+
+        # v0.8.1 migration: add embedding columns to pre-existing
+        # v0.8 databases that were created before the embedding
+        # work shipped. PRAGMA table_info returns one row per
+        # column; we collect column names and ALTER anything missing.
+        async with conn.execute("PRAGMA table_info(memory_records)") as cursor:
+            existing_columns = {row[1] for row in await cursor.fetchall()}
+        migrations: list[tuple[str, str]] = [
+            ("embedding", "ALTER TABLE memory_records ADD COLUMN embedding BLOB"),
+            (
+                "embedding_dim",
+                "ALTER TABLE memory_records ADD COLUMN embedding_dim INTEGER",
+            ),
+            (
+                "embedding_model",
+                "ALTER TABLE memory_records ADD COLUMN embedding_model TEXT",
+            ),
+        ]
+        for column_name, sql in migrations:
+            if column_name not in existing_columns:
+                await conn.execute(sql)
+                logger.info(
+                    "SqliteMemoryStore: migrated memory_records schema (added %s)",
+                    column_name,
+                )
+
         await conn.commit()
 
     # ── Public interface (MemoryStore protocol) ───────────────────────
@@ -263,6 +358,9 @@ class SqliteMemoryStore:
         namespace: Namespace,
         key: str,
         value: dict,
+        *,
+        embedding: list[float] | None = None,
+        embedding_model: str | None = None,
     ) -> None:
         """Store a record under ``(namespace, key)``.
 
@@ -276,14 +374,15 @@ class SqliteMemoryStore:
         JSON-serialized into the ``value`` column so the caller
         can read it back as-is via ``aget`` / ``asearch``.
 
-        ``created_at`` and ``last_referenced_at`` default to the
-        record's own timestamps if the value dict contains them
-        (which it does for ``SemanticFact`` and ``StoredSessionArc``);
-        otherwise they default to the stored JSON's ``created_at``
-        field or a sentinel empty string. We don't generate our own
-        timestamps because the caller (extract_facts,
-        summarize_session) already generates them when building the
-        record.
+        v0.8.1: ``embedding`` and ``embedding_model`` are optional
+        keyword args matching the :class:`MemoryStore` protocol.
+        When provided, the embedding is serialized to a BLOB via
+        :func:`_encode_embedding` and written to the ``embedding``
+        column, the length goes to ``embedding_dim``, and the model
+        name goes to ``embedding_model``. When absent, all three
+        columns are written as NULL and the record participates in
+        hybrid retrieval via the token-recall path only — same
+        contract as the in-memory store.
         """
 
         conn = await self._ensure_connection()
@@ -294,6 +393,9 @@ class SqliteMemoryStore:
         dormant_at = value.get("dormant_at")
         user_visible = 1 if value.get("user_visible", True) else 0
         serialized = json.dumps(value, default=str)
+
+        embedding_blob = _encode_embedding(embedding)
+        embedding_dim = len(embedding) if embedding is not None else None
 
         # INSERT OR REPLACE via a conflict clause on the compound
         # UNIQUE (id, owner_id, namespace_kind) constraint. When a row
@@ -306,15 +408,19 @@ class SqliteMemoryStore:
             """
             INSERT INTO memory_records
                 (id, owner_id, namespace_kind, category, value,
-                 created_at, last_referenced_at, dormant_at, user_visible)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 created_at, last_referenced_at, dormant_at, user_visible,
+                 embedding, embedding_dim, embedding_model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, owner_id, namespace_kind) DO UPDATE SET
                 category = excluded.category,
                 value = excluded.value,
                 created_at = excluded.created_at,
                 last_referenced_at = excluded.last_referenced_at,
                 dormant_at = excluded.dormant_at,
-                user_visible = excluded.user_visible
+                user_visible = excluded.user_visible,
+                embedding = excluded.embedding,
+                embedding_dim = excluded.embedding_dim,
+                embedding_model = excluded.embedding_model
             """,
             (
                 key,
@@ -326,9 +432,53 @@ class SqliteMemoryStore:
                 last_referenced_at,
                 dormant_at,
                 user_visible,
+                embedding_blob,
+                embedding_dim,
+                embedding_model,
             ),
         )
         await conn.commit()
+
+    @staticmethod
+    def _row_to_store_record(
+        row: aiosqlite.Row,
+        namespace: Namespace,
+    ) -> StoreRecord:
+        """Map a ``memory_records`` row into a :class:`StoreRecord`.
+
+        v0.8.1 helper: all three read paths (``aget``, ``asearch``,
+        ``asearch_similar``) need the same row→record transformation
+        including the embedding decode. Extracted here so a schema
+        change only touches one place.
+
+        Callers must ``SELECT`` at minimum the ``id``, ``value``,
+        ``embedding``, and ``embedding_model`` columns. The helper
+        does NOT require every column to be present — if ``embedding``
+        or ``embedding_model`` is missing from the row, it defaults
+        to None (which happens for old test fixtures that SELECT
+        only id+value).
+        """
+
+        # Row access via sqlite3.Row supports both name and index
+        # lookups, but name lookups on missing columns raise
+        # IndexError. Guard with a try/except so the helper works
+        # on partial-column SELECTs.
+        try:
+            embedding_blob = row["embedding"]
+        except IndexError:
+            embedding_blob = None
+        try:
+            embedding_model = row["embedding_model"]
+        except IndexError:
+            embedding_model = None
+
+        return StoreRecord(
+            namespace=namespace,
+            key=row["id"],
+            value=json.loads(row["value"]),
+            embedding=_decode_embedding(embedding_blob),
+            embedding_model=embedding_model,
+        )
 
     async def aget(
         self,
@@ -347,7 +497,7 @@ class SqliteMemoryStore:
         owner_id, namespace_kind = self._unpack_namespace(namespace)
         async with conn.execute(
             """
-            SELECT id, value FROM memory_records
+            SELECT id, value, embedding, embedding_model FROM memory_records
             WHERE id = ? AND owner_id = ? AND namespace_kind = ?
             LIMIT 1
             """,
@@ -356,11 +506,7 @@ class SqliteMemoryStore:
             row = await cursor.fetchone()
         if row is None:
             return None
-        return StoreRecord(
-            namespace=namespace,
-            key=row["id"],
-            value=json.loads(row["value"]),
-        )
+        return self._row_to_store_record(row, namespace)
 
     async def asearch(
         self,
@@ -393,7 +539,7 @@ class SqliteMemoryStore:
             # Return all records in insertion order, limited.
             async with conn.execute(
                 """
-                SELECT id, value FROM memory_records
+                SELECT id, value, embedding, embedding_model FROM memory_records
                 WHERE owner_id = ? AND namespace_kind = ?
                 ORDER BY insertion_order ASC
                 LIMIT ?
@@ -401,14 +547,7 @@ class SqliteMemoryStore:
                 (owner_id, namespace_kind, limit),
             ) as cursor:
                 rows = await cursor.fetchall()
-            return [
-                StoreRecord(
-                    namespace=namespace,
-                    key=row["id"],
-                    value=json.loads(row["value"]),
-                )
-                for row in rows
-            ]
+            return [self._row_to_store_record(row, namespace) for row in rows]
 
         query_tokens = tokenize_meaningful(query)
         if not query_tokens:
@@ -420,7 +559,7 @@ class SqliteMemoryStore:
         # the scoring rationale.
         async with conn.execute(
             """
-            SELECT id, value FROM memory_records
+            SELECT id, value, embedding, embedding_model FROM memory_records
             WHERE owner_id = ? AND namespace_kind = ?
             ORDER BY insertion_order ASC
             """,
@@ -443,16 +582,144 @@ class SqliteMemoryStore:
                     (
                         recall,
                         insertion_index,
-                        StoreRecord(
-                            namespace=namespace,
-                            key=row["id"],
-                            value=value_dict,
-                        ),
+                        self._row_to_store_record(row, namespace),
                     )
                 )
 
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [record for _, _, record in scored[:limit]]
+
+    async def asearch_similar(
+        self,
+        namespace: Namespace,
+        *,
+        query_text: str,
+        query_embedding: list[float] | None,
+        embedding_model: str | None = None,
+        limit: int = 10,
+    ) -> list[StoreRecord]:
+        """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
+
+        Same contract as :meth:`OpenCouchMemoryStore.asearch_similar`.
+        See :mod:`agent.memory.retrieval` for the RRF rationale.
+
+        SQL-layer considerations:
+
+        - Both scans use the same ``WHERE owner_id = ? AND
+          namespace_kind = ?`` filter so the index on
+          ``(owner_id, namespace_kind)`` is used for both paths.
+        - The embedding-similarity scan pulls every row with a
+          non-NULL ``embedding`` column — Python computes the cosines.
+          At v0.8.1 scale (hundreds of records per user) this is
+          well under 10ms per query. A future v0.8.2 could add a
+          vector index (sqlite-vec or similar) without changing
+          the method signature.
+        - The token-recall scan is the same as :meth:`asearch`'s
+          query-path, just extracted so ``asearch_similar`` can
+          reuse the logic.
+        """
+
+        from agent.memory.retrieval import (
+            EMBEDDING_MATCH_THRESHOLD,
+            ScoredRecord,
+            cosine_similarity,
+            rrf_fuse,
+        )
+
+        conn = await self._ensure_connection()
+        owner_id, namespace_kind = self._unpack_namespace(namespace)
+
+        # ── Token-recall side (lexical) ───────────────────────────────
+        lexical_scored: list[ScoredRecord] = []
+        query_tokens = tokenize_meaningful(query_text)
+        if query_tokens:
+            async with conn.execute(
+                """
+                SELECT id, value, embedding, embedding_model FROM memory_records
+                WHERE owner_id = ? AND namespace_kind = ?
+                ORDER BY insertion_order ASC
+                """,
+                (owner_id, namespace_kind),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+            query_token_count = len(query_tokens)
+            for insertion_index, row in enumerate(rows):
+                value_dict = json.loads(row["value"])
+                haystack = " ".join(
+                    str(v) for v in value_dict.values() if v is not None
+                )
+                haystack_tokens = tokenize(haystack)
+                if not haystack_tokens:
+                    continue
+                overlap = len(query_tokens & haystack_tokens)
+                recall = overlap / query_token_count
+                if recall >= SEARCH_MATCH_THRESHOLD:
+                    record = self._row_to_store_record(row, namespace)
+                    lexical_scored.append(
+                        ScoredRecord(
+                            record=record,
+                            score=recall,
+                            insertion_index=insertion_index,
+                        )
+                    )
+            lexical_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+
+        # ── Embedding-similarity side (dense) ─────────────────────────
+        dense_scored: list[ScoredRecord] = []
+        if query_embedding is not None:
+            # Pull only rows with a non-NULL embedding to avoid
+            # scanning records that can't contribute to the dense
+            # side anyway. The order matches the lexical scan (by
+            # insertion_order) so the insertion_index tiebreaker
+            # is consistent between the two scans.
+            async with conn.execute(
+                """
+                SELECT id, value, embedding, embedding_model, insertion_order
+                FROM memory_records
+                WHERE owner_id = ? AND namespace_kind = ?
+                    AND embedding IS NOT NULL
+                ORDER BY insertion_order ASC
+                """,
+                (owner_id, namespace_kind),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+            for insertion_index, row in enumerate(rows):
+                stored_model = row["embedding_model"]
+                # Skip cross-model similarity (same guard as the
+                # in-memory store).
+                if (
+                    embedding_model is not None
+                    and stored_model is not None
+                    and stored_model != embedding_model
+                ):
+                    continue
+                stored_embedding = _decode_embedding(row["embedding"])
+                if stored_embedding is None:
+                    continue
+                if len(stored_embedding) != len(query_embedding):
+                    continue
+                sim = cosine_similarity(query_embedding, stored_embedding)
+                if sim >= EMBEDDING_MATCH_THRESHOLD:
+                    record = self._row_to_store_record(row, namespace)
+                    dense_scored.append(
+                        ScoredRecord(
+                            record=record,
+                            score=sim,
+                            insertion_index=insertion_index,
+                        )
+                    )
+            dense_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+
+        if not lexical_scored and not dense_scored:
+            return []
+
+        return rrf_fuse(
+            lexical_ranked=lexical_scored,
+            dense_ranked=dense_scored,
+            limit=limit,
+        )
 
     async def adelete(
         self,

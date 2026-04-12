@@ -1,7 +1,161 @@
 """Interactive CLI for the OpenCouch agent runtime.
 
-Example:
-    uv run python -m opencouch_cli --mode auto --thread-id local-demo --sqlite-path .opencouch_threads.sqlite3
+Run from ``apps/backend/``. All commands below assume that as the
+current working directory because SQLite paths default to files
+(``.opencouch_threads.sqlite3``, ``.opencouch_memory.sqlite3``,
+``.opencouch_crisis.sqlite3``) in the CWD.
+
+════════════════════════════════════════════════════════════════════
+Common invocations (see notes/dogfood-checklist.md for the guided pass)
+════════════════════════════════════════════════════════════════════
+
+1. ── Fast deterministic smoke test ─────────────────────────────────
+   Zero LLM calls, in-memory only, useful for verifying panels render
+   and the graph spine runs end-to-end without burning tokens::
+
+       uv run python -m opencouch_cli \\
+           --mode deterministic \\
+           --memory-mode guest \\
+           --thread-id scratch
+
+   Good for: CLI rendering regressions, crisis gate keyword paths,
+   session context panel layout, /debug state JSON dump.
+
+2. ── Hybrid mode with temporary persistence ────────────────────────
+   Real LLM, but a throwaway thread in persistent storage — lets you
+   test extraction + procedural writer + dedup without polluting a
+   stable thread history::
+
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode persistent \\
+           --thread-id scratch-$(date +%s)
+
+   Good for: semantic fact writes, store Δ vs. writes in the Stage
+   Timings panel, procedural rule writes, dedup on paraphrase.
+
+3. ── Stable "user" for multi-session memory continuity ─────────────
+   Decouples memory identity from thread_id via ``--user-id``. All
+   sessions sharing the same ``alice`` user_id see the same semantic,
+   episodic, and procedural memory regardless of which thread was
+   active when the fact/arc/rule was written::
+
+       # Session 1 — seed memory
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode persistent \\
+           --user-id alice \\
+           --thread-id alice-s1
+
+       # Session 2 — same user, different thread
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode persistent \\
+           --user-id alice \\
+           --thread-id alice-s2
+
+   Good for: first-turn episodic catch-up, cross-session semantic
+   recall, procedural rule persistence across restarts.
+
+4. ── Namespace isolation check ─────────────────────────────────────
+   Confirms that a different user sees a clean slate — no memory
+   bleed between users::
+
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode persistent \\
+           --user-id bob \\
+           --thread-id bob-s1
+
+   Expected: working_memory and procedural_rules are empty even
+   though alice's store has content. If Bob sees Alice's data this
+   is a catastrophic privacy bug.
+
+5. ── Resume an existing thread ─────────────────────────────────────
+   LangGraph checkpointer restores the transcript and state for a
+   thread that was previously active. Useful for picking up after a
+   crash or for multi-day iteration on the same scenario::
+
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode persistent \\
+           --user-id alice \\
+           --thread-id alice-s1
+
+   Then inside the CLI, ``/history`` should show prior turns with
+   their ``mode`` annotations, and ``/context`` should render the
+   last saved state.
+
+6. ── Guest / incognito mode ────────────────────────────────────────
+   No long-term memory writes. Semantic, episodic, and procedural
+   extractors all short-circuit. The crisis log is still always-on::
+
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode guest
+
+   Good for: verifying the privacy contract (no writes to the memory
+   store), testing crisis flow in isolation, one-off conversations.
+
+7. ── Custom SQLite paths (share memory with another tool) ──────────
+   Override the default ``.opencouch_*.sqlite3`` paths when the user
+   wants memory to live elsewhere (e.g., on an external drive, or
+   shared with the eval harness)::
+
+       uv run python -m opencouch_cli \\
+           --mode auto \\
+           --memory-mode persistent \\
+           --user-id alice \\
+           --thread-id alice-s1 \\
+           --sqlite-path /tmp/my_threads.sqlite3 \\
+           --memory-sqlite-path /tmp/my_memory.sqlite3 \\
+           --crisis-log-sqlite-path /tmp/my_crisis.sqlite3
+
+   Good for: keeping multiple parallel memory stores, running the
+   eval harness against the same state the CLI produced, backing up
+   a session to a specific path.
+
+════════════════════════════════════════════════════════════════════
+Slash commands inside the chat loop
+════════════════════════════════════════════════════════════════════
+
+   /help                                  List all commands
+   /status                                Thread id, mode, turn count
+   /history [n]                           Recent messages with mode (v0.8)
+   /context                               Full session context snapshot
+   /memory status                         Per-namespace counts + recall toggle
+   /memory list                           Semantic facts + episodic arcs
+   /memory list facts|sessions|rules      Filter to one namespace (v0.9)
+   /memory recall on|off                  Toggle proactive content recall
+   /memory forget fact|session|rule <n>   Delete one record by index (v0.9)
+   /memory clear facts|sessions|rules|all Wipe a namespace (v0.9, typed confirm)
+   /memory purge-crisis [days]            Retention-purge crisis log (v0.8.1)
+   /threads [n]                           List persisted thread ids
+   /resume <tid>                          Switch to a different thread
+   /new [tid]                             Start a fresh thread
+   /reset                                 Clear the active thread's state
+   /clear                                 Clear the terminal
+   /mode <det|hyb|auto>                   Switch LLM resolution mode
+   /debug state                           Dump raw graph state as JSON (v0.8)
+   /end                                   Summarize session, save episodic arc
+   /exit                                  End session with save prompt
+
+════════════════════════════════════════════════════════════════════
+What to look for in the panels
+════════════════════════════════════════════════════════════════════
+
+The chat loop renders four panels after each turn:
+
+- **Assistant reply** (green for therapeutic, red for crisis)
+- **Turn Diagnostics** (mode routing + safety classification)
+- **Stage Timings & Writes** (per-node ms, write counts, store Δ)
+- **Session Context** (what the graph is carrying forward, including
+  v0.8 additions: procedural_rules, proactive_recall, exercise state)
+
+Use ``/debug state`` for the raw JSON dump when the panels aren't
+enough. See ``notes/dogfood-checklist.md`` for a guided walk-through
+that maps each shipped phase to specific prompts and expected panel
+contents.
 """
 
 from __future__ import annotations
@@ -9,6 +163,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -61,6 +216,69 @@ CLI_THEME = Theme(
 )
 
 console = Console(theme=CLI_THEME)
+
+
+# v0.8 observability pass: map internal graph node names → CLI stage
+# labels used in the Live progress spinner. The keys are the values
+# produced by ``run_turn_stream`` (already translated from node names
+# in persistence.py) plus a few legacy labels kept for backward
+# compatibility with older tests / callers that might emit them.
+# Unknown stages fall through to the raw key in the chat loop, so
+# adding a new node doesn't require a CLI change to stay readable.
+_STAGE_LABELS = {
+    "load_memory": "loading memory",
+    "memory_profile_load": "loading profile memory",
+    "memory_graph_load": "querying graph memory",
+    "memory_profile_save": "saving profile memory",
+    "memory_graph_save": "writing graph memory",
+    "crisis_gate": "safety check",
+    "crisis_response": "generating crisis reply",
+    "crisis_log": "writing crisis log",
+    "therapeutic": "generating therapeutic reply",
+    "extract_facts": "extracting facts",
+    "extract_procedural": "extracting style rules",
+    "finalize": "finalizing turn",
+    "session_stage": "reading context",
+    "response_generation": "generating",
+}
+
+
+async def _snapshot_namespace_counts(
+    runtime: PersistentAgentRuntime,
+    *,
+    owner_id: str,
+) -> dict[str, int]:
+    """Return per-namespace record counts for this owner from the store.
+
+    Used by the chat loop to compute memory-write deltas (before vs.
+    after the turn) for the stage timings panel. We ask the store once
+    per turn on each side, which is cheap with the in-memory and SQLite
+    backends (both implement ``arecord_count`` as a single query).
+
+    The three namespaces we care about are ``semantic``, ``episodic``,
+    and ``procedural`` — they correspond one-to-one with the extractor
+    nodes whose writes we want to observe. Other namespaces (crisis log,
+    anything added later) are ignored.
+
+    Returns a dict keyed by namespace kind, defaulting missing kinds
+    to 0 so the caller can subtract pre/post without null-checks.
+
+    Silent on failure: if the store layer raises for any reason (e.g.,
+    the async context hasn't been entered yet), we return an all-zeros
+    dict so the deltas render as ``0`` instead of crashing the chat
+    loop. Observability should never break the happy path.
+    """
+
+    counts: dict[str, int] = {"semantic": 0, "episodic": 0, "procedural": 0}
+    try:
+        store = runtime.memory_store
+        for kind in counts:
+            counts[kind] = await store.arecord_count((owner_id, kind))
+    except Exception:
+        # Degrade silently — observability panel should not break the
+        # chat loop if the store layer is unavailable for any reason.
+        pass
+    return counts
 
 
 @dataclass(slots=True)
@@ -268,7 +486,7 @@ def render_header(
     console.print(Text.from_markup("  [muted]|[/muted]  ".join(header_parts)))
     console.print(
         "[muted]slash commands:[/muted] [info]/help, /status, /history, /context, "
-        "/memory, /threads, /resume, /new, /reset, /clear, /mode, /exit[/info]\n"
+        "/memory, /threads, /resume, /new, /reset, /clear, /mode, /debug, /exit[/info]\n"
     )
 
 
@@ -309,8 +527,17 @@ def render_meta(
     needs_clarification: bool,
     needs_crisis_response: bool,
     reason: str,
+    diagnostics: dict | None = None,
+    memory_deltas: dict | None = None,
 ) -> None:
     """Render classifier metadata as a compact table.
+
+    v0.8 observability pass: added per-stage timings and memory-write
+    counts underneath the classifier table. The timings come from
+    ``diagnostics`` (populated by each node in the graph) and the
+    memory-write deltas come from ``memory_deltas`` (computed by the
+    CLI from before/after store counts so we report **this turn's**
+    additions, not cumulative totals).
 
     Args:
         mode: Selected graph mode for the response.
@@ -321,6 +548,16 @@ def render_meta(
         needs_clarification: Whether the gate requested a safety check.
         needs_crisis_response: Whether the gate requested the crisis path.
         reason: Crisis-classifier explanation.
+        diagnostics: Per-turn diagnostics dict from ``AgentOutput.diagnostics``.
+            When present, a second table renders stage timings
+            (load_memory, crisis_gate, extract_facts, extract_procedural,
+            turn_total) and memory-write counts. Unknown keys are
+            silently ignored so adding new diagnostics upstream doesn't
+            require a CLI change.
+        memory_deltas: Optional ``{namespace: delta}`` dict reporting how
+            many records were added to each memory namespace this turn.
+            Populated by the CLI from before/after store counts. When
+            None, no deltas row is shown.
 
     Returns:
         None.
@@ -362,11 +599,122 @@ def render_meta(
             box=box.ROUNDED,
         )
     )
+
+    # v0.8: per-stage timings + memory write deltas. Rendered as a
+    # separate table so the existing classifier table doesn't get
+    # crowded. Only prints when there's something to show — a stale
+    # test-path state with no diagnostics still prints the first
+    # table and then skips the timings table cleanly.
+    diag = diagnostics or {}
+    deltas = memory_deltas or {}
+    _render_stage_timings(diag, deltas)
     console.print()
+
+
+def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
+    """Render the per-turn stage timings + memory-write table.
+
+    Extracted from ``render_meta`` for testability. Skips entirely when
+    both inputs are empty — that's the "tests constructed an AgentOutput
+    manually and didn't populate diagnostics" case and there's nothing
+    useful to show.
+
+    Timings come from the diagnostics dict stamped by each node:
+
+    - ``load_memory_ms`` from ``run_load_memory_node``
+    - ``crisis_gate_ms`` from ``run_crisis_gate_node``
+    - ``extract_facts_ms`` from ``run_extract_semantic_facts_node``
+    - ``extract_procedural_ms`` from ``run_extract_procedural_rules_node``
+    - ``turn_total_ms`` stamped by ``run_turn`` / ``run_turn_stream``
+      after the graph invocation completes
+
+    A missing key renders as ``-`` so the table shape stays stable even
+    when a skip path (incognito, no LLM) short-circuits a node before
+    it wrote its timing. The "total" column is the outer ``run_turn``
+    clock — useful because the node-level sums don't include edge work,
+    checkpoint I/O, or the Python-side overhead between nodes.
+
+    Memory-write deltas come from the CLI's before/after store counts
+    (see the chat_loop bookkeeping), NOT from the diagnostics dict. The
+    two paths carry different semantics: the diagnostics dict reports
+    what the extractor nodes **tried to write** (``semantic_writes``,
+    ``procedural_writes``), whereas the delta reports what actually
+    **landed in the store** after any silent skip / dedup interactions.
+    We render both when available to make "writer produced a candidate
+    but dedup rejected it" visible at a glance.
+    """
+
+    if not diagnostics and not memory_deltas:
+        return
+
+    timing_table = Table(show_header=True, header_style="primary", box=box.SIMPLE_HEAVY)
+    timing_table.add_column("stage", style="muted", no_wrap=True)
+    timing_table.add_column("time (ms)", style="info", justify="right", no_wrap=True)
+    timing_table.add_column("writes", style="accent", justify="right", no_wrap=True)
+    timing_table.add_column("store Δ", style="success", justify="right", no_wrap=True)
+
+    # Helper: format a float ms value to 2 decimals or "-" when absent.
+    def _fmt_ms(key: str) -> str:
+        val = diagnostics.get(key)
+        if val is None:
+            return "-"
+        try:
+            return f"{float(val):.2f}"
+        except (TypeError, ValueError):
+            return "-"
+
+    # Helper: format an int count or "-" when absent.
+    def _fmt_count(key: str) -> str:
+        val = diagnostics.get(key)
+        if val is None:
+            return "-"
+        return str(int(val))
+
+    def _fmt_delta(key: str) -> str:
+        val = memory_deltas.get(key)
+        if val is None:
+            return "-"
+        return f"+{val}" if val > 0 else str(val)
+
+    timing_table.add_row("load_memory", _fmt_ms("load_memory_ms"), "-", "-")
+    timing_table.add_row("crisis_gate", _fmt_ms("crisis_gate_ms"), "-", "-")
+    timing_table.add_row(
+        "extract_facts",
+        _fmt_ms("extract_facts_ms"),
+        _fmt_count("semantic_writes"),
+        _fmt_delta("semantic"),
+    )
+    timing_table.add_row(
+        "extract_procedural",
+        _fmt_ms("extract_procedural_ms"),
+        _fmt_count("procedural_writes"),
+        _fmt_delta("procedural"),
+    )
+    # Episodic writes happen at session end via the summarizer, not
+    # per-turn, so only the store Δ column carries information here.
+    # We still include the row so the panel layout stays stable.
+    timing_table.add_row("episodic", "-", "-", _fmt_delta("episodic"))
+    timing_table.add_row("turn_total", _fmt_ms("turn_total_ms"), "-", "-")
+
+    console.print(
+        Panel(
+            timing_table,
+            title="[primary]Stage Timings & Writes[/primary]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
 
 
 def render_context(state: AgentState | None) -> None:
     """Render the current structured session context.
+
+    v0.8 observability pass: the panel now shows procedural rules,
+    proactive-recall toggle state, and guided-exercise tracking fields
+    alongside the pre-existing memory/progress surface. Working-memory
+    entries are rendered as newline-separated bullets (one per entry)
+    instead of pipe-joined, so long semantic/episodic snippets wrap
+    cleanly in the terminal rather than overflowing a single row.
 
     Args:
         state: Most recent graph input state snapshot.
@@ -390,17 +738,27 @@ def render_context(state: AgentState | None) -> None:
     progress = state.get("progress", {})
     memory = state.get("memory", {})
     response_state = state.get("response", {})
+    routing_state = state.get("routing", {})
 
     table = Table(show_header=False, box=box.SIMPLE_HEAVY)
     table.add_column(style="muted", no_wrap=True)
     table.add_column(style="info")
     table.add_row("turn_count", str(progress.get("turn_count", 0)))
-    table.add_row(
-        "working_memory",
-        " | ".join(state.get("working_memory", []))
-        if state.get("working_memory")
-        else "-",
-    )
+
+    # v0.8: bullet-wrap the working-memory entries so each entry is
+    # on its own line. Rich will wrap each bullet's text within the
+    # cell width, keeping long "Previously noted: ..." or "Last session
+    # (...): ..." strings readable. Joining with " | " made each turn's
+    # panel scroll-heavy and hid entries behind truncation.
+    working_memory = state.get("working_memory") or []
+    if working_memory:
+        table.add_row(
+            "working_memory",
+            "\n".join(f"• {entry}" for entry in working_memory),
+        )
+    else:
+        table.add_row("working_memory", "-")
+
     table.add_row("current_goal", memory.get("current_goal") or "-")
     table.add_row("response_guidance", response_state.get("guidance") or "-")
     active_concerns = memory.get("active_concerns") or []
@@ -411,14 +769,106 @@ def render_context(state: AgentState | None) -> None:
     open_loops = memory.get("open_loops") or []
     table.add_row(
         "open_loops",
-        " | ".join(open_loops) if open_loops else "-",
+        "\n".join(f"• {loop}" for loop in open_loops) if open_loops else "-",
     )
+
+    # v0.8: procedural layer surface. ``procedural_rules`` is the raw
+    # rule-text list loaded by ``run_load_memory_node`` — the same
+    # strings the Stage D prompt builders inject. Showing them in the
+    # context panel lets a dogfood operator verify the writer+loader
+    # round-trip and spot stale rules at a glance. Long rules wrap
+    # inside the cell.
+    procedural_rules = memory.get("procedural_rules") or []
+    if procedural_rules:
+        table.add_row(
+            "procedural_rules",
+            "\n".join(f"• {rule}" for rule in procedural_rules),
+        )
+    else:
+        table.add_row("procedural_rules", "-")
+
+    # v0.8: proactive-recall toggle state. Procedural rules are always
+    # applied; the recall toggle governs whether the agent proactively
+    # references stored semantic/episodic content in replies. Surfacing
+    # it here saves a round-trip to ``/memory status``.
+    recall_enabled = bool(memory.get("proactive_recall_enabled", False))
+    table.add_row("proactive_recall", "on" if recall_enabled else "off")
+
+    # v0.8: guided-exercise tracking. The therapeutic subgraph writes
+    # ``exercise_type`` and ``exercise_step`` into ``routing`` when a
+    # guided mode is active (box breathing, grounding, etc.). Dogfood
+    # feedback flagged that exercise mid-run state was invisible —
+    # surface it here so the operator can see "we're on step 3 of box
+    # breathing" without inspecting the raw state.
+    exercise_type = routing_state.get("exercise_type")
+    exercise_step = routing_state.get("exercise_step")
+    if exercise_type:
+        step_display = f" (step {exercise_step})" if exercise_step is not None else ""
+        table.add_row("exercise", f"{exercise_type}{step_display}")
+
     table.add_row("session_summary", memory.get("summary", ""))
     console.print(
         Panel(
             table,
             title="[primary]Session Context[/primary]",
             subtitle="[muted]what the graph is carrying forward[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+async def _render_debug_state(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+) -> None:
+    """Dump the raw graph state for the active thread as JSON.
+
+    v0.8 observability pass: backs ``/debug state``. This is the "I
+    want to see everything" view for when Session Context or Stage
+    Timings isn't enough to diagnose a specific turn. Fetches the
+    current checkpointed state for the active thread via
+    ``runtime.get_state`` and pretty-prints it inside a Panel.
+
+    Pydantic models and other non-JSON types round-trip through
+    ``default=str`` in ``json.dumps`` rather than crashing — most
+    state fields are already plain dicts (we serialize to JSON at
+    checkpoint write time via LangGraph's JsonPlusSerializer), so
+    this fallback only kicks in for an odd CrisisAssessment instance
+    that survived the round-trip as a typed model.
+
+    Degrades gracefully when no state exists yet (fresh thread, or
+    ``/reset`` was just called). Prints a warning panel instead of
+    crashing on a None state.
+    """
+
+    import json
+
+    state = await runtime.get_state(session.thread_id)
+    if state is None:
+        console.print(
+            Panel(
+                "[muted]No state for this thread yet. Send a message first, "
+                "or use /threads to pick a thread with prior turns.[/muted]",
+                title="[primary]Debug State[/primary]",
+                border_style="panel",
+                box=box.ROUNDED,
+            )
+        )
+        console.print()
+        return
+
+    try:
+        rendered = json.dumps(state, indent=2, default=str)
+    except (TypeError, ValueError) as exc:
+        rendered = f"<failed to serialize state as JSON: {exc}>"
+
+    console.print(
+        Panel(
+            Text(rendered, style="info"),
+            title=f"[primary]Debug State[/primary] [muted]({session.thread_id})[/muted]",
+            subtitle="[muted]raw graph state dict[/muted]",
             border_style="panel",
             box=box.ROUNDED,
         )
@@ -553,6 +1003,61 @@ async def _collect_records_by_kind(
         for record in namespace_records:
             records.append((record.key, record.value))
     return records
+
+
+async def _collect_records_with_namespace(
+    runtime: PersistentAgentRuntime,
+    *,
+    kind: str,
+    owner_id: str,
+) -> list[tuple[tuple[str, ...], str, dict[str, object]]]:
+    """Collect ``(namespace, key, value)`` tuples for a kind + owner.
+
+    v0.9 helper for the destructive memory commands (``/memory forget
+    fact <n>``, ``/memory forget session <n>``, ``/memory clear``).
+    Unlike :func:`_collect_records_by_kind` which returns just
+    ``(key, value)`` for rendering, these handlers need the full
+    namespace tuple so they can call ``store.adelete(namespace, key)``.
+
+    The records are returned in the same insertion order as
+    ``/memory list`` displays them, so the 1-indexed position the
+    user types matches the position they see in the table. **If you
+    change the sort order here, also change the corresponding table
+    renderer — the indexes must stay synchronized or users will
+    delete the wrong record.**
+
+    Owner scoping: unlike the read-only ``_collect_records_by_kind``
+    helper which iterates every namespace in the store (useful when
+    rendering the full list), this helper filters to a single
+    ``owner_id``. Destructive commands are always scoped to the
+    active session's owner — never cross-user — so restricting the
+    fetch at the source prevents any accidental cross-user deletion
+    path from even being reachable through the CLI.
+
+    Args:
+        runtime: Active persistent runtime. Reads the memory store.
+        kind: Namespace kind — ``"semantic"`` or ``"episodic"``.
+            ``"procedural"`` is NOT supported here because procedural
+            memory is stored as a single profile document per user,
+            not as individual records — see the procedural forget /
+            clear handlers which go through ``aget/aput_procedural_profile``
+            instead.
+        owner_id: The owner to scope the fetch to, typically
+            ``session.owner_id()``.
+
+    Returns:
+        A list of ``(namespace, key, value)`` tuples in insertion order,
+        ready to be 1-indexed for display and passed to ``adelete``.
+    """
+
+    target_namespace = (owner_id, kind)
+    store = runtime.memory_store
+    namespaces = await store.anamespaces()
+    if target_namespace not in namespaces:
+        return []
+
+    records = await store.asearch(target_namespace, query=None, limit=1000)
+    return [(target_namespace, record.key, record.value) for record in records]
 
 
 def _format_entity_identifier(entity: object) -> str:
@@ -1146,6 +1651,626 @@ async def render_memory_forget_rule(
     )
 
 
+# ── v0.9 privacy controls: /memory forget fact|session + /memory clear ─────
+
+
+def _parse_one_based_index(
+    index_str: str,
+    *,
+    kind_label: str,
+) -> int | None:
+    """Parse a 1-indexed CLI argument into an int, or render a warning.
+
+    Shared across the v0.9 forget handlers (``fact``, ``session``) so
+    they produce identical error messages for the same failure modes
+    (non-integer argument, zero, negative). Returns ``None`` when the
+    parse fails or the value is out of the 1-indexed range; the caller
+    should abort without touching the store in that case. Returns the
+    parsed integer on success.
+
+    Why a separate helper and not a one-liner: the warning messages
+    are slightly different per failure mode (wrong type vs. zero vs.
+    negative), and keeping all three paths in one place makes it
+    easy to keep the phrasing consistent across fact / session /
+    rule handlers. The rule handler at
+    :func:`render_memory_forget_rule` shipped before this helper
+    existed and inlines the same logic — it's fine to leave that
+    one alone because the pattern is stable.
+    """
+
+    try:
+        index_1based = int(index_str)
+    except ValueError:
+        render_info(
+            f"Usage: /memory forget {kind_label} <n>  (got: {index_str!r})",
+            style="warning",
+        )
+        return None
+
+    if index_1based < 1:
+        render_info(
+            f"{kind_label.capitalize()} index must be 1 or greater "
+            f"(got: {index_1based}).",
+            style="warning",
+        )
+        return None
+
+    return index_1based
+
+
+def _render_forget_confirmation(
+    *,
+    kind_label: str,
+    index_1based: int,
+    preview_lines: list[str],
+) -> bool:
+    """Render a y/N confirmation panel for a single-record forget command.
+
+    Shared helper for the v0.9 forget handlers (fact, session) that
+    need to show a preview of the target before the user confirms.
+    The panel mirrors the rule-forget confirmation shipped in v0.7
+    Stage E so the UX stays consistent across kinds.
+
+    Args:
+        kind_label: The word shown in the panel title, e.g., ``"fact"``
+            or ``"session"``. Used as ``f"Delete {kind_label} #N?"``.
+        index_1based: The 1-indexed position, shown in the title.
+        preview_lines: A list of ``[label] value`` lines describing the
+            target record. Lines are joined with newlines inside the
+            panel body. Keep each line short enough to fit on one
+            terminal row without wrapping.
+
+    Returns:
+        ``True`` if the user confirmed (typed ``y``), ``False``
+        otherwise (including Enter-for-default-N, ``n``, or any
+        non-``y`` input). The caller should treat ``False`` as "abort
+        without touching the store."
+    """
+
+    body = "\n".join(f"[info]{line}[/info]" for line in preview_lines)
+    console.print()
+    console.print(
+        Panel(
+            body,
+            title=f"[warning]Delete {kind_label} #{index_1based}?[/warning]",
+            border_style="warning",
+            box=box.ROUNDED,
+        )
+    )
+    answer = Prompt.ask(
+        f"[muted]Delete this {kind_label}?[/muted] [accent][y/N][/accent]",
+        choices=["y", "n", ""],
+        default="n",
+        show_choices=False,
+        show_default=False,
+    )
+    return answer.strip().lower() == "y"
+
+
+async def render_memory_forget_fact(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+    *,
+    index_str: str,
+) -> None:
+    """Handle the ``/memory forget fact <n>`` command.
+
+    v0.9 privacy control. Deletes one semantic fact from the active
+    owner's semantic namespace by its 1-indexed position in
+    ``/memory list`` (or ``/memory list facts``). The index must
+    match the number shown in the ``#`` column of the semantic
+    records table — if you change the sort order in
+    ``_collect_records_with_namespace``, update
+    ``_render_semantic_records_table`` to match or the indexes
+    will drift.
+
+    UX mirrors the rule-forget flow (:func:`render_memory_forget_rule`):
+
+    1. Parse the index. Invalid / zero / negative values render a
+       warning and abort without any store interaction.
+    2. Fetch the target namespace via
+       :func:`_collect_records_with_namespace` using the session's
+       owner_id. Out-of-range indexes render a warning that includes
+       the current fact count so the user knows what went wrong.
+    3. Show a preview panel (category, predicate, object, evidence
+       quote) + y/N confirmation. Default is N.
+    4. On confirm, call ``store.adelete(namespace, key)``. A single
+       record delete, not a profile round-trip, because semantic
+       memory is stored one-record-per-fact (unlike procedural).
+    5. Render a success message with the remaining fact count.
+
+    Owner scope: operations are always scoped to ``session.owner_id()``,
+    which is the ``--user-id`` flag if set or the thread_id fallback.
+    Cross-user deletion is not reachable through this command.
+
+    Args:
+        runtime: Active persistent runtime, for the memory store.
+        session: Active CLI session, for the owner id.
+        index_str: The raw argument the user typed after
+            ``/memory forget fact``. Parsed to an int here.
+    """
+
+    index_1based = _parse_one_based_index(index_str, kind_label="fact")
+    if index_1based is None:
+        return
+
+    facts = await _collect_records_with_namespace(
+        runtime, kind="semantic", owner_id=session.owner_id()
+    )
+
+    if not facts:
+        render_info(
+            "No semantic facts to forget for this thread.",
+            style="warning",
+        )
+        return
+
+    if index_1based > len(facts):
+        render_info(
+            f"Fact #{index_1based} does not exist "
+            f"(only {len(facts)} fact(s) for this thread).",
+            style="warning",
+        )
+        return
+
+    namespace, key, value = facts[index_1based - 1]
+
+    # Preview lines mirror the semantic table columns (category,
+    # predicate, object, evidence quote) so the user sees the same
+    # record shape they saw in /memory list. Evidence quote is
+    # truncated at 120 chars to keep the panel compact.
+    category = str(value.get("category", "?"))
+    predicate = str(value.get("predicate", "?"))
+    object_id = _format_entity_identifier(value.get("object"))
+    quote = str(value.get("evidence_quote", ""))
+    if len(quote) > 120:
+        quote = quote[:117].rstrip() + "…"
+    preview = [
+        f"category:  {category}",
+        f"predicate: {predicate}",
+        f"object:    {object_id}",
+        f"evidence:  {quote}",
+    ]
+
+    if not _render_forget_confirmation(
+        kind_label="fact",
+        index_1based=index_1based,
+        preview_lines=preview,
+    ):
+        render_info("Cancelled — no facts deleted.", style="info")
+        return
+
+    deleted = await runtime.memory_store.adelete(namespace, key)
+    if not deleted:
+        # Race condition: the record was deleted between the fetch
+        # and the delete call. Unlikely in the single-user CLI but
+        # possible in a future multi-process scenario. Report
+        # honestly rather than pretending the delete happened.
+        render_info(
+            f"Fact #{index_1based} was already gone before the delete "
+            "landed (possibly deleted in another session).",
+            style="warning",
+        )
+        return
+
+    render_info(
+        f"Deleted fact #{index_1based}. "
+        f"{len(facts) - 1} fact(s) remaining for this thread.",
+        style="success",
+    )
+
+
+async def render_memory_forget_session(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+    *,
+    index_str: str,
+) -> None:
+    """Handle the ``/memory forget session <n>`` command.
+
+    v0.9 privacy control. Deletes one episodic session arc from the
+    active owner's episodic namespace by its 1-indexed position in
+    ``/memory list`` (or ``/memory list sessions``). Parallels
+    :func:`render_memory_forget_fact` — same index contract, same
+    confirmation pattern, same single-record adelete path.
+
+    Preview shows the arc's summary (truncated) and themes so the
+    user knows which session they're about to delete. Date is not
+    shown in the preview because the summary field already includes
+    temporal context.
+
+    Args:
+        runtime: Active persistent runtime, for the memory store.
+        session: Active CLI session, for the owner id.
+        index_str: The raw argument the user typed after
+            ``/memory forget session``. Parsed to an int here.
+    """
+
+    index_1based = _parse_one_based_index(index_str, kind_label="session")
+    if index_1based is None:
+        return
+
+    sessions = await _collect_records_with_namespace(
+        runtime, kind="episodic", owner_id=session.owner_id()
+    )
+
+    if not sessions:
+        render_info(
+            "No episodic sessions to forget for this thread.",
+            style="warning",
+        )
+        return
+
+    if index_1based > len(sessions):
+        render_info(
+            f"Session #{index_1based} does not exist "
+            f"(only {len(sessions)} session arc(s) for this thread).",
+            style="warning",
+        )
+        return
+
+    namespace, key, value = sessions[index_1based - 1]
+
+    summary = str(value.get("summary", ""))
+    if len(summary) > 240:
+        summary = summary[:237].rstrip() + "…"
+    themes_list = value.get("primary_themes") or []
+    themes_display = (
+        ", ".join(str(t) for t in themes_list)  # type: ignore[union-attr]
+        if themes_list
+        else "—"
+    )
+    ended_at = str(value.get("ended_at", ""))
+    date_display = ended_at[:10] if len(ended_at) >= 10 else "—"
+    preview = [
+        f"date:    {date_display}",
+        f"themes:  {themes_display}",
+        f"summary: {summary}",
+    ]
+
+    if not _render_forget_confirmation(
+        kind_label="session",
+        index_1based=index_1based,
+        preview_lines=preview,
+    ):
+        render_info("Cancelled — no session arcs deleted.", style="info")
+        return
+
+    deleted = await runtime.memory_store.adelete(namespace, key)
+    if not deleted:
+        render_info(
+            f"Session #{index_1based} was already gone before the delete "
+            "landed (possibly deleted in another session).",
+            style="warning",
+        )
+        return
+
+    render_info(
+        f"Deleted session #{index_1based}. "
+        f"{len(sessions) - 1} session arc(s) remaining for this thread.",
+        style="success",
+    )
+
+
+async def render_memory_clear(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,
+    *,
+    kind: str,
+) -> None:
+    """Handle the ``/memory clear <kind>`` command.
+
+    v0.9 privacy control — the nuclear option. Deletes every record
+    in a namespace (or all namespaces) for the active owner.
+    Unrecoverable.
+
+    Because this is destructive at scale, the confirmation is
+    **stronger** than the single-record forget commands: instead of
+    y/N, the user must type the literal word ``clear`` to proceed.
+    This prevents muscle-memory confirmations from nuking a memory
+    store the user didn't mean to lose. Any other input — including
+    ``y``, ``yes``, ``CLEAR``, or an empty line — cancels.
+
+    Supported kinds:
+
+    - ``facts``     → clear the semantic namespace
+    - ``sessions``  → clear the episodic namespace
+    - ``rules``     → clear the procedural profile (rules only;
+                     ``proactive_recall_enabled`` is preserved
+                     because it's a user preference, not content)
+    - ``all``       → clear all three of the above in one operation
+
+    Implementation notes:
+
+    - Semantic and episodic use per-record ``adelete`` in a loop
+      rather than a hypothetical ``aclear_namespace`` primitive,
+      because the existing ``MemoryStore`` protocol doesn't include
+      a bulk-clear method. Adding one would be a v0.8 protocol
+      extension; the per-record loop is O(n) but n is bounded by
+      the <1k records per user expected in the dogfood window.
+    - Procedural uses a profile round-trip (``aget`` → reset
+      ``rules`` list → ``aput``) because it's stored as a single
+      profile document per user, not per-record.
+    - The clear operation is NOT atomic across kinds when
+      ``all`` is used — if the semantic sweep completes but
+      the episodic sweep raises, the semantic records are gone.
+      This is acceptable for v0.9 because (a) it's CLI-local, not
+      multi-client, and (b) the user has no restore path anyway, so
+      partial-clear behaves the same as full-clear from the user's
+      perspective. A future v0.9.1 could wrap the sweep in a
+      transaction if it matters.
+
+    Args:
+        runtime: Active persistent runtime, for the memory store.
+        session: Active CLI session, for the owner id.
+        kind: One of ``"facts"``, ``"sessions"``, ``"rules"``,
+            ``"all"``. Unknown kinds render a usage warning.
+    """
+
+    valid_kinds = {"facts", "sessions", "rules", "all"}
+    if kind not in valid_kinds:
+        render_info(
+            "Usage: /memory clear <facts|sessions|rules|all>",
+            style="warning",
+        )
+        return
+
+    owner_id = session.owner_id()
+    store = runtime.memory_store
+
+    # Pre-count how many records will be destroyed so the warning
+    # panel can show concrete numbers. Users take a "permanently
+    # delete 47 facts" prompt more seriously than "permanently
+    # delete all facts".
+    counts: dict[str, int] = {"facts": 0, "sessions": 0, "rules": 0}
+    if kind in ("facts", "all"):
+        counts["facts"] = await store.arecord_count((owner_id, "semantic"))
+    if kind in ("sessions", "all"):
+        counts["sessions"] = await store.arecord_count((owner_id, "episodic"))
+    if kind in ("rules", "all"):
+        profile = await aget_procedural_profile(store, user_id=owner_id)
+        counts["rules"] = len(profile.rules)
+
+    # If nothing would be destroyed, skip the confirmation entirely
+    # and tell the user. No point showing a scary panel for a no-op.
+    if sum(counts.values()) == 0:
+        render_info(
+            f"Nothing to clear for {kind}. Store is already empty "
+            f"for this {'user' if session.user_id else 'thread'}.",
+            style="info",
+        )
+        return
+
+    # Build the warning panel body. Only shows counts for the kinds
+    # being touched, so the user isn't confused by zeros they don't
+    # care about.
+    affected_lines = []
+    if kind in ("facts", "all") and counts["facts"] > 0:
+        affected_lines.append(f"semantic facts:    {counts['facts']}")
+    if kind in ("sessions", "all") and counts["sessions"] > 0:
+        affected_lines.append(f"episodic sessions: {counts['sessions']}")
+    if kind in ("rules", "all") and counts["rules"] > 0:
+        affected_lines.append(f"procedural rules:  {counts['rules']}")
+
+    body = "\n".join(f"[warning]{line}[/warning]" for line in affected_lines)
+    body += (
+        "\n\n[danger]This cannot be undone.[/danger]\n"
+        "[muted]Type [accent]clear[/accent] to proceed, "
+        "or anything else to cancel.[/muted]"
+    )
+
+    console.print()
+    console.print(
+        Panel(
+            body,
+            title=(
+                f"[danger]Clear memory ({kind})[/danger] "
+                f"[muted]— owner: {owner_id}[/muted]"
+            ),
+            border_style="danger",
+            box=box.ROUNDED,
+        )
+    )
+    answer = Prompt.ask(
+        "[muted]Type the word to confirm[/muted]",
+        default="",
+        show_default=False,
+    )
+    if answer.strip() != "clear":
+        render_info(
+            "Cancelled — no memory cleared.",
+            style="info",
+        )
+        return
+
+    # Confirmed. Sweep each kind in the requested scope.
+    deleted_counts: dict[str, int] = {"facts": 0, "sessions": 0, "rules": 0}
+
+    if kind in ("facts", "all"):
+        records = await _collect_records_with_namespace(
+            runtime, kind="semantic", owner_id=owner_id
+        )
+        for namespace, key, _value in records:
+            if await store.adelete(namespace, key):
+                deleted_counts["facts"] += 1
+
+    if kind in ("sessions", "all"):
+        records = await _collect_records_with_namespace(
+            runtime, kind="episodic", owner_id=owner_id
+        )
+        for namespace, key, _value in records:
+            if await store.adelete(namespace, key):
+                deleted_counts["sessions"] += 1
+
+    if kind in ("rules", "all"):
+        # Procedural is a profile-document, not per-record. Reset
+        # the rules list but preserve the recall toggle (it's a
+        # user preference, not content) and re-put the profile.
+        profile = await aget_procedural_profile(store, user_id=owner_id)
+        deleted_counts["rules"] = len(profile.rules)
+        profile.rules = []
+        await aput_procedural_profile(store, user_id=owner_id, profile=profile)
+
+    # Render a success summary listing every kind that was touched.
+    # Zero-count lines are suppressed so the panel is compact when
+    # a kind was already empty.
+    summary_lines = [
+        f"{label}: {deleted_counts[label]}"
+        for label in ("facts", "sessions", "rules")
+        if deleted_counts[label] > 0
+    ]
+    if not summary_lines:
+        # This can happen on a clear-between-fetch-and-commit race;
+        # the counts were non-zero when we showed the warning but
+        # are zero now. Rare but worth reporting honestly.
+        render_info(
+            "Clear completed, but no records were found to delete "
+            "(they may have been removed between the confirmation "
+            "and the sweep).",
+            style="warning",
+        )
+        return
+
+    render_info(
+        "Cleared: " + ", ".join(summary_lines),
+        style="success",
+    )
+
+
+# v0.8.1: crisis log retention purge. See the design note in
+# ``agent/memory/crisis_log.py`` for the 90-day default rationale.
+#
+# Default cutoff window (in days) for ``/memory purge-crisis``. 90 days
+# matches the retention policy documented in schema.yaml §2 and the
+# legal-review caveat on the always-on crisis log. Operators can
+# override per-invocation (e.g., ``/memory purge-crisis 30`` for a
+# tighter sweep) but the default should match the documented policy.
+DEFAULT_CRISIS_RETENTION_DAYS = 90
+
+
+async def render_memory_purge_crisis(
+    runtime: PersistentAgentRuntime,
+    session: RunnerSession,  # noqa: ARG001 — session unused but kept for symmetry
+    *,
+    days: int,
+) -> None:
+    """Handle the ``/memory purge-crisis [days]`` command.
+
+    v0.8.1 retention operation. Deletes all crisis log records older
+    than ``days`` days from the active runtime's crisis log backend.
+    Calls :meth:`CrisisLogBackend.apurge_before` with ``today - days``
+    as the exclusive cutoff, so records on the cutoff date itself are
+    preserved (the semantics match the backend's docstring).
+
+    Unlike ``/memory forget`` or ``/memory clear``, this command
+    operates on the **crisis log**, which is always-on regardless of
+    memory mode — even incognito sessions have an in-memory crisis
+    log that the gate writes to. The purge affects whichever backend
+    is currently wired, so operators can run this against an
+    incognito session's in-memory log too (though it's less useful
+    because the in-memory log dies at CLI exit anyway).
+
+    Confirmation pattern: same typed ``purge`` gate as ``/memory clear``
+    — the user must type the literal word ``purge`` to proceed, not
+    ``y`` or ``purge-crisis`` or ``PURGE``. This is consistent with
+    the v0.9 destructive-command pattern and prevents muscle-memory
+    mistakes from wiping the audit trail.
+
+    Args:
+        runtime: Active persistent runtime. Reads the crisis log
+            backend via ``runtime.crisis_log_backend``.
+        session: Active CLI session. Not currently read — included
+            for signature symmetry with other destructive handlers
+            and because a future enhancement might scope the purge
+            to the session's owner_id (currently the crisis log is
+            not owner-scoped, matching the privacy design).
+        days: Retention window in days. Records with detected_date
+            older than ``today - days`` are deleted. Must be >= 1;
+            zero or negative values produce a warning without
+            touching the log.
+    """
+
+    if days < 1:
+        render_info(
+            f"Retention window must be at least 1 day (got {days}).",
+            style="warning",
+        )
+        return
+
+    crisis_log = runtime.crisis_log_backend
+    total_before = await crisis_log.arecord_count()
+
+    # Compute the cutoff as (today - days) in the runtime's timezone.
+    # We use UTC to match the crisis log records' ``detected_at``
+    # strings which are always stored with a Z suffix (UTC). Using
+    # the local timezone would create subtle boundary bugs when the
+    # operator is in a non-UTC zone and runs the purge near midnight.
+    today_utc = datetime.now(UTC).date()
+    cutoff = today_utc - timedelta(days=days)
+
+    if total_before == 0:
+        render_info(
+            "Crisis log is empty — nothing to purge.",
+            style="info",
+        )
+        return
+
+    # Warning panel: show the retention window, the cutoff date, and
+    # the total count the purge will scan against. We don't know the
+    # exact delete count yet (would require a pre-scan), but the
+    # total count gives the operator a sense of scale. Post-purge
+    # the success message reports the actual deleted count.
+    body = (
+        f"[warning]Retention window:[/warning] {days} day(s)\n"
+        f"[warning]Cutoff date:[/warning]       {cutoff.isoformat()} "
+        f"(records BEFORE this date will be deleted)\n"
+        f"[warning]Crisis log size:[/warning]   {total_before} record(s) total\n\n"
+        f"[danger]This cannot be undone.[/danger]\n"
+        f"[muted]Type [accent]purge[/accent] to proceed, or anything else "
+        f"to cancel.[/muted]"
+    )
+
+    console.print()
+    console.print(
+        Panel(
+            body,
+            title=(
+                f"[danger]Purge crisis log[/danger] [muted]— retention {days}d[/muted]"
+            ),
+            border_style="danger",
+            box=box.ROUNDED,
+        )
+    )
+    answer = Prompt.ask(
+        "[muted]Type the word to confirm[/muted]",
+        default="",
+        show_default=False,
+    )
+    if answer.strip() != "purge":
+        render_info(
+            "Cancelled — no crisis records purged.",
+            style="info",
+        )
+        return
+
+    # Confirmed. Run the purge and report the result.
+    try:
+        deleted = await crisis_log.apurge_before(cutoff)
+    except Exception as exc:
+        render_info(
+            f"Purge failed: {exc}",
+            style="danger",
+        )
+        return
+
+    remaining = total_before - deleted
+    render_info(
+        f"Purged {deleted} crisis record(s) older than {cutoff.isoformat()}. "
+        f"{remaining} record(s) remaining in the log.",
+        style="success",
+    )
+
+
 async def render_memory_list_rules(
     runtime: PersistentAgentRuntime,
     session: RunnerSession,
@@ -1269,12 +2394,9 @@ def render_help() -> None:
         "Show memory layer state (counts, mode, crisis log, recall toggle).",
     )
     table.add_row(
-        "/memory list",
-        "List every semantic fact and episodic arc stored for this thread.",
-    )
-    table.add_row(
-        "/memory list rules",
-        "List the procedural style rules the writer has recorded for this thread.",
+        "/memory list [facts|sessions|rules]",
+        "List semantic facts, episodic arcs, and/or procedural rules. "
+        "Without a subcommand, shows semantic + episodic together.",
     )
     table.add_row(
         "/memory recall on|off",
@@ -1282,8 +2404,19 @@ def render_help() -> None:
         "content in replies. Style rules are always applied regardless.",
     )
     table.add_row(
-        "/memory forget rule <n>",
-        "Delete one procedural rule by its 1-indexed position from /memory list rules.",
+        "/memory forget <fact|session|rule> <n>",
+        "Delete one record by its 1-indexed position from /memory list. "
+        "Shows a preview panel and asks for y/N confirmation.",
+    )
+    table.add_row(
+        "/memory clear <facts|sessions|rules|all>",
+        "Wipe an entire namespace for the active user. Unrecoverable. "
+        "Requires typing the word 'clear' to confirm (stronger than y/N).",
+    )
+    table.add_row(
+        "/memory purge-crisis [days]",
+        "Delete crisis log records older than the retention window. "
+        "Default 90 days. Requires typing 'purge' to confirm.",
     )
     table.add_row("/threads [n]", "List persisted thread ids. Default: 12.")
     table.add_row("/resume <thread-id>", "Switch to an existing persisted thread.")
@@ -1295,6 +2428,10 @@ def render_help() -> None:
     table.add_row(
         "/mode <deterministic|hybrid|auto>",
         "Switch LLM resolution mode for future turns.",
+    )
+    table.add_row(
+        "/debug state",
+        "Dump the raw graph state for the active thread (verbose diagnostics).",
     )
     table.add_row(
         "/end",
@@ -1357,6 +2494,14 @@ def render_status(session: RunnerSession) -> None:
 def render_history(session: RunnerSession, limit: int = 6) -> None:
     """Render the most recent transcript entries.
 
+    v0.8 observability pass: the table now includes a ``mode`` column
+    populated from ``Message.mode``, which ``run_finalize_turn_node``
+    stamps on assistant turns. User turns show ``-`` in the mode
+    column. When rendering a transcript from an older checkpoint
+    (where assistant turns predate the mode field), every assistant
+    cell falls back to ``-`` — gracefully hiding the fact that the
+    data wasn't captured at that time rather than raising.
+
     Args:
         session: Mutable CLI session state.
         limit: Maximum number of recent messages to display.
@@ -1380,10 +2525,12 @@ def render_history(session: RunnerSession, limit: int = 6) -> None:
     recent = session.history[-max(1, limit) :]
     table = Table(show_header=True, header_style="primary", box=box.SIMPLE_HEAVY)
     table.add_column("role", style="accent", no_wrap=True)
+    table.add_column("mode", style="muted", no_wrap=True)
     table.add_column("content", style="info")
     for message in recent:
         role = message.role.value
-        table.add_row(role, message.content)
+        mode_display = message.mode if message.mode else "-"
+        table.add_row(role, mode_display, message.content)
     console.print(
         Panel(
             table,
@@ -1608,18 +2755,44 @@ async def handle_command(
 
     if command == "/memory":
         # v0.3.1 added /memory status and /memory list.
-        # v0.7 adds /memory list rules, /memory recall on|off, and
+        # v0.7 added /memory list rules, /memory recall on|off, and
         # /memory forget rule <n>.
-        # Full /memory forget/clear suite for semantic + episodic is
-        # still scoped to v0.9.
+        # v0.9 adds /memory list facts|sessions subcommands,
+        # /memory forget fact|session <n>, and /memory clear <kind>.
         if len(args) == 0 or args[0] == "status":
             await render_memory_status(runtime, session)
             return True
         if args[0] == "list":
-            # /memory list               — semantic + episodic
-            # /memory list rules         — procedural rules for this thread
+            # /memory list                   — semantic + episodic (current)
+            # /memory list facts             — semantic only (v0.9)
+            # /memory list sessions          — episodic only (v0.9)
+            # /memory list rules             — procedural rules (v0.7)
             if len(args) >= 2 and args[1] == "rules":
                 await render_memory_list_rules(runtime, session)
+                return True
+            if len(args) >= 2 and args[1] == "facts":
+                # Render just the semantic table. Reuses the existing
+                # helper to avoid duplicating the table rendering
+                # logic across the list / list facts paths.
+                semantic_records = await _collect_records_by_kind(
+                    runtime, kind="semantic"
+                )
+                if not semantic_records:
+                    _render_memory_list_empty_state()
+                    return True
+                _render_semantic_records_table(semantic_records)
+                console.print()
+                return True
+            if len(args) >= 2 and args[1] == "sessions":
+                # Render just the episodic table.
+                episodic_records = await _collect_records_by_kind(
+                    runtime, kind="episodic"
+                )
+                if not episodic_records:
+                    _render_memory_list_empty_state()
+                    return True
+                _render_episodic_records_table(episodic_records)
+                console.print()
                 return True
             await render_memory_list(runtime)
             return True
@@ -1638,10 +2811,9 @@ async def handle_command(
             )
             return True
         if args[0] == "forget":
-            # /memory forget rule <n> — delete one procedural rule
-            # by its 1-indexed position. Prompts for y/n confirmation.
-            # /memory forget fact|session — v0.9 scope; show a
-            # helpful "not yet" message rather than a generic error.
+            # /memory forget rule <n>    — delete one procedural rule (v0.7)
+            # /memory forget fact <n>    — delete one semantic fact (v0.9)
+            # /memory forget session <n> — delete one episodic arc (v0.9)
             if len(args) >= 2 and args[1] == "rule":
                 if len(args) < 3:
                     render_info(
@@ -1651,22 +2823,68 @@ async def handle_command(
                     return True
                 await render_memory_forget_rule(runtime, session, index_str=args[2])
                 return True
-            if len(args) >= 2 and args[1] in ("fact", "session"):
-                render_info(
-                    f"/memory forget {args[1]} is not yet available "
-                    "(scoped to v0.9). Rules can be deleted with "
-                    "/memory forget rule <n>.",
-                    style="warning",
-                )
+            if len(args) >= 2 and args[1] == "fact":
+                if len(args) < 3:
+                    render_info(
+                        "Usage: /memory forget fact <n>",
+                        style="warning",
+                    )
+                    return True
+                await render_memory_forget_fact(runtime, session, index_str=args[2])
+                return True
+            if len(args) >= 2 and args[1] == "session":
+                if len(args) < 3:
+                    render_info(
+                        "Usage: /memory forget session <n>",
+                        style="warning",
+                    )
+                    return True
+                await render_memory_forget_session(runtime, session, index_str=args[2])
                 return True
             render_info(
-                "Usage: /memory forget rule <n>",
+                "Usage: /memory forget <fact|session|rule> <n>",
                 style="warning",
             )
             return True
+        if args[0] == "clear":
+            # /memory clear <facts|sessions|rules|all> — v0.9 nuclear option.
+            # Stronger confirmation than forget: user must type the
+            # literal word ``clear`` to proceed. See render_memory_clear
+            # for the full contract.
+            if len(args) < 2:
+                render_info(
+                    "Usage: /memory clear <facts|sessions|rules|all>",
+                    style="warning",
+                )
+                return True
+            await render_memory_clear(runtime, session, kind=args[1])
+            return True
+        if args[0] == "purge-crisis":
+            # /memory purge-crisis [days] — v0.8.1 retention operation.
+            # Deletes crisis log records older than the retention
+            # window. Default is 90 days (DEFAULT_CRISIS_RETENTION_DAYS)
+            # to match the policy in schema.yaml §2. Operators can
+            # override per-call, e.g., ``/memory purge-crisis 30`` for
+            # a tighter sweep. Requires typed ``purge`` confirmation,
+            # same UX pattern as /memory clear.
+            days = DEFAULT_CRISIS_RETENTION_DAYS
+            if len(args) >= 2:
+                try:
+                    days = int(args[1])
+                except ValueError:
+                    render_info(
+                        f"Usage: /memory purge-crisis [days]  "
+                        f"(got: {args[1]!r}, expected an integer)",
+                        style="warning",
+                    )
+                    return True
+            await render_memory_purge_crisis(runtime, session, days=days)
+            return True
         render_info(
-            "Unknown /memory subcommand. Available in v0.7: "
-            "status, list, list rules, recall on|off, forget rule <n>",
+            "Unknown /memory subcommand. Available in v0.9: "
+            "status, list [facts|sessions|rules], recall on|off, "
+            "forget <fact|session|rule> <n>, clear <facts|sessions|rules|all>, "
+            "purge-crisis [days]",
             style="warning",
         )
         return True
@@ -1802,6 +3020,23 @@ async def handle_command(
         )
         return True
 
+    if command == "/debug":
+        # v0.8 observability pass: ``/debug state`` dumps the raw
+        # state dict for the active thread. This is intentionally
+        # verbose — it's the "everything the graph is carrying
+        # forward" view for when the Session Context panel isn't
+        # enough (e.g., when inspecting raw ``routing.semantic_signals``
+        # or ``diagnostics`` contents). Future subcommands (e.g.,
+        # ``/debug history``, ``/debug raw crisis``) can chain here.
+        if len(args) == 0 or args[0] != "state":
+            render_info(
+                "Usage: /debug state  (dumps raw graph state for the active thread)",
+                style="warning",
+            )
+            return True
+        await _render_debug_state(runtime, session)
+        return True
+
     render_info(f"Unknown command: {command}. Try /help.", style="warning")
     return True
 
@@ -1903,16 +3138,18 @@ async def chat_loop(
             accumulated_text = ""
             final_output = None
 
-            _STAGE_LABELS = {
-                "load_memory": "loading memory",
-                "memory_profile_load": "loading profile memory",
-                "memory_graph_load": "querying graph memory",
-                "memory_profile_save": "saving profile memory",
-                "memory_graph_save": "writing graph memory",
-                "crisis_gate": "safety check",
-                "session_stage": "reading context",
-                "response_generation": "generating",
-            }
+            # v0.8 observability: snapshot the per-namespace store
+            # counts before the turn runs, then again after, so we can
+            # compute the Δ for the stage timings panel. This is the
+            # "what actually landed in storage" counterpart to the
+            # extractor nodes' self-reported write counts — the two
+            # values disagree when dedup swallows a candidate, and
+            # showing both makes that observable. When the CLI's
+            # store path is unavailable (tests, guest mode), we fall
+            # back to an empty dict and the panel just shows ``-``.
+            pre_counts = await _snapshot_namespace_counts(
+                runtime, owner_id=session.owner_id()
+            )
 
             with Live(console=console, refresh_per_second=15) as live:
                 async for event in runtime.run_turn_stream(
@@ -1958,6 +3195,14 @@ async def chat_loop(
                             )
                         )
 
+            post_counts = await _snapshot_namespace_counts(
+                runtime, owner_id=session.owner_id()
+            )
+            memory_deltas = {
+                kind: post_counts.get(kind, 0) - pre_counts.get(kind, 0)
+                for kind in ("semantic", "episodic", "procedural")
+            }
+
             if final_output is not None:
                 # If no chunks were streamed (deterministic path), the final
                 # panel was set in the DoneEvent handler above. For the
@@ -1976,6 +3221,8 @@ async def chat_loop(
                     needs_clarification=final_output.crisis.needs_clarification,
                     needs_crisis_response=final_output.crisis.needs_crisis_response,
                     reason=final_output.crisis.reason,
+                    diagnostics=final_output.diagnostics,
+                    memory_deltas=memory_deltas,
                 )
 
             # Refresh session state from the persisted checkpoint.

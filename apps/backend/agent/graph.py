@@ -133,6 +133,13 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
             "text": "",
             "should_persist_memory": False,
         },
+        # v0.8 observability: start each turn with a fresh, empty
+        # diagnostics dict that nodes can write timings and write-
+        # counts into. Explicitly seeded (rather than left absent)
+        # so node code can use ``state["diagnostics"][key] = value``
+        # without a ``setdefault`` or KeyError check — the dict is
+        # always present during a real graph invocation.
+        diagnostics={},
     )
     return state
 
@@ -151,6 +158,11 @@ def state_to_output(state: AgentState) -> AgentOutput:
         mode_type=routing_state.get("mode_type"),
         mode_source=routing_state.get("mode_source"),
         should_persist_memory=response_state.get("should_persist_memory", False),
+        # v0.8 observability: pass the per-turn diagnostics dict
+        # through to the CLI / API caller. Empty dict when no node
+        # wrote anything (e.g., pre-observability-instrumentation
+        # tests that construct state manually).
+        diagnostics=dict(state.get("diagnostics", {})),
     )
 
 

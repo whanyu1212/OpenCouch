@@ -267,7 +267,7 @@ class TestExtractFactsNodeUnit:
 
     @pytest.mark.asyncio
     async def test_no_llm_client_skips_silently(self) -> None:
-        """Without an LLM client, the node returns {} with no side effects."""
+        """Without an LLM client, the node returns diagnostics-only with no side effects."""
 
         store = OpenCouchMemoryStore()
         runtime = _MockRuntime(llm_client=None, memory_store=store)
@@ -275,7 +275,19 @@ class TestExtractFactsNodeUnit:
 
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        # v0.8 observability: node now returns a diagnostics delta on
+        # every path (empty dict contract replaced with "empty facts,
+        # populated diagnostics"). The skip reason records the early
+        # exit path so downstream dashboards can distinguish "no LLM"
+        # from "LLM returned empty" from "LLM errored".
+        assert delta == {
+            "diagnostics": {
+                "extract_facts_ms": pytest.approx(0.0, abs=50.0),
+                "semantic_writes": 0,
+                "semantic_bumps": 0,
+                "extract_facts_reason": "skipped: no llm_client",
+            }
+        }
         assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
@@ -298,7 +310,8 @@ class TestExtractFactsNodeUnit:
 
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["extract_facts_reason"] == "skipped: incognito"
         assert await store.arecord_count() == 0
         # LLM should NOT have been called (the early exit fires before it)
         assert fake.extraction_calls == 0
@@ -319,7 +332,15 @@ class TestExtractFactsNodeUnit:
 
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        # v0.8: empty facts path still records the LLM's reason in the
+        # diagnostics so dashboards can see why the extractor skipped
+        # a turn — the reason comes straight from the LLM, not a hard-
+        # coded string, so we pass the fake's reason through.
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert (
+            delta["diagnostics"]["extract_facts_reason"]
+            == "small talk, nothing to extract"
+        )
         assert fake.extraction_calls == 1
         assert await store.arecord_count() == 0
 
@@ -481,7 +502,8 @@ class TestExtractFactsNodeUnit:
         with caplog.at_level(logging.WARNING, logger="agent.nodes.extract_facts"):
             delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["extract_facts_reason"] == "skipped: llm error"
         assert await store.arecord_count() == 0
         assert any("structured-output call failed" in r.message for r in caplog.records)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, Literal
 
 from langgraph.runtime import Runtime
@@ -340,13 +341,15 @@ def _build_crisis_delta(
     override_kind: Literal["imminent_risk", "idiomatic_safe", "none"],
     classifier_path: Literal["deterministic", "llm_fallback", "override"],
     llm_failure_occurred: bool,
+    duration_ms: float,
 ) -> dict[str, Any]:
     """Build the state-delta dict for one crisis-gate decision.
 
     Returns only the keys the gate updated: ``crisis``, ``routing`` (with
     the crisis debug-metadata fields so ``crisis_log_node`` can record an
-    accurate audit trail), and the crisis-tagged ``response.kind`` so
-    downstream nodes can rely on the response slot already being marked.
+    accurate audit trail), the crisis-tagged ``response.kind`` so
+    downstream nodes can rely on the response slot already being marked,
+    and a ``diagnostics`` entry with this turn's crisis-gate timing.
 
     The three debug-metadata kwargs are required (not defaulted) so each
     call site in :func:`run_crisis_gate_node` has to think explicitly
@@ -379,6 +382,15 @@ def _build_crisis_delta(
             **response,
             "kind": ResponseKind.CRISIS if route == "crisis" else response.get("kind"),
         },
+        # v0.8 observability: per-stage timing for the crisis gate.
+        # The CLI renders this alongside load_memory_ms and the
+        # other stage timings in the post-turn diagnostics panel.
+        "diagnostics": {
+            **state.get("diagnostics", {}),
+            "crisis_gate_ms": round(duration_ms, 2),
+            "crisis_classifier_path": classifier_path,
+            "crisis_level": assessment.level,
+        },
     }
 
 
@@ -396,6 +408,11 @@ async def run_crisis_gate_node(
     """
 
     llm_client = runtime.context.get("llm_client")
+
+    # v0.8 observability: time the whole gate call so the CLI can
+    # render it in the post-turn diagnostics panel. The timer covers
+    # both the regex ladder and the LLM fallback path.
+    gate_start = time.monotonic()
 
     # Debug metadata tracked across the decision tree. Every path below
     # MUST set all three before reaching _build_crisis_delta so the
@@ -442,12 +459,14 @@ async def run_crisis_gate_node(
             classifier_path = "deterministic"
             assessment = normalize_crisis_assessment(deterministic)
 
+    gate_duration_ms = (time.monotonic() - gate_start) * 1000
     delta = _build_crisis_delta(
         state,
         assessment,
         override_kind=override_kind,
         classifier_path=classifier_path,
         llm_failure_occurred=llm_failure_occurred,
+        duration_ms=gate_duration_ms,
     )
     next_node = (
         "crisis_response_node"

@@ -71,9 +71,21 @@ async def run_finalize_turn_node(
         # to write a blank assistant turn that the CLI would render.
         return {}
 
+    # v0.8 observability pass: stamp the routing mode onto the assistant
+    # turn dict so it round-trips through the checkpoint and surfaces
+    # in the CLI's /history panel. The mode string comes straight from
+    # ``state["routing"]["mode"]`` — whichever response node composed
+    # this reply set that field as part of its own delta. Falls back
+    # to ``None`` when routing hasn't resolved (edge cases: crisis
+    # short-circuit paths that never wrote the key, historical state
+    # predating this field). Persistence._messages_from_transcript
+    # reads the same key on load.
+    routing_mode = state.get("routing", {}).get("mode") or None
+
     assistant_turn = {
         "role": MessageRole.ASSISTANT.value,
         "content": response_text,
+        "mode": routing_mode,
     }
 
     current_transcript = list(state.get("transcript", []))

@@ -360,7 +360,120 @@ def test_satisfies_crisis_log_backend_protocol() -> None:
     assert hasattr(backend, "aappend")
     assert hasattr(backend, "alist_by_date")
     assert hasattr(backend, "arecord_count")
+    assert hasattr(backend, "apurge_before")
     assert hasattr(backend, "aclose")
     # And the module-level type assertion in sqlite_crisis_log.py
     # serves the same purpose at import time.
     _: type[CrisisLogBackend] = SqliteCrisisLogBackend
+
+
+# ─── v0.8.1 retention purge ────────────────────────────────────────────
+#
+# Symmetric tests for ``InMemoryCrisisLogBackend.apurge_before`` live in
+# ``test_crisis_log.py::TestInMemoryCrisisLogRetentionPurge``. The two
+# suites must behave identically — both backends satisfy the same
+# protocol and the CLI command path is polymorphic across them.
+
+
+@pytest.mark.asyncio
+async def test_purge_before_deletes_only_records_before_cutoff() -> None:
+    """Records strictly older than the cutoff are deleted; cutoff-day
+    records are preserved. Exclusive boundary."""
+
+    backend = SqliteCrisisLogBackend(":memory:")
+    await backend.aappend(
+        _crisis_record(record_id="old", detected_at="2025-12-01T10:00:00Z")
+    )
+    await backend.aappend(
+        _crisis_record(record_id="on_cutoff", detected_at="2026-04-01T10:00:00Z")
+    )
+    await backend.aappend(
+        _crisis_record(record_id="recent", detected_at="2026-04-12T10:00:00Z")
+    )
+
+    deleted = await backend.apurge_before(date(2026, 4, 1))
+    assert deleted == 1
+    assert await backend.arecord_count() == 2
+
+    on_cutoff_bucket = await backend.alist_by_date(date(2026, 4, 1))
+    assert len(on_cutoff_bucket) == 1
+    assert on_cutoff_bucket[0].id == "on_cutoff"
+
+    recent_bucket = await backend.alist_by_date(date(2026, 4, 12))
+    assert len(recent_bucket) == 1
+    assert recent_bucket[0].id == "recent"
+
+    old_bucket = await backend.alist_by_date(date(2025, 12, 1))
+    assert len(old_bucket) == 0
+
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_purge_before_is_idempotent() -> None:
+    """Running the same purge twice is a safe no-op on the second call."""
+
+    backend = SqliteCrisisLogBackend(":memory:")
+    await backend.aappend(
+        _crisis_record(record_id="old", detected_at="2025-12-01T10:00:00Z")
+    )
+    await backend.aappend(
+        _crisis_record(record_id="recent", detected_at="2026-04-12T10:00:00Z")
+    )
+
+    first = await backend.apurge_before(date(2026, 4, 1))
+    second = await backend.apurge_before(date(2026, 4, 1))
+    assert first == 1
+    assert second == 0
+    assert await backend.arecord_count() == 1
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_purge_before_on_empty_backend_returns_zero() -> None:
+    """Purging an empty backend returns 0 without raising."""
+
+    backend = SqliteCrisisLogBackend(":memory:")
+    deleted = await backend.apurge_before(date(2026, 4, 1))
+    assert deleted == 0
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_purge_before_on_closed_backend_returns_zero() -> None:
+    """Closed backends return 0 without reopening the connection —
+    matches the closed-safe contract of arecord_count."""
+
+    backend = SqliteCrisisLogBackend(":memory:")
+    await backend.aclose()
+    deleted = await backend.apurge_before(date(2026, 4, 1))
+    assert deleted == 0
+
+
+@pytest.mark.asyncio
+async def test_purge_before_persists_across_reopen(tmp_path) -> None:
+    """The purge's effect survives a close/reopen cycle. This is the
+    SQLite-specific durability pin — the in-memory backend's test
+    suite can't exercise this path."""
+
+    db_path = tmp_path / "purge_test.sqlite3"
+    backend = SqliteCrisisLogBackend(str(db_path))
+    await backend.aappend(
+        _crisis_record(record_id="old", detected_at="2025-12-01T10:00:00Z")
+    )
+    await backend.aappend(
+        _crisis_record(record_id="recent", detected_at="2026-04-12T10:00:00Z")
+    )
+    deleted = await backend.apurge_before(date(2026, 4, 1))
+    assert deleted == 1
+    await backend.aclose()
+
+    # Reopen and verify the purge stuck.
+    backend2 = SqliteCrisisLogBackend(str(db_path))
+    assert await backend2.arecord_count() == 1
+    recent_bucket = await backend2.alist_by_date(date(2026, 4, 12))
+    assert len(recent_bucket) == 1
+    assert recent_bucket[0].id == "recent"
+    old_bucket = await backend2.alist_by_date(date(2025, 12, 1))
+    assert len(old_bucket) == 0
+    await backend2.aclose()

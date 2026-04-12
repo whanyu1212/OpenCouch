@@ -11,21 +11,30 @@ and the legal-review caveat on the 90-day retention default.
 
 Phase 1 v0.8 scope:
 - :class:`CrisisLogBackend` protocol that any backend must implement
-  (append, list by date, arecord_count, aclose).
+  (append, list by date, arecord_count, apurge_before, aclose).
 - :class:`InMemoryCrisisLogBackend` — original v0.1 implementation.
   Dict-backed, ephemeral, fast. Used for tests and incognito-mode
   CLI sessions where crisis events shouldn't persist to disk.
 - :class:`agent.memory.sqlite_crisis_log.SqliteCrisisLogBackend`
   (v0.8) — aiosqlite-backed, durable across process restarts. Used
   by persistent-mode CLI sessions so the crisis log survives CLI
-  exits. The 90-day retention policy will be enforced by a
-  background-job cleanup path in a later release (schema includes
-  the columns needed; enforcement is deferred).
+  exits.
+
+v0.8.1 adds :meth:`CrisisLogBackend.apurge_before` to enforce the
+90-day retention policy documented in schema.yaml §2. The purge
+is exposed to the CLI via ``/memory purge-crisis [days]`` with a
+typed ``purge`` confirmation to prevent accidental audit-trail
+deletion — matching the v0.9 ``/memory clear`` UX pattern for
+destructive operations. The append-only contract still holds
+from the **agent's** perspective: graph nodes never delete crisis
+records, only the operator-triggered purge command does.
 
 Design decisions:
-- The backend is **append-only from the agent's perspective**. There is
-  no ``delete`` or ``update`` method. Retention purging is a
-  background-job concern, not a public method on the backend.
+- The backend is **append-only from the agent's perspective**. Graph
+  nodes never delete crisis records. The v0.8.1
+  :meth:`apurge_before` method is a retention operation invoked by
+  the operator (via the CLI) or by a future scheduled cleanup job,
+  not by the agent runtime during normal turn processing.
 - Records are stored using the :class:`CrisisLogRecord` pydantic model
   from :mod:`agent.memory.models`. The backend accepts model instances
   and returns them — no serialization gymnastics at the interface.
@@ -38,6 +47,11 @@ Design decisions:
   shares a single aiosqlite connection across its async methods,
   and a sync helper would either open a second connection (breaking
   ``:memory:`` databases) or require separate caching machinery.
+- ``apurge_before`` is part of the protocol as of v0.8.1. All three
+  concrete backends implement it. ``NullCrisisLogBackend`` returns
+  0 without touching any state; the in-memory backend drops expired
+  date buckets; the SQLite backend runs a single DELETE with a
+  ``detected_date < ?`` predicate that uses the existing date index.
 """
 
 from __future__ import annotations
@@ -89,6 +103,29 @@ class CrisisLogBackend(Protocol):
         its async methods, and a sync helper would either open a
         second connection (breaking ``:memory:`` databases) or require
         separate caching.
+        """
+        ...
+
+    async def apurge_before(self, cutoff: date) -> int:
+        """Delete all records with ``detected_date < cutoff``.
+
+        v0.8.1 retention-purge interface. Implementations MUST NOT
+        delete records where ``detected_date == cutoff`` — the
+        boundary is exclusive so a caller asking "delete everything
+        older than today" doesn't accidentally lose today's events.
+
+        Returns the number of records deleted. Returns 0 if nothing
+        matched, the backend is empty, or the backend is closed. The
+        count lets the CLI confirm to the operator what the purge
+        actually did, which matters because destructive operations
+        on the safety audit trail need to be observable.
+
+        Not invoked by any graph node. The agent's append-only
+        contract still holds for normal turn processing — this
+        method is a retention operation called by the CLI (via
+        ``/memory purge-crisis``) or by a future scheduled cleanup
+        job. See schema.yaml §2 namespaces.crisis_log retention
+        for the 90-day default and legal-review caveat.
         """
         ...
 
@@ -166,6 +203,29 @@ class InMemoryCrisisLogBackend:
             return 0
         return sum(len(records) for records in self._records_by_date.values())
 
+    async def apurge_before(self, cutoff: date) -> int:
+        """Delete all in-memory date buckets older than ``cutoff``.
+
+        v0.8.1: scans the per-date dict, removes every bucket whose
+        date is strictly less than ``cutoff``, and returns the total
+        number of records removed. The boundary is exclusive — the
+        cutoff date itself is preserved — so "purge before today"
+        doesn't drop today's records.
+
+        Closed backends return 0 without touching any state, matching
+        the other methods' closed-safe contract.
+        """
+
+        if self._closed:
+            return 0
+
+        stale_dates = [day for day in self._records_by_date.keys() if day < cutoff]
+        deleted = 0
+        for day in stale_dates:
+            deleted += len(self._records_by_date[day])
+            del self._records_by_date[day]
+        return deleted
+
 
 class NullCrisisLogBackend:
     """No-op crisis log backend.
@@ -193,5 +253,10 @@ class NullCrisisLogBackend:
 
     async def arecord_count(self) -> int:
         """Always zero."""
+
+        return 0
+
+    async def apurge_before(self, cutoff: date) -> int:  # noqa: ARG002 — contract
+        """No-op: the null backend has nothing to purge."""
 
         return 0

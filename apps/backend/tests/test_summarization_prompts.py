@@ -114,6 +114,24 @@ class TestSummarizationSystemPrompt:
         # "1-3" or similar phrasing should appear in the themes section
         assert "1-3" in prompt or "three" in prompt.lower()
 
+    def test_system_prompt_pins_language_consistency_rule(self) -> None:
+        """Regression guard against the v0.8 dogfood finding where the
+        summarizer dropped an Armenian-script word ('ծանր', heavy) into
+        a mood_arc string rendered in English. The rule: every text field
+        the summarizer produces must be in the same language as the
+        transcript. Mixed-language output looks like a glitch to the user
+        reading the catch-up entry days later, and there's no downstream
+        filter that repairs it.
+
+        We pin two substrings so a future prompt refactor can't silently
+        drop the language rule: the section header and the explicit "same
+        language" phrase. Both must survive for the rule to be load-bearing.
+        """
+
+        prompt = build_summarization_system_prompt()
+        assert "Language" in prompt
+        assert "same language" in prompt.lower()
+
 
 # ─── User prompt ──────────────────────────────────────────────────────
 

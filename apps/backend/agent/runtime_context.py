@@ -9,9 +9,10 @@ without creating an import cycle.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from agent.memory.crisis_log import CrisisLogBackend
+from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from services.llm.base import BaseLLMClient
@@ -34,3 +35,13 @@ class WorkflowContext(TypedDict):
     # asymmetry rationale.
     crisis_log_backend: CrisisLogBackend
     memory_mode: MemoryMode
+    # v0.8.1: embedding provider for hybrid retrieval. When set,
+    # the extractor nodes compute embeddings at write time and
+    # the load_memory node computes query embeddings for the
+    # RRF fusion path in the store's ``asearch_similar`` method.
+    # When None or :class:`NullEmbeddingProvider`, retrieval
+    # degrades to token-recall only — the v0.3.1 contract that
+    # shipped before v0.8.1. NotRequired so existing tests that
+    # construct a WorkflowContext dict without an embedding
+    # provider still typecheck cleanly.
+    embedding_provider: NotRequired[EmbeddingProvider | None]

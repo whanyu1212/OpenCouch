@@ -35,6 +35,7 @@ v0.3 design rules (locked via the v0.3 scoping discussion):
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -123,12 +124,23 @@ async def _write_new_fact(
     *,
     owner_id: str,
     fact: SemanticFact,
+    embedding: list[float] | None = None,
+    embedding_model: str | None = None,
 ) -> None:
     """Persist a freshly-extracted SemanticFact to the store.
 
     Separated from the main node body so the error-handling scope is
     tight around the single store call. A failure here is logged but
     never raised to the caller.
+
+    v0.8.1: accepts optional ``embedding`` and ``embedding_model``
+    kwargs matching the :class:`MemoryStore.aput` extension. When
+    provided, the embedding is stored alongside the record so the
+    read path can use it for hybrid retrieval via
+    :meth:`MemoryStore.asearch_similar`. When not provided (guest
+    mode, null embedding provider, or embedding computation failed),
+    the record is still written via the token-recall path only —
+    graceful degradation preserved.
     """
 
     namespace = (owner_id, "semantic")
@@ -136,6 +148,8 @@ async def _write_new_fact(
         namespace,
         key=fact.id,
         value=fact.model_dump(mode="json"),
+        embedding=embedding,
+        embedding_model=embedding_model,
     )
 
 
@@ -167,8 +181,9 @@ async def run_extract_semantic_facts_node(
     """Extract and persist zero or more semantic facts from the current turn.
 
     Runs after the response generation node on both the crisis and
-    therapeutic branches. Returns an empty state delta; the write is
-    a side effect on the memory store.
+    therapeutic branches. Returns a state delta whose only meaningful
+    content is the per-turn diagnostics entry (timing + write
+    counts). The actual memory writes are side effects on the store.
 
     Silently skips when the runtime lacks an LLM client or is in
     incognito mode. All other failure modes (LLM errors, schema
@@ -176,21 +191,52 @@ async def run_extract_semantic_facts_node(
     with ``exc_info=True`` but never propagate.
     """
 
+    # v0.8 observability: time the full extraction call and report
+    # write counts via the diagnostics dict. Every return path below
+    # composes its delta via ``_diagnostics_delta`` so skipped turns
+    # are still distinguishable from turns where the node never ran.
+    start = time.monotonic()
+
+    def _diagnostics_delta(
+        *,
+        semantic_writes: int = 0,
+        semantic_bumps: int = 0,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Return a state delta carrying just the extractor's diagnostics."""
+
+        return {
+            "diagnostics": {
+                **state.get("diagnostics", {}),
+                "extract_facts_ms": round((time.monotonic() - start) * 1000, 2),
+                "semantic_writes": semantic_writes,
+                "semantic_bumps": semantic_bumps,
+                "extract_facts_reason": reason,
+            }
+        }
+
     # ── Early exits ─────────────────────────────────────────────────────
     llm_client = runtime.context.get("llm_client")
     memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
 
     if llm_client is None:
         logger.debug("extract_semantic_facts_node: no llm_client; skipping")
-        return {}
+        return _diagnostics_delta(reason="skipped: no llm_client")
     if memory_mode == MemoryMode.INCOGNITO:
         logger.debug(
             "extract_semantic_facts_node: incognito mode; skipping (no writes to "
             "persistent memory in incognito)"
         )
-        return {}
+        return _diagnostics_delta(reason="skipped: incognito")
 
     store = runtime.context["memory_store"]
+    # v0.8.1: embedding provider is optional in the context
+    # (NotRequired in WorkflowContext). When absent or when the
+    # runtime wires a NullEmbeddingProvider, the extractor writes
+    # records without embeddings and the store's hybrid retrieval
+    # degrades to token-recall for those rows. No error path —
+    # embeddings are a quality boost, not a correctness requirement.
+    embedding_provider = runtime.context.get("embedding_provider")
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
     # Turn index is 0-based; state["progress"]["turn_count"] counts user
@@ -213,7 +259,7 @@ async def run_extract_semantic_facts_node(
             "skipping extraction for this turn.",
             exc_info=True,
         )
-        return {}
+        return _diagnostics_delta(reason="skipped: llm error")
 
     # Log the extraction reason regardless of whether facts were produced —
     # it's a free observability signal for prompt tuning. INFO level (not
@@ -228,7 +274,7 @@ async def run_extract_semantic_facts_node(
     )
 
     if not extraction.facts:
-        return {}
+        return _diagnostics_delta(reason=extraction.reason)
 
     # ── Fetch existing records once for dedup ──────────────────────────
     try:
@@ -239,12 +285,64 @@ async def run_extract_semantic_facts_node(
             "dedup; skipping all candidates for this turn.",
             exc_info=True,
         )
-        return {}
+        return _diagnostics_delta(reason="skipped: dedup fetch failed")
+
+    # ── Batch-compute embeddings for all candidates (v0.8.1) ───────────
+    #
+    # Embedding computation happens ONCE per turn in a single batch
+    # call, even though dedup may later reject some candidates. The
+    # alternative (compute after dedup, per surviving candidate) would
+    # add per-candidate network round-trips in the common case of
+    # 1-2 surviving facts — a single batch is simpler and cheaper
+    # even with the wasted work on dedup rejects.
+    #
+    # We embed the evidence quote as the canonical representation of
+    # the fact. This matches what the store's haystack looks like at
+    # retrieval time: the retrieval query is a user message, and the
+    # most retrieval-relevant field of a stored fact is the evidence
+    # quote (the user's own words). Embedding the triple instead
+    # (subject/predicate/object) would make the embedding less
+    # comparable to natural-language queries. Dogfood can revisit
+    # this if the eval harness shows the quote-only choice is wrong.
+    #
+    # The ``task_type="RETRIEVAL_DOCUMENT"`` hint tells Gemini this
+    # is a document-side embedding (will be matched against query-
+    # side embeddings later in load_memory_node). Matters for
+    # asymmetric retrieval models; ignored by providers that don't
+    # support task types.
+    candidate_embeddings: list[list[float] | None] = [None] * len(extraction.facts)
+    embedding_model_name: str | None = None
+    if embedding_provider is not None:
+        try:
+            quotes = [c.evidence_quote for c in extraction.facts]
+            candidate_embeddings = await embedding_provider.aembed(
+                quotes,
+                task_type="RETRIEVAL_DOCUMENT",
+            )
+            embedding_model_name = embedding_provider.model_name
+            # NullEmbeddingProvider returns all-None; treat that as
+            # "no embeddings available" so downstream writes don't
+            # attach a bogus model name to NULL embeddings.
+            if all(e is None for e in candidate_embeddings):
+                embedding_model_name = None
+        except Exception:
+            # Embedding failures should never poison the write path —
+            # fall back to all-None which means "write without
+            # embeddings, token-recall still works." Logged so dogfood
+            # can observe embedding-provider health without having to
+            # tail a different log stream.
+            logger.warning(
+                "extract_semantic_facts_node: embedding batch failed; "
+                "writing facts without embeddings for this turn.",
+                exc_info=True,
+            )
+            candidate_embeddings = [None] * len(extraction.facts)
+            embedding_model_name = None
 
     # ── Per-candidate dedup + write ─────────────────────────────────────
     written = 0
     bumped = 0
-    for candidate in extraction.facts:
+    for candidate_index, candidate in enumerate(extraction.facts):
         try:
             matched = find_near_duplicate(candidate, existing_records)
         except Exception:
@@ -273,7 +371,22 @@ async def run_extract_semantic_facts_node(
         # No duplicate: materialize as SemanticFact and write.
         try:
             fact = _memory_write_to_semantic_fact(candidate)
-            await _write_new_fact(store, owner_id=owner_id, fact=fact)
+            # v0.8.1: pair the fact with the embedding computed in
+            # the batch above. ``candidate_embeddings[i]`` is None
+            # when no embedding provider is configured, when the
+            # provider returned None for this specific candidate,
+            # or when the batch call failed — all three cases are
+            # handled the same way at the store layer (NULL embedding,
+            # token-recall only).
+            this_embedding = candidate_embeddings[candidate_index]
+            this_model = embedding_model_name if this_embedding is not None else None
+            await _write_new_fact(
+                store,
+                owner_id=owner_id,
+                fact=fact,
+                embedding=this_embedding,
+                embedding_model=this_model,
+            )
             written += 1
             # Include the newly-written fact in the existing_records view so
             # subsequent candidates in the same extraction batch can dedup
@@ -286,6 +399,8 @@ async def run_extract_semantic_facts_node(
                     namespace=(owner_id, "semantic"),
                     key=fact.id,
                     value=fact.model_dump(mode="json"),
+                    embedding=this_embedding,
+                    embedding_model=this_model,
                 )
             )
         except Exception:
@@ -303,4 +418,8 @@ async def run_extract_semantic_facts_node(
         bumped,
         len(extraction.facts),
     )
-    return {}
+    return _diagnostics_delta(
+        semantic_writes=written,
+        semantic_bumps=bumped,
+        reason=extraction.reason,
+    )

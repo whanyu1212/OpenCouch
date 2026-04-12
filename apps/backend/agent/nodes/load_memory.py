@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langgraph.runtime import Runtime
 
@@ -73,6 +73,9 @@ from agent.memory.text_tokens import tokenize_meaningful
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
+if TYPE_CHECKING:
+    from agent.memory.embeddings import EmbeddingProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,18 +84,36 @@ async def _retrieve_semantic_working_memory(
     *,
     owner_id: str,
     query: str,
+    query_embedding: list[float] | None,
+    embedding_model: str | None,
 ) -> list[str]:
     """Fetch the top semantic facts for this user and format them as strings.
 
-    Uses the v0.3.1 token-recall scorer in ``store.asearch``: the store
-    scores each record by the fraction of the query's meaningful tokens
-    (after stopword filtering) that appear in the record's haystack, and
-    returns results in score-descending order. The caller here just asks
-    for ``limit=5`` — any scoring changes happen at the store layer.
+    v0.8.1: routes through the store's hybrid retrieval path
+    (:meth:`MemoryStore.asearch_similar`). When ``query_embedding`` is
+    provided, the store runs both the v0.3.1 token-recall scan AND a
+    cosine-similarity scan on stored embeddings, then combines the
+    two ranked lists via Reciprocal Rank Fusion. When
+    ``query_embedding`` is ``None`` (no embedding provider, embedding
+    computation failed, guest mode short-circuited above), the
+    hybrid path degenerates cleanly to token-recall-only and the
+    behavior matches the v0.3.1/v0.4/v0.8 retrieval contract
+    exactly — no conditional code path is needed here.
+
+    The caller is responsible for pre-computing the query embedding
+    with ``task_type="RETRIEVAL_QUERY"`` so asymmetric retrieval
+    models (like Gemini's text-embedding-004) produce query-tuned
+    vectors rather than document-tuned ones.
     """
 
     namespace = (owner_id, "semantic")
-    records = await store.asearch(namespace, query=query, limit=5)
+    records = await store.asearch_similar(
+        namespace,
+        query_text=query,
+        query_embedding=query_embedding,
+        embedding_model=embedding_model,
+        limit=5,
+    )
     formatted: list[str] = []
     for record in records:
         quote = record.value.get("evidence_quote")
@@ -128,6 +149,8 @@ async def _retrieve_episodic_working_memory(
     *,
     owner_id: str,
     query: str,
+    query_embedding: list[float] | None,
+    embedding_model: str | None,
     is_first_turn: bool,
 ) -> list[str]:
     """Fetch relevant episodic session arcs and format them as strings.
@@ -140,10 +163,20 @@ async def _retrieve_episodic_working_memory(
        for this user regardless of query match, so the session opens
        with a "last time we talked…" context entry.
 
-    2. **Query-based** (``is_first_turn=False``): on later turns, we
-       go through the same token-recall scorer as semantic retrieval,
-       limited to 2 entries so the prompt doesn't bloat. An off-topic
-       query still produces zero hits.
+       v0.8.1 note: the catch-up path still uses ``asearch(query=None)``
+       rather than ``asearch_similar`` because it's a pure enumeration
+       (take the most-recent record), not a similarity search. No
+       embedding is needed — the "most recent" ordering comes from
+       insertion order. Moving this to ``asearch_similar`` would just
+       invoke the hybrid scorer with irrelevant results.
+
+    2. **Query-based** (``is_first_turn=False`` or additional matches
+       on first turn): goes through the v0.8.1 hybrid retrieval path
+       (:meth:`MemoryStore.asearch_similar`). When ``query_embedding``
+       is provided, RRF-fuses token-recall and cosine similarity on
+       the stored arc embeddings. When ``query_embedding`` is None,
+       degenerates to token-recall only — same as the v0.4/v0.8
+       contract. Limited to 2 entries so the prompt doesn't bloat.
 
     The caller combines the returned list with semantic results. v0.4
     initial ship uses ``limit=2`` for the query-based branch; this
@@ -174,7 +207,13 @@ async def _retrieve_episodic_working_memory(
     # Query-based retrieval — always runs, but on the first turn the
     # catch-up entry is already in `formatted` so we dedupe by comparing
     # the rendered string.
-    query_records = await store.asearch(namespace, query=query, limit=2)
+    query_records = await store.asearch_similar(
+        namespace,
+        query_text=query,
+        query_embedding=query_embedding,
+        embedding_model=embedding_model,
+        limit=2,
+    )
     for record in query_records:
         entry = _format_episodic_entry(record.value)
         if entry is not None and entry not in formatted:
@@ -265,6 +304,9 @@ async def run_load_memory_node(
 
     memory_store = runtime.context["memory_store"]
     memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
+    embedding_provider: EmbeddingProvider | None = runtime.context.get(
+        "embedding_provider"
+    )
     is_guest_mode = memory_mode == MemoryMode.INCOGNITO
 
     if is_guest_mode:
@@ -308,6 +350,40 @@ async def run_load_memory_node(
     # hundred records. Until then, "always on" is the right call.
     retrieval_start = time.monotonic()
 
+    # v0.8.1: compute the query embedding once per turn so both the
+    # semantic and episodic retrieval paths can reuse it without
+    # duplicating the embedding call. ``task_type="RETRIEVAL_QUERY"``
+    # is the canonical hint for query-side embeddings on asymmetric
+    # retrieval models (Gemini text-embedding-004 specifically tunes
+    # its query vs. document embeddings differently).
+    #
+    # The embedding is optional: when the provider is absent or is a
+    # NullEmbeddingProvider, ``query_embedding`` stays None and the
+    # store's ``asearch_similar`` degenerates cleanly to the v0.3.1
+    # token-recall path. Failures degrade silently — a provider
+    # outage should never break retrieval; it should just fall back
+    # to what v0.3.1 already did.
+    query_embedding: list[float] | None = None
+    query_embedding_model: str | None = None
+    retrieval_path = "token_recall"
+    if embedding_provider is not None:
+        try:
+            embeddings_out = await embedding_provider.aembed(
+                [query],
+                task_type="RETRIEVAL_QUERY",
+            )
+            if embeddings_out and embeddings_out[0] is not None:
+                query_embedding = embeddings_out[0]
+                query_embedding_model = embedding_provider.model_name
+                retrieval_path = "hybrid_rrf"
+        except Exception:
+            logger.warning(
+                "load_memory_node: embedding call failed; falling back to "
+                "token-recall only for this turn.",
+                exc_info=True,
+            )
+            retrieval_path = "token_recall_after_embed_error"
+
     semantic_store_size = await memory_store.arecord_count(semantic_ns)
     episodic_store_size = await memory_store.arecord_count(episodic_ns)
 
@@ -316,14 +392,18 @@ async def run_load_memory_node(
         memory_store,
         owner_id=owner_id,
         query=query,
+        query_embedding=query_embedding,
+        embedding_model=query_embedding_model,
         is_first_turn=is_first_turn,
     )
 
-    # Semantic retrieval: v0.3.1 token-recall path.
+    # Semantic retrieval: v0.8.1 hybrid RRF path via store.asearch_similar.
     semantic_entries = await _retrieve_semantic_working_memory(
         memory_store,
         owner_id=owner_id,
         query=query,
+        query_embedding=query_embedding,
+        embedding_model=query_embedding_model,
     )
 
     # Procedural retrieval (v0.7 Stage C): always load the full rule set
@@ -351,18 +431,20 @@ async def run_load_memory_node(
         f"{len(episodic_entries)} of {episodic_store_size} episodic record(s), "
         f"{len(procedural_rules)} procedural rule(s), "
         f"recall={'on' if proactive_recall_enabled else 'off'} "
+        f"path={retrieval_path} "
         f"(query had {len(meaningful_query_tokens)} meaningful token(s))."
     )
 
     logger.info(
         "load_memory_node: semantic=%d/%d episodic=%d/%d procedural=%d "
-        "recall=%s first_turn=%s query_tokens=%d duration_ms=%.2f owner=%r",
+        "recall=%s path=%s first_turn=%s query_tokens=%d duration_ms=%.2f owner=%r",
         len(semantic_entries),
         semantic_store_size,
         len(episodic_entries),
         episodic_store_size,
         len(procedural_rules),
         "on" if proactive_recall_enabled else "off",
+        retrieval_path,
         is_first_turn,
         len(meaningful_query_tokens),
         retrieval_duration_ms,
@@ -376,5 +458,30 @@ async def run_load_memory_node(
             "summary": summary,
             "procedural_rules": procedural_rules,
             "proactive_recall_enabled": proactive_recall_enabled,
+        },
+        # v0.8 observability: flow the retrieval timing + per-layer
+        # counts into the diagnostics dict so the CLI can render them
+        # in the post-turn panel. Other nodes append their own
+        # timings into this same dict; LangGraph replaces the
+        # top-level ``diagnostics`` key so each node must spread the
+        # existing dict before adding its own keys.
+        #
+        # v0.8.1: ``retrieval_path`` reports which scorer actually
+        # ran — one of ``"hybrid_rrf"`` (embedding + token-recall
+        # fused via RRF), ``"token_recall"`` (no embedding provider
+        # configured or returned None), or
+        # ``"token_recall_after_embed_error"`` (embedding call raised
+        # and we fell back). Dogfood can watch this to verify the
+        # hybrid path is actually running under normal operation.
+        "diagnostics": {
+            **state.get("diagnostics", {}),
+            "load_memory_ms": round(retrieval_duration_ms, 2),
+            "semantic_hits": len(semantic_entries),
+            "semantic_store_size": semantic_store_size,
+            "episodic_hits": len(episodic_entries),
+            "episodic_store_size": episodic_store_size,
+            "procedural_count": len(procedural_rules),
+            "proactive_recall": proactive_recall_enabled,
+            "retrieval_path": retrieval_path,
         },
     }

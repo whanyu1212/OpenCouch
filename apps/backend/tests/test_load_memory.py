@@ -92,11 +92,18 @@ class TestLoadMemoryNode:
     async def test_returns_only_working_memory_and_memory_summary_keys(
         self,
     ) -> None:
-        """The delta must contain exactly ``working_memory`` and ``memory``
-        — no transcript, no history, no response, no routing, no progress.
-        This is the core regression: the old node wrote to seven keys,
-        and the response/routing/transcript writes caused the phantom
-        assistant turn bug."""
+        """The delta must contain exactly ``working_memory``, ``memory``, and
+        (v0.8) ``diagnostics`` — no transcript, no history, no response, no
+        routing, no progress. This is the core regression: the old node
+        wrote to seven keys, and the response/routing/transcript writes
+        caused the phantom assistant turn bug.
+
+        v0.8 observability added ``diagnostics`` to the allowed-key set
+        to carry per-stage timings. The forbidden-keys list is unchanged
+        because the regression the original test protects against is
+        specifically about transcript/routing/response writes, not
+        about strict key-count equality.
+        """
 
         store = OpenCouchMemoryStore()
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
@@ -104,7 +111,7 @@ class TestLoadMemoryNode:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        assert set(delta.keys()) == {"working_memory", "memory"}
+        assert set(delta.keys()) == {"working_memory", "memory", "diagnostics"}
         # Specifically, none of the forbidden keys:
         assert "transcript" not in delta
         assert "history" not in delta
@@ -162,13 +169,16 @@ class TestLoadMemoryNode:
         # for BOTH semantic and episodic namespaces. Store has 1 semantic
         # record and 0 episodic, query "Sarah" has 1 meaningful token.
         # v0.7 Stage C: summary extended with procedural rule count and
-        # recall toggle state.
-        assert (
-            delta["memory"]["summary"]
-            == "Retrieved 1 of 1 semantic + 0 of 0 episodic record(s), "
-            "0 procedural rule(s), recall=off "
-            "(query had 1 meaningful token(s))."
-        )
+        # recall toggle state. v0.8.1: summary extended with retrieval_path.
+        # Substring assertions are more robust to future extensions than
+        # pinning the full string.
+        summary = delta["memory"]["summary"]
+        assert "Retrieved 1 of 1 semantic" in summary
+        assert "0 of 0 episodic record(s)" in summary
+        assert "0 procedural rule(s)" in summary
+        assert "recall=off" in summary
+        assert "1 meaningful token(s)" in summary
+        assert "path=token_recall" in summary
 
     @pytest.mark.asyncio
     async def test_retrieval_miss_returns_empty_with_zero_snippet_summary(
@@ -188,15 +198,22 @@ class TestLoadMemoryNode:
         assert delta["working_memory"] == []
         # Empty stores (0 semantic, 0 episodic, 0 procedural), 3 meaningful
         # query tokens, 0 hits on any namespace. v0.7 Stage C: procedural
-        # rule count and recall toggle included in the summary.
-        assert (
-            delta["memory"]["summary"]
-            == "Retrieved 0 of 0 semantic + 0 of 0 episodic record(s), "
-            "0 procedural rule(s), recall=off "
-            "(query had 3 meaningful token(s))."
-        )
+        # rule count and recall toggle included in the summary. v0.8.1:
+        # retrieval_path is also part of the summary; we assert the
+        # load-bearing substrings rather than pinning the full string so
+        # future observability additions don't require updating this test.
+        summary = delta["memory"]["summary"]
+        assert "Retrieved 0 of 0 semantic" in summary
+        assert "0 of 0 episodic record(s)" in summary
+        assert "0 procedural rule(s)" in summary
+        assert "recall=off" in summary
+        assert "3 meaningful token(s)" in summary
+        # v0.8.1: path indicator — token_recall when there's no embedding
+        # provider in the runtime context (the fake runtime fixture
+        # doesn't wire one).
+        assert "path=token_recall" in summary
         # Specifically NOT the guest session string:
-        assert "Guest session" not in delta["memory"]["summary"]
+        assert "Guest session" not in summary
 
     @pytest.mark.asyncio
     async def test_summary_distinguishes_empty_store_from_below_threshold_miss(
@@ -932,7 +949,12 @@ class TestFinalizeTurnNode:
         self,
     ) -> None:
         """The node should append a single assistant turn containing the
-        response text to both transcript and history."""
+        response text to both transcript and history.
+
+        v0.8 observability: the assistant turn dict also carries a
+        ``mode`` field sourced from ``state["routing"]["mode"]``. This
+        state has no routing, so the mode resolves to ``None``.
+        """
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -948,6 +970,7 @@ class TestFinalizeTurnNode:
         assert delta["transcript"][1] == {
             "role": MessageRole.ASSISTANT.value,
             "content": "Hello, how can I help?",
+            "mode": None,
         }
         assert delta["history"] == delta["transcript"]
 

@@ -534,3 +534,181 @@ class TestCrisisLogMetadata:
         # negative, not a crisis event.
         records = await _fetch_all_records(backend)
         assert len(records) == 0
+
+
+# ─── 5. Retention purge (v0.8.1) ──────────────────────────────────────────
+
+
+def _build_retention_record(
+    *,
+    record_id: str,
+    detected_at: str,
+    level: int = 1,
+) -> CrisisLogRecord:
+    """Build a minimal CrisisLogRecord for retention-purge tests.
+
+    The retention tests don't care about classifier path or response
+    metadata — only ``detected_at`` (which drives the cutoff filter)
+    and the record ``id`` (so we can assert which records survived).
+    Everything else gets sensible defaults.
+    """
+
+    return CrisisLogRecord(
+        id=record_id,
+        session_id_opaque="sess-hashed",
+        user_id_or_null=None,
+        detected_at=detected_at,
+        level=level,
+        classifier_path="deterministic",
+        confidence="medium",
+        reason="retention purge test",
+        override_kind="none",
+        response_node_completed=True,
+        llm_failure_occurred=False,
+    )
+
+
+class TestInMemoryCrisisLogRetentionPurge:
+    """Pin the v0.8.1 ``apurge_before`` behavior on the in-memory backend.
+
+    Symmetric tests for the SQLite backend live in
+    ``tests/test_sqlite_crisis_log.py``. Both backends MUST behave
+    identically — the runtime picks between them based on memory mode
+    and the operator-facing contract must not depend on which backend
+    is wired.
+    """
+
+    @pytest.mark.asyncio
+    async def test_purge_deletes_only_records_before_cutoff(self) -> None:
+        """Records strictly older than the cutoff are deleted; cutoff-day
+        records are preserved. This is the exclusive-boundary contract
+        the backend docstring promises."""
+
+        backend = InMemoryCrisisLogBackend()
+        # Three records across three dates bracketing the cutoff.
+        await backend.aappend(
+            _build_retention_record(record_id="old", detected_at="2025-12-01T10:00:00Z")
+        )
+        await backend.aappend(
+            _build_retention_record(
+                record_id="on_cutoff", detected_at="2026-04-01T10:00:00Z"
+            )
+        )
+        await backend.aappend(
+            _build_retention_record(
+                record_id="recent", detected_at="2026-04-12T10:00:00Z"
+            )
+        )
+
+        deleted = await backend.apurge_before(date(2026, 4, 1))
+
+        # Only the old record was before the cutoff.
+        assert deleted == 1
+        assert await backend.arecord_count() == 2
+
+        # Cutoff-day record survives (exclusive boundary).
+        on_cutoff_bucket = await backend.alist_by_date(date(2026, 4, 1))
+        assert len(on_cutoff_bucket) == 1
+        assert on_cutoff_bucket[0].id == "on_cutoff"
+
+        # Recent record survives.
+        recent_bucket = await backend.alist_by_date(date(2026, 4, 12))
+        assert len(recent_bucket) == 1
+        assert recent_bucket[0].id == "recent"
+
+        # Old record is gone.
+        old_bucket = await backend.alist_by_date(date(2025, 12, 1))
+        assert len(old_bucket) == 0
+
+    @pytest.mark.asyncio
+    async def test_purge_idempotent(self) -> None:
+        """Running the same purge twice deletes records on the first call
+        and zero on the second. The contract is idempotent because the
+        predicate ``detected_date < cutoff`` is stable."""
+
+        backend = InMemoryCrisisLogBackend()
+        await backend.aappend(
+            _build_retention_record(record_id="old", detected_at="2025-12-01T10:00:00Z")
+        )
+        await backend.aappend(
+            _build_retention_record(
+                record_id="recent", detected_at="2026-04-12T10:00:00Z"
+            )
+        )
+
+        first = await backend.apurge_before(date(2026, 4, 1))
+        second = await backend.apurge_before(date(2026, 4, 1))
+        assert first == 1
+        assert second == 0
+        assert await backend.arecord_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_purge_empty_backend_returns_zero(self) -> None:
+        """Purging an empty backend returns 0 without raising."""
+
+        backend = InMemoryCrisisLogBackend()
+        deleted = await backend.apurge_before(date(2026, 4, 1))
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_purge_closed_backend_returns_zero(self) -> None:
+        """Purge on a closed backend is a safe no-op (matches the closed-
+        safe contract of the other methods)."""
+
+        backend = InMemoryCrisisLogBackend()
+        await backend.aclose()
+        deleted = await backend.apurge_before(date(2026, 4, 1))
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_purge_preserves_multi_record_days(self) -> None:
+        """Multiple records on the same day are treated as a unit — if
+        the day is before the cutoff, all records on that day are
+        deleted; if the day is on or after the cutoff, all records
+        on that day are preserved."""
+
+        backend = InMemoryCrisisLogBackend()
+        # Two records on the same old day.
+        await backend.aappend(
+            _build_retention_record(
+                record_id="old1", detected_at="2025-12-01T09:00:00Z"
+            )
+        )
+        await backend.aappend(
+            _build_retention_record(
+                record_id="old2", detected_at="2025-12-01T15:00:00Z"
+            )
+        )
+        # Two records on the same recent day.
+        await backend.aappend(
+            _build_retention_record(
+                record_id="new1", detected_at="2026-04-12T09:00:00Z"
+            )
+        )
+        await backend.aappend(
+            _build_retention_record(
+                record_id="new2", detected_at="2026-04-12T15:00:00Z"
+            )
+        )
+
+        deleted = await backend.apurge_before(date(2026, 4, 1))
+        assert deleted == 2
+        assert await backend.arecord_count() == 2
+
+
+class TestNullCrisisLogRetentionPurge:
+    """NullCrisisLogBackend's apurge_before is a no-op that returns 0.
+
+    This is protocol-conformance machinery, not a behavior test — but
+    without this pin, a future refactor that forgets to implement the
+    method on the null backend would surface as a mysterious
+    AttributeError during retention cleanup rather than a test failure.
+    """
+
+    @pytest.mark.asyncio
+    async def test_null_purge_returns_zero(self) -> None:
+        from agent.memory.crisis_log import NullCrisisLogBackend
+
+        backend = NullCrisisLogBackend()
+        deleted = await backend.apurge_before(date(2026, 4, 1))
+        assert deleted == 0

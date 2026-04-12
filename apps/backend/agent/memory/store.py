@@ -117,11 +117,22 @@ class StoreRecord:
     The store is namespace-aware; each record knows which namespace it
     belongs to. The ``value`` dict holds the serialized pydantic model
     (via ``model.model_dump()``) so the store stays model-agnostic.
+
+    v0.8.1 adds two optional fields — ``embedding`` and
+    ``embedding_model`` — to support the hybrid retrieval path via
+    :meth:`MemoryStore.asearch_similar`. Records written before
+    v0.8.1 or through a NullEmbeddingProvider leave both fields
+    as ``None``, and those records participate in hybrid retrieval
+    via the token-recall path only. Records with embeddings
+    participate in both the token-recall and the embedding-
+    similarity paths.
     """
 
     namespace: Namespace
     key: str
     value: dict[str, Any]
+    embedding: list[float] | None = None
+    embedding_model: str | None = None
 
 
 @dataclass(slots=True)
@@ -175,8 +186,27 @@ class MemoryStore(Protocol):
         namespace: Namespace,
         key: str,
         value: dict[str, Any],
+        *,
+        embedding: list[float] | None = None,
+        embedding_model: str | None = None,
     ) -> None:
-        """Store a record under ``(namespace, key)``."""
+        """Store a record under ``(namespace, key)``.
+
+        v0.8.1: the optional ``embedding`` and ``embedding_model``
+        parameters let callers attach a pre-computed embedding
+        alongside the record. When present, the store uses them
+        for the embedding-similarity path in :meth:`asearch_similar`.
+        When absent (the common case for existing callers and for
+        tests that don't need embeddings), the record is stored
+        without an embedding and only the token-recall path
+        applies. Both parameters default to None so existing
+        callers are unchanged.
+
+        The ``embedding_model`` string identifies which model
+        produced the embedding — stored alongside the vector so
+        future model migrations can detect cohort mismatches and
+        skip cross-model similarity computations.
+        """
         ...
 
     async def aget(
@@ -194,7 +224,52 @@ class MemoryStore(Protocol):
         query: str | None = None,
         limit: int = 10,
     ) -> list[StoreRecord]:
-        """Search for records within ``namespace`` matching ``query``."""
+        """Search for records within ``namespace`` matching ``query``.
+
+        v0.3.1 token-recall path. Retained as of v0.8.1 for (a)
+        backward compatibility with existing callers that don't
+        compute embeddings, (b) the ``query=None`` enumeration
+        path used by dedup, and (c) the fallback path inside
+        :meth:`asearch_similar` when no embedding is available.
+        """
+        ...
+
+    async def asearch_similar(
+        self,
+        namespace: Namespace,
+        *,
+        query_text: str,
+        query_embedding: list[float] | None,
+        embedding_model: str | None = None,
+        limit: int = 10,
+    ) -> list[StoreRecord]:
+        """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
+
+        Runs the v0.3.1 token-recall scan and an embedding-similarity
+        scan on the same namespace, then combines the two ranked
+        lists with RRF (see :mod:`agent.memory.retrieval`). Returns
+        the top-``limit`` records from the fused ranking.
+
+        ``query_text`` is always required (it's the input to the
+        token-recall path). ``query_embedding`` is optional: when
+        ``None``, the method degenerates to pure token-recall
+        (which is how guest mode, no-provider mode, and tests
+        without embedding mocks continue to work). When provided,
+        the embedding must match the dimensionality of the stored
+        embeddings for this namespace — mismatches are silently
+        skipped.
+
+        ``embedding_model`` (optional) is the identifier of the
+        model that produced ``query_embedding``. When present, the
+        store skips records whose stored ``embedding_model`` doesn't
+        match, preventing cross-model cosine similarity that isn't
+        meaningful. When ``None``, the store uses every record's
+        stored embedding regardless of model.
+
+        Returns records sorted by hybrid RRF score descending, with
+        insertion-order tiebreaking — same determinism contract as
+        the token-recall ``asearch``.
+        """
         ...
 
     async def adelete(
@@ -276,6 +351,9 @@ class OpenCouchMemoryStore:
         namespace: Namespace,
         key: str,
         value: dict[str, Any],
+        *,
+        embedding: list[float] | None = None,
+        embedding_model: str | None = None,
     ) -> None:
         """Store a record under ``(namespace, key)``.
 
@@ -283,6 +361,15 @@ class OpenCouchMemoryStore:
         store does NOT perform hot-path deduplication here — that logic
         lives in the node layer (see ``extract_semantic_facts_node``
         in the design sketch) so the store stays a pure key-value layer.
+
+        v0.8.1: ``embedding`` and ``embedding_model`` are optional
+        keyword args. When the caller has a pre-computed embedding
+        (via an :class:`agent.memory.embeddings.EmbeddingProvider`),
+        it passes both here and the store keeps them alongside the
+        record for use in :meth:`asearch_similar`. When the caller
+        doesn't have an embedding (guest mode, no provider, tests),
+        both default to None and the record participates in
+        hybrid retrieval via the token-recall path only.
         """
 
         self._ensure_open()
@@ -291,6 +378,8 @@ class OpenCouchMemoryStore:
             namespace=namespace,
             key=key,
             value=dict(value),  # defensive copy so callers can mutate the input
+            embedding=list(embedding) if embedding is not None else None,
+            embedding_model=embedding_model,
         )
 
     async def aget(
@@ -381,6 +470,121 @@ class OpenCouchMemoryStore:
         # Sort by (recall desc, insertion_index asc) then slice to limit.
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [record for _, _, record in scored[:limit]]
+
+    async def asearch_similar(
+        self,
+        namespace: Namespace,
+        *,
+        query_text: str,
+        query_embedding: list[float] | None,
+        embedding_model: str | None = None,
+        limit: int = 10,
+    ) -> list[StoreRecord]:
+        """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
+
+        Combines the v0.3.1 token-recall scan with an embedding-
+        similarity scan. See :mod:`agent.memory.retrieval` for the
+        RRF fusion rationale and :data:`SEARCH_MATCH_THRESHOLD` /
+        :data:`agent.memory.retrieval.EMBEDDING_MATCH_THRESHOLD`
+        for the per-scorer cutoffs.
+
+        Degenerate cases:
+
+        - ``query_text`` has no meaningful tokens AND
+          ``query_embedding`` is None → empty list. Neither scorer
+          can contribute.
+        - ``query_text`` has no meaningful tokens but
+          ``query_embedding`` is provided → embedding-only result,
+          RRF with one list degenerates to the dense ranking.
+        - ``query_embedding`` is None but ``query_text`` has
+          meaningful tokens → token-recall-only result, RRF with
+          one list degenerates to the lexical ranking and this
+          method behaves identically to :meth:`asearch` for this
+          query.
+        - Record has no stored embedding → it participates in
+          the token-recall side only. Its rank position on the
+          dense side is effectively infinite (i.e., zero contribution).
+        - Stored ``embedding_model`` doesn't match the query's
+          ``embedding_model`` → the record is skipped in the dense
+          scan (still participates in the lexical scan). This
+          prevents cross-model cosine similarity which isn't
+          meaningful.
+        """
+
+        from agent.memory.retrieval import (
+            EMBEDDING_MATCH_THRESHOLD,
+            ScoredRecord,
+            cosine_similarity,
+            rrf_fuse,
+        )
+
+        self._ensure_open()
+        bucket = self._buckets.get(namespace)
+        if bucket is None:
+            return []
+
+        # ── Token-recall side (lexical) ───────────────────────────────
+        lexical_scored: list[ScoredRecord] = []
+        query_tokens = tokenize_meaningful(query_text)
+        if query_tokens:
+            query_token_count = len(query_tokens)
+            for insertion_index, record in enumerate(bucket.records.values()):
+                haystack = " ".join(
+                    str(v) for v in record.value.values() if v is not None
+                )
+                haystack_tokens = tokenize(haystack)
+                if not haystack_tokens:
+                    continue
+                overlap = len(query_tokens & haystack_tokens)
+                recall = overlap / query_token_count
+                if recall >= SEARCH_MATCH_THRESHOLD:
+                    lexical_scored.append(
+                        ScoredRecord(
+                            record=record,
+                            score=recall,
+                            insertion_index=insertion_index,
+                        )
+                    )
+            lexical_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+
+        # ── Embedding-similarity side (dense) ─────────────────────────
+        dense_scored: list[ScoredRecord] = []
+        if query_embedding is not None:
+            for insertion_index, record in enumerate(bucket.records.values()):
+                if record.embedding is None:
+                    continue
+                # Skip cross-model similarity — comparing embeddings
+                # from different models with cosine is noise.
+                if (
+                    embedding_model is not None
+                    and record.embedding_model is not None
+                    and record.embedding_model != embedding_model
+                ):
+                    continue
+                # Dimensionality mismatch is also a skip; caller is
+                # expected to have passed the right model, but we
+                # guard against schema drift.
+                if len(record.embedding) != len(query_embedding):
+                    continue
+                sim = cosine_similarity(query_embedding, record.embedding)
+                if sim >= EMBEDDING_MATCH_THRESHOLD:
+                    dense_scored.append(
+                        ScoredRecord(
+                            record=record,
+                            score=sim,
+                            insertion_index=insertion_index,
+                        )
+                    )
+            dense_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+
+        if not lexical_scored and not dense_scored:
+            return []
+
+        return rrf_fuse(
+            lexical_ranked=lexical_scored,
+            dense_ranked=dense_scored,
+            limit=limit,
+        )
 
     async def adelete(
         self,
