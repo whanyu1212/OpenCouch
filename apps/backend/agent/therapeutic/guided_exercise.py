@@ -595,11 +595,29 @@ async def _build_stuck_delta(
 ) -> dict[str, Any]:
     """Build the delta for a stuck classification — offer to simplify."""
 
+    progress = state.get("progress", {})
+    step_index = progress.get("exercise_step", 0)
+    exercise_type = progress.get("exercise_type", EXERCISE_5_4_3_2_1)
+    current_step = _get_current_step(exercise_type, step_index)
+    step_ref = current_step.prompt_fallback if current_step else ""
+
+    directive = (
+        f"The user is STUCK on step {step_index} of the exercise. "
+        f'The step asked: "{step_ref}"\n'
+        f"Offer a simpler version of the same step — make it smaller and "
+        f"more concrete. Do NOT advance to the next step or repeat the "
+        f"original instruction verbatim."
+    )
+
     response_text = _FALLBACK_STUCK_REPHRASE
     if llm_client is not None:
         try:
             response_text = await llm_client.generate_text(
-                prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
+                prompt=build_therapeutic_response_prompt(
+                    state,
+                    mode="guided_exercise",
+                    step_directive=directive,
+                ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
@@ -632,11 +650,28 @@ async def _build_hold_delta(
 ) -> dict[str, Any]:
     """Build the delta for a hold classification — space, no advancement."""
 
+    progress = state.get("progress", {})
+    step_index = progress.get("exercise_step", 0)
+    exercise_type = progress.get("exercise_type", EXERCISE_5_4_3_2_1)
+    current_step = _get_current_step(exercise_type, step_index)
+    step_ref = current_step.prompt_fallback if current_step else ""
+
+    directive = (
+        f"The user gave a tentative or partial response to step {step_index}. "
+        f'The step asked: "{step_ref}"\n'
+        f"Give brief encouragement to continue this same step. Do NOT "
+        f"advance to the next step or re-explain the full instruction."
+    )
+
     response_text = _FALLBACK_HOLD
     if llm_client is not None:
         try:
             response_text = await llm_client.generate_text(
-                prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
+                prompt=build_therapeutic_response_prompt(
+                    state,
+                    mode="guided_exercise",
+                    step_directive=directive,
+                ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
@@ -679,10 +714,24 @@ async def _build_advance_delta(
     next_step = steps[next_step_index]
     response_text = next_step.prompt_fallback
 
+    total_steps = len(steps)
+    directive = (
+        f"The user completed step {next_step_index - 1} of {total_steps - 1}. "
+        f"Briefly acknowledge what they shared, then move to step "
+        f"{next_step_index}.\n"
+        f'Step {next_step_index} instruction: "{next_step.prompt_fallback}"\n'
+        f"Rephrase naturally in your own words — do NOT repeat this "
+        f"instruction verbatim. Do NOT repeat any earlier step."
+    )
+
     if llm_client is not None:
         try:
             response_text = await llm_client.generate_text(
-                prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
+                prompt=build_therapeutic_response_prompt(
+                    state,
+                    mode="guided_exercise",
+                    step_directive=directive,
+                ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )
@@ -720,11 +769,22 @@ async def _build_complete_delta(
     Clears exercise state and returns a brief "you did it" response.
     """
 
+    directive = (
+        "The user just finished the LAST step of the exercise. "
+        "Briefly acknowledge what they shared, name what they just did "
+        "(a grounding moment), and invite them to notice how their body "
+        "feels now. Do NOT start a new exercise or ask a new question."
+    )
+
     response_text = _FALLBACK_COMPLETE
     if llm_client is not None:
         try:
             response_text = await llm_client.generate_text(
-                prompt=build_therapeutic_response_prompt(state, mode="guided_exercise"),
+                prompt=build_therapeutic_response_prompt(
+                    state,
+                    mode="guided_exercise",
+                    step_directive=directive,
+                ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
             )

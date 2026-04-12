@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  /* Primary teal */
+  --color-oc-teal-900: #0d2422;
+  --color-oc-teal-800: #143432;
+  --color-oc-teal-700: #1b4542;
+  --color-oc-teal-600: #215f5a;
+  --color-oc-teal-500: #2d7a74;
+  --color-oc-teal-400: #3d9990;
+  --color-oc-teal-300: #65b8af;
+  --color-oc-teal-200: #9dd2cb;
+  --color-oc-teal-100: #d0ebe8;
+  --color-oc-teal-50: #eef7f6;
+
+  /* Warm neutrals */
+  --color-oc-warm-50: #f5f6f3;
+  --color-oc-warm-100: #edefec;
+  --color-oc-warm-200: #e4e6e2;
+  --color-oc-warm-300: #d3d5d1;
+  --color-oc-warm-400: #babdb8;
+  --color-oc-warm-500: #a0a49e;
+  --color-oc-warm-600: #838881;
+  --color-oc-warm-700: #636860;
+  --color-oc-warm-800: #44483f;
+  --color-oc-warm-900: #282b26;
+
+  /* Light mode surfaces */
+  --color-oc-bg: #ffffff;
+  --color-oc-bg-card: #f5f6f3;
+  --color-oc-bg-elevated: #edefec;
+  --color-oc-bg-input: #ffffff;
+
+  /* Borders */
+  --color-oc-border: rgba(33, 95, 90, 0.12);
+  --color-oc-border-strong: rgba(33, 95, 90, 0.28);
+
+  /* Accent */
+  --color-oc-accent: #215f5a;
+  --color-oc-accent-hover: #2d7a74;
+  --color-oc-accent-subtle: rgba(33, 95, 90, 0.08);
+  --color-oc-accent-glow: rgba(61, 153, 144, 0.22);
+
+  /* CTA warm accent */
+  --color-oc-cta: #d78b5f;
+  --color-oc-cta-hover: #c9794b;
+
+  /* Text */
+  --color-oc-text: #0d2422;
+  --color-oc-text-secondary: #636860;
+  --color-oc-text-muted: #a0a49e;
+  --color-oc-text-dim: #babdb8;
+
+  /* Semantic */
+  --color-oc-red: #b84a40;
+  --color-oc-orange: #d78b5f;
+  --color-oc-green: #2d7a74;
+}
+
+body {
+  background: var(--color-oc-bg);
+  color: var(--color-oc-text);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-oc-warm-300); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-oc-warm-400); }

@@ -464,21 +464,32 @@ def build_guided_exercise_system_prompt(state: AgentState) -> str:
     )
 
 
-def build_therapeutic_response_prompt(state: AgentState, *, mode: str) -> str:
+def build_therapeutic_response_prompt(
+    state: AgentState,
+    *,
+    mode: str,
+    step_directive: str | None = None,
+) -> str:
     """Build the user/task prompt for any therapeutic mode.
 
-    All three modes share the same user-prompt structure — the system
+    All modes share the same user-prompt structure — the system
     prompt (which differs per mode) is what shapes the response
-    character. The user prompt provides the conversation context and
-    current message.
+    character. The user prompt provides the conversation context
+    and current message.
 
     Args:
         state: Current graph state with history and working memory.
         mode: The dispatched mode name, injected as context for
             observability in the prompt.
+        step_directive: For multi-turn modes (guided_exercise), an
+            explicit instruction about what the LLM should generate.
+            This bridges the node's deterministic state transition
+            to the LLM's prose generation — the node knows *which*
+            step to produce, and tells the LLM via this directive.
     """
 
     memory_block = _format_working_memory(state)
+    directive_block = f"\n\nStep directive:\n{step_directive}" if step_directive else ""
 
     return (
         f"Write the next assistant message for a mental health support "
@@ -486,4 +497,5 @@ def build_therapeutic_response_prompt(state: AgentState, *, mode: str) -> str:
         f"Recent conversation:\n{_format_recent_history(state)}\n"
         f"{memory_block}\n"
         f"Current user message:\nuser: {state['message']}"
+        f"{directive_block}"
     )
