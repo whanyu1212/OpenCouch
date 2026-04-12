@@ -1,0 +1,82 @@
+---
+title: Agent State
+sidebar_position: 2
+---
+
+import StateFields from '@site/src/components/StateFields';
+
+# Agent State
+
+One `AgentState` TypedDict flows through the entire graph. Every
+node reads from it and writes back partial updates (deltas).
+LangGraph merges deltas by replacing top-level keys, so each node
+must spread existing dicts before adding its own keys.
+
+Click any field below to see what it does, who sets it, and its
+type.
+
+<StateFields />
+
+---
+
+## Lifecycle
+
+Not all fields survive between turns. Understanding which persist
+and which are re-derived matters for debugging and eval design.
+
+**Input** — set by `build_initial_state()` from `AgentInput`. The
+current user message is appended to the transcript at this stage;
+the assistant side is appended later by `finalize_turn_node`.
+
+**Persisted** — stored in the LangGraph checkpoint between turns.
+The transcript is the source of truth. Progress fields (turn_count,
+stage) carry forward.
+
+**Loaded per turn** — `load_memory_node` populates `working_memory`
+(semantic + episodic snippets via hybrid RRF retrieval),
+`memory.procedural_rules` (full rule set from the user's procedural
+profile), and `memory.proactive_recall_enabled` (the recall toggle).
+These are loaded from the memory store, not derived from the
+transcript.
+
+**Turn-scoped** — reset at the start of each turn, then filled by
+nodes as the graph executes:
+
+- `crisis` — safety assessment (level, confidence, reason, flags)
+  from `crisis_gate_node`
+- `routing.route` — `"therapeutic"` or `"crisis"` from the gate
+- `routing.mode` — which therapeutic mode was selected (supportive,
+  reflective, clarifying, psychoeducation, guided_exercise, closing)
+- `routing.mode_source` — how the mode was selected (keyword, llm,
+  default)
+- `routing.mode_type` — category (therapeutic, operational, crisis)
+- `response` — the generated reply (text, kind, guidance)
+
+**Diagnostics** — `diagnostics: NotRequired[dict[str, Any]]` —
+per-turn timing and write-count metadata populated by each node.
+Keys include `load_memory_ms`, `crisis_gate_ms`, `extract_facts_ms`,
+`extract_procedural_ms`, `turn_total_ms`, `semantic_writes`,
+`procedural_writes`, `retrieval_path`, and `crisis_classifier_path`.
+Flows through to `AgentOutput.diagnostics` for the CLI's Stage
+Timings panel.
+
+## Public contract
+
+The external API sees `AgentInput` and `AgentOutput` — not
+`AgentState`. The state is internal to the graph.
+
+| Model | Key fields |
+|---|---|
+| `AgentInput` | message, channel, user_id, session_id, history, working_memory, installed_skills |
+| `AgentOutput` | response_text, response_type, crisis, mode, mode_type, mode_source, should_persist_memory, diagnostics |
+| `CrisisAssessment` | level (0-3), confidence, reason, needs_crisis_response, needs_clarification |
+| `Message` | role, content, **mode** (`str | None`) — optional per-turn annotation stamped onto assistant transcript entries by `finalize_turn_node` |
+
+## Key files
+
+| File | What it defines |
+|---|---|
+| `agent/state.py` | `AgentState` TypedDict |
+| `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, stream event types |
+| `agent/graph.py` | `build_initial_state()` (input → state), `state_to_output()` (state → output) |
+| `agent/runtime_context.py` | `WorkflowContext` TypedDict — runtime dependencies injected via `runtime.context` |

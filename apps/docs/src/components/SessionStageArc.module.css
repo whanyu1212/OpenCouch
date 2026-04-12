@@ -1,0 +1,186 @@
+.root {
+  padding: 1rem 0 1.5rem;
+}
+
+/* ── Arc bar ────────────────────────────────────────────────────────────────── */
+
+.arc {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 20px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background: var(--oc-surface-1);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out), box-shadow var(--oc-duration-fast) var(--oc-ease-out), background var(--oc-duration-fast) var(--oc-ease-out);
+  min-width: 100px;
+}
+[data-theme='dark'] .stage {
+  background: var(--oc-surface-1);
+  border-color: var(--oc-border);
+}
+.stage:hover {
+  border-color: var(--oc-accent);
+  box-shadow: var(--oc-shadow-md);
+}
+.stageActive {
+  border-color: var(--oc-accent) !important;
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+[data-theme='dark'] .stageActive {
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+
+.stageIcon {
+  font-size: 1.1rem;
+  color: var(--oc-accent);
+  line-height: 1;
+}
+
+.stageLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+  letter-spacing: -0.01em;
+}
+
+/* ── Arc connector ──────────────────────────────────────────────────────────── */
+
+.arcConnector {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.arcLine {
+  width: 20px;
+  height: 1px;
+  background: var(--oc-border-strong);
+}
+[data-theme='dark'] .arcLine { background: rgba(120,184,175,0.2); }
+.arcArrow {
+  font-size: 1rem;
+  color: rgba(33,95,90,0.4);
+  line-height: 1;
+  margin-left: -2px;
+}
+[data-theme='dark'] .arcArrow { color: rgba(120,184,175,0.35); }
+
+/* ── Detail panel ───────────────────────────────────────────────────────────── */
+
+.detail {
+  margin-top: 14px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background: var(--oc-surface-1);
+  overflow: hidden;
+  animation: slideIn 0.18s cubic-bezier(0.16,1,0.3,1) both;
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  background: var(--oc-surface-3);
+  border-bottom: 1px solid var(--oc-border);
+}
+.detailIcon {
+  font-size: 0.9rem;
+  color: var(--oc-accent);
+}
+.detailTitle {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--oc-accent);
+  flex: 1;
+}
+.detailClose {
+  width: 22px; height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.68rem;
+  color: var(--oc-text-muted);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  transition: background var(--oc-duration-fast) var(--oc-ease-out);
+}
+.detailClose:hover { background: var(--oc-surface-2); }
+
+.detailBody {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sectionKey {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-primary);
+}
+.sectionVal {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--ifm-font-color-base);
+  margin: 0;
+}
+
+.signalList {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.signalItem {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  background: var(--oc-surface-2);
+  border-radius: 5px;
+  padding: 3px 9px;
+  color: var(--oc-text-secondary);
+}
+[data-theme='dark'] .signalItem {
+  background: rgba(120,184,175,0.08);
+  color: #6b9e99;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .stage { min-width: 80px; padding: 10px 14px; }
+  .arcLine { width: 12px; }
+}
