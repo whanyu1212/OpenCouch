@@ -399,6 +399,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="ask",
         help="Local memory behavior: guest (ephemeral), persistent (SQLite), or ask at startup.",
     )
+    parser.add_argument(
+        "--voice",
+        action="store_true",
+        default=False,
+        help=(
+            "Start voice mode instead of the text CLI. Launches the "
+            "FastAPI server with the OpenAI Realtime voice endpoint "
+            "and opens the voice test page in your browser. Requires "
+            "OPENAI_API_KEY for Realtime and optionally GEMINI_API_KEY "
+            "for the therapeutic LLM and memory extraction."
+        ),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for the voice mode server. Default: 8000.",
+    )
     return parser
 
 
@@ -3235,11 +3253,19 @@ async def chat_loop(
 def main() -> int:
     """Run the OpenCouch CLI.
 
+    With ``--voice``, starts the FastAPI server with the OpenAI
+    Realtime voice endpoint and opens the test page in the browser.
+    Without ``--voice``, runs the interactive text CLI as usual.
+
     Returns:
         Process exit code for the CLI session.
     """
 
     args = build_parser().parse_args()
+
+    if args.voice:
+        return _run_voice_mode(args)
+
     thread_id = args.thread_id or generate_thread_id()
     sqlite_path = str(Path(args.sqlite_path).expanduser())
     memory_sqlite_path = str(Path(args.memory_sqlite_path).expanduser())
@@ -3256,4 +3282,49 @@ def main() -> int:
             crisis_log_sqlite_path=crisis_log_sqlite_path,
         )
     )
+    return 0
+
+
+def _run_voice_mode(args) -> int:
+    """Start the voice mode server and open the browser.
+
+    Launches uvicorn serving the FastAPI app (which includes the
+    ``/api/voice/session`` WebSocket endpoint and the
+    ``/api/voice/test`` test page). Then opens the test page in the
+    default browser.
+
+    The server runs in the foreground — Ctrl+C to stop.
+    """
+
+    import webbrowser
+
+    import uvicorn
+
+    port = args.port
+    url = f"http://localhost:{port}/api/voice/test"
+
+    console.print(Rule("[primary]OpenCouch Voice Mode[/primary]", style="panel"))
+    console.print(
+        f"[muted]Starting voice server on port[/muted] [info]{port}[/info]\n"
+        f"[muted]Opening[/muted] [info]{url}[/info] [muted]in your browser...[/muted]\n"
+        f"[muted]Press[/muted] [accent]Ctrl+C[/accent] [muted]to stop.[/muted]\n"
+    )
+
+    # Open the browser after a short delay so the server has time
+    # to start. We use a thread because uvicorn.run blocks.
+    import threading
+
+    def open_browser():
+        import time
+
+        time.sleep(1.5)
+        webbrowser.open(url)
+
+    threading.Thread(target=open_browser, daemon=True).start()
+
+    try:
+        uvicorn.run("main:app", host="127.0.0.1", port=port, log_level="info")
+    except KeyboardInterrupt:
+        console.print("\n[muted]Voice server stopped.[/muted]")
+
     return 0

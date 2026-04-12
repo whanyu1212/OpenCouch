@@ -78,15 +78,15 @@ from typing import Protocol, runtime_checkable
 logger = logging.getLogger(__name__)
 
 
-# Gemini's text-embedding-004 is the default model for v0.8.1. It
-# produces 768-dimensional embeddings, supports batch input, and is
-# cheap enough (~$0.00001/1k tokens) that dogfood doesn't need
-# per-session cost tracking. Switching models later requires (a)
-# updating this constant or injecting the model name at provider
-# construction time, and (b) running a re-embed sweep for records
-# that still have the old model stored in ``embedding_model``.
-DEFAULT_GEMINI_EMBEDDING_MODEL = "text-embedding-004"
-DEFAULT_GEMINI_EMBEDDING_DIMENSION = 768
+# Gemini's gemini-embedding-001 is the default model. It produces
+# 3072-dimensional embeddings, supports batch input, and is cheap
+# enough that dogfood doesn't need per-session cost tracking.
+# Switching models later requires (a) updating this constant or
+# injecting the model name at provider construction time, and (b)
+# running a re-embed sweep for records that still have the old
+# model stored in ``embedding_model``.
+DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+DEFAULT_GEMINI_EMBEDDING_DIMENSION = 3072
 
 
 @runtime_checkable
