@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenCouch Voice Test</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, sans-serif; background: #0d1b1a; color: #c6e8e4; padding: 2rem; max-width: 600px; margin: 0 auto; }
+        h1 { color: #65b8af; margin-bottom: 0.5rem; font-size: 1.5rem; }
+        .subtitle { color: #838881; margin-bottom: 2rem; font-size: 0.85rem; }
+        .controls { display: flex; gap: 1rem; margin-bottom: 2rem; }
+        button { padding: 0.75rem 1.5rem; border: 1px solid #3d9990; border-radius: 8px; background: transparent; color: #65b8af; cursor: pointer; font-size: 0.9rem; }
+        button:hover { background: #1b3533; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        button.active { background: #3d9990; color: #0d1b1a; }
+        button.danger { border-color: #e46e62; color: #e46e62; }
+        button.danger:hover { background: #2a1515; }
+        #status { color: #d78b5f; margin-bottom: 1rem; font-size: 0.85rem; }
+        #transcript { background: #142422; border-radius: 8px; padding: 1rem; max-height: 400px; overflow-y: auto; font-size: 0.85rem; line-height: 1.6; }
+        .turn { margin-bottom: 0.75rem; }
+        .turn .role { font-weight: 600; margin-right: 0.5rem; }
+        .turn .role.user { color: #d78b5f; }
+        .turn .role.assistant { color: #65b8af; }
+        .config { margin-bottom: 1.5rem; }
+        .config input { background: #142422; border: 1px solid #2d5550; color: #c6e8e4; padding: 0.4rem 0.6rem; border-radius: 4px; width: 100%; margin-top: 0.25rem; font-size: 0.85rem; }
+        .config label { color: #838881; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <h1>OpenCouch Voice</h1>
+    <p class="subtitle">Option B — OpenAI Realtime direct integration</p>
+
+    <div class="config">
+        <label>User ID</label>
+        <input id="userId" value="voice-user" />
+        <label>Thread ID</label>
+        <input id="threadId" value="voice-session-1" />
+    </div>
+
+    <div class="controls">
+        <button id="connectBtn" onclick="connect()">Connect</button>
+        <button id="disconnectBtn" onclick="disconnect()" disabled class="danger">Disconnect</button>
+    </div>
+
+    <div id="status">Not connected</div>
+    <div id="transcript"></div>
+
+    <script>
+        let ws = null;
+        let audioContext = null;
+        let mediaStream = null;
+        let processor = null;
+        let micMuted = false;         // mute mic while agent speaks
+        let agentSpeaking = false;
+        let nextPlayTime = 0;         // schedule audio chunks sequentially
+
+        const SAMPLE_RATE = 24000;
+
+        function setStatus(msg) {
+            document.getElementById('status').textContent = msg;
+        }
+
+        function addTranscript(role, text) {
+            const el = document.getElementById('transcript');
+            const div = document.createElement('div');
+            div.className = 'turn';
+            div.innerHTML = `<span class="role ${role}">${role}:</span> ${text}`;
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        async function connect() {
+            const userId = document.getElementById('userId').value;
+            const threadId = document.getElementById('threadId').value;
+
+            setStatus('Connecting...');
+
+            audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+            nextPlayTime = 0;
+
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/api/voice/session`);
+
+            ws.onopen = async () => {
+                setStatus('Connected — requesting mic access...');
+
+                ws.send(JSON.stringify({
+                    type: 'start',
+                    user_id: userId,
+                    thread_id: threadId,
+                }));
+
+                try {
+                    // Request mic with echo cancellation
+                    mediaStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            sampleRate: SAMPLE_RATE,
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        }
+                    });
+                    startAudioCapture();
+                    setStatus('Connected — speak to begin');
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                } catch (err) {
+                    setStatus('Mic access denied: ' + err.message);
+                }
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'audio') {
+                    agentSpeaking = true;
+                    setStatus('Agent speaking...');
+                    const bytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+                    playAudioChunk(bytes);
+                } else if (data.type === 'agent_done') {
+                    agentSpeaking = false;
+                    setStatus('Connected — speak to continue');
+                } else if (data.type === 'transcript') {
+                    addTranscript(data.role, data.text);
+                    if (data.role === 'assistant') {
+                        // Agent finished a response
+                        agentSpeaking = false;
+                        setStatus('Connected — speak to continue');
+                    }
+                } else if (data.type === 'error') {
+                    setStatus('Error: ' + data.message);
+                }
+            };
+
+            ws.onclose = () => {
+                setStatus('Disconnected');
+                cleanup();
+            };
+
+            ws.onerror = (err) => {
+                setStatus('WebSocket error');
+                console.error(err);
+            };
+        }
+
+        function startAudioCapture() {
+            if (!audioContext || !mediaStream) return;
+
+            const source = audioContext.createMediaStreamSource(mediaStream);
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                // Don't send mic audio while agent is speaking (prevent echo loop)
+                if (agentSpeaking) return;
+
+                const input = e.inputBuffer.getChannelData(0);
+                const pcm16 = new Int16Array(input.length);
+                for (let i = 0; i < input.length; i++) {
+                    pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+                }
+
+                const bytes = new Uint8Array(pcm16.buffer);
+                const base64 = btoa(String.fromCharCode(...bytes));
+                ws.send(JSON.stringify({ type: 'audio', data: base64 }));
+            };
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+        }
+
+        function playAudioChunk(pcm16Bytes) {
+            if (!audioContext) return;
+
+            // Convert PCM16 bytes to float32
+            const int16 = new Int16Array(pcm16Bytes.buffer, pcm16Bytes.byteOffset, pcm16Bytes.byteLength / 2);
+            const float32 = new Float32Array(int16.length);
+            for (let i = 0; i < int16.length; i++) {
+                float32[i] = int16[i] / 32768.0;
+            }
+
+            const buffer = audioContext.createBuffer(1, float32.length, SAMPLE_RATE);
+            buffer.copyToChannel(float32, 0);
+
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+
+            // Schedule chunks sequentially to avoid overlap
+            const now = audioContext.currentTime;
+            const startTime = Math.max(now, nextPlayTime);
+            source.start(startTime);
+            nextPlayTime = startTime + buffer.duration;
+
+            source.onended = () => {
+                // Check if this was the last chunk
+                if (audioContext && audioContext.currentTime >= nextPlayTime - 0.05) {
+                    agentSpeaking = false;
+                    setStatus('Connected — speak to continue');
+                }
+            };
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+            cleanup();
+        }
+
+        function cleanup() {
+            if (processor) { processor.disconnect(); processor = null; }
+            if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+            if (audioContext) { audioContext.close(); audioContext = null; }
+            agentSpeaking = false;
+            nextPlayTime = 0;
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+        }
+    </script>
+</body>
+</html>
