@@ -26,6 +26,11 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Voice',
+      items: ['voice/overview']
+    },
+    {
+      type: 'category',
       label: 'Observability',
       items: ['observability/overview']
     },

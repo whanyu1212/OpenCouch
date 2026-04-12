@@ -17,19 +17,6 @@ Likely stack: React/Next.js with a clean chat interface, session
 management, and memory inspection panels mirroring what the CLI's
 `/memory list`, `/context`, and `/debug state` provide today.
 
-## Voice Chat
-
-LiveKit + OpenAI Realtime integration using **Pattern C**: Realtime
-handles audio I/O and voice quality, the LangGraph agent runs
-per-turn for safety and routing. The crisis gate runs on every
-transcribed user turn before Realtime is allowed to respond —
-transcript-only crisis detection ships first, acoustic
-paralinguistic detection (voice cracking, sobbing, prosodic
-flatness) follows in a later release.
-
-See `notes/voice-chat-design.md` for the full Pattern A/B/C
-analysis and the decision rationale.
-
 ## Messaging Channels
 
 Adapters for messaging platforms so users can interact with the
@@ -50,6 +37,20 @@ adding a new channel is a transport adapter, not a graph change.
 Crisis responses would need channel-specific formatting (e.g.,
 inline buttons for crisis hotline links on Telegram, embeds on
 Discord).
+
+## Acoustic Crisis Detection
+
+The current voice mode uses transcript-only crisis detection (regex
+patterns on the transcribed text). Paralinguistic signals — voice
+cracking, sobbing, pressured speech, prosodic flatness — are real
+gaps that transcript-only classification cannot capture. A user
+saying "I'm fine" through tears is classified as level 0 by the
+text gate.
+
+Shipping this requires either a curated distressed-voice dataset
+(ethically fraught to gather) or a validated off-the-shelf acoustic
+classifier (not a solved problem). Calendar-gated on dataset and
+model maturity.
 
 ## Graph Memory
 
