@@ -1,0 +1,364 @@
+[
+  {
+    "id": "supportive_rough_day",
+    "history": [],
+    "message": "I had a really rough day at work today.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Complete self-report, no pattern language. Should fall through to the default supportive mode via the regex fallback."
+  },
+  {
+    "id": "supportive_short_self_report",
+    "history": [],
+    "message": "I feel overwhelmed.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Short self-report — the SELF_REPORT_PATTERNS guard should prevent this from routing to clarifying."
+  },
+  {
+    "id": "supportive_contracted_self_report",
+    "history": [],
+    "message": "I'm anxious about tomorrow.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Contracted self-report ('I'm'). Regression guard for the self-report regex bug caught in Stage G1."
+  },
+  {
+    "id": "supportive_contracted_ive",
+    "history": [],
+    "message": "I've been stressed lately.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Contracted 'I've' form — another SELF_REPORT_PATTERNS variant that should stay in supportive."
+  },
+  {
+    "id": "supportive_contracted_id",
+    "history": [],
+    "message": "I'd really rather not talk about it.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Contracted 'I'd' form. Short but a complete statement — should be supportive."
+  },
+  {
+    "id": "supportive_somatic_self_report",
+    "history": [],
+    "message": "My chest feels tight.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Somatic self-report (my <body part> feels/hurts). Should match SELF_REPORT_PATTERNS and route to supportive."
+  },
+  {
+    "id": "supportive_it_hurts",
+    "history": [],
+    "message": "It hurts so much.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Impersonal 'it hurts' form — short but a complete distress signal. Should route to supportive via SELF_REPORT_PATTERNS."
+  },
+  {
+    "id": "reflective_why_keep",
+    "history": [],
+    "message": "Why do I keep ending up in the same fights with my sister?",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "Classic 'why do I keep' pattern question. High-precision reflective fast path."
+  },
+  {
+    "id": "reflective_every_time",
+    "history": [],
+    "message": "Every time I try to set a boundary with my mom, I end up feeling guilty.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'Every time I' pattern trigger — reflective fast path without using the word 'keep'."
+  },
+  {
+    "id": "reflective_same_cycle",
+    "history": [],
+    "message": "I feel like I'm stuck in the same cycle with work again.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'Same cycle' pattern — both SAME_CYCLE and STUCK_IN_PATTERN regexes should match. Reflective fast path."
+  },
+  {
+    "id": "reflective_why_always",
+    "history": [],
+    "message": "Why does this always happen to me?",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'Why does this always happen' — second reflective pattern family (beyond 'why do I keep')."
+  },
+  {
+    "id": "reflective_i_notice",
+    "history": [],
+    "message": "I notice I keep avoiding hard conversations when they matter most.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'I notice I keep' — self-reflective pattern observation. Should match the notice-i-keep regex."
+  },
+  {
+    "id": "reflective_i_always",
+    "history": [],
+    "message": "I always end up apologizing first.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "regex",
+    "notes": "'I always ... end up' pattern. Reflective fast path via the generic i-always-doing regex."
+  },
+  {
+    "id": "clarifying_bare_acknowledge",
+    "history": [],
+    "message": "ok",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Truly sparse message, no self-report. Should route to clarifying to request context."
+  },
+  {
+    "id": "clarifying_confusion_marker",
+    "history": [],
+    "message": "What do you mean?",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Explicit confusion marker. Fast path to clarifying."
+  },
+  {
+    "id": "clarifying_huh",
+    "history": [],
+    "message": "Huh?",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Single-word confusion marker. Should match the ^huh$ pattern exactly."
+  },
+  {
+    "id": "clarifying_dont_understand",
+    "history": [],
+    "message": "I don't understand what you're getting at.",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Longer confusion marker via 'I don't understand'. Fast path to clarifying even though the message isn't short."
+  },
+  {
+    "id": "clarifying_short_sparse",
+    "history": [],
+    "message": "not really",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "2-word non-self-report sparse message. Should route to clarifying via the short-message heuristic."
+  },
+  {
+    "id": "reflective_implicit_pattern",
+    "history": [
+      {"role": "user", "content": "I had another argument with my partner last night."},
+      {"role": "assistant", "content": "That sounds really hard."}
+    ],
+    "message": "It's like I can never say what I actually mean without it turning into a fight.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "llm",
+    "notes": "Implicit pattern recognition — the user is naming a recurring dynamic but doesn't use any of the regex keywords ('keep', 'always', 'every time'). Only the LLM path can catch this. If the dispatcher routes this to supportive, the LLM dispatcher is under-graded."
+  },
+  {
+    "id": "supportive_ambiguous_venting",
+    "history": [],
+    "message": "I just needed to get that off my chest.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Venting signal — the user wants to be heard, not probed. No pattern language, no confusion markers, not a self-report in the regex sense. LLM should recognize this as a supportive case."
+  },
+  {
+    "id": "clarifying_fragment_with_pronoun",
+    "history": [],
+    "message": "It just doesn't make sense to me.",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "llm",
+    "notes": "Ambiguous pronoun 'it' with no clear antecedent. A good dispatcher asks 'what doesn't make sense?'. Regex would likely route to supportive via fallback; LLM should pick clarifying."
+  },
+  {
+    "id": "supportive_capability_greeting",
+    "history": [],
+    "message": "Hi, what can you do for me?",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Dogfood observation: this first-turn greeting currently routes to clarifying because it's short and has no self-report, but the intent is 'I'm reaching out for help' which is a supportive context. The LLM should recognize that a user greeting a mental-health agent with 'what can you do' is opening up, not requesting clarification. Expected-mode 'supportive' is a calibration target — if this fails on baseline, the tuning should fix it."
+  },
+  {
+    "id": "supportive_grief_statement",
+    "history": [],
+    "message": "My grandmother died last week.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Grief disclosure — high emotional content, warrants warm validation, NOT a clarifying probe. Short enough that the regex fallback MIGHT route to clarifying without the SELF_REPORT guard firing. LLM should reliably pick supportive."
+  },
+  {
+    "id": "supportive_gratitude",
+    "history": [
+      {"role": "user", "content": "I'm feeling really anxious about the interview."},
+      {"role": "assistant", "content": "Anxiety before a big moment is so common — can you tell me what part feels hardest right now?"}
+    ],
+    "message": "Thank you for that, it helps to talk it through.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Gratitude after a supportive exchange — should continue in supportive mode, not flip to clarifying. The LLM has history context showing this is a follow-up, not a fresh sparse message."
+  },
+  {
+    "id": "reflective_context_dependent",
+    "history": [
+      {"role": "user", "content": "I had another blowup at work today over nothing."},
+      {"role": "assistant", "content": "That sounds frustrating. What happened?"},
+      {"role": "user", "content": "My boss gave me feedback and I just lost it, same as last month."}
+    ],
+    "message": "I don't know why I keep doing this.",
+    "expected_mode": "reflective",
+    "dispatch_tier": "llm",
+    "notes": "Multi-turn pattern context — 'why do I keep doing this' IS a regex trigger (reflective fast path), but the key is that the LLM with history would also pick reflective. This case should pass in BOTH regex and LLM modes. Bonus: validates that the regex fires even mid-session."
+  },
+  {
+    "id": "supportive_low_mood_report",
+    "history": [],
+    "message": "I'm feeling down these days.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Dogfood case from v0.4: low-mood self-report should route to supportive. 'I'm' contracted self-report should match SELF_REPORT_PATTERNS."
+  },
+  {
+    "id": "supportive_lack_of_motivation",
+    "history": [
+      {"role": "user", "content": "I'm feeling down these days."},
+      {"role": "assistant", "content": "I'm sorry to hear that. What's been weighing on you?"}
+    ],
+    "message": "lack of motivation to start the day and to complete things that i need to",
+    "expected_mode": "supportive",
+    "dispatch_tier": "regex",
+    "notes": "Dogfood case from v0.4/v0.8: the follow-up to 'I'm feeling down'. Not a self-report in the strict sense (no 'I feel/am/was' verb), but a substantive emotional disclosure continuing the prior turn. Should route to supportive. In regex mode this passes as supportive by default because word count (14) exceeds CLARIFYING_MAX_WORD_COUNT. LLM mode should also pick supportive because the history makes the context clear."
+  },
+  {
+    "id": "clarifying_ambiguous_yes",
+    "history": [
+      {"role": "user", "content": "I don't know if I should bring this up with my therapist next week."},
+      {"role": "assistant", "content": "What's making you hesitant?"}
+    ],
+    "message": "yes",
+    "expected_mode": "clarifying",
+    "dispatch_tier": "regex",
+    "notes": "Single-word 'yes' in response to a clarifying question — itself needs another clarifying question because 'yes' doesn't answer what was asked. Short message, no self-report, should route to clarifying."
+  },
+  {
+    "id": "psychoeducation_anxiety_confusion",
+    "history": [],
+    "message": "My heart starts racing for no reason and then I convince myself something is really wrong with me. I don't get what's happening to me.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: anxiety-topic psychoeducation case. User is confused about a bodily reaction (racing heart + catastrophic thought loop) and explicitly asks for a frame ('I don't get what's happening to me'). Drawn from the good-example snippet in knowledge/response_modes/psychoeducation.md. NOTE: the original draft of this case ended with 'Why does this keep happening?' but that phrasing triggered reflective-mode classification because reflective's canonical trigger is 'why does this keep happening'. Swapped to 'I don't get what's happening to me' for cleaner signal — still confusion about a bodily reaction, but without the reflective-triggering tag."
+  },
+  {
+    "id": "psychoeducation_grief_confusion",
+    "history": [],
+    "message": "I was fine all week and then I walked past this restaurant we used to go to and I completely fell apart. I don't understand why that happened.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: grief-topic psychoeducation case. User is confused about a sudden wave of grief triggered by an environmental cue. 'I don't understand why' is the psychoeducation marker. This case is drawn from the good-example snippet in knowledge/response_modes/psychoeducation.md, so it should be a high-confidence route for the LLM. Regression guard: if this routes to supportive instead, the LLM has lost the 'confusion about reaction' signal."
+  },
+  {
+    "id": "psychoeducation_stress_confusion",
+    "history": [],
+    "message": "I don't even know why I'm so short with everyone lately. Nothing that bad is happening.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: stress-topic psychoeducation case. User is puzzled about their own irritability given that 'nothing bad is happening'. The knowledge file explicitly frames this as a stress-response normalization case ('the body can stay in a low-grade activation state even after the stressor is gone'). Another draw from the good-example snippet. The 'I don't even know why' framing is the psychoeducation tell."
+  },
+  {
+    "id": "psychoeducation_general_emotional_confusion",
+    "history": [],
+    "message": "I don't even know why I cried. It wasn't that big a deal.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: general emotional process psychoeducation case. User had a disproportionate emotional reaction and is puzzled by it — doesn't fit neatly into the anxiety/stress/grief branches. The knowledge file's 'general emotional process' topic branch handles exactly this. Third draw from the good-example snippet. Tests that the LLM routes to psychoeducation even when there's no specific topic keyword (no 'anxious', 'grief', 'stressed')."
+  },
+  {
+    "id": "supportive_expressing_not_asking",
+    "history": [],
+    "message": "I'm so angry right now. I could scream.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage A: boundary case between supportive and psychoeducation. User is EXPRESSING an emotion, not asking why they feel it. Per the knowledge file's 'Boundary with supportive mode' section, this should route to supportive even though the user is describing an intense reaction. If this routes to psychoeducation, the LLM has confused 'intense emotional state' with 'confusion about reaction'. Pin for the single biggest expected dispatcher drift point for psychoeducation."
+  },
+  {
+    "id": "closing_explicit_wind_down",
+    "history": [
+      {"role": "user", "content": "I've been feeling really stuck at work this week."},
+      {"role": "assistant", "content": "That sounds exhausting. What's been the hardest part?"},
+      {"role": "user", "content": "Just the feeling that nothing I do matters. But talking about it has helped a bit."},
+      {"role": "assistant", "content": "I'm glad naming it gave you some breathing room. It doesn't have to mean more than that tonight."}
+    ],
+    "message": "Thanks, I think I need to step away now. This really helped.",
+    "expected_mode": "closing",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: textbook closing trigger. User explicitly thanks + signals stepping away + names that the session was helpful. This is the canonical case from the good-example snippet in knowledge/response_modes/closing.md. If this routes to supportive, the LLM is missing the wind-down signal entirely."
+  },
+  {
+    "id": "closing_need_to_go",
+    "history": [
+      {"role": "user", "content": "My partner and I had another fight about chores last night."},
+      {"role": "assistant", "content": "That sounds draining — fights about small things often carry bigger weight underneath."},
+      {"role": "user", "content": "Yeah, I think it's about feeling unseen more than the dishes."},
+      {"role": "assistant", "content": "Naming that distinction matters. It gives you something to actually talk about with them later."}
+    ],
+    "message": "I should probably go, it's late. I'll come back to this.",
+    "expected_mode": "closing",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: closing via 'I should go' framing. User names the practical reason (it's late) and signals intent to return ('I'll come back to this'). The closing node should produce a warm wind-down that doesn't push back on the user's departure."
+  },
+  {
+    "id": "closing_with_open_loops",
+    "history": [
+      {"role": "user", "content": "My mom is sick, my rent went up, and my friend is ghosting me. I don't know where to start."},
+      {"role": "assistant", "content": "That's three genuinely heavy things at once. Which one is loudest right now?"},
+      {"role": "user", "content": "My mom, probably."},
+      {"role": "assistant", "content": "Makes sense. You don't have to solve any of it tonight — just naming the pile is real work."}
+    ],
+    "message": "I think I need to stop here. Thanks for listening.",
+    "expected_mode": "closing",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: closing with unresolved threads still in the air (mom sick, rent up, friend ghosting). The closing node should acknowledge the exit cleanly and MAY reference one of the open threads per the knowledge file's 'Respect open loops' pattern. Tests that closing handles unresolved state without trying to resolve it."
+  },
+  {
+    "id": "supportive_mid_conversation_thanks",
+    "history": [
+      {"role": "user", "content": "I've been having this recurring dream where I'm back in my childhood home."},
+      {"role": "assistant", "content": "That kind of dream can feel strange to wake up from. What's it like when you're in it?"}
+    ],
+    "message": "Thanks, that helps me think about it differently.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage B: CRITICAL boundary case. The user says 'thanks, that helps' MID-CONVERSATION — it's a polite acknowledgment of what the assistant just said, NOT a wind-down signal. The conversation is still actively flowing. Per the closing mode description in the dispatcher prompt, 'false-positive closings are user-trust-damaging', so this must route to supportive, not closing. If this routes to closing, the LLM has over-reached on wind-down cues. Pin for the biggest expected dispatcher drift point for closing."
+  },
+  {
+    "id": "guided_exercise_start_ground_me",
+    "history": [],
+    "message": "Can you walk me through a grounding exercise? I'm feeling really scattered.",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: textbook guided_exercise trigger. User explicitly asks for a structured grounding exercise. The phrase 'walk me through' + 'grounding exercise' is unambiguous. The mention of feeling scattered is distress context, not a supportive trigger — the explicit request for an exercise dominates."
+  },
+  {
+    "id": "guided_exercise_help_me_breathe",
+    "history": [],
+    "message": "I need to breathe. Can you help me with a breathing exercise?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: explicit breathing exercise request. 'I need to breathe' alone is ambiguous between expressing distress and requesting an exercise, but 'Can you help me with a breathing exercise' resolves it cleanly. Routes to guided_exercise. (The node will start its default exercise — 5-4-3-2-1 grounding — because Stage C only implements grounding; adding breath-specific exercises is a future-stage concern.)"
+  },
+  {
+    "id": "supportive_distress_not_request",
+    "history": [],
+    "message": "I can't calm down. Nothing is helping.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: CRITICAL boundary case for guided_exercise. The user is EXPRESSING distress ('I can't calm down') and frustration ('nothing is helping'), NOT asking for an exercise. The dispatcher prompt explicitly calls this out as a supportive case: 'The distinction is: is the user asking the agent to DO something structured with them, or sharing how they feel? Only the former is guided_exercise.' If this routes to guided_exercise, the LLM is confusing distress with a request for intervention. Pin for the biggest expected drift point for guided_exercise."
+  },
+  {
+    "id": "psychoeducation_vs_guided_exercise",
+    "history": [],
+    "message": "Why does grounding even work? I don't really get the point.",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "v0.6 Stage C: boundary case between psychoeducation and guided_exercise. User asks ABOUT grounding (why does it work, what's the point) rather than asking TO DO grounding. This is a confusion about the mechanism, not a request for the intervention — psychoeducation territory, not guided_exercise. Tests the 'asking about mechanism' counter-example in the dispatcher prompt."
+  }
+]

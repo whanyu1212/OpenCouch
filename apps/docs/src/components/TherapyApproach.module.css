@@ -1,0 +1,273 @@
+.root {
+  padding: 0.5rem 0 2rem;
+  font-family: var(--ifm-font-family-base);
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+/* ── Section titles ─────────────────────────────────────────────────────────── */
+
+.sectionTitle {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-primary);
+  margin: 0 0 12px;
+}
+
+.sectionSub {
+  font-size: 0.82rem;
+  color: var(--oc-text-secondary);
+  margin: -4px 0 16px;
+  line-height: 1.5;
+}
+[data-theme='dark'] .sectionSub { color: var(--oc-text-secondary); }
+
+/* ── Principles grid ────────────────────────────────────────────────────────── */
+
+.principlesSection {}
+
+.principleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.principleCard {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface-1);
+  box-shadow: var(--oc-shadow-sm);
+}
+
+.principleLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+}
+
+.principleDesc {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--oc-text-secondary);
+}
+[data-theme='dark'] .principleDesc { color: var(--oc-text-secondary); }
+
+/* ── Modality cards ─────────────────────────────────────────────────────────── */
+
+.modalitySection {}
+
+.modalityRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.modalityCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface-1);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out), box-shadow var(--oc-duration-fast) var(--oc-ease-out), background var(--oc-duration-fast) var(--oc-ease-out);
+}
+[data-theme='dark'] .modalityCard {
+  background: var(--oc-surface-1);
+  border-color: var(--oc-border);
+}
+.modalityCard:hover {
+  border-color: var(--oc-accent);
+  box-shadow: var(--oc-shadow-md);
+}
+.modalityActive {
+  border-color: var(--oc-accent) !important;
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+[data-theme='dark'] .modalityActive {
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+
+.modalityAbbr {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--ifm-color-primary);
+  letter-spacing: -0.02em;
+}
+
+.modalityFull {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+}
+
+.modalityRole {
+  font-size: 0.66rem;
+  color: var(--oc-text-secondary);
+  margin-top: 2px;
+}
+[data-theme='dark'] .modalityRole { color: var(--oc-text-secondary); }
+
+/* ── Modality detail ────────────────────────────────────────────────────────── */
+
+.modalityDetail {
+  margin-top: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background: var(--oc-surface-1);
+  box-shadow: var(--oc-shadow-sm);
+  animation: slideIn 0.18s cubic-bezier(0.16,1,0.3,1) both;
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.modalityDesc {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--oc-text-primary);
+  margin: 0 0 14px;
+}
+
+.modalityColumns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.modalityCol {}
+
+.colLabel {
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-accent);
+  margin-bottom: 6px;
+}
+
+.tagList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tagGood {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.66rem;
+  background: var(--oc-accent-subtle);
+  border: 1px solid var(--oc-border);
+  border-radius: 5px;
+  padding: 3px 9px;
+  color: var(--oc-accent);
+}
+[data-theme='dark'] .tagGood {
+  background: var(--oc-accent-subtle);
+  color: var(--oc-accent);
+}
+
+.tagAvoid {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.66rem;
+  background: rgba(184, 72, 62, 0.12);
+  border-radius: 5px;
+  padding: 3px 9px;
+  color: #8f2f27;
+}
+[data-theme='dark'] .tagAvoid {
+  background: rgba(228, 110, 98, 0.14);
+  color: #f09090;
+}
+
+/* ── Response modes table ───────────────────────────────────────────────────── */
+
+.modesSection {}
+
+.modeTable {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.modeRow {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--oc-border);
+  transition: background var(--oc-duration-fast) var(--oc-ease-out);
+}
+.modeRow:last-child { border-bottom: none; }
+.modeRow:hover {
+  background: var(--oc-accent-subtle);
+}
+[data-theme='dark'] .modeRow:hover {
+  background: var(--oc-accent-subtle);
+}
+
+.modeLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  flex-shrink: 0;
+}
+
+.modeName {
+  font-family: var(--ifm-font-family-monospace) !important;
+  font-size: 0.78rem !important;
+  font-weight: 700;
+  color: var(--oc-text-primary) !important;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.modeWhen {
+  font-size: 0.66rem;
+  color: var(--oc-text-secondary);
+}
+[data-theme='dark'] .modeWhen { color: var(--oc-text-secondary); }
+
+.modeGoal {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--oc-text-secondary);
+}
+[data-theme='dark'] .modeGoal { color: var(--oc-text-secondary); }
+
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .modeRow { flex-direction: column; gap: 4px; }
+  .modeLeft { min-width: 0; }
+  .modalityColumns { grid-template-columns: 1fr; }
+}

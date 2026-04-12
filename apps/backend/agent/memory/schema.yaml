@@ -1,0 +1,1065 @@
+# OpenCouch memory schema (v1, decisions locked)
+#
+# This file is the source-of-truth design document for the memory layer
+# rebuild. All seven open design questions from draft 1 have been resolved
+# and the locked decisions are recorded in §9 (decisions log) at the bottom.
+#
+# Sections:
+#   1. Modes               — the three persistence tiers and what each enables
+#   2. Memory namespaces   — the CoALA layers (semantic, episodic, procedural)
+#   3. Entity types        — the graph node labels (users, people, concerns…)
+#   4. Edge types          — the graph relationship labels and their semantics
+#   5. Retrieval policies  — how the load-memory node assembles working memory
+#   6. Write policies      — when/how each layer gets written
+#   7. Consolidation       — the deferred phase-4 background pass
+#   8. CLI command catalog — the user-facing memory commands by phase
+#   9. Decisions log       — what was decided, when, and why
+#
+# Conventions:
+#   - All timestamps are UTC ISO-8601 unless otherwise noted.
+#   - All IDs are UUIDv7 (lexicographically sortable, time-prefixed).
+#   - All user-facing fields are tagged `user_visible: true|false`.
+#   - `confidence` is always one of: low | med | high.
+#   - The embedding model is `text-embedding-3-small` for all similarity
+#     thresholds in this file. Switching models requires recalibrating the
+#     thresholds (see §9, q5).
+
+# ─── 1. Modes ────────────────────────────────────────────────────────────────
+
+modes:
+  incognito:
+    # Ephemeral, in-process only. The checkpointer runs against :memory:.
+    # Nothing survives the runtime instance dying. The crisis safety log is
+    # the ONLY exception — it always persists, even in incognito mode, with
+    # no user identifier attached.
+    checkpointer_backend: in_memory
+    semantic_backend: in_memory
+    episodic_backend: in_memory
+    procedural_backend: in_memory
+    graph_backend: null_graph
+    crisis_log_backend: local_sqlite_anonymous   # always-on, opaque session id only
+    user_id_required: false
+    description: |
+      Use when the user explicitly asks for no memory, when they're trying
+      out the app, when they're using a shared device, or when they just
+      don't trust persistent memory yet. The agent will not remember anything
+      between sessions, and the agent's responses will not be shaped by any
+      prior interaction.
+
+  local:
+    # Persists to local SQLite + (optionally) local Neo4j for graph memory.
+    # Never leaves the device. This is the default for the desktop CLI.
+    checkpointer_backend: local_sqlite
+    semantic_backend: local_sqlite
+    episodic_backend: local_sqlite
+    procedural_backend: local_sqlite
+    graph_backend: local_graphiti     # falls back to null_graph if neo4j unavailable
+    crisis_log_backend: local_sqlite_per_user
+    user_id_required: true            # generated locally if not provided
+    description: |
+      Use when the user wants the agent to remember them across sessions but
+      keeps everything on their own device. This is the default for the
+      desktop CLI and the recommended mode for privacy-conscious users.
+
+  synced:
+    # Persists to remote Postgres + remote Neo4j. Requires user accounts and
+    # auth (deferred until backend exists). Phase 1 ships without this; the
+    # mode is reserved in the schema so phases 1-3 can be designed against it.
+    checkpointer_backend: remote_postgres
+    semantic_backend: remote_postgres
+    episodic_backend: remote_postgres
+    procedural_backend: remote_postgres
+    graph_backend: remote_graphiti
+    crisis_log_backend: remote_postgres_per_user
+    user_id_required: true
+    description: |
+      Use when the user wants their memory to follow them across devices.
+      Requires an account on the OpenCouch backend. Phase 1 reserves this
+      mode in the schema but does not implement the remote backends yet.
+
+# ─── 2. Memory namespaces (the CoALA layers) ─────────────────────────────────
+#
+# Each namespace is a separate logical store, accessed via the unified
+# `OpenCouchMemoryStore` (which fans out to the right backend based on mode).
+# Namespaces follow LangGraph's `(user_id, kind, ...)` tuple convention.
+
+namespaces:
+  semantic:
+    # Atomic facts about the user. The "knows things about you" layer.
+    # Stored as a *collection* (one record per fact, many facts per user)
+    # rather than a profile, because facts add up over time and we want
+    # fine-grained add/delete/dormant.
+    namespace_template: ["{user_id}", "semantic"]
+    record_schema:
+      id: uuid7                                 # primary key
+      type: literal["fact"]                     # discriminator
+      category: enum
+      categories:
+        - loss             # bereavement, breakups, job loss, etc.
+        - preference       # things the user likes or dislikes
+        - coping_strategy  # techniques the user uses (or has tried)
+        - relationship     # named people in the user's life
+        - trigger          # things that exacerbate concerns
+        - goal             # things the user wants to achieve
+        - context          # everything else (job, location, schedule…)
+      subject: entity_ref                       # see §3
+      predicate: edge_type                      # see §4
+      object: entity_ref                        # see §3
+      evidence_quote: string                    # the actual user words, ≤ 280 chars
+      source_session_id: string
+      source_turn_index: int
+      confidence: enum[low, med, high]
+      created_at: timestamp
+      last_referenced_at: timestamp             # bumped when retrieved or re-extracted
+      dormant_at: timestamp_or_null             # set by consolidation; not deleted
+      superseded_by: uuid7_or_null              # for the audit-trail update pattern
+      user_visible: bool                        # default true; see §9 q3
+
+  episodic:
+    # Compact session arcs. The "remembers what we talked about last time"
+    # layer. One record per completed session.
+    #
+    # A session is bounded by:
+    #   - explicit /end command, OR
+    #   - 20 minutes of inactivity (hardcoded in v1; see §9 q2), OR
+    #   - runtime shutdown
+    namespace_template: ["{user_id}", "episodic"]
+    record_schema:
+      id: uuid7
+      type: literal["session_arc"]
+      session_id: string
+      started_at: timestamp
+      ended_at: timestamp
+      duration_seconds: int
+      turn_count: int
+      primary_themes: list[string]              # 1-3 high-level tags, e.g. ["grief", "sleep"]
+      summary: string                            # 2-4 sentences, written by the summarizer LLM
+      mood_arc:
+        opened: string                           # e.g. "anxious"
+        closed: string                           # e.g. "tentatively_okay"
+      open_loops: list[string]                   # threads worth checking in on next time
+      resolved_threads: list[string]             # threads the session closed
+      crisis_level_max: int                      # 0..3, peak crisis level during session
+      user_visible: bool                         # default true
+
+  procedural:
+    # Style rules the agent has learned about THIS user. The "talks differently
+    # to me than to other users" layer. Stored as a *profile* (one document
+    # per user, continuously updated) rather than a collection, because there
+    # are typically only ~5-15 rules and they need to be coherent.
+    #
+    # IMPORTANT: rules are user-visible by default (see §9 q3). The internal
+    # rule string IS the displayed string — there is no curation pass. Rules
+    # are written in second-person, evidence-grounded form ("You've said
+    # meditation makes you more anxious") rather than third-person verdicts
+    # ("User dislikes meditation").
+    namespace_template: ["{user_id}", "procedural"]
+    record_schema:
+      id: literal["user_response_style"]        # always this key; one doc per user
+      type: literal["response_style"]
+      proactive_recall_enabled: bool            # see §9 q4; default false
+      rules:
+        - rule: string                           # second-person, evidence-grounded
+          evidence: list[string]                 # quotes or fact_ids that support it
+          confidence: enum[low, med, high]
+          added_at: timestamp
+          source: enum[explicit_user, consolidation, manual]
+      last_consolidated_at: timestamp_or_null
+
+  crisis_log:
+    # Always-on safety audit channel. Lives outside the user-facing memory
+    # system entirely. The user CANNOT disable this; the privacy policy
+    # documents the asymmetry: "We don't remember you. We do log when our
+    # crisis response fires, with no identifying info, so we can improve
+    # safety."
+    #
+    # Retention split (see §9 q6):
+    #   - Per-user records: 90 days, auto-purged daily
+    #   - Aggregate stats:  indefinite, no PII
+    #
+    # The 90-day default MUST be revisited with legal counsel before any
+    # production launch, especially in jurisdictions with mental-health data
+    # regulations.
+    namespace_template: ["crisis_log", "{date}"]   # NOT keyed by user_id in incognito
+    record_schema:
+      id: uuid7
+      session_id_opaque: string                  # SHA-256 of session_id, no reverse mapping
+      user_id_or_null: string_or_null            # populated only in local/synced modes
+      detected_at: timestamp
+      level: int                                 # 0..3 from CrisisAssessment
+      override_kind: enum[imminent_risk, idiomatic_safe, none]
+      classifier_path: enum[deterministic, llm_fallback, override]
+      reason: string                             # the classifier's reason field
+      response_node_completed: bool              # did crisis_response_node finish?
+      llm_failure_occurred: bool                 # did the LLM fall back to deterministic?
+      retention_policy: 90_days                  # auto-purge after 90 days
+      retention_extended_until: timestamp_or_null   # phase 2+; null in phase 1
+      retention_extended_reason: string_or_null     # phase 2+; null in phase 1
+
+  crisis_log_aggregate:
+    # Daily rollup of crisis events with NO per-user identifiers. Retained
+    # indefinitely so that long-term safety eval and trend detection have
+    # a stable signal even after per-user records are purged.
+    #
+    # The rollup job is deferred to phase 2 (§9 q6); phase 1 just leaves
+    # the per-user log un-purged for at least 90 days so phase 2 has data
+    # to backfill from.
+    namespace_template: ["crisis_log_aggregate", "{date}"]
+    record_schema:
+      date: date                                  # primary key
+      events_total: int
+      events_by_level:
+        level_0: int
+        level_1: int
+        level_2: int
+        level_3: int
+      events_by_classifier_path:
+        deterministic: int
+        llm_fallback: int
+        override: int
+      llm_failures_total: int
+      response_node_completion_rate: float       # 0.0–1.0
+
+# ─── 3. Entity types (graph node labels) ─────────────────────────────────────
+#
+# These are the labels in the Neo4j graph. Every "subject" and "object" of a
+# fact is one of these. We start with eight; add new ones only when an
+# extraction repeatedly produces facts that don't fit.
+
+entity_types:
+  User:
+    description: The person using OpenCouch. One per user_id.
+    properties:
+      user_id: string             # primary key
+      first_seen_at: timestamp
+      display_name: string_or_null
+    one_per_user: true
+
+  Person:
+    description: |
+      Anyone the user mentions by name or by role. The user's mother, sister,
+      therapist, boss, etc. May or may not have a stable name across sessions.
+      Entity resolution merges duplicates within a session aggressively and
+      across sessions conservatively.
+    properties:
+      name: string                 # canonical form, e.g. "Sarah"
+      relation_to_user: string     # e.g. "sister", "boss", "therapist"
+      first_mentioned_at: timestamp
+      last_mentioned_at: timestamp
+    notes: |
+      Entity resolution: within a session, two Persons with the same canonical
+      name are merged automatically. Across sessions, require name match OR
+      embedding similarity > 0.85.
+
+  Concern:
+    description: |
+      A recurring worry or theme the user brings up across multiple turns or
+      sessions. Distinct from Event (one-time). Examples: "work stress",
+      "sleep difficulties", "rumination at 3am".
+    properties:
+      label: string                # canonical short form, e.g. "work stress"
+      first_mentioned_at: timestamp
+      last_mentioned_at: timestamp
+      severity_max: enum[mild, moderate, severe]   # peak severity observed
+      dormant_at: timestamp_or_null
+
+  Event:
+    description: |
+      A specific thing that happened. One-time. Examples: "mother died",
+      "lost job", "moved to a new city". Has a date if known.
+    properties:
+      description: string
+      occurred_at: date_or_null    # may be unknown; the LLM doesn't invent dates
+      first_mentioned_at: timestamp
+
+  CopingStrategy:
+    description: |
+      A technique the user uses or has tried. Examples: "5-4-3-2-1 grounding",
+      "deep breathing", "journaling", "calling sister". Tagged with efficacy
+      based on user reports.
+    properties:
+      name: string                 # canonical short form
+      first_mentioned_at: timestamp
+      efficacy_observed: enum[helpful, mixed, unhelpful, untried]
+
+  Goal:
+    description: |
+      Something the user wants to achieve or work on. Examples: "sleep through
+      the night", "feel less anxious at work", "process grief". Has a status.
+    properties:
+      description: string
+      status: enum[active, paused, achieved, abandoned]
+      first_mentioned_at: timestamp
+
+  Session:
+    description: |
+      A completed conversation session. Provenance anchor for facts that
+      reference where they came from. Always created at session end, never
+      mid-session.
+    properties:
+      session_id: string
+      started_at: timestamp
+      ended_at: timestamp
+      mode: enum[incognito, local, synced]   # which mode was active
+    notes: |
+      In incognito mode, Session entities are not persisted to the long-term
+      graph; they live only in the per-runtime checkpointer.
+
+  Turn:
+    description: |
+      One user turn within a session. Sparsely created — only for turns whose
+      facts are anchored to a specific quote. Most turns do NOT get a Turn
+      entity; only turns that produced a high-confidence fact extraction.
+    properties:
+      session_id: string
+      turn_index: int
+      user_quote: string           # the verbatim user text, ≤ 280 chars
+      assistant_quote: string      # the verbatim assistant reply, ≤ 280 chars
+
+# ─── 4. Edge types (graph relationship labels) ───────────────────────────────
+#
+# Six edge types for the User→Entity layer (covered by hot-path extraction)
+# plus a few inter-entity edges (added by background reasoning, phase 3+).
+#
+# Every edge has implicit temporal properties:
+#   first_observed_at: timestamp       (set on first creation)
+#   last_observed_at: timestamp        (bumped when re-observed)
+#   confidence: low | med | high
+#   source: extraction | co_occurrence | llm_inference | user_explicit
+#   dormant: bool                       (set by consolidation; not deleted)
+
+edge_types:
+
+  # ── Hot-path edges (User → Entity), populated by extraction node ──────────
+
+  KNOWS:
+    from: User
+    to: Person
+    description: User has mentioned this person. Most basic edge; created
+      whenever a Person entity is extracted.
+    examples:
+      - "(User)-[:KNOWS]->(Person {name: 'Sarah'})"
+
+  WORRIES_ABOUT:
+    from: User
+    to: Concern
+    description: User has expressed this concern. The most common edge in a
+      therapy graph. Often attached to a CopingStrategy via HELPED_WITH later.
+    examples:
+      - "(User)-[:WORRIES_ABOUT]->(Concern {label: 'work stress'})"
+
+  EXPERIENCED:
+    from: User
+    to: Event
+    description: Something happened to the user. Has a date if known.
+    examples:
+      - "(User)-[:EXPERIENCED]->(Event {description: 'mother died', occurred_at: '2026-03'})"
+
+  USES:
+    from: User
+    to: CopingStrategy
+    description: The user has tried this strategy. Efficacy is recorded on
+      the CopingStrategy node, not the edge.
+    examples:
+      - "(User)-[:USES]->(CopingStrategy {name: 'grounding'})"
+
+  WANTS:
+    from: User
+    to: Goal
+    description: A current or recent goal the user has expressed.
+    examples:
+      - "(User)-[:WANTS]->(Goal {description: 'sleep through the night'})"
+
+  PARTICIPATED_IN:
+    from: User
+    to: Session
+    description: Provenance link from the user to a completed session. Used
+      for "show me what we talked about in session X" queries.
+    examples:
+      - "(User)-[:PARTICIPATED_IN]->(Session {session_id: '...'})"
+
+  # ── Provenance edges (Session/Turn → Entity), populated by extraction ─────
+
+  MENTIONED_IN:
+    from: any_entity
+    to: Session
+    description: Used to trace any extracted entity back to the session it
+      came from. Critical for the "where did I learn this?" audit query.
+
+  EVIDENCED_IN:
+    from: any_fact
+    to: Turn
+    description: Sparser than MENTIONED_IN. Only attaches the highest-confidence
+      facts to the specific Turn that produced them, for verbatim recall.
+
+  # ── Inter-entity edges, populated by background reasoning (phase 3+) ──────
+
+  OVERLAPS_WITH:
+    from: Concern
+    to: Concern
+    bidirectional: true
+    description: Two concerns that frequently co-occur in the same session.
+      Inferred by the co-occurrence pass; never extracted directly.
+
+  HELPED_WITH:
+    from: CopingStrategy
+    to: Concern
+    description: Strategy was reported as effective for this concern.
+      Extracted directly from user statements like "the grounding helped
+      with the panic".
+
+  DID_NOT_HELP:
+    from: CopingStrategy
+    to: Concern
+    description: Strategy was reported as ineffective. Critical for the
+      "don't suggest meditation again" feature — the response node consults
+      this edge before recommending a strategy.
+
+  TRIGGERED:
+    from: Event
+    to: Concern
+    description: A specific event triggered or worsened a concern. Inferred
+      by the LLM reasoning pass when both an Event and a Concern share a
+      temporal proximity in extraction.
+
+  RELATES_TO:
+    # Generic edge for inter-Person relationships and any other catch-all
+    # connections. The relationship type lives on a `kind` property using a
+    # controlled vocabulary (see §9 q1 for why this is one edge type instead
+    # of many explicit ones).
+    from: any_entity
+    to: any_entity
+    description: |
+      Inter-entity relationship with a controlled-vocabulary `kind` property.
+      The `kind` value is restricted to the allowlist below; values that
+      don't fit fall back to "other" with the original phrasing preserved
+      in `kind_raw`.
+    properties:
+      kind: relationship_kind        # see allowlist below
+      kind_raw: string_or_null       # original phrasing when kind == "other"
+      first_observed_at: timestamp
+      last_observed_at: timestamp
+      confidence: enum[low, med, high]
+
+# Controlled vocabulary for the RELATES_TO `kind` property. Organized into
+# six clusters; the agent's graph queries can target whole clusters via the
+# group constants in agent/memory/relationship_kinds.py (eventual home).
+#
+# Anything not in this list normalizes to "other" and the original phrasing
+# is preserved in `kind_raw`. Phase 4 consolidation reviews `kind_raw` values
+# to identify frequently-seen relationships worth promoting to first-class
+# kinds.
+
+relationship_kind_allowlist:
+
+  family_of_origin:
+    - mother
+    - father
+    - parent              # for "my parent" or non-binary
+    - step_mother
+    - step_father
+    - sister
+    - brother
+    - sibling             # for "my sibling" or non-binary
+    - child               # generic for son/daughter/non-binary child
+    - grandparent
+    - grandchild
+    - other_family        # aunt, uncle, cousin, niece, nephew, etc.
+
+  romantic:
+    - partner             # current partner, gender-unspecified
+    - spouse
+    - ex_partner          # critical for therapy contexts
+    - ex_spouse
+
+  friendship:
+    - friend
+    - close_friend        # for "best friend" / "closest friend"
+    - estranged_friend    # for "we used to be close"
+
+  professional:
+    - colleague
+    - boss
+    - subordinate         # for "someone who reports to me"
+    - client
+
+  care:
+    - therapist           # other therapists the user is seeing
+    - doctor
+    - caregiver           # someone who cares for the user
+    - dependent           # someone the user cares for
+
+  catch_all:
+    - other               # the bucket; original phrasing kept in kind_raw
+
+# ─── 5. Retrieval policies ───────────────────────────────────────────────────
+#
+# These policies govern what the load-memory node fetches at the start of each
+# turn. They are intentionally conservative to avoid the "creepy memory"
+# failure mode (see §9 q4).
+
+retrieval:
+
+  per_turn:
+    # Runs on every turn, keeps response latency low.
+    semantic_search:
+      enabled: true
+      query: current_user_message_text
+      limit: 5
+      max_age_days: null              # no age filter; semantic search handles relevance
+      include_dormant: false
+    episodic_search:
+      enabled: true
+      query: current_user_message_text
+      limit: 2
+      max_age_days: 30                # only recent sessions; older arcs surface via /memory list sessions
+    graph_expansion:
+      enabled: true                    # phase 3+; no-op until graph backend exists
+      seed_from: semantic_search_results
+      hops: 1                          # 1-hop only on hot path; deeper traversals are too slow
+      limit: 5
+      edge_filter:
+        # Hot-path retrieval avoids inter-entity edges to keep results focused
+        # on facts directly about the user. Inter-entity edges are queried
+        # only on demand (see on_demand below).
+        include: [KNOWS, WORRIES_ABOUT, EXPERIENCED, USES, WANTS]
+        exclude: [OVERLAPS_WITH, RELATES_TO]
+    procedural:
+      # Always inject the full procedural rule list into the system prompt.
+      enabled: true
+      injection_point: system_prompt_suffix
+
+  on_demand:
+    # Runs only when the agent needs deep reasoning (rare). Triggered by
+    # explicit user questions like "what have we been working on?" or by
+    # specific node logic. Higher latency budget (~500ms-2s).
+    deep_graph_query:
+      max_hops: 3
+      time_window_days: 90
+
+  proactive_recall:
+    # Whether the agent volunteers memory unprompted ("Last time you mentioned
+    # X — how's that going?"). Default OFF; user-controllable via /memory recall.
+    # See §9 q4 for the full reasoning.
+    default: off
+    user_setting_key: proactive_recall_enabled
+    storage_location: procedural namespace, special record
+    enable_command: /memory recall on
+    disable_command: /memory recall off
+    enforcement: |
+      Implemented as a system-prompt constraint, not output filtering.
+      When OFF, the response generation node's system prompt includes:
+        "Use any retrieved memories to inform the warmth, pacing, and
+         content of your response, but do NOT explicitly reference past
+         sessions or past statements unless the user has just asked
+         about them."
+      When ON, the constraint is relaxed:
+        "You may reference relevant past memories when it adds value to
+         the current moment, but do so sparingly and never for emotionally
+         charged topics without strong contextual fit."
+
+      The load-memory node still retrieves memories regardless of this
+      setting — the setting only controls whether the model EXPLICITLY
+      references them, not whether they're available for silent shaping.
+
+    onboarding_mention: |
+      First-run experience includes one sentence:
+        "I'll use what you tell me to be more helpful over time, but I won't
+         bring up old topics unless you ask. Type /memory for details."
+
+    opt_in_confirmation_example: |
+      When the user runs `/memory recall on` for the first time, the CLI
+      shows a benign example of what changes:
+        "OK — I'll start bringing up things from our past conversations
+         when they seem relevant. For example, if we talked about your
+         work schedule yesterday, I might say 'last time you mentioned
+         the morning standups have been rough — how was today?'
+
+         Type `/memory recall off` any time to switch this back."
+
+      The example is deliberately benign (work, sleep, daily routine) and
+      avoids emotionally charged topics (loss, relationships, health).
+
+# ─── 6. Write policies ───────────────────────────────────────────────────────
+#
+# When does each layer get written, and by which node?
+
+write_policies:
+
+  semantic:
+    when: after_response_generation
+    by: extract_semantic_facts_node
+    cadence: per_turn                  # but most turns produce zero writes
+    structured_output: true            # uses Pydantic schema, temperature 0
+    deduplication:
+      strategy: hot_path
+      threshold: 0.95                  # see §9 q5; conservative, permanent
+      embedding_model: text-embedding-3-small
+    notes: |
+      Most turns produce zero facts. The extractor is asked to be conservative:
+      no small talk, no transient feelings, no ambiguous claims, nothing the
+      user explicitly asked to forget.
+
+  episodic:
+    when: at_session_end
+    by: summarize_session_node
+    cadence: per_session
+    triggers:
+      - explicit_end_command           # user types /end
+      - inactivity_timeout             # 20 minutes, hardcoded in v1; see §9 q2
+      - runtime_shutdown               # CLI close, server graceful shutdown
+    structured_output: true            # uses Pydantic SessionArc schema
+    notes: |
+      One LLM call per session, not per turn. The summarizer reads the full
+      transcript from the checkpointer and produces a structured arc.
+
+  procedural:
+    when: explicit_user_request OR phase_4_consolidation
+    by: procedural_writer_node
+    cadence:
+      phase_1: explicit_user_request_only
+      phase_4: explicit + nightly_consolidation
+    structured_output: true
+    rule_phrasing_constraint: |
+      Rules MUST be written in second-person, evidence-grounded form.
+      Good: "You've said meditation makes you more anxious."
+      Bad:  "User dislikes meditation."
+      Good: "Sometimes you say 'I'm fine' before getting into how you actually feel."
+      Bad:  "User often deflects with 'I'm fine'."
+
+      The internal rule string is identical to the displayed string. There
+      is no curation pass between storage and display. The grounding-in-
+      evidence framing is the natural softening — it presents the rule as
+      an observation about a pattern, not a verdict.
+    notes: |
+      In phase 1-3, procedural rules are written ONLY when the user explicitly
+      asks the agent to remember a style preference ("please don't suggest
+      meditation again" → immediate write). The nightly consolidation that
+      infers rules from accumulated facts is deferred to phase 4.
+
+  crisis_log:
+    when: on_crisis_event
+    by: crisis_log_node                # always-on, runs alongside crisis_response_node
+    cadence: per_crisis_event
+    structured_output: true
+    mode_override: true                 # writes EVEN in incognito mode
+    notes: |
+      Logged regardless of memory mode. In incognito mode, the user_id field
+      is null and the session_id is opaque-hashed (SHA-256, no reverse
+      mapping). This is the asymmetry that makes "we don't remember you,
+      but we do log safety events" possible.
+
+      Retention: 90 days for per-user records, indefinite for aggregate
+      stats. See §9 q6 for the legal-review caveat.
+
+# ─── 7. Consolidation (phase 4) ──────────────────────────────────────────────
+#
+# Phase 1-3 ship with no background consolidation. The only "consolidation"
+# in those phases is hot-path deduplication during semantic writes (see
+# §6 write_policies.semantic.deduplication).
+
+consolidation:
+
+  phase_1_to_3:
+    strategy: hot_path_dedup_only
+    description: |
+      When the extraction node is about to write a new fact, first check if
+      a near-identical fact already exists for this user (vector similarity
+      >= 0.95 against text-embedding-3-small). If yes, bump last_referenced_at
+      instead of writing a duplicate. This is a function call on the write
+      path, not a separate job.
+
+  phase_4:
+    strategy: in_process_scheduler_with_catchup    # Option B in the consolidation discussion
+    interval_hours: 24
+    catchup_at_startup: true
+    distributed_lock: pg_advisory_lock              # only relevant for synced mode
+
+    background_merge_threshold: 0.85
+    # Note: hot-path threshold (0.95) is permanent. The 0.85 background
+    # threshold only applies to merges proposed by the nightly pass, where
+    # mistakes are observable via consolidation_runs and can be reviewed.
+
+    proposal_types:
+      - merge_facts                     # collapse duplicates that escaped hot path
+      - mark_contradiction              # flag conflicting facts
+      - promote_to_procedural           # turn a recurring fact into a style rule
+      - infer_graph_edge                # add inter-entity edges (OVERLAPS_WITH, etc.)
+      - mark_dormant                    # age out unreferenced facts
+
+    confidence_threshold:
+      auto_apply: high
+      log_for_review: med
+      discard: low
+
+    promote_to_procedural_constraint: |
+      Promoting an accumulated pattern to a procedural rule requires AT
+      LEAST 3 supporting evidence quotes (and preferably 5+). Single-
+      evidence promotions are discarded; double-evidence promotions are
+      logged for review but not auto-applied.
+
+  consolidation_runs_log:
+    # Schema designed in phase 1, table empty until phase 4.
+    # Phase 1 ships the table so phase 4 doesn't need a schema migration.
+    table_name: consolidation_runs
+    fields:
+      run_id: uuid7
+      user_id: string
+      started_at: timestamp
+      duration_seconds: int
+      proposals_total: int
+      proposals_applied: int
+      proposals_discarded: int
+      proposals_logged_for_review: int
+      merge_proposals:                  # detailed log of every merge
+        - source_fact_ids: list[uuid7]
+          merged_fact_id: uuid7
+          similarity_score: float
+          rationale: string
+      errors: list[string]
+
+# ─── 8. CLI command catalog ──────────────────────────────────────────────────
+#
+# User-facing memory commands by phase. Phase 1 ships the 9 ID-based commands;
+# phase 2 adds search-based commands; phase 4 adds consolidation commands.
+# All commands follow the `subject verb [noun] [arg]` shape (kubectl-style).
+
+cli_commands:
+
+  phase_1:
+    # ID-based delete only. No search, no fuzzy matching, no NLP.
+    list:
+      - command: /memory list
+        description: Show all memory contents (paginated, default page size 20)
+        flags: ["--page <n>"]
+      - command: /memory list facts
+        description: Show only semantic facts
+        flags: ["--page <n>"]
+      - command: /memory list rules
+        description: Show only procedural rules
+      - command: /memory list sessions
+        description: Show only episodic session arcs
+        flags: ["--page <n>"]
+      - command: /memory status
+        description: Show memory mode, total record counts, last consolidation
+          timestamp, proactive recall on/off
+
+    forget:
+      - command: /memory forget fact <n>
+        description: Delete one semantic fact by its list index
+        confirmation: y/n
+      - command: /memory forget rule <n>
+        description: Delete one procedural rule by its list index
+        confirmation: y/n
+      - command: /memory forget session <id>
+        description: Delete one episodic session arc by its session id
+        confirmation: y/n
+      - command: /memory clear
+        description: Wipe everything for this user
+        confirmation: type "delete everything"
+
+    other:
+      - command: /memory recall on
+        description: Enable proactive recall (the agent will reference past
+          memories unprompted)
+        first_run_explanation: true
+      - command: /memory recall off
+        description: Disable proactive recall (silent shaping only)
+      - command: /end
+        description: Explicitly end the current session, triggering immediate
+          summarization
+
+  phase_2:
+    # Search-based delete and per-layer bulk wipe.
+    - command: /memory search <term>
+      description: Find matches across all layers using keyword + embedding
+        similarity. Shows results without deleting.
+    - command: /memory forget search <n>
+      description: Delete one match from the most recent search
+      confirmation: y/n
+    - command: /memory forget search all
+      description: Delete all matches from the most recent search
+      confirmation: type "delete N records" (with exact count)
+    - command: /memory clear facts
+      description: Wipe all semantic facts (keep rules and sessions)
+      confirmation: type "delete N facts" (with exact count)
+    - command: /memory clear rules
+      description: Wipe all procedural rules (keep facts and sessions)
+      confirmation: type "delete N rules" (with exact count)
+    - command: /memory clear sessions
+      description: Wipe all episodic session arcs (keep facts and rules)
+      confirmation: type "delete N sessions" (with exact count)
+
+  phase_4:
+    # Consolidation commands; only meaningful once the background pass exists.
+    - command: /memory consolidate
+      description: Manually trigger a consolidation pass for this user
+    - command: /memory restore <id>
+      description: Undo a recent merge from the consolidation_runs log
+
+  conventions:
+    confirmation_strength:
+      single_item: simple y/n
+      bulk_wipe: type the exact phrase ("delete everything")
+      search_based_bulk: type "delete N records" with exact count
+    list_pagination:
+      default_page_size: 20
+      navigation: "--page <n>"
+      reasoning: |
+        Cheap to add early, painful to retrofit. Memory grows over time;
+        starting with pagination means users build habits around the
+        paginated form.
+
+# ─── 9. Decisions log ────────────────────────────────────────────────────────
+#
+# All 7 open questions from draft 1 were resolved in a design session on
+# 2026-04-10. This section records what was decided, when, and the reasoning,
+# so future contributors can understand the rationale before changing
+# settings.
+#
+# Decisions are listed in the order they were locked. Each entry has the
+# format:
+#   id           — q1..q7
+#   locked_on    — date
+#   decision     — the locked value
+#   alternatives — what else was considered
+#   reasoning    — why this was chosen
+#   reversibility — how hard it is to change later
+#   triggers_to_revisit — observable signals that should prompt re-evaluation
+
+decisions_log:
+
+  - id: q1
+    title: Edge type granularity for Person→Person relationships
+    locked_on: 2026-04-10
+    decision: |
+      Generic RELATES_TO edge with controlled-vocabulary `kind` property.
+      27-value allowlist organized in 6 clusters (family_of_origin, romantic,
+      friendship, professional, care, catch_all). Catch-all bucket is "other"
+      with original phrasing preserved in `kind_raw`.
+    alternatives:
+      - Explicit edge types per relationship (MOTHER_OF, SISTER_OF, etc.)
+    reasoning: |
+      The decisive factor is LLM labeling reliability. With 12+ explicit
+      edge types, LLM extractors produce inconsistent labels on ~5-15% of
+      writes, fragmenting the graph in ways that are hard to detect. A
+      single edge type with a controlled-vocabulary property gives most of
+      the same query precision while letting the LLM only ever pick
+      RELATES_TO. The kind_raw escape valve catches the long tail.
+    reversibility: |
+      Medium-hard. Migrating from generic to explicit (or vice versa)
+      requires rewriting every existing edge plus updating extraction and
+      retrieval. Not catastrophic but not trivial.
+    triggers_to_revisit: |
+      - LLM extractor consistently confused by the kind property
+      - kind_raw values cluster around 1-2 specific patterns (signal to
+        promote them to first-class kinds, not change the strategy)
+      - Graph queries become slow due to property-filtering instead of
+        edge-type-filtering (very unlikely at OpenCouch's expected scale)
+
+  - id: q2
+    title: Inactivity timeout for session boundaries
+    locked_on: 2026-04-10
+    decision: |
+      20 minutes, hardcoded in v1. Plus first-class /end command for
+      explicit termination.
+    alternatives:
+      - 10 minutes (too short for therapy thinking-pauses)
+      - 60 minutes (lets unrelated subjects bleed together)
+      - User-configurable (deferred; configurability is cheap to add but
+        expensive to support)
+    reasoning: |
+      Aligned with how therapy conversations actually unfold — long thoughtful
+      pauses are normal, the timeout accommodates them. A user who talks for
+      ~1 hour with 2-3 thinking pauses gets one session, which matches
+      intuition. The /end escape valve handles users who want explicit
+      control. The downside of being slightly wrong is small in either
+      direction and recoverable with a one-line config change.
+    reversibility: |
+      Easy. Single config value, no data migration. Existing session arcs
+      remain valid; only future session boundaries are affected.
+    triggers_to_revisit: |
+      - Look at the inter-turn pause distribution after a few weeks of
+        usage data. If there's a clear bimodal shape, pick a value in the
+        middle of the gap.
+      - User feedback that sessions are "splitting in the middle of
+        conversations" → consider lengthening to 25-30 min
+      - User feedback that "the agent thinks I'm still in yesterday's
+        session" → consider shortening to 15 min
+
+  - id: q3
+    title: Visibility of procedural rules
+    locked_on: 2026-04-10
+    decision: |
+      Always visible. Internal rule string IS the displayed string (no
+      curation pass). Rules are written in second-person, evidence-grounded
+      form. Discoverable via /memory rules; no first-run push.
+      /memory off (temporary disable without delete) deferred to phase 2+.
+    alternatives:
+      - Hidden rules (smoother UX but breaks privacy promise asymmetrically)
+      - Curated middle path with separate internal/displayed forms (two
+        versions of truth, undermined transparency)
+    reasoning: |
+      Privacy policy ergonomics. With visible rules, OpenCouch's privacy
+      story is "we don't keep secret notes about you; everything we've
+      learned is in /memory rules" — three short, true sentences. Hidden
+      rules require a footnote that erodes trust if discovered. The
+      second-person, evidence-grounded phrasing transforms rules from
+      verdicts into observations, which is the natural softening.
+    reversibility: |
+      Architecturally easy (single bool flag), socially hard. Going from
+      hidden to visible later requires explaining "we used to keep rules
+      hidden, but now we don't," which raises the question "what else are
+      you hiding?"
+    triggers_to_revisit: |
+      - Users repeatedly delete rules right after seeing them → may signal
+        the phrasing feels too clinical
+      - Users explicitly ask "what does the agent know about me?" but
+        ignore the rules section → maybe the rules need better surfacing
+      - A specific class of rule keeps appearing wrong → tighten the
+        extraction prompt, don't hide the rules
+
+  - id: q4
+    title: Default for proactive recall
+    locked_on: 2026-04-10
+    decision: |
+      OFF by default. Silent shaping always on. Reactive recall always on.
+      Proactive recall opt-in via /memory recall on. First-run mention of
+      memory in onboarding (one sentence). Opt-in confirmation includes a
+      benign concrete example.
+    alternatives:
+      - Default ON (catastrophic failure modes for therapy)
+      - No mention in onboarding (creates a different trust gap)
+    reasoning: |
+      The single most user-trust-sensitive knob in the memory layer.
+      Therapy users are uniquely sensitive to feeling surveilled. Failure
+      modes of proactive recall are catastrophic, not embarrassing — the
+      "father's-health" example (agent surfaces a worry the user has since
+      learned worse news about) is one of many. The opt-in has zero
+      downside for users who want it; the off-default has substantial
+      protective value for users who didn't think about it. When one side
+      of a default has zero downside and the other has catastrophic
+      downside, the safer default wins by default.
+    reversibility: |
+      Architecturally easy, socially load-bearing. Flipping is a one-line
+      change but the trust impact of having shipped "on" first is hard to
+      undo at the population level.
+    triggers_to_revisit: |
+      - High opt-in rate among users who try /memory recall on (signal that
+        users want this feature surfaced more)
+      - Repeated user feedback that "memory feels invisible" or "I turned
+        on memory but nothing happens" — may indicate silent shaping is
+        too quiet to be perceived
+      - DO NOT revisit based on "users would be surprised if it just
+        worked" intuition; that's the failure mode this default exists
+        to prevent
+
+  - id: q5
+    title: Consolidation merge aggressiveness
+    locked_on: 2026-04-10
+    decision: |
+      Tiered thresholds:
+        - Hot-path deduplication: 0.95 (conservative, permanent)
+        - Background consolidation: 0.85 (phase 4 only, observability-gated)
+      Embedding model: text-embedding-3-small (locks the threshold values).
+      Phase 1 ships only the hot-path threshold; the background pass and
+      its threshold land in phase 4.
+      consolidation_runs log schema designed in phase 1, table empty until
+      phase 4 (avoids future schema migration).
+    alternatives:
+      - Single uniform threshold (loses the safety asymmetry between hot
+        and background paths)
+      - Aggressive hot path (silent loss of signal in live conversation)
+    reasoning: |
+      Hot-path mistakes happen during a live conversation and are
+      uncorrectable from the user's perspective — the conservative 0.95
+      threshold is permanent, not phase-gated. Background consolidation
+      runs with humans-in-the-loop possible and full observability via
+      consolidation_runs, so it can be more aggressive (0.85) without the
+      same risk. The two thresholds correspond to two failure profiles,
+      not one.
+    reversibility: |
+      Easy in either direction with a catch — going aggressive→conservative
+      doesn't unmerge already-merged facts. Conservative→aggressive is
+      purely additive: facts that should be merged eventually will be in
+      subsequent passes.
+    triggers_to_revisit: |
+      - Users complaining that /memory list shows duplicate-looking facts
+        → tune background threshold up (0.85 → 0.90)
+      - Consolidation_runs log shows merges that lost meaningful nuance
+        → tune background threshold down (0.85 → 0.80)
+      - Hot-path threshold (0.95) is intentionally NOT tunable; it stays
+        conservative regardless of observed patterns
+
+  - id: q6
+    title: Crisis log retention period
+    locked_on: 2026-04-10
+    decision: |
+      Two-tier retention:
+        - Per-user records: 90 days, auto-purged daily
+        - Aggregate statistics: indefinite, no PII, daily rollups
+      Flagged-event extension mechanism deferred to phase 2+.
+      Daily aggregate rollup job deferred to phase 2 (phase 1 just doesn't
+      delete records before then).
+      ALL of the above MUST be revisited with legal counsel before any
+      production launch, especially in jurisdictions with mental-health
+      data regulations.
+    alternatives:
+      - Forever (indefinite privacy exposure, legal discovery surface)
+      - 30 days (too short for incident investigation)
+      - 1 year (substantial privacy exposure, no clear benefit over 90)
+    reasoning: |
+      90 days is the Goldilocks number for consumer software dealing with
+      sensitive events. Long enough to investigate incidents that surface
+      weeks later, short enough to defend in any "why do you still have
+      this" conversation. The aggregate-vs-per-user split lets you keep
+      year-over-year trend visibility without year-long PII retention.
+    reversibility: |
+      Easy to extend, hard to shorten. Lengthening retention is purely
+      additive. Shortening it after publishing a policy is a public
+      communication exercise, not a config edit.
+    triggers_to_revisit: |
+      - Legal review (REQUIRED before any production launch)
+      - Specific jurisdictions with mental-health data regulations
+        (HIPAA-adjacent, GDPR special category data, etc.)
+      - Active investigations that need the extension mechanism to ship
+
+  - id: q7
+    title: /forget X UX
+    locked_on: 2026-04-10
+    decision: |
+      Hybrid (Option D): per-layer commands + search command, shipped
+      progressively across phases. Phase 1 ships 9 ID-based commands
+      covering list, point delete, bulk wipe, and status. Phase 2 adds
+      search-based commands (the riskier delete operations). Phase 4 adds
+      consolidation commands.
+      Confirmation patterns:
+        - Single-item delete: simple y/n
+        - Bulk wipe: type "delete everything"
+        - Search-based bulk: type "delete N records" with exact count
+      /memory list paginated from phase 1 (default page size 20).
+    alternatives:
+      - List + ID-based only (insufficient for bulk operations)
+      - Free-text natural language (too much hidden NLP, dangerous bulk
+        deletes)
+      - Per-layer commands without search (covers precision but not
+        discovery)
+    reasoning: |
+      Phase 1 ships only the precise (ID-based) commands so users cannot
+      accidentally bulk-delete via search. Search-based deletion is the
+      riskiest operation in the whole forget UX and waits until phase 2
+      when its failure modes are better understood. The typing-to-confirm
+      pattern (vs. simple y/n) is the right amount of friction for
+      destructive operations without being annoying for routine ones.
+    reversibility: |
+      Easy to extend (adding new commands is always safe), hard to remove
+      (removing commands deprecates user habits). Start narrow, widen
+      based on observed needs.
+    triggers_to_revisit: |
+      - Users frequently asking for bulk delete by topic before phase 2
+        ships → consider promoting search to phase 1
+      - Pagination page size (20) feels too small or too large in practice
+      - Users routinely deleting from multiple layers → consider a
+        cross-layer "forget about X" command
+
+# ─── End of schema v1 ────────────────────────────────────────────────────────

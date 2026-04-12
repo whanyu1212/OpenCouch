@@ -1,0 +1,405 @@
+.root {
+  padding: 0.5rem 0 2rem;
+  font-family: var(--ifm-font-family-base);
+}
+
+/* ── Legend ──────────────────────────────────────────────────────────────────── */
+
+.legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--oc-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+[data-theme='dark'] .legendItem { color: var(--oc-text-muted); }
+
+.legendDot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Scenario card grid ───────────────────────────────────────────────────── */
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface-1);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out), background var(--oc-duration-fast) var(--oc-ease-out), box-shadow var(--oc-duration-fast) var(--oc-ease-out);
+}
+[data-theme='dark'] .card {
+  background: var(--oc-surface-1);
+  border-color: var(--oc-border);
+}
+.card:hover {
+  border-color: var(--oc-accent);
+  box-shadow: var(--oc-shadow-md);
+}
+.cardActive {
+  border-color: var(--oc-accent) !important;
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+[data-theme='dark'] .cardActive {
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cardTitle {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+}
+
+.cardTurns {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: var(--oc-text-secondary);
+  background: var(--oc-accent-subtle);
+  border: 1px solid var(--oc-border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+[data-theme='dark'] .cardTurns {
+  background: var(--oc-accent-subtle);
+  color: var(--oc-text-secondary);
+}
+
+.cardSub {
+  font-size: 0.68rem;
+  color: var(--oc-text-secondary);
+  line-height: 1.4;
+}
+[data-theme='dark'] .cardSub { color: var(--oc-text-secondary); }
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cardDots {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.cardDot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cardModes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cardMode {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.54rem;
+  color: var(--oc-text-muted);
+  background: var(--oc-accent-subtle);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+[data-theme='dark'] .cardMode {
+  background: var(--oc-accent-subtle);
+  color: var(--oc-text-muted);
+}
+
+/* ── Conversation ───────────────────────────────────────────────────────────── */
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  animation: fadeIn 0.2s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Turn ───────────────────────────────────────────────────────────────────── */
+
+.turn {
+  display: flex;
+  gap: 16px;
+}
+
+.turnMarker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 28px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.turnNum {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: rgba(33,95,90,0.10);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.64rem;
+  font-weight: 700;
+  color: var(--ifm-color-primary);
+  flex-shrink: 0;
+}
+[data-theme='dark'] .turnNum {
+  background: rgba(120,184,175,0.10);
+  color: #78b8af;
+}
+.turnLine {
+  flex: 1;
+  width: 1.5px;
+  background: rgba(33,95,90,0.12);
+  margin: 6px 0;
+}
+[data-theme='dark'] .turnLine { background: rgba(120,184,175,0.10); }
+
+.turnBody {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 24px;
+}
+
+/* ── Chat bubbles ───────────────────────────────────────────────────────────── */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.bubbleUser, .bubbleAgent {
+  max-width: 88%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--oc-border);
+}
+
+.bubbleUser {
+  align-self: flex-end;
+  background: var(--oc-surface-2);
+  border-bottom-right-radius: 3px;
+}
+
+.bubbleAgent {
+  align-self: flex-start;
+  background: var(--oc-accent-subtle);
+  border-bottom-left-radius: 3px;
+}
+
+.bubbleRole {
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-text-muted);
+  margin-bottom: 4px;
+}
+[data-theme='dark'] .bubbleRole { color: var(--oc-text-muted); }
+
+.bubbleText {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--oc-text-primary);
+  margin: 0;
+}
+
+/* ── State strip ────────────────────────────────────────────────────────────── */
+
+.stateStrip {
+  padding: 10px 14px;
+  border: 1px solid var(--oc-border);
+  border-radius: 8px;
+  background: var(--oc-surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routeTrace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.routeLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-text-muted);
+  flex-shrink: 0;
+}
+[data-theme='dark'] .routeLabel { color: var(--oc-text-muted); }
+.routePath {
+  font-family: var(--ifm-font-family-monospace) !important;
+  font-size: 0.68rem !important;
+  color: var(--oc-accent) !important;
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  word-break: break-all;
+}
+
+.statePills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+/* ── Mode type pills ────────────────────────────────────────────────────────── */
+
+.pill {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.mtTherapeutic {
+  background: var(--oc-accent);
+  color: var(--oc-text-inverse);
+}
+[data-theme='dark'] .mtTherapeutic {
+  background: var(--oc-accent-subtle);
+  color: var(--oc-accent);
+}
+
+.mtOperational {
+  background: rgba(215, 139, 95, 0.2);
+  color: #7a4b2c;
+}
+[data-theme='dark'] .mtOperational {
+  background: rgba(240, 173, 126, 0.2);
+  color: #f0ad7e;
+}
+
+.mtCrisis {
+  background: rgba(184, 72, 62, 0.2);
+  color: #8f2f27;
+}
+[data-theme='dark'] .mtCrisis {
+  background: rgba(228, 110, 98, 0.2);
+  color: #f09090;
+}
+
+.pillMuted {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--oc-accent-subtle);
+  color: var(--oc-text-secondary);
+  white-space: nowrap;
+}
+[data-theme='dark'] .pillMuted {
+  background: var(--oc-accent-subtle);
+  color: var(--oc-text-secondary);
+}
+
+.pillType {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--oc-border);
+  color: var(--oc-text-muted);
+  white-space: nowrap;
+}
+[data-theme='dark'] .pillType {
+  border-color: var(--oc-border);
+  color: var(--oc-text-muted);
+}
+
+/* ── Why line ───────────────────────────────────────────────────────────────── */
+
+.why {
+  font-size: 0.74rem;
+  font-style: italic;
+  line-height: 1.45;
+  color: var(--oc-text-secondary);
+  margin: 0;
+  padding-top: 2px;
+  border-top: 1px solid var(--oc-border);
+}
+[data-theme='dark'] .why {
+  color: var(--oc-text-secondary);
+  border-top-color: var(--oc-border);
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .cardGrid { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .card { padding: 10px 12px; }
+  .cardTitle { font-size: 0.68rem; }
+  .cardModes { display: none; }
+  .turn { gap: 10px; }
+  .turnMarker { width: 22px; }
+  .turnNum { width: 20px; height: 20px; font-size: 0.58rem; }
+  .bubbleUser, .bubbleAgent { max-width: 95%; }
+  .statePills { gap: 4px; }
+}
+
+@media (max-width: 400px) {
+  .cardGrid { grid-template-columns: 1fr; }
+}

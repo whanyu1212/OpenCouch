@@ -1,0 +1,282 @@
+/* ── Root ───────────────────────────────────────────────────────────────────── */
+
+.root {
+  padding: 1.5rem 0 2rem;
+  font-family: var(--ifm-font-family-base);
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--oc-text-muted);
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+[data-theme='dark'] .hint { color: var(--oc-text-muted); }
+.hint::before {
+  content: '';
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--oc-border-strong);
+  flex-shrink: 0;
+}
+
+/* ── Pipeline layout ────────────────────────────────────────────────────────── */
+
+.pipeline {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+/* ── Step card ──────────────────────────────────────────────────────────────── */
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface-1);
+  cursor: pointer;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out), box-shadow var(--oc-duration-fast) var(--oc-ease-out), background var(--oc-duration-fast) var(--oc-ease-out);
+}
+[data-theme='dark'] .step {
+  background: var(--oc-surface-1);
+  border-color: var(--oc-border);
+}
+.step:hover {
+  border-color: var(--oc-accent);
+  box-shadow: var(--oc-shadow-md);
+}
+
+.stepActive {
+  border-color: var(--oc-accent) !important;
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+[data-theme='dark'] .stepActive {
+  background: var(--oc-surface-2) !important;
+  box-shadow: var(--oc-shadow-md) !important;
+}
+
+/* ── Step internals ─────────────────────────────────────────────────────────── */
+
+.stepIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: rgba(33,95,90,0.10);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #215f5a;
+  flex-shrink: 0;
+  letter-spacing: -0.02em;
+}
+[data-theme='dark'] .stepIcon {
+  background: rgba(120,184,175,0.12);
+  color: #78b8af;
+}
+
+.stepLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+  white-space: nowrap;
+  min-width: 140px;
+}
+
+.stepIO {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.74rem;
+  color: var(--oc-text-secondary);
+  flex-wrap: wrap;
+}
+[data-theme='dark'] .stepIO { color: var(--oc-text-secondary); }
+
+.ioIn {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  background: rgba(33,95,90,0.06);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+[data-theme='dark'] .ioIn { background: rgba(120,184,175,0.08); }
+
+.ioArrow {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.ioOut {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  background: rgba(33,95,90,0.10);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-weight: 600;
+  color: #215f5a;
+}
+[data-theme='dark'] .ioOut {
+  background: rgba(120,184,175,0.12);
+  color: #78b8af;
+}
+
+/* ── Connector between steps ────────────────────────────────────────────────── */
+
+.connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.connectorLine {
+  width: 1px;
+  flex: 1;
+  background: var(--oc-border-strong);
+}
+[data-theme='dark'] .connectorLine { background: rgba(120,184,175,0.25); }
+
+.connectorHead {
+  width: 0; height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--oc-border-strong);
+}
+[data-theme='dark'] .connectorHead {
+  border-top-color: rgba(120,184,175,0.35);
+}
+
+/* ── Detail panel ───────────────────────────────────────────────────────────── */
+
+.detail {
+  margin-top: 16px;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  background: var(--oc-surface-1);
+  overflow: hidden;
+  animation: detailIn 0.18s cubic-bezier(0.16,1,0.3,1) both;
+}
+
+@keyframes detailIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  background: var(--oc-surface-3);
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.detailIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 6px;
+  background: rgba(33,95,90,0.10);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #215f5a;
+  flex-shrink: 0;
+}
+[data-theme='dark'] .detailIcon {
+  background: rgba(120,184,175,0.12);
+  color: #78b8af;
+}
+
+.detailTitle {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  flex: 1;
+}
+
+.detailClose {
+  width: 22px; height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.68rem;
+  color: var(--ifm-color-secondary-darkest);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  transition: background var(--oc-duration-fast) var(--oc-ease-out);
+}
+.detailClose:hover { background: var(--oc-surface-2); }
+
+.detailBody {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detailText {
+  font-size: 0.84rem;
+  line-height: 1.6;
+  color: var(--ifm-font-color-base);
+  margin: 0;
+}
+
+.detailMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.metaRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.metaKey {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-primary);
+  min-width: 32px;
+}
+
+.metaVal {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.76rem;
+  color: var(--ifm-color-secondary-darkest);
+}
+[data-theme='dark'] .metaVal { color: #a8cdc9; }
+
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .step { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+  .stepLabel { min-width: auto; }
+  .stepIO { width: 100%; }
+}
