@@ -1,0 +1,50 @@
+---
+title: Runtime & Persistence
+---
+
+import RuntimeLayers from '@site/src/components/RuntimeLayers';
+import ThreadLifecycle from '@site/src/components/ThreadLifecycle';
+
+# Runtime & Persistence
+
+The agent has two entry points that share the same core pipeline. The stateless layer is for simple request/response. The persistent layer adds thread-aware checkpointing so conversations survive across sessions.
+
+## Two layers, one pipeline
+
+Both layers run the same nodes in the same order. The difference is what happens between turns.
+
+<RuntimeLayers />
+
+The stateless path (`run_agent`) is a single async function — the caller passes in history and gets back a response. The persistent path (`PersistentAgentRuntime`) manages a SQLite-backed checkpoint store. It loads the previous state, runs the turn, and saves the result automatically.
+
+The runtime now wires three collaborators at startup: an LLM client, an `EmbeddingProvider` (used for semantic retrieval in the memory layer), and a memory store. All three are injected into the graph so nodes never construct their own clients.
+
+---
+
+## Thread lifecycle
+
+Hover a turn to see what persists versus what gets re-derived. Persisted fields survive between turns; re-derived fields are recomputed from the transcript by `prepare_turn_state` each turn.
+
+<ThreadLifecycle />
+
+The `compact_persisted_state` step runs at the end of every turn. It strips the derived `history` field before the checkpoint is saved — the transcript is the source of truth, and history is just a trimmed view of it.
+
+---
+
+## The `--user-id` flag
+
+By default, each thread is its own isolated namespace — memory created in one thread is invisible to another. The `--user-id` flag decouples memory identity from thread identity: when set, every thread sharing the same user ID reads and writes the same memory store. This means switching threads (e.g. starting a fresh conversation) preserves accumulated semantic facts, procedural rules, and episodic arcs.
+
+---
+
+## Privacy controls
+
+Three CLI commands call through to the store/backend layer for memory management:
+
+| Command | Effect |
+|---|---|
+| `/memory forget` | Deletes a specific fact or rule from the user's memory |
+| `/memory clear` | Wipes all memory for the current user identity |
+| `/memory purge-crisis [days]` | Removes crisis log entries older than the specified retention window |
+
+See the [Memory](/docs/memory/overview) section for the full architecture.

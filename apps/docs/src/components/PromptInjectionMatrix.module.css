@@ -1,0 +1,116 @@
+.root {
+  padding: 1rem 0 1.5rem;
+}
+
+/* ── Grid layout ────────────────────────────────────────────────────────────── */
+
+.matrix {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) repeat(5, 1fr);
+  gap: 2px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--oc-border);
+  box-shadow: var(--oc-shadow-sm);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
+
+.headerCorner {
+  background: var(--oc-surface-3);
+  padding: 10px 12px;
+}
+
+.headerCell {
+  background: var(--oc-surface-3);
+  padding: 10px 8px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--oc-text-muted);
+  text-align: center;
+  letter-spacing: 0.02em;
+  transition: background var(--oc-duration-fast) var(--oc-ease-out), color var(--oc-duration-fast) var(--oc-ease-out);
+}
+[data-theme='dark'] .headerCell { color: var(--oc-text-muted); }
+
+.headerActive {
+  background: var(--oc-accent-subtle) !important;
+  color: var(--ifm-color-primary) !important;
+}
+[data-theme='dark'] .headerActive {
+  background: var(--oc-accent-subtle) !important;
+  color: var(--oc-accent) !important;
+}
+
+/* ── Mode label cell ────────────────────────────────────────────────────────── */
+
+.modeCell {
+  background: var(--oc-surface-1);
+  padding: 9px 12px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+  display: flex;
+  align-items: center;
+  transition: background var(--oc-duration-fast) var(--oc-ease-out);
+}
+
+.modeCellActive {
+  background: var(--oc-surface-2) !important;
+}
+[data-theme='dark'] .modeCellActive {
+  background: var(--oc-surface-2) !important;
+}
+
+/* ── Data cells ─────────────────────────────────────────────────────────────── */
+
+.cell {
+  padding: 9px 8px;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: background var(--oc-duration-fast) var(--oc-ease-out);
+  background: var(--oc-surface-1);
+}
+
+.cellOn {
+  color: var(--oc-accent);
+}
+[data-theme='dark'] .cellOn { color: var(--oc-accent); }
+
+.cellOff {
+  color: rgba(20, 52, 50, 0.22);
+}
+[data-theme='dark'] .cellOff { color: rgba(232, 245, 243, 0.18); }
+
+.cellHighlight {
+  background: var(--oc-surface-2) !important;
+}
+[data-theme='dark'] .cellHighlight {
+  background: var(--oc-surface-2) !important;
+}
+
+/* ── Hover note ─────────────────────────────────────────────────────────────── */
+
+.note {
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: var(--oc-text-muted);
+  font-style: italic;
+  animation: fadeUp var(--oc-duration-fast) var(--oc-ease-out);
+}
+[data-theme='dark'] .note { color: var(--oc-text-muted); }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .matrix { grid-template-columns: minmax(90px, 1fr) repeat(5, 1fr); }
+  .headerCell { font-size: 0.6rem; padding: 8px 4px; }
+  .modeCell { font-size: 0.66rem; padding: 8px; }
+}

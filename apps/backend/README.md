@@ -1,0 +1,30 @@
+# OpenCouch Backend
+
+Backend service for the OpenCouch mental health support product.
+
+Current status:
+- minimal FastAPI app entrypoint
+- agent kernel with crisis and therapeutic subgraphs
+- LangGraph workflow with SQLite-backed thread persistence
+- provider-backed LLM adapters
+- local interactive CLI entrypoint
+- pytest backend tests and runner-based crisis evals
+
+Planned implementation order:
+1. real chat API endpoint
+2. auth and request context
+3. memory write and retrieval
+4. background summarization and jobs
+5. observability
+
+Local CLI:
+
+```bash
+uv run python -m opencouch_cli --mode auto
+```
+
+Resume a persisted local thread:
+
+```bash
+uv run python -m opencouch_cli --mode auto --thread-id local-demo
+```

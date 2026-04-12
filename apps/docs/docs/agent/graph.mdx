@@ -1,0 +1,131 @@
+---
+title: Agent Graph
+sidebar_position: 1
+---
+
+import AgentGraph from '@site/src/components/AgentGraph';
+
+# Agent Graph
+
+Every message follows the same pipeline: memory retrieval first,
+then safety check, then routing, then response, then memory writes.
+Click any step below to see what it does.
+
+<AgentGraph />
+
+---
+
+## Topology
+
+The parent graph has 8 nodes. The therapeutic subgraph (compiled as
+a single parent-level node) hides 7 internal nodes (dispatcher + 6
+mode nodes). The crisis gate routes between branches via
+`Command(goto=...)`.
+
+```text
+START
+  -> load_memory_node             retrieve semantic + episodic + procedural context
+  -> crisis_gate_node             hybrid regex + LLM safety classification
+  -> [crisis branch]              crisis_response_node -> crisis_log_node
+     OR
+     [therapeutic branch]         therapeutic_subgraph (dispatcher -> mode node)
+  -> extract_semantic_facts_node  LLM structured output, gated by small-talk check
+  -> extract_procedural_rules_node  same gate, writes style rules
+  -> finalize_turn_node           append assistant reply + mode to transcript
+END
+```
+
+Both branches converge at the shared extraction + finalize spine.
+
+## Node responsibilities
+
+| Node | What it does |
+|---|---|
+| `load_memory_node` | Retrieves semantic + episodic + procedural context via hybrid RRF retrieval. Computes the query embedding. Populates `working_memory` and `memory.procedural_rules`. |
+| `crisis_gate_node` | Hybrid regex + LLM crisis classification. Three deterministic fast paths (imminent-risk, clear self-harm, idiomatic-safe) before the LLM fallback. Routes via `Command(goto=...)`. |
+| `crisis_response_node` | Generates the crisis response with PFA overlay. Writes to `state["response"]`. |
+| `crisis_log_node` | Appends a `CrisisLogRecord` to the always-on audit log. Writes regardless of memory mode. |
+| `therapeutic_subgraph` | Dispatcher picks one of 6 modes, the mode node generates the response. See below. |
+| `extract_semantic_facts_node` | LLM structured-output call to extract persistent facts from the turn. Gated by the small-talk check. Batch-embeds candidates before writing. |
+| `extract_procedural_rules_node` | LLM structured-output call to extract style rules. Same small-talk gate. Writes to the procedural profile. |
+| `finalize_turn_node` | Appends the assistant reply to the transcript with the routing `mode` stamped on it (so `/history` shows which mode shaped each reply). |
+
+## Therapeutic subgraph
+
+The dispatcher picks exactly one mode per turn:
+
+| Mode | When it fires |
+|---|---|
+| `supportive` | Default — user sharing feelings, seeking support, or greeting |
+| `reflective` | User describing a recurring pattern they've already named |
+| `clarifying` | Ambiguous message — agent needs context before responding |
+| `psychoeducation` | User describes a reaction AND seeks understanding |
+| `guided_exercise` | User requests a structured technique (breathing, grounding) |
+| `closing` | User signals wind-down ("I should go", "thanks, this helped") |
+
+The dispatcher uses hybrid classification: high-precision regex fast
+paths for obvious cases (confusion markers → clarifying, active
+exercise re-entry → guided_exercise), LLM classifier for the
+ambiguous middle, regex fallback when no LLM is available.
+
+## Design principles
+
+**Safety is sequential.** The crisis gate runs before any response
+generation. There is no path through the graph that produces a
+response without passing the safety check.
+
+**Routing is deterministic-first.** Regex patterns fire before the
+LLM. Most turns never need an LLM classification call.
+
+**Post-response extraction is a side effect.** The two extractor
+nodes run after the response is composed. They write to memory for
+future turns. A failure in extraction never fails the parent turn.
+
+**Small-talk gate saves cost.** Both extractors check whether the
+message is obviously small talk before making the LLM call.
+Greetings and acknowledgments skip extraction entirely.
+
+**Per-turn diagnostics.** Every node stamps timing and decision
+metadata into `state["diagnostics"]`. Each node spreads the existing
+dict before adding its keys (LangGraph replaces top-level keys, not
+merges them).
+
+## Key files
+
+| File | What it does |
+|---|---|
+| `agent/graph.py` | `build_agent_workflow()`, `build_initial_state()`, `state_to_output()` |
+| `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` — dispatcher + 6 mode nodes |
+| `agent/therapeutic/dispatcher.py` | Hybrid regex + LLM mode classification |
+| `agent/therapeutic/prompts.py` | Knowledge composition + mode-specific instructions |
+| `agent/therapeutic/supportive.py` | Supportive mode node |
+| `agent/therapeutic/reflective.py` | Reflective mode node |
+| `agent/therapeutic/clarifying.py` | Clarifying mode node |
+| `agent/therapeutic/psychoeducation.py` | Psychoeducation mode node |
+| `agent/therapeutic/guided_exercise.py` | Guided exercise with multi-turn step tracking |
+| `agent/therapeutic/closing.py` | Closing mode node |
+| `agent/nodes/load_memory.py` | Memory retrieval + query embedding |
+| `agent/nodes/crisis_gate.py` | Crisis classification + routing |
+| `agent/nodes/crisis_response.py` | Crisis response generation |
+| `agent/nodes/crisis_log.py` | Audit log writer |
+| `agent/nodes/extract_facts.py` | Semantic fact extraction |
+| `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction |
+| `agent/nodes/finalize_turn.py` | Transcript finalization |
+| `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
+| `agent/persistence.py` | `PersistentAgentRuntime` — SQLite-backed thread state |
+
+## Adding a new therapeutic mode
+
+1. Create `knowledge/response_modes/your_mode.md` with the mode's
+   knowledge content
+2. Create `agent/therapeutic/your_mode.py` with the response node
+   function
+3. Add a knowledge tuple and instructions block in
+   `agent/therapeutic/prompts.py`
+4. Register the node in `agent/therapeutic/graph.py`
+   (`subgraph.add_node(...)`)
+5. Add dispatch patterns in `agent/therapeutic/dispatcher.py`
+   (regex fast paths + LLM prompt update)
+6. Add cases to `eval/datasets/therapeutic_routing_v0.json`
+7. Add a `_STAGE_LABELS` entry in `opencouch_cli/app.py` if the
+   node name differs from the CLI's stage label vocabulary

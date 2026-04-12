@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync backend dependencies
+        working-directory: apps/backend
+        run: uv sync --group dev
+
+      - name: Run backend tests
+        working-directory: apps/backend
+        run: uv run pytest -q tests
+
+      - name: Run crisis eval runner
+        working-directory: apps/backend
+        run: uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
