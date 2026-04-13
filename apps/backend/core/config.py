@@ -41,9 +41,9 @@ class Settings:
     Keep this focused on provider selection and model defaults, not domain policy.
     """
 
-    llm_provider: LLMProvider = "gemini"
+    llm_provider: LLMProvider = "openai"
     gemini_model: str = "gemini-3-flash-preview"
-    openai_model: str = "gpt-5.4-nano"
+    openai_model: str = "gpt-5.4-mini"
 
 
 def get_settings() -> Settings:
@@ -58,14 +58,14 @@ def get_settings() -> Settings:
 
     load_runtime_env()
 
-    provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
     if provider not in {"gemini", "openai"}:
         raise ValueError(f"Unsupported LLM_PROVIDER value: {provider}")
 
     return Settings(
         llm_provider=provider,  # type: ignore[arg-type]
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-5.4-nano"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
     )
 
 
