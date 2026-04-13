@@ -4,10 +4,10 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'OpenCouch Docs',
   tagline: 'Architecture, safety, and contributor documentation for OpenCouch',
-  url: 'https://opencouch.dev',
-  baseUrl: '/',
+  url: 'https://whanyu1212.github.io',
+  baseUrl: '/OpenCouch/',
   onBrokenLinks: 'throw',
-  organizationName: 'opencouch',
+  organizationName: 'whanyu1212',
   projectName: 'OpenCouch',
   trailingSlash: false,
   favicon: 'img/favicon.svg',
