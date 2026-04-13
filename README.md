@@ -46,6 +46,23 @@ uv run python -m opencouch_cli --voice
 uv run pytest tests/
 ```
 
+### Web frontend
+
+```bash
+# Terminal 1 — backend API
+cd apps/backend
+uv run uvicorn main:app --port 8000 --reload
+
+# Terminal 2 — Next.js dev server
+cd apps/web
+pnpm install
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The frontend connects to the backend at `localhost:8000`. On first load you'll choose **Persistent** (loads memory and history) or **Incognito** (fresh thread, nothing saved).
+
+Pages: **Chat** (text with diagnostics), **Voice** (OpenAI Realtime), **Memory** (facts/sessions/rules), **State** (full agent state dict inspector).
+
 See the [docs site](apps/docs/) for architecture, memory layers, voice integration, and contributor guides.
 
 ## Architecture
@@ -76,6 +93,7 @@ apps/
     opencouch_cli/   — Rich-based interactive CLI
     services/llm/    — Gemini + OpenAI provider adapters
     tests/           — 495+ pytest tests
+  web/               — Next.js 16 frontend (React 19, Tailwind v4)
   docs/              — Docusaurus documentation site
 eval/
   datasets/          — hand-curated eval cases per layer

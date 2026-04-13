@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState, useCallback } from "react";
 import { useSessionStore } from "@/lib/session";
+import { CouchLogo } from "@/components/logo";
 
 const NAV_ITEMS = [
   {
-    label: "Text Chat",
+    label: "Chat",
     href: "/",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-[18px] h-[18px]">
@@ -31,20 +32,32 @@ const NAV_ITEMS = [
     href: "/memory",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-[18px] h-[18px]">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M12 16v-4M12 8h.01" />
+        <path d="M4 7h16M4 12h16M4 17h10" />
+      </svg>
+    ),
+  },
+  {
+    label: "State",
+    href: "/state",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-[18px] h-[18px]">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="9" y1="13" x2="15" y2="13" />
+        <line x1="9" y1="17" x2="13" y2="17" />
       </svg>
     ),
   },
 ];
 
-const MIN_WIDTH = 200;
-const MAX_WIDTH = 400;
-const DEFAULT_WIDTH = 240;
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 420;
+const DEFAULT_WIDTH = 260;
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { userId, threadId, setUserId, setThreadId, newSession } = useSessionStore();
+  const { userId, threadId, sessionMode, setUserId, setThreadId, newSession } = useSessionStore();
+  const isIncognito = sessionMode === "incognito";
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isResizing = useRef(false);
 
@@ -73,66 +86,117 @@ export function Sidebar() {
 
   return (
     <aside
-      className="relative border-r border-oc-border bg-oc-bg-card flex flex-col shrink-0"
+      className="relative border-r border-oc-border bg-oc-bg-sidebar flex flex-col shrink-0 oc-surface-noise"
       style={{ width }}
     >
       {/* Logo */}
-      <div className="px-4 py-3.5 border-b border-oc-border">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-md bg-oc-teal-600 flex items-center justify-center text-white font-bold text-[10px]">
-            OC
+      <div className="relative z-10 px-4 pt-5 pb-4">
+        <Link href="/" className="flex items-center gap-3 group">
+          <div className="w-9 h-9 rounded-lg bg-oc-warm-100 border border-oc-border flex items-center justify-center shadow-sm group-hover:bg-oc-warm-50 transition-colors">
+            <CouchLogo className="w-6 h-6" />
           </div>
-          <span className="font-semibold text-[13px] text-oc-teal-800">OpenCouch</span>
+          <div>
+            <span className="font-display text-[17px] text-oc-teal-900 block leading-none">
+              OpenCouch
+            </span>
+            <span className="text-[11px] text-oc-text-muted font-mono tracking-wide uppercase">
+              v0.8 · lab
+            </span>
+          </div>
         </Link>
       </div>
 
       {/* Session config */}
-      <div className="px-3 py-2.5 border-b border-oc-border space-y-1.5">
+      <div className="relative z-10 mx-3 px-3 py-3 border border-oc-border rounded-lg bg-oc-bg/60 backdrop-blur-sm space-y-2.5">
+        {/* Mode indicator — clickable to go back to mode picker */}
+        <button
+          onClick={newSession}
+          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md border transition-all cursor-pointer ${
+            isIncognito
+              ? "bg-oc-warm-100 border-oc-warm-200 hover:bg-oc-warm-200/70"
+              : "bg-oc-teal-50 border-oc-teal-200/60 hover:bg-oc-teal-100/60"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {isIncognito ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5 text-oc-warm-600">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+            ) : (
+              <div className="w-2 h-2 rounded-full bg-oc-green" />
+            )}
+            <span className={`text-[11px] font-mono font-medium uppercase tracking-widest ${
+              isIncognito ? "text-oc-warm-600" : "text-oc-teal-700"
+            }`}>
+              {isIncognito ? "incognito" : "persistent"}
+            </span>
+          </div>
+          <span className={`text-[11px] font-mono flex items-center gap-1 ${
+            isIncognito ? "text-oc-warm-400" : "text-oc-teal-400"
+          }`}>
+            switch
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </span>
+        </button>
+
         <div>
-          <label className="text-[9px] font-medium uppercase tracking-wider text-oc-text-muted block mb-0.5">
-            User ID
+          <label className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-muted block mb-1">
+            user
           </label>
           <input
             type="text"
-            value={userId}
+            value={isIncognito ? "(anonymous)" : userId}
             onChange={(e) => setUserId(e.target.value)}
-            className="w-full px-2 py-1 text-[11px] bg-oc-bg border border-oc-border rounded focus:outline-none focus:border-oc-border-strong transition-colors"
+            disabled={isIncognito}
+            placeholder="e.g. alice"
+            className="w-full px-2.5 py-2 text-[13px] font-mono bg-oc-bg-input border border-oc-border rounded-md focus:outline-none focus:border-oc-teal-400 focus:ring-1 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 disabled:bg-oc-warm-50 placeholder:text-oc-text-dim/60"
           />
         </div>
         <div>
-          <label className="text-[9px] font-medium uppercase tracking-wider text-oc-text-muted block mb-0.5">
-            Thread ID
+          <label className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-muted block mb-1">
+            thread
           </label>
           <input
             type="text"
             value={threadId}
             onChange={(e) => setThreadId(e.target.value)}
-            className="w-full px-2 py-1 text-[11px] bg-oc-bg border border-oc-border rounded focus:outline-none focus:border-oc-border-strong transition-colors"
+            disabled={isIncognito}
+            placeholder="e.g. session-1"
+            className="w-full px-2.5 py-2 text-[13px] font-mono bg-oc-bg-input border border-oc-border rounded-md focus:outline-none focus:border-oc-teal-400 focus:ring-1 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 disabled:bg-oc-warm-50 placeholder:text-oc-text-dim/60"
           />
         </div>
         <button
           onClick={newSession}
-          className="w-full text-[10px] font-medium text-oc-teal-600 hover:text-oc-teal-500 py-1 border border-oc-border rounded hover:bg-oc-teal-50 transition-colors"
+          className="w-full text-[12px] font-medium text-oc-teal-700 hover:text-oc-teal-600 py-2 border border-oc-border-subtle rounded-md hover:bg-oc-teal-50 hover:border-oc-teal-200 transition-all"
         >
           + New Session
         </button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 space-y-0.5">
+      <nav className="relative z-10 flex-1 px-3 pt-5 space-y-1">
+        <p className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-dim px-2.5 mb-2">
+          Navigate
+        </p>
         {NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-2.5 px-2.5 py-2 rounded-md text-[12px] transition-colors ${
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[14px] transition-all ${
                 isActive
-                  ? "bg-oc-teal-50 text-oc-teal-700 font-medium"
-                  : "text-oc-text-secondary hover:text-oc-text hover:bg-oc-warm-50"
+                  ? "bg-oc-teal-50 text-oc-teal-800 font-medium border border-oc-teal-100 shadow-sm"
+                  : "text-oc-text-secondary hover:text-oc-text hover:bg-oc-warm-100/60 border border-transparent"
               }`}
             >
-              {item.icon}
+              <span className={isActive ? "text-oc-teal-600" : "text-oc-text-muted"}>
+                {item.icon}
+              </span>
               {item.label}
             </Link>
           );
@@ -140,16 +204,16 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-2.5 border-t border-oc-border">
-        <p className="text-[9px] text-oc-text-muted leading-relaxed">
-          Development prototype · Not a therapist
+      <div className="relative z-10 px-3 py-3 border-t border-oc-border-subtle">
+        <p className="text-[11px] text-oc-text-dim font-mono leading-relaxed">
+          prototype · not a therapist
         </p>
       </div>
 
       {/* Drag handle */}
       <div
         onMouseDown={handleMouseDown}
-        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-oc-teal-300/30 active:bg-oc-teal-400/40 transition-colors"
+        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-oc-teal-300/30 active:bg-oc-teal-400/40 transition-colors z-20"
       />
     </aside>
   );

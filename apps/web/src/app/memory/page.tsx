@@ -57,12 +57,13 @@ export default function MemoryPage() {
   return (
     <div className="flex flex-col h-screen">
       <header className="px-6 py-3.5 border-b border-oc-border shrink-0 flex items-center justify-between">
-        <h1 className="text-sm font-semibold text-oc-teal-800">Memory</h1>
+        <h1 className="font-display text-lg text-oc-teal-900">Memory</h1>
         <button
           onClick={loadAll}
-          className="text-[11px] text-oc-teal-500 hover:text-oc-teal-400 transition-colors"
+          disabled={loading}
+          className="text-[13px] font-mono text-oc-teal-600 hover:text-oc-teal-500 transition-colors disabled:opacity-50"
         >
-          Refresh
+          {loading ? "loading…" : "refresh"}
         </button>
       </header>
 
@@ -72,15 +73,15 @@ export default function MemoryPage() {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-3 py-2.5 text-[12px] font-medium border-b-2 transition-colors ${
+            className={`px-4 py-3 text-[14px] font-medium border-b-2 transition-colors ${
               tab === t.key
-                ? "border-oc-teal-500 text-oc-teal-700"
+                ? "border-oc-teal-600 text-oc-teal-800"
                 : "border-transparent text-oc-text-muted hover:text-oc-text-secondary"
             }`}
           >
             {t.label}
             {t.count > 0 && (
-              <span className="ml-1.5 text-[10px] bg-oc-teal-50 text-oc-teal-600 px-1.5 py-0.5 rounded-full">
+              <span className="ml-2 text-[11px] font-mono bg-oc-teal-50 text-oc-teal-600 px-2 py-0.5 rounded-md border border-oc-teal-200/60">
                 {t.count}
               </span>
             )}
@@ -89,19 +90,26 @@ export default function MemoryPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        {loading && <p className="text-oc-text-muted text-xs">Loading...</p>}
+        {loading && (
+          <div className="flex items-center gap-2 text-oc-text-muted text-sm font-mono">
+            <div className="dot-pulse"><span /><span /><span /></div>
+            loading
+          </div>
+        )}
         {error && (
-          <div className="px-3.5 py-2.5 bg-red-50 border border-red-200 rounded-lg text-oc-red text-[13px]">
+          <div className="px-4 py-3 bg-oc-red-subtle border border-oc-red/20 rounded-xl text-oc-red text-[15px]">
             {error}
           </div>
         )}
 
-        {!loading && !error && tab === "overview" && status && (
-          <OverviewTab status={status} />
+        {!loading && !error && (
+          <div className="animate-fadeIn">
+            {tab === "overview" && status && <OverviewTab status={status} />}
+            {tab === "facts" && <FactsTab facts={facts} />}
+            {tab === "sessions" && <SessionsTab sessions={sessions} />}
+            {tab === "rules" && <RulesTab rules={rules} />}
+          </div>
         )}
-        {!loading && !error && tab === "facts" && <FactsTab facts={facts} />}
-        {!loading && !error && tab === "sessions" && <SessionsTab sessions={sessions} />}
-        {!loading && !error && tab === "rules" && <RulesTab rules={rules} />}
       </div>
     </div>
   );
@@ -109,30 +117,37 @@ export default function MemoryPage() {
 
 function OverviewTab({ status }: { status: MemoryStatus }) {
   return (
-    <div className="space-y-4 max-w-md">
+    <div className="space-y-5 max-w-lg">
+      {/* Count cards */}
       <div className="grid grid-cols-3 gap-3">
         {Object.entries(status.counts).map(([kind, count]) => (
-          <div key={kind} className="bg-oc-bg-card border border-oc-border rounded-xl p-3.5 text-center">
-            <p className="text-2xl font-bold text-oc-teal-600 tabular-nums">{count}</p>
-            <p className="text-[11px] text-oc-text-secondary mt-0.5 capitalize">{kind}</p>
+          <div key={kind} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center">
+            <p className="text-3xl font-display text-oc-teal-700 tabular-nums">{count}</p>
+            <p className="text-[12px] text-oc-text-muted mt-1.5 font-mono uppercase tracking-wider">{kind}</p>
           </div>
         ))}
       </div>
-      <div className="bg-oc-bg-card border border-oc-border rounded-xl p-3.5 text-[12px] space-y-1.5">
-        <Row label="Mode" value={status.memory_mode} />
-        <Row label="Owner" value={status.owner_id} mono />
-        <Row label="Crisis log" value={String(status.crisis_log_count)} />
-        <Row label="Proactive recall" value={status.proactive_recall_enabled ? "On" : "Off"} highlight={status.proactive_recall_enabled} />
+
+      {/* Config card */}
+      <div className="bg-oc-bg-card border border-oc-border rounded-xl divide-y divide-oc-border">
+        <MetaRow label="Mode" value={status.memory_mode} />
+        <MetaRow label="Owner" value={status.owner_id} mono />
+        <MetaRow label="Crisis log" value={String(status.crisis_log_count)} />
+        <MetaRow
+          label="Proactive recall"
+          value={status.proactive_recall_enabled ? "On" : "Off"}
+          accent={status.proactive_recall_enabled}
+        />
       </div>
     </div>
   );
 }
 
-function Row({ label, value, mono, highlight }: { label: string; value: string; mono?: boolean; highlight?: boolean }) {
+function MetaRow({ label, value, mono, accent }: { label: string; value: string; mono?: boolean; accent?: boolean }) {
   return (
-    <div className="flex justify-between">
+    <div className="flex justify-between px-5 py-3 text-[14px]">
       <span className="text-oc-text-muted">{label}</span>
-      <span className={`${mono ? "font-mono text-[11px]" : ""} ${highlight ? "text-oc-green font-medium" : "text-oc-text-secondary"}`}>
+      <span className={`${mono ? "font-mono text-[13px]" : ""} ${accent ? "text-oc-green font-medium" : "text-oc-text-secondary"}`}>
         {value}
       </span>
     </div>
@@ -142,21 +157,21 @@ function Row({ label, value, mono, highlight }: { label: string; value: string; 
 function FactsTab({ facts }: { facts: Record<string, unknown>[] }) {
   if (facts.length === 0) return <Empty label="No semantic facts stored yet." />;
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 max-w-2xl">
       {facts.map((f, i) => (
-        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-lg p-3.5">
-          <div className="flex items-start justify-between gap-3">
+        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+          <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <p className="text-[13px] text-oc-text leading-relaxed">
+              <p className="text-[15px] text-oc-text leading-relaxed italic">
                 &ldquo;{String(f.evidence_quote)}&rdquo;
               </p>
-              <div className="flex flex-wrap gap-2 mt-2">
+              <div className="flex flex-wrap gap-2 mt-3">
                 <Tag>{String(f.category)}</Tag>
                 <Tag>{String(f.subject)} → {String(f.predicate)} → {String(f.object)}</Tag>
                 <Tag muted>{String(f.confidence)}</Tag>
               </div>
             </div>
-            <span className="text-[10px] text-oc-text-dim shrink-0">#{String(f.index)}</span>
+            <span className="text-[11px] font-mono text-oc-text-dim shrink-0">#{String(f.index)}</span>
           </div>
         </div>
       ))}
@@ -167,11 +182,11 @@ function FactsTab({ facts }: { facts: Record<string, unknown>[] }) {
 function SessionsTab({ sessions }: { sessions: Record<string, unknown>[] }) {
   if (sessions.length === 0) return <Empty label="No episodic session arcs yet." />;
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 max-w-2xl">
       {sessions.map((s, i) => (
-        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-lg p-3.5">
-          <p className="text-[13px] text-oc-text leading-relaxed">{String(s.summary)}</p>
-          <div className="flex flex-wrap gap-2 mt-2">
+        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+          <p className="text-[15px] text-oc-text leading-relaxed">{String(s.summary)}</p>
+          <div className="flex flex-wrap gap-2 mt-3">
             {(s.themes as string[] || []).map((t: string) => (
               <Tag key={t}>{t}</Tag>
             ))}
@@ -188,17 +203,17 @@ function SessionsTab({ sessions }: { sessions: Record<string, unknown>[] }) {
 function RulesTab({ rules }: { rules: Record<string, unknown>[] }) {
   if (rules.length === 0) return <Empty label="No procedural style rules yet." />;
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 max-w-2xl">
       {rules.map((r, i) => (
-        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-lg p-3.5">
-          <p className="text-[13px] text-oc-text">{String(r.rule)}</p>
-          <div className="flex flex-wrap gap-2 mt-2">
+        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+          <p className="text-[15px] text-oc-text">{String(r.rule)}</p>
+          <div className="flex flex-wrap gap-2 mt-3">
             <Tag muted>{String(r.confidence)}</Tag>
             {r.added_at ? <Tag muted>{String(r.added_at).slice(0, 10)}</Tag> : null}
           </div>
           {Array.isArray(r.evidence) && r.evidence.length > 0 ? (
-            <p className="text-[11px] text-oc-text-muted mt-1.5 italic">
-              Evidence: {(r.evidence as string[]).join("; ")}
+            <p className="text-[13px] text-oc-text-muted mt-2.5 italic font-mono leading-relaxed">
+              evidence: {(r.evidence as string[]).join("; ")}
             </p>
           ) : null}
         </div>
@@ -209,10 +224,10 @@ function RulesTab({ rules }: { rules: Record<string, unknown>[] }) {
 
 function Tag({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
   return (
-    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+    <span className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border ${
       muted
-        ? "bg-oc-warm-100 text-oc-text-muted"
-        : "bg-oc-teal-50 text-oc-teal-700"
+        ? "bg-oc-warm-100 text-oc-warm-600 border-oc-warm-200"
+        : "bg-oc-teal-50 text-oc-teal-700 border-oc-teal-200/60"
     }`}>
       {children}
     </span>
@@ -221,6 +236,6 @@ function Tag({ children, muted }: { children: React.ReactNode; muted?: boolean }
 
 function Empty({ label }: { label: string }) {
   return (
-    <div className="text-center py-12 text-oc-text-muted text-sm">{label}</div>
+    <div className="text-center py-16 text-oc-text-muted text-base font-mono">{label}</div>
   );
 }
