@@ -777,14 +777,30 @@ TherapeuticMode = Literal[
     "clarifying",
 ]
 
+# Therapeutic modalities are orthogonal to modes — they represent the
+# therapeutic *framework* (CBT, ACT, grief support) while modes represent
+# the response *style* (supportive, reflective, etc.). The dispatcher
+# picks both in a single LLM call so the mode node can load the right
+# knowledge overlay.
+TherapeuticModality = Literal[
+    "motivational_interviewing",
+    "cbt",
+    "act",
+    "dbt_skills",
+    "grief_support",
+    "interpersonal_therapy",
+    "pfa",
+    "none",
+]
+
 
 class DispatchDecision(BaseModel):
     """The structured output of the therapeutic_dispatch_node LLM call.
 
     The dispatcher is given the current message, recent history, and
     retrieved memory, and it returns a DispatchDecision. The decision
-    includes the picked mode and a brief reasoning string for
-    observability (LangSmith spans, debugging).
+    includes the picked mode, therapeutic modality, and a brief
+    reasoning string for observability (LangSmith spans, debugging).
 
     The reasoning is SHORT — single sentence, max ~40 words. It exists
     for debugging, not for the user. It should never be shown to the
@@ -792,6 +808,7 @@ class DispatchDecision(BaseModel):
     """
 
     mode: TherapeuticMode
+    modality: TherapeuticModality = "none"
     reasoning: str = Field(min_length=1, max_length=240)
     confidence: ConfidenceLevel
 
@@ -807,6 +824,7 @@ __all__ = [
     "EntityType",
     "EntityRef",
     "HotPathEdgeType",
+    "TherapeuticModality",
     # §2 semantic
     "SemanticCategory",
     "MemoryWrite",

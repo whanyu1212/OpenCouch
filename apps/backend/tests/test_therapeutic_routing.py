@@ -399,11 +399,12 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
-    async def test_command_update_is_empty(self) -> None:
-        """The dispatcher's Command should have an empty update dict.
+    async def test_command_update_contains_modality(self) -> None:
+        """The dispatcher's Command carries routing.modality.
 
-        Mode nodes own the routing.mode/mode_source/mode_type fields in
-        their own deltas; the dispatcher shouldn't write any of those.
+        Mode nodes own routing.mode/mode_source/mode_type in their own
+        deltas; the dispatcher only writes routing.modality so the mode
+        node can load the correct knowledge overlay.
         """
 
         runtime = _MockRuntime(llm_client=None)
@@ -411,7 +412,9 @@ class TestDispatchNode:
 
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
-        assert cmd.update == {}
+        # Regex fallback for supportive defaults to MI
+        assert "routing" in cmd.update
+        assert cmd.update["routing"]["modality"] == "motivational_interviewing"
 
 
 # ─── 3. build_therapeutic_subgraph compile tests ─────────────────────────

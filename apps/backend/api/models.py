@@ -74,6 +74,12 @@ class ChatResponse(BaseModel):
         default=None,
         description="How the mode was selected: keyword, llm, default.",
     )
+    modality: str | None = Field(
+        default=None,
+        description="Which therapeutic modality informed the reply "
+        "(motivational_interviewing, cbt, act, dbt_skills, "
+        "grief_support, interpersonal_therapy, pfa, or none).",
+    )
     crisis: CrisisInfo
     diagnostics: dict = Field(
         default_factory=dict,

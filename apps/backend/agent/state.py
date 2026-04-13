@@ -94,6 +94,11 @@ class RoutingState(TypedDict):
     mode_source: NotRequired[str | None]
     # Distinguishes operational routing states from therapeutic and crisis modes.
     mode_type: NotRequired[ModeType]
+    # The therapeutic modality picked for this turn (CBT, ACT, grief, etc.).
+    # Set by the dispatcher alongside the mode. "none" when no modality
+    # applies (clarifying, closing). The mode node reads this to load the
+    # matching knowledge file into its system prompt.
+    modality: NotRequired[str | None]
     # Active modality overlays selected for the current response node.
     active_modalities: NotRequired[list[str]]
     # Cached semantic interpretation shared by routing and prompt shaping.

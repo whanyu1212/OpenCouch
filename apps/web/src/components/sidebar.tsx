@@ -56,7 +56,7 @@ const DEFAULT_WIDTH = 260;
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { userId, threadId, sessionMode, setUserId, setThreadId, newSession } = useSessionStore();
+  const { userId, threadId, sessionMode, setUserId, setThreadId, newSession, chatLoading } = useSessionStore();
   const isIncognito = sessionMode === "incognito";
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isResizing = useRef(false);
@@ -179,6 +179,17 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="relative z-10 flex-1 px-3 pt-5 space-y-1">
+        {chatLoading && (
+          <div className="flex items-center gap-2 px-2.5 py-2 mb-2 rounded-lg bg-oc-cta-subtle border border-oc-cta/15 animate-fadeIn">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-oc-cta opacity-50" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-cta" />
+            </span>
+            <span className="text-[11px] font-mono text-oc-cta leading-tight">
+              Response in progress — stay on Chat until it completes
+            </span>
+          </div>
+        )}
         <p className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-dim px-2.5 mb-2">
           Navigate
         </p>

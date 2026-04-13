@@ -18,61 +18,61 @@ const MODALITIES: Modality[] = [
     id: 'motivational_interviewing',
     label: 'MI ✓',
     full: 'Motivational Interviewing',
-    role: 'Active — wired into supportive mode',
+    role: 'Active — default for supportive mode',
     desc: 'Partnership over authority. Reflective listening, respect for autonomy, evoking the user\'s own reasons and next steps. OARS: open questions, affirmations, reflections, summaries.',
     goodFor: ['Ambivalence', 'Stuck feelings', 'Exploring change', 'Building self-awareness'],
     avoid: ['Lecturing', 'Rushing to fix', 'Forcing change talk', 'Coach-script tone'],
   },
   {
     id: 'pfa',
-    label: 'PFA',
+    label: 'PFA ✓',
     full: 'Psychological First Aid',
-    role: 'Authored — not yet wired',
+    role: 'Active — LLM-routed for acute distress',
     desc: 'Humane, supportive, practical help. Calm presence, emotional stabilization, immediate needs. No forced disclosure or intensive processing.',
     goodFor: ['Acute distress', 'Emotional stabilization', 'Practical next steps', 'Crisis-adjacent support'],
     avoid: ['Deep interpretation', 'Probing for trauma details', 'Premature reframing'],
   },
   {
     id: 'cbt',
-    label: 'CBT',
+    label: 'CBT ✓',
     full: 'Cognitive Behavioral Therapy',
-    role: 'Authored — not yet wired',
+    role: 'Active — LLM-routed for thought work and psychoeducation',
     desc: 'Collaborative, concrete, one technique at a time. Identify a specific thought or behavior target, examine evidence, generate a balanced alternative. Small, doable practice steps.',
     goodFor: ['Thought records', 'Cognitive distortions', 'Behavioral activation', 'Problem-solving structure'],
     avoid: ['Forcing reframes before validation', 'Worksheet dumps', 'Clinical jargon', 'Debate-club tone'],
   },
   {
     id: 'grief_support',
-    label: 'Grief',
+    label: 'Grief ✓',
     full: 'Grief Support',
-    role: 'Authored — not yet wired',
+    role: 'Active — LLM-routed for loss and bereavement',
     desc: 'Make room for grief without rushing resolution. Validate mixed emotions. Respect that grief is not a problem to fix quickly.',
     goodFor: ['Bereavement', 'Loss processing', 'Mixed or contradictory emotions', 'Sitting with pain'],
     avoid: ['Cliché comfort', 'Silver linings', 'Treating grief as pathology', 'Tidy lessons'],
   },
   {
     id: 'interpersonal_therapy',
-    label: 'IPT',
+    label: 'IPT ✓',
     full: 'Interpersonal Therapy',
-    role: 'Authored — not yet wired',
+    role: 'Active — LLM-routed for relationship and role issues',
     desc: 'Focuses on how relationships and social roles affect mood. Helps the user understand interpersonal patterns and communication dynamics.',
     goodFor: ['Relationship strain', 'Role transitions', 'Social isolation', 'Communication patterns'],
     avoid: ['Blaming others', 'Overanalyzing every relationship', 'Ignoring internal experience'],
   },
   {
     id: 'act',
-    label: 'ACT',
+    label: 'ACT ✓',
     full: 'Acceptance & Commitment Therapy',
-    role: 'Authored — not yet wired',
+    role: 'Active — LLM-routed for avoidance and values work',
     desc: 'Psychological flexibility through acceptance, defusion, and values-driven action. Name the thought, hold it lightly, choose what matters.',
     goodFor: ['Avoidance patterns', 'Values clarification', 'Acceptance of difficult emotions', 'Committed action'],
     avoid: ['Forcing positivity', 'Dismissing pain', 'Overcomplicating metaphors', 'Abstract philosophizing'],
   },
   {
     id: 'dbt_skills',
-    label: 'DBT skills',
+    label: 'DBT ✓',
     full: 'DBT Skills Training',
-    role: 'Authored — not yet wired',
+    role: 'Active — LLM-routed for emotional overwhelm',
     desc: 'Concrete skills for emotional regulation, distress tolerance, and interpersonal effectiveness. TIPP, STOP, radical acceptance.',
     goodFor: ['Emotional overwhelm', 'Distress tolerance', 'Impulse management', 'Interpersonal effectiveness'],
     avoid: ['Full DBT protocol', 'Diagnostic framing', 'Assuming personality pathology', 'Skills without validation first'],
@@ -94,7 +94,7 @@ const MODES: Mode[] = [
   { id: 'reflective', label: 'Reflective', when: 'User is describing a recurring pattern they\'ve already named', goal: 'Name 1–2 patterns carefully. Tentative, testable. Preserve user\'s framing.' },
   { id: 'clarifying', label: 'Clarifying', when: 'Ambiguous message — agent doesn\'t know what "it" refers to', goal: 'One context-gathering question. About context, not content. No assumptions.' },
   { id: 'psychoeducation', label: 'Psychoeducation', when: 'User describes a reaction AND seeks understanding ("why am I crying?")', goal: 'One short normalizing explanation. Pivot back to user\'s experience. No clinical jargon.' },
-  { id: 'guided_exercise', label: 'Guided exercise', when: 'User requests a structured technique (breathing, grounding, etc.)', goal: 'One exercise at a time. Multi-turn step tracking. Check pace between steps.' },
+  { id: 'guided_exercise', label: 'Guided exercise', when: 'User requests a structured technique — 12 exercises across 6 subtypes (grounding, thought work, activation, ACT, self-compassion, emotion regulation)', goal: 'One exercise at a time. Multi-turn step tracking. Check pace between steps.' },
   { id: 'closing', label: 'Closing', when: 'User signals wind-down ("I should go", "thanks, this helped")', goal: 'Warm wrap-up. Don\'t ask a new question or pivot to a new topic.' },
 ];
 
@@ -139,7 +139,7 @@ export default function TherapyApproach() {
       <section className={styles.modalitySection}>
         <h3 className={styles.sectionTitle}>Therapeutic modalities</h3>
         <p className={styles.sectionSub}>
-          Designed as overlays and stances — not full treatments. Currently only MI is wired into prompt construction (for supportive mode). The other six are authored as knowledge files and ready for mode-specific integration during clinical review. Click to see what each is good for and what to avoid.
+          Designed as overlays and stances — not full treatments. All seven modalities are wired and selected per turn by the LLM dispatcher based on the user&apos;s message context. Click to see what each is good for and what to avoid.
         </p>
         <div className={styles.modalityRow}>
           {MODALITIES.map(m => (

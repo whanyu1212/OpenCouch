@@ -72,10 +72,14 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal
+from uuid import uuid4
 
 from langgraph.runtime import Runtime
 
+from agent.memory.modes import MemoryMode
+from agent.memory.models import EntityRef, SemanticFact
 from agent.models import ModeType, ResponseKind
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -93,6 +97,9 @@ EXERCISE_5_4_3_2_1 = "grounding_5_4_3_2_1"
 
 
 StepState = Literal["complete", "hold", "stuck", "exit"]
+
+
+CompletionMode = Literal["item_count", "user_confirmation"]
 
 
 @dataclass(frozen=True)
@@ -113,11 +120,18 @@ class ExerciseStep:
       still counts as complete. Leniency matters — a user naming 4
       things on a "name 5" step should be allowed to advance rather
       than being held back on a technicality.
+    - ``completion_mode``: how the classifier determines completion.
+      ``"item_count"`` (default) counts listed items; used for steps
+      that ask the user to name things. ``"user_confirmation"`` matches
+      confirmation phrases ("ok", "done", "yes"); used for steps where
+      the user performs an action (breathing, visualization) and
+      confirms they did it.
     """
 
     prompt_fallback: str
     expected_count: int
     min_count_for_completion: int
+    completion_mode: CompletionMode = "item_count"
 
 
 # 5-4-3-2-1 grounding: a sensory exercise that anchors the user in the
@@ -174,11 +188,617 @@ _GROUNDING_5_4_3_2_1_STEPS: tuple[ExerciseStep, ...] = (
     ),
 )
 
+# ── Box breathing ─────────────────────────────────────────────────────
+# A structured 4-phase breathing cycle. Each step is a single breathing
+# action that the user confirms completing. Steps use
+# user_confirmation mode.
+
+EXERCISE_BOX_BREATHING = "grounding_box_breathing"
+
+_BOX_BREATHING_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's try box breathing. Breathe in slowly through your "
+            "nose for a count of four. Just focus on the air coming in. "
+            "Let me know when you've done that."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Good. Now hold that breath gently for another count of "
+            "four. No strain — just a soft pause. Tell me when you're "
+            "ready."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Now breathe out slowly through your mouth for a count of "
+            "four. Let the air go completely. Let me know when you've "
+            "exhaled."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "One more hold — empty lungs, count of four. Just sit with "
+            "the stillness for a moment. Tell me when you're done."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+)
+
+
+# ── STOP technique ───────────────────────────────────────────────────
+# A DBT-informed distress tolerance skill. Each letter in STOP is a
+# discrete step. Steps 0-1 use confirmation; steps 2-3 use item_count
+# (the user names an observation or action).
+
+EXERCISE_STOP_TECHNIQUE = "grounding_stop_technique"
+
+_STOP_TECHNIQUE_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's try the STOP technique. S is for Stop — just pause "
+            "whatever you're doing right now. Hands in your lap, feet "
+            "on the floor. Take a second. Let me know when you've paused."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "T is for Take a breath. One slow, deliberate breath — in "
+            "through your nose, out through your mouth. Tell me when "
+            "you've taken it."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "O is for Observe. What are you noticing right now — in "
+            "your body, your thoughts, or your surroundings? Just name "
+            "what's there."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "P is for Proceed. Now that you've paused and noticed, "
+            "what feels like the most useful next thing you could do? "
+            "Even something small."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Simple thought record ────────────────────────────────────────────
+# A simplified 4-step CBT thought record: situation → thought →
+# evidence → alternative. Sequential — each step depends on prior
+# steps. Exit is the only valid off-ramp (no skip).
+
+EXERCISE_THOUGHT_RECORD = "thought_work_simple_record"
+
+_THOUGHT_RECORD_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's slow down and look at one thought that's been "
+            "pulling at you. Can you describe the situation — what was "
+            "happening when this thought showed up?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Got it. Now, what's the specific thought or belief that "
+            "came with that moment? Try to put it in one sentence if "
+            "you can — the exact words your mind was saying."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Okay. Now let's look at that thought from the outside for "
+            "a moment. What evidence do you have that it might not be "
+            "the full picture? Even small things count."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Last step. Given what you just noticed, is there a more "
+            "balanced way to hold that thought? Not a fake positive — "
+            "just something that accounts for the full picture."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Tiny action experiment ───────────────────────────────────────────
+# A behavioral activation exercise: identify one small action, plan
+# when/where, anticipate obstacles, check feasibility. Sequential.
+
+EXERCISE_TINY_ACTION = "behavioral_activation_tiny_action"
+
+_TINY_ACTION_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's find one small thing you could try — not a plan, "
+            "just an experiment. What's something you've been meaning "
+            "to do or used to enjoy, even a little? It can be very small."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Good. Now let's make it smaller and more specific. When "
+            "could you do it today or tomorrow, and where? Just a rough "
+            "picture — no pressure to commit yet."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "What might get in the way? Not to solve it in advance — "
+            "just to notice it, so it doesn't surprise you."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Last thing. On a scale from 'no way' to 'I could probably "
+            "do that,' how doable does this feel? And is there anything "
+            "that would make it even one notch more doable?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Leaves on a stream ───────────────────────────────────────────────
+# An ACT defusion exercise. The user names a sticky thought, places it
+# on an imagined leaf, watches it float away, notices what remains,
+# then identifies a values-aligned step. Mixed completion modes.
+
+EXERCISE_LEAVES_ON_STREAM = "defusion_leaves_on_stream"
+
+_LEAVES_ON_STREAM_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's try something different with the thought that keeps "
+            "showing up. First — can you tell me the thought, in the "
+            "exact words your mind uses? Not the story around it, just "
+            "the sentence."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Now imagine a slow stream in front of you, with leaves "
+            "floating on the surface. Take that thought and place it "
+            "on one of the leaves. Watch it sit there for a moment. "
+            "Let me know when you can picture it."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Good. Now let the leaf drift downstream. You don't have "
+            "to push it — just let the current take it. If your mind "
+            "pulls you back to the thought, that's fine — just notice "
+            "that, and gently put the new thought on another leaf. "
+            "Tell me when you've watched it drift for a moment."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "What do you notice right now? Not whether the thought is "
+            "gone — it probably isn't — but what's the feeling in your "
+            "body or the space in your mind like, compared to a few "
+            "minutes ago?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "The thought might float back. That's normal — thoughts do "
+            "that. But now you know you can set it down without having "
+            "to argue with it or fix it first. What's one small thing "
+            "you could do next that matters to you, even with this "
+            "thought still in the background?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Progressive muscle relaxation ─────────────────────────────────────
+# A body-focused relaxation exercise: tense and release 5 muscle groups.
+# Each step uses user_confirmation mode.
+
+EXERCISE_MUSCLE_RELAXATION = "grounding_muscle_relaxation"
+
+_MUSCLE_RELAXATION_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's release some tension from your body. Start with your "
+            "hands — clench both fists as tight as you can. Hold for "
+            "about five seconds, then let go all at once. Notice the "
+            "difference. Tell me when you've done that."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Good. Now your shoulders — shrug them up toward your ears, "
+            "hold them there for five seconds, then drop them. Let them "
+            "fall all the way down. Let me know when you've released."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Now your face — scrunch everything up: squeeze your eyes, "
+            "clench your jaw, furrow your brow. Hold it for five "
+            "seconds, then release. Let your face go completely slack. "
+            "Tell me when you're done."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Your stomach now — pull it in tight, like you're bracing "
+            "for something. Hold for five seconds, then let it go soft. "
+            "Let me know when you've released."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Last one — your legs and feet. Press your feet into the "
+            "floor and tense your thighs. Hold for five seconds, then "
+            "release everything. Let your legs go heavy. Tell me when "
+            "you're done."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+)
+
+
+# ── Behavioral experiment ────────────────────────────────────────────
+# A CBT exercise for testing beliefs in the real world. Sequential —
+# each step depends on prior. The gap between step 2 and 3 may span
+# hours or days (the user does something IRL).
+
+EXERCISE_BEHAVIORAL_EXPERIMENT = "thought_work_behavioral_experiment"
+
+_BEHAVIORAL_EXPERIMENT_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's test a belief. What's a thought or prediction you "
+            "keep making that causes you distress? Try to state it as "
+            "clearly as you can — something like 'If I speak up in the "
+            "meeting, people will think I'm stupid.'"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Got it. Now — what's a small, manageable way you could "
+            "test whether that's actually true? Not a huge leap, just "
+            "something that would give you real information. What could "
+            "you try?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Before you try it, let's write down your prediction. What "
+            "exactly do you think will happen? Be specific — what will "
+            "people do, how will you feel, what's the worst-case scenario "
+            "you're expecting?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Now — what actually happened? Or if you haven't tried it "
+            "yet, come back when you have. How did the reality compare "
+            "to what you predicted? What surprised you?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Self-compassion break ────────────────────────────────────────────
+# Kristin Neff's 3-component model: mindfulness of suffering, common
+# humanity, self-kindness. Very short (3 steps), confirmation mode.
+
+EXERCISE_SELF_COMPASSION = "self_compassion_break"
+
+_SELF_COMPASSION_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's take a moment to be gentle with yourself. First — "
+            "just acknowledge what you're going through. Say it simply, "
+            "like 'This is really hard right now' or 'I'm struggling.' "
+            "You can say it out loud or just in your mind. Let me know "
+            "when you've done that."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Good. Now remind yourself that you're not alone in this. "
+            "Other people feel this way too — it's part of being human, "
+            "not a sign that something is wrong with you. Try saying "
+            "something like 'Everyone struggles sometimes.' Let me know "
+            "when you've sat with that for a moment."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Last step. Place a hand on your chest if that feels "
+            "comfortable, and say something kind to yourself — the way "
+            "you'd talk to a friend who was hurting. Something like "
+            "'May I be kind to myself' or 'May I give myself what I "
+            "need.' What feels right to you?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── IMPROVE the moment ───────────────────────────────────────────────
+# DBT distress tolerance skill. We use 4 of the 7 letters:
+# Imagery, Meaning, One thing, Encouragement. Mixed completion modes.
+
+EXERCISE_IMPROVE = "emotion_regulation_improve"
+
+_IMPROVE_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's IMPROVE this moment. I is for Imagery — close your "
+            "eyes if you can, and picture a place where you feel safe "
+            "or calm. It can be real or imagined. Spend a few seconds "
+            "there. Let me know when you have it."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "M is for Meaning. Even in difficult moments, there's "
+            "sometimes something to be learned or a reason to keep "
+            "going. Can you name one thing — even small — that makes "
+            "this struggle worth enduring?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "O is for One thing in the moment. Instead of thinking "
+            "about everything at once, focus on just one thing you can "
+            "do right now. What's one manageable task or focus point "
+            "for the next few minutes? Let me know when you've picked one."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="user_confirmation",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "E is for Encouragement. Say something supportive to "
+            "yourself — not toxic positivity, just honest encouragement. "
+            "Something like 'I've gotten through hard things before' or "
+            "'I'm doing the best I can right now.' What feels true?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Values compass ───────────────────────────────────────────────────
+# ACT values clarification. Helps users identify what matters and take
+# one step toward it. Complements defusion exercises (letting go) with
+# direction (moving toward).
+
+EXERCISE_VALUES_COMPASS = "defusion_values_compass"
+
+_VALUES_COMPASS_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's check your values compass. Think about the big areas "
+            "of your life — relationships, work, health, personal growth, "
+            "fun. Which area feels most important to you right now, or "
+            "most neglected?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Why does that area matter to you? Not what you 'should' "
+            "care about — what genuinely pulls at you when you're honest "
+            "with yourself?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "On a scale of 1 to 10, how aligned do you feel your "
+            "current actions are with what you just described? 1 is "
+            "'completely off track,' 10 is 'living it fully.' Just a "
+            "gut feeling — no wrong answer."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "What's one small thing you could do this week — even "
+            "today — that would move that number up by one? Not a "
+            "big overhaul, just one step closer."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
+# ── Gratitude inventory ──────────────────────────────────────────────
+# A short positive-psychology exercise for building positive affect.
+# 3 steps, item_count mode. Good session closer.
+
+EXERCISE_GRATITUDE = "emotion_regulation_gratitude"
+
+_GRATITUDE_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's shift gears for a moment. Can you name three things "
+            "you're grateful for today? They can be big or small — a "
+            "good cup of coffee counts as much as a good friend."
+        ),
+        expected_count=3,
+        min_count_for_completion=2,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Pick the one that resonates most. Why does it matter to "
+            "you? Not just 'it's nice' — what does it give you or mean "
+            "to you?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Take a moment and notice what's happening in your body "
+            "right now, after focusing on that. Does anything feel "
+            "different compared to a few minutes ago — even slightly?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
 # Registry mapping exercise_type → step sequence. Adding a new exercise
-# in a future stage means adding an entry here plus an ExerciseStep
-# tuple; the dispatcher and node code don't need to change.
+# means adding an entry here plus an ExerciseStep tuple; the dispatcher
+# and node code don't need to change.
 _EXERCISE_REGISTRY: dict[str, tuple[ExerciseStep, ...]] = {
     EXERCISE_5_4_3_2_1: _GROUNDING_5_4_3_2_1_STEPS,
+    EXERCISE_BOX_BREATHING: _BOX_BREATHING_STEPS,
+    EXERCISE_STOP_TECHNIQUE: _STOP_TECHNIQUE_STEPS,
+    EXERCISE_THOUGHT_RECORD: _THOUGHT_RECORD_STEPS,
+    EXERCISE_TINY_ACTION: _TINY_ACTION_STEPS,
+    EXERCISE_LEAVES_ON_STREAM: _LEAVES_ON_STREAM_STEPS,
+    EXERCISE_MUSCLE_RELAXATION: _MUSCLE_RELAXATION_STEPS,
+    EXERCISE_BEHAVIORAL_EXPERIMENT: _BEHAVIORAL_EXPERIMENT_STEPS,
+    EXERCISE_SELF_COMPASSION: _SELF_COMPASSION_STEPS,
+    EXERCISE_IMPROVE: _IMPROVE_STEPS,
+    EXERCISE_VALUES_COMPASS: _VALUES_COMPASS_STEPS,
+    EXERCISE_GRATITUDE: _GRATITUDE_STEPS,
+}
+
+# Display names for exercise-aware fallback messages.
+_EXERCISE_DISPLAY_NAMES: dict[str, str] = {
+    EXERCISE_5_4_3_2_1: "a grounding moment",
+    EXERCISE_BOX_BREATHING: "a box breathing cycle",
+    EXERCISE_STOP_TECHNIQUE: "the STOP technique",
+    EXERCISE_THOUGHT_RECORD: "a thought record",
+    EXERCISE_TINY_ACTION: "a tiny action experiment",
+    EXERCISE_LEAVES_ON_STREAM: "a defusion exercise",
+    EXERCISE_MUSCLE_RELAXATION: "a muscle relaxation exercise",
+    EXERCISE_BEHAVIORAL_EXPERIMENT: "a behavioral experiment",
+    EXERCISE_SELF_COMPASSION: "a self-compassion break",
+    EXERCISE_IMPROVE: "an IMPROVE the moment exercise",
+    EXERCISE_VALUES_COMPASS: "a values compass exercise",
+    EXERCISE_GRATITUDE: "a gratitude inventory",
 }
 
 
@@ -203,6 +823,22 @@ _STUCK_PATTERNS: tuple[str, ...] = (
     r"\b(?:nothing|none) (?:comes to mind|stands out)\b",
     r"\b(?:this is|that is|it'?s) (?:stupid|pointless|not working)\b",
     r"\bi (?:am|'?m) stuck\b",
+)
+
+
+# User confirmation patterns. Used for steps where the user does
+# something (breathe, visualize, pause) and confirms they did it.
+# These are intentionally strict: bare "ok" / "done" are full-message
+# matches; longer confirmations require specific phrasing. This avoids
+# false positives where "ok" appears mid-sentence (e.g., "ok but this
+# isn't working" — which hits STUCK first anyway via pattern priority).
+_CONFIRMATION_PATTERNS: tuple[str, ...] = (
+    r"^\s*(?:ok|okay|done|yes|yeah|yep|yup|got it|did it|ready|"
+    r"finished|mhm|mhmm|alright|sure)\s*[.!]?\s*$",
+    r"\b(?:i did|i'?ve done|i'?m done|i'?m ready|done with that|"
+    r"i did that|that'?s done)\b",
+    r"\b(?:took (?:a |the )?breath|breathed?|exhaled?|inhaled?|"
+    r"held it|paused|i (?:can |do )?(?:see|picture|imagine) it)\b",
 )
 
 
@@ -291,9 +927,13 @@ def _classify_step_state(
     if _matches_any(message, _STUCK_PATTERNS):
         return "stuck"
 
-    item_count = _count_listed_items(message)
-    if item_count >= current_step.min_count_for_completion:
-        return "complete"
+    if current_step.completion_mode == "user_confirmation":
+        if _matches_any(message, _CONFIRMATION_PATTERNS):
+            return "complete"
+    else:
+        item_count = _count_listed_items(message)
+        if item_count >= current_step.min_count_for_completion:
+            return "complete"
 
     return "hold"
 
@@ -352,6 +992,137 @@ def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
 # ── Main node function ────────────────────────────────────────────────
 
 
+# ── Exercise selection ─────────────────────────────────────────────────
+
+# Keyword patterns for selecting an exercise from the user's message.
+# Checked in order; the first match wins. The default fallback is
+# 5-4-3-2-1 grounding.
+_EXERCISE_SELECTORS: tuple[tuple[tuple[str, ...], str], ...] = (
+    # Grounding
+    (("breath", "breathe", "breathing", "box breath"), EXERCISE_BOX_BREATHING),
+    (
+        ("muscle", "tense", "tension", "relax my body", "pmr", "progressive"),
+        EXERCISE_MUSCLE_RELAXATION,
+    ),
+    (("stop technique", "stop method", "s.t.o.p"), EXERCISE_STOP_TECHNIQUE),
+    # Emotion regulation (must come before thought work — "improve"
+    # contains "prove" which would match behavioral experiment)
+    (
+        (
+            "improve the moment",
+            "improve",
+            "cope",
+            "get through this",
+            "emotion regulation",
+        ),
+        EXERCISE_IMPROVE,
+    ),
+    # Thought work
+    (
+        (
+            "behavioral experiment",
+            "test this belief",
+            "is this.*true",
+            "prove it",
+            "check if",
+        ),
+        EXERCISE_BEHAVIORAL_EXPERIMENT,
+    ),
+    (
+        (
+            "thought record",
+            "thought check",
+            "examine.*thought",
+            "look at.*thought",
+            "belief",
+        ),
+        EXERCISE_THOUGHT_RECORD,
+    ),
+    # Behavioral activation
+    (
+        (
+            "stuck",
+            "can't start",
+            "motivation",
+            "depleted",
+            "can't do anything",
+            "small action",
+            "tiny action",
+        ),
+        EXERCISE_TINY_ACTION,
+    ),
+    # Self-compassion (must come before values compass — "compassion"
+    # contains "compass" as a substring)
+    (
+        (
+            "self.?compassion",
+            "kinder to myself",
+            "hard on myself",
+            "self.?critical",
+            "hate myself",
+            "compassion break",
+        ),
+        EXERCISE_SELF_COMPASSION,
+    ),
+    # Acceptance / defusion / values
+    (
+        (
+            "values",
+            "what matters",
+            "meaning",
+            "purpose",
+            "direction",
+            "compass",
+            "life direction",
+        ),
+        EXERCISE_VALUES_COMPASS,
+    ),
+    (
+        (
+            "accept",
+            "let go",
+            "defusion",
+            "leaves",
+            "step back from",
+            "stop fighting",
+            "fused",
+            "fusion",
+        ),
+        EXERCISE_LEAVES_ON_STREAM,
+    ),
+    (
+        (
+            "grateful",
+            "gratitude",
+            "thankful",
+            "something good",
+            "positive",
+            "appreciate",
+        ),
+        EXERCISE_GRATITUDE,
+    ),
+    # Generic grounding triggers (lower priority)
+    (("stop", "pause", "slow down"), EXERCISE_STOP_TECHNIQUE),
+    (("overwhelmed", "too much"), EXERCISE_IMPROVE),
+)
+
+
+def _select_exercise(message: str) -> str:
+    """Pick an exercise type based on keywords in the user's message.
+
+    Returns the exercise_type constant. Falls back to 5-4-3-2-1
+    grounding when no keyword matches — the most established
+    exercise and the safest default.
+    """
+
+    lowered = message.lower()
+    for keywords, exercise_type in _EXERCISE_SELECTORS:
+        for kw in keywords:
+            if re.search(kw, lowered):
+                return exercise_type
+    return EXERCISE_5_4_3_2_1
+
+
 # Deterministic fallback strings used when no LLM client is available.
 _FALLBACK_HOLD = "Take your time — even one counts. There's no rush."
 _FALLBACK_STUCK_REPHRASE = (
@@ -359,11 +1130,6 @@ _FALLBACK_STUCK_REPHRASE = (
     "notice right now, whatever stands out."
 )
 _FALLBACK_EXIT = "Of course, let's stop. What would feel most helpful right now?"
-_FALLBACK_COMPLETE = (
-    "You just walked yourself through a grounding moment. "
-    "Notice how your body feels now compared to when we started."
-)
-_FALLBACK_START_DEFAULT = _GROUNDING_5_4_3_2_1_STEPS[0].prompt_fallback
 
 
 def _get_current_step(
@@ -419,6 +1185,8 @@ async def run_guided_exercise_response_node(
     """
 
     llm_client = runtime.context.get("llm_client")
+    memory_store = runtime.context.get("memory_store")
+    memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
     progress = state.get("progress", {})
     exercise_type = progress.get("exercise_type")
     step_index = progress.get("exercise_step")
@@ -448,6 +1216,8 @@ async def run_guided_exercise_response_node(
     return await _handle_continue(
         state=state,
         llm_client=llm_client,
+        memory_store=memory_store,
+        memory_mode=memory_mode,
         exercise_type=exercise_type,
         step_index=step_index,
         current_step=current_step,
@@ -460,29 +1230,21 @@ def _handle_start(
 ) -> dict[str, Any]:
     """Start a new exercise at step 0.
 
-    Currently always starts 5-4-3-2-1 grounding. A future stage could
-    inspect the user's message to pick a different exercise, but for
-    v0.6 Stage C the default is fine — the LLM dispatcher only routes
-    here when the user has asked for grounding-adjacent support.
+    Selects the exercise based on keywords in the user's message.
+    Falls back to 5-4-3-2-1 grounding when no keyword matches.
     """
 
-    response_text = _FALLBACK_START_DEFAULT
-    # The LLM path uses the same template as the fallback, just with
-    # the LLM rephrasing it to match the user's register. We don't
-    # call the LLM here in Stage C because the start step is pure
-    # instruction — variation doesn't add much. When dogfood reveals
-    # this is too robotic we can revisit. For now, use the fallback
-    # directly for the start step.
-    #
-    # NOTE: this is intentionally different from hold/complete/exit
-    # paths below, which DO call the LLM when available. The start
-    # step is the one place where determinism is more valuable than
-    # wording variation.
+    message = state.get("message", "")
+    selected = _select_exercise(message)
+    steps = _EXERCISE_REGISTRY[selected]
+    response_text = steps[0].prompt_fallback
+    # The start step uses the deterministic fallback directly —
+    # variation doesn't add much for instructions. The LLM is
+    # used on subsequent turns (hold/complete/exit) where wording
+    # variation helps more.
     _ = llm_client  # unused for the start step; flagged for future use
 
-    start_progress_delta = _start_exercise_delta(
-        state, exercise_type=EXERCISE_5_4_3_2_1
-    )
+    start_progress_delta = _start_exercise_delta(state, exercise_type=selected)
     return {
         **start_progress_delta,
         "response": {
@@ -503,6 +1265,8 @@ async def _handle_continue(
     *,
     state: AgentState,
     llm_client: Any,  # BaseLLMClient | None
+    memory_store: Any,  # MemoryStore | None
+    memory_mode: Any,  # MemoryMode
     exercise_type: str,
     step_index: int,
     current_step: ExerciseStep,
@@ -530,23 +1294,19 @@ async def _handle_continue(
         return _build_exit_delta(state, llm_client=llm_client)
 
     if step_state == "stuck":
-        # Stuck → offer a rephrase/simplification. Do NOT advance the
-        # step; the user is still engaging with it, just needs help.
-        # Do NOT exit; that escalation happens only after multiple
-        # turns, and the dispatcher fast-path keeps routing here on
-        # subsequent turns so a pattern of stuck will naturally
-        # produce multiple stuck-classified turns (future: add a
-        # stuck-turn counter to escalate to exit after N turns).
         return await _build_stuck_delta(state, llm_client=llm_client)
 
     if step_state == "hold":
-        # Hold → give space, don't advance. The response should be
-        # minimal encouragement, not a re-explanation of the step.
         return await _build_hold_delta(state, llm_client=llm_client)
 
     # step_state == "complete" → advance or finish
     if _is_last_step(exercise_type, step_index):
-        return await _build_complete_delta(state, llm_client=llm_client)
+        return await _build_complete_delta(
+            state,
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+        )
 
     return await _build_advance_delta(
         state=state,
@@ -763,20 +1523,31 @@ async def _build_complete_delta(
     state: AgentState,
     *,
     llm_client: Any,
+    memory_store: Any = None,  # MemoryStore | None
+    memory_mode: Any = None,  # MemoryMode | None
 ) -> dict[str, Any]:
     """Build the delta for natural completion of the exercise.
 
-    Clears exercise state and returns a brief "you did it" response.
+    Clears exercise state, writes a coping_strategy semantic fact
+    (if memory is enabled), and returns a brief "you did it" response.
     """
 
+    progress = state.get("progress", {})
+    exercise_type = progress.get("exercise_type", EXERCISE_5_4_3_2_1)
+    display_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, "that exercise")
+
     directive = (
-        "The user just finished the LAST step of the exercise. "
-        "Briefly acknowledge what they shared, name what they just did "
-        "(a grounding moment), and invite them to notice how their body "
-        "feels now. Do NOT start a new exercise or ask a new question."
+        f"The user just finished the LAST step of the exercise. "
+        f"Briefly acknowledge what they shared, name what they just did "
+        f"({display_name}), and invite them to notice how their body "
+        f"feels now. Do NOT start a new exercise or ask a new question."
     )
 
-    response_text = _FALLBACK_COMPLETE
+    fallback_complete = (
+        f"You just walked yourself through {display_name}. "
+        f"Notice how your body feels now compared to when we started."
+    )
+    response_text = fallback_complete
     if llm_client is not None:
         try:
             response_text = await llm_client.generate_text(
@@ -795,6 +1566,18 @@ async def _build_complete_delta(
                 exc_info=True,
             )
 
+    # ── Write exercise completion as a coping_strategy fact ──────────
+    # This runs BEFORE clearing exercise state, while exercise_type
+    # is still available. Only writes in non-incognito mode with a
+    # valid memory store.
+    await _write_exercise_completion_fact(
+        state=state,
+        exercise_type=exercise_type,
+        display_name=display_name,
+        memory_store=memory_store,
+        memory_mode=memory_mode,
+    )
+
     cleared = _clear_exercise_delta(state)
     return {
         **cleared,
@@ -802,6 +1585,7 @@ async def _build_complete_delta(
             **state.get("response", {}),
             "kind": ResponseKind.THERAPEUTIC,
             "text": response_text,
+            "should_persist_memory": True,
         },
         "routing": {
             **state.get("routing", {}),
@@ -810,3 +1594,69 @@ async def _build_complete_delta(
             "mode_type": ModeType.THERAPEUTIC,
         },
     }
+
+
+async def _write_exercise_completion_fact(
+    *,
+    state: AgentState,
+    exercise_type: str,
+    display_name: str,
+    memory_store: Any,
+    memory_mode: Any,
+) -> None:
+    """Write a semantic fact recording that the user completed an exercise.
+
+    This is a deterministic write — no LLM involved. The fact is
+    written as a coping_strategy with predicate USES, which the
+    retrieval system will surface on future turns when the user's
+    context overlaps with coping strategies.
+
+    Skips silently when:
+    - memory_store is None (no store configured)
+    - memory_mode is INCOGNITO (no persistent writes allowed)
+    - any error occurs (logged, never raised)
+    """
+
+    if memory_store is None or memory_mode == MemoryMode.INCOGNITO:
+        return
+
+    # Determine the owner_id — same logic as the extraction node.
+    owner_id = state.get("user_id") or state.get("session_id") or "unknown"
+    session_id = state.get("session_id") or "unknown"
+    turn_count = state.get("progress", {}).get("turn_count", 0)
+
+    now = datetime.now(timezone.utc).isoformat()
+    fact = SemanticFact(
+        id=str(uuid4()),
+        category="coping_strategy",
+        subject=EntityRef(type="User", identifier=owner_id),
+        predicate="USES",
+        object=EntityRef(type="CopingStrategy", identifier=exercise_type),
+        evidence_quote=f"Completed {display_name} exercise.",
+        confidence="high",
+        source_session_id=session_id,
+        source_turn_index=turn_count,
+        created_at=now,
+        last_referenced_at=now,
+        dormant_at=None,
+        superseded_by=None,
+        user_visible=True,
+    )
+
+    try:
+        namespace = (owner_id, "semantic")
+        await memory_store.aput(
+            namespace,
+            key=fact.id,
+            value=fact.model_dump(mode="json"),
+        )
+        logger.info(
+            "Wrote exercise completion fact: exercise_type=%s owner=%s",
+            exercise_type,
+            owner_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to write exercise completion fact; skipping.",
+            exc_info=True,
+        )

@@ -1,0 +1,112 @@
+[
+  {
+    "id": "complete_grounding_writes_fact",
+    "exercise_type": "grounding_5_4_3_2_1",
+    "exercise_step": 4,
+    "message": "my coffee",
+    "memory_mode": "local",
+    "expected_fact_written": true,
+    "expected_category": "coping_strategy",
+    "expected_object_contains": "grounding_5_4_3_2_1",
+    "notes": "Completing 5-4-3-2-1 grounding (last step = 4) should write a coping_strategy fact."
+  },
+  {
+    "id": "complete_box_breathing_writes_fact",
+    "exercise_type": "grounding_box_breathing",
+    "exercise_step": 3,
+    "message": "done",
+    "memory_mode": "local",
+    "expected_fact_written": true,
+    "expected_category": "coping_strategy",
+    "expected_object_contains": "box_breathing",
+    "notes": "Completing box breathing (last step = 3) should write a coping_strategy fact."
+  },
+  {
+    "id": "complete_thought_record_writes_fact",
+    "exercise_type": "thought_work_simple_record",
+    "exercise_step": 3,
+    "message": "Maybe it's more like I didn't know that one thing and that's okay.",
+    "memory_mode": "local",
+    "expected_fact_written": true,
+    "expected_category": "coping_strategy",
+    "expected_object_contains": "thought_work",
+    "notes": "Completing thought record (last step = 3) should write a coping_strategy fact."
+  },
+  {
+    "id": "complete_self_compassion_writes_fact",
+    "exercise_type": "self_compassion_break",
+    "exercise_step": 2,
+    "message": "May I be kind to myself right now.",
+    "memory_mode": "local",
+    "expected_fact_written": true,
+    "expected_category": "coping_strategy",
+    "expected_object_contains": "self_compassion",
+    "notes": "Completing self-compassion break (last step = 2) should write a coping_strategy fact."
+  },
+  {
+    "id": "exit_mid_exercise_no_fact",
+    "exercise_type": "grounding_box_breathing",
+    "exercise_step": 1,
+    "message": "stop, I don't want to do this",
+    "memory_mode": "local",
+    "expected_fact_written": false,
+    "expected_category": null,
+    "expected_object_contains": null,
+    "notes": "Exiting mid-exercise should NOT write a fact — the user chose to stop."
+  },
+  {
+    "id": "stuck_no_fact",
+    "exercise_type": "defusion_leaves_on_stream",
+    "exercise_step": 1,
+    "message": "I can't do this, I can't picture anything",
+    "memory_mode": "local",
+    "expected_fact_written": false,
+    "expected_category": null,
+    "expected_object_contains": null,
+    "notes": "Stuck classification should NOT write a fact."
+  },
+  {
+    "id": "hold_no_fact",
+    "exercise_type": "grounding_5_4_3_2_1",
+    "exercise_step": 0,
+    "message": "um, a plant?",
+    "memory_mode": "local",
+    "expected_fact_written": false,
+    "expected_category": null,
+    "expected_object_contains": null,
+    "notes": "Hold classification (tentative response) should NOT write a fact."
+  },
+  {
+    "id": "complete_incognito_no_fact",
+    "exercise_type": "grounding_box_breathing",
+    "exercise_step": 3,
+    "message": "done",
+    "memory_mode": "incognito",
+    "expected_fact_written": false,
+    "expected_category": null,
+    "expected_object_contains": null,
+    "notes": "Completing in incognito mode should NOT write a fact — no persistent writes allowed."
+  },
+  {
+    "id": "advance_mid_exercise_no_fact",
+    "exercise_type": "grounding_box_breathing",
+    "exercise_step": 0,
+    "message": "done",
+    "memory_mode": "local",
+    "expected_fact_written": false,
+    "expected_category": null,
+    "expected_object_contains": null,
+    "notes": "Advancing to step 1 (not the last step) should NOT write a fact — only completion writes."
+  },
+  {
+    "id": "complete_gratitude_writes_fact",
+    "exercise_type": "emotion_regulation_gratitude",
+    "exercise_step": 2,
+    "message": "I feel a little lighter actually. My chest isn't as tight.",
+    "memory_mode": "local",
+    "expected_fact_written": true,
+    "expected_category": "coping_strategy",
+    "expected_object_contains": "gratitude",
+    "notes": "Completing gratitude inventory (last step = 2) should write a coping_strategy fact."
+  }
+]

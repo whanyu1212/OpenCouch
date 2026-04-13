@@ -218,15 +218,7 @@ notes/
 # local living roadmap — maintained as a working doc but not tracked
 ROADMAP.md
 
-# local runtime and eval sqlite databases
-apps/backend/.opencouch_threads.sqlite3
-apps/backend/.opencouch_threads.sqlite3-shm
-apps/backend/.opencouch_threads.sqlite3-wal
-apps/backend/.opencouch_memory.sqlite3
-apps/backend/.opencouch_memory.sqlite3-shm
-apps/backend/.opencouch_memory.sqlite3-wal
-apps/backend/.opencouch_crisis.sqlite3
-apps/backend/.opencouch_crisis.sqlite3-shm
-apps/backend/.opencouch_crisis.sqlite3-wal
+# local runtime sqlite databases
+apps/backend/.store/
 eval/.session_trajectory_eval.sqlite3
 eval/.session_arc_eval.sqlite3

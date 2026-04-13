@@ -31,37 +31,56 @@ _CORE_KNOWLEDGE = (
     "policy/privacy.md",
 )
 
+# ─── Mode base knowledge (without modality overlay) ──────────────────────────
+
+_MODE_BASE_KNOWLEDGE: dict[str, tuple[str, ...]] = {
+    "supportive": (*_CORE_KNOWLEDGE, "response_modes/support.md"),
+    "reflective": (*_CORE_KNOWLEDGE, "response_modes/reflection.md"),
+    "clarifying": _CORE_KNOWLEDGE,
+    "psychoeducation": (*_CORE_KNOWLEDGE, "response_modes/psychoeducation.md"),
+    "closing": (*_CORE_KNOWLEDGE, "response_modes/closing.md"),
+    "guided_exercise": (*_CORE_KNOWLEDGE, "response_modes/guided_exercise.md"),
+}
+
+# ─── Modality file mapping ───────────────────────────────────────────────────
+
+_MODALITY_FILES: dict[str, str] = {
+    "motivational_interviewing": "modalities/motivational_interviewing.md",
+    "cbt": "modalities/cbt.md",
+    "act": "modalities/act.md",
+    "dbt_skills": "modalities/dbt_skills.md",
+    "grief_support": "modalities/grief_support.md",
+    "interpersonal_therapy": "modalities/interpersonal_therapy.md",
+    "pfa": "modalities/pfa.md",
+}
+
+
+def _knowledge_for_mode(mode: str, modality: str | None = None) -> tuple[str, ...]:
+    """Compose the knowledge file list for a mode + modality combination.
+
+    Returns the base knowledge for the mode, plus the modality overlay
+    file if a valid modality is specified. When modality is None or
+    "none", only the base mode knowledge is returned.
+    """
+
+    base = _MODE_BASE_KNOWLEDGE.get(mode, _CORE_KNOWLEDGE)
+    if modality and modality != "none" and modality in _MODALITY_FILES:
+        return (*base, _MODALITY_FILES[modality])
+    return base
+
+
+# Backward-compatible aliases for callers that haven't been updated
+# to pass modality yet. These will be removed once all mode nodes
+# use _knowledge_for_mode directly.
 _SUPPORTIVE_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
-    "response_modes/support.md",
+    *_MODE_BASE_KNOWLEDGE["supportive"],
     "modalities/motivational_interviewing.md",
 )
-
-_REFLECTIVE_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
-    "response_modes/reflection.md",
-)
-
-_CLARIFYING_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
-    # No mode-specific knowledge file — the clarifying prompt is
-    # self-contained in the mode instructions below.
-)
-
-_PSYCHOEDUCATION_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
-    "response_modes/psychoeducation.md",
-)
-
-_CLOSING_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
-    "response_modes/closing.md",
-)
-
-_GUIDED_EXERCISE_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
-    "response_modes/guided_exercise.md",
-)
+_REFLECTIVE_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["reflective"]
+_CLARIFYING_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["clarifying"]
+_PSYCHOEDUCATION_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["psychoeducation"]
+_CLOSING_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["closing"]
+_GUIDED_EXERCISE_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["guided_exercise"]
 
 
 def _knowledge_root() -> Path:
@@ -412,23 +431,31 @@ def _compose_system_prompt_with_state(
     return f"{knowledge}\n\n{instructions}{rules_block}{recall_block}"
 
 
+def _read_modality(state: AgentState) -> str | None:
+    """Read the dispatcher-selected modality from routing state."""
+
+    return state.get("routing", {}).get("modality")
+
+
 def build_supportive_system_prompt(state: AgentState) -> str:
     """Build the system prompt for supportive-mode responses.
 
-    v0.7 Stage D: now takes ``state`` and injects the user's procedural
-    rules and recall-toggle constraint as suffix blocks. Callers must
-    pass the current graph state so the dynamic blocks can read
-    ``memory.procedural_rules`` and ``memory.proactive_recall_enabled``.
+    Loads the modality overlay selected by the dispatcher (defaults to
+    MI if no modality was set, for backward compatibility).
     """
 
-    knowledge = _compose(*_SUPPORTIVE_KNOWLEDGE)
+    modality = _read_modality(state) or "motivational_interviewing"
+    files = _knowledge_for_mode("supportive", modality)
+    knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _SUPPORTIVE_INSTRUCTIONS, state)
 
 
 def build_reflective_system_prompt(state: AgentState) -> str:
     """Build the system prompt for reflective-mode responses."""
 
-    knowledge = _compose(*_REFLECTIVE_KNOWLEDGE)
+    modality = _read_modality(state)
+    files = _knowledge_for_mode("reflective", modality)
+    knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _REFLECTIVE_INSTRUCTIONS, state)
 
 
@@ -442,7 +469,9 @@ def build_clarifying_system_prompt(state: AgentState) -> str:
 def build_psychoeducation_system_prompt(state: AgentState) -> str:
     """Build the system prompt for psychoeducation-mode responses."""
 
-    knowledge = _compose(*_PSYCHOEDUCATION_KNOWLEDGE)
+    modality = _read_modality(state)
+    files = _knowledge_for_mode("psychoeducation", modality)
+    knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
         knowledge, _PSYCHOEDUCATION_INSTRUCTIONS, state
     )
@@ -456,9 +485,15 @@ def build_closing_system_prompt(state: AgentState) -> str:
 
 
 def build_guided_exercise_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for guided_exercise-mode responses."""
+    """Build the system prompt for guided_exercise-mode responses.
 
-    knowledge = _compose(*_GUIDED_EXERCISE_KNOWLEDGE)
+    Loads the base exercise knowledge plus the dispatcher-selected
+    modality overlay (CBT for thought records, ACT for defusion, etc.).
+    """
+
+    modality = _read_modality(state)
+    files = _knowledge_for_mode("guided_exercise", modality)
+    knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
         knowledge, _GUIDED_EXERCISE_INSTRUCTIONS, state
     )

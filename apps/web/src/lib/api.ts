@@ -23,6 +23,7 @@ export interface ChatResponse {
   response_type: string;
   mode: string | null;
   mode_source: string | null;
+  modality: string | null;
   crisis: CrisisInfo;
   diagnostics: Record<string, unknown>;
 }

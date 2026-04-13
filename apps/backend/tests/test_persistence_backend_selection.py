@@ -62,13 +62,12 @@ def test_default_paths_live_next_to_thread_db() -> None:
     assert DEFAULT_CRISIS_LOG_DB_PATH.parent == DEFAULT_THREAD_DB_PATH.parent
 
 
-def test_default_paths_are_hidden_files() -> None:
-    """The SQLite files should be hidden (dotfile prefix) so they
-    don't clutter ``ls`` output. Matches the convention set by
-    ``.opencouch_threads.sqlite3``."""
+def test_default_paths_are_in_store_dir() -> None:
+    """The SQLite files should live under ``.store/`` so they
+    don't clutter the backend root."""
 
-    assert DEFAULT_MEMORY_DB_PATH.name.startswith(".opencouch_")
-    assert DEFAULT_CRISIS_LOG_DB_PATH.name.startswith(".opencouch_")
+    assert DEFAULT_MEMORY_DB_PATH.parent.name == ".store"
+    assert DEFAULT_CRISIS_LOG_DB_PATH.parent.name == ".store"
     assert DEFAULT_MEMORY_DB_PATH.suffix == ".sqlite3"
     assert DEFAULT_CRISIS_LOG_DB_PATH.suffix == ".sqlite3"
 

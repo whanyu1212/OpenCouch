@@ -13,18 +13,8 @@ import {
   type MemoryStatus,
   type ThreadSummary,
 } from "@/lib/api";
-import { useSessionStore } from "@/lib/session";
+import { useSessionStore, type ChatMessage } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  mode?: string | null;
-  modeSource?: string | null;
-  responseType?: string | null;
-  crisis?: CrisisInfo | null;
-  diagnostics?: Record<string, unknown> | null;
-}
 
 const CONVERSATION_STARTERS = [
   {
@@ -33,9 +23,29 @@ const CONVERSATION_STARTERS = [
     icon: "💬",
   },
   {
-    label: "Grounding exercise",
-    prompt: "I'm feeling anxious. Can we do a grounding exercise?",
-    icon: "🌿",
+    label: "Breathing exercise",
+    prompt: "I'm feeling wound up. Can we do a breathing exercise?",
+    icon: "🌬️",
+  },
+  {
+    label: "Examine a thought",
+    prompt: "I have a thought that keeps pulling at me. Can we do a thought record?",
+    icon: "💭",
+  },
+  {
+    label: "I'm stuck",
+    prompt: "I've been stuck all week and can't make myself do anything. Can we try something small?",
+    icon: "🧱",
+  },
+  {
+    label: "Self-compassion",
+    prompt: "I'm being really hard on myself right now. Is there something we can do about that?",
+    icon: "🤲",
+  },
+  {
+    label: "Let go of a thought",
+    prompt: "I want to try letting go of a thought instead of arguing with it. Can we do that?",
+    icon: "🍃",
   },
   {
     label: "Reflect on patterns",
@@ -50,10 +60,8 @@ const CONVERSATION_STARTERS = [
 ];
 
 export default function TextChatPage() {
-  const { userId, threadId, sessionMode, setThreadId } = useSessionStore();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const { userId, threadId, sessionMode, setThreadId, messages, setMessages, addMessage, clearMessages, chatLoading: isLoading, setChatLoading: setIsLoading } = useSessionStore();
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [stages, setStages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -61,10 +69,15 @@ export default function TextChatPage() {
   // Empty state data
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
   const [recentThreads, setRecentThreads] = useState<ThreadSummary[]>([]);
+  const lastLoadedThread = useRef<string | null>(null);
 
-  // Load history for current thread
+  // Load history when thread changes — NOT on every re-mount.
+  // Messages live in Zustand so they survive tab switches. We only
+  // reload from the backend when the threadId actually changes.
   useEffect(() => {
-    setMessages([]);
+    if (lastLoadedThread.current === threadId) return;
+    lastLoadedThread.current = threadId;
+    clearMessages();
     if (sessionMode === "incognito") return;
     getHistory(threadId)
       .then((history) => {
@@ -79,7 +92,7 @@ export default function TextChatPage() {
         }
       })
       .catch(() => {});
-  }, [threadId, sessionMode]);
+  }, [threadId, sessionMode, clearMessages, setMessages]);
 
   // Load memory status and recent threads for empty state
   useEffect(() => {
@@ -107,7 +120,7 @@ export default function TextChatPage() {
       inputRef.current.style.height = "auto";
     }
 
-    setMessages((prev) => [...prev, { role: "user", content: msg }]);
+    addMessage({ role: "user", content: msg });
 
     let done = false;
 
@@ -117,18 +130,16 @@ export default function TextChatPage() {
       } else if (event.type === "done") {
         done = true;
         const resp = event.response as ChatResponse;
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: resp.response_text,
-            mode: resp.mode,
-            modeSource: resp.mode_source,
-            responseType: resp.response_type,
-            crisis: resp.crisis,
-            diagnostics: resp.diagnostics,
-          },
-        ]);
+        addMessage({
+          role: "assistant",
+          content: resp.response_text,
+          mode: resp.mode,
+          modeSource: resp.mode_source,
+          modality: resp.modality,
+          responseType: resp.response_type,
+          crisis: resp.crisis,
+          diagnostics: resp.diagnostics,
+        });
         setStages([]);
         setIsLoading(false);
         ws.close();
@@ -140,14 +151,11 @@ export default function TextChatPage() {
       if (done) return;
       setStages([]);
       setIsLoading(false);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "Connection error — is the backend running?\nStart with: uv run uvicorn main:app --port 8000",
-        },
-      ]);
+      addMessage({
+        role: "assistant",
+        content:
+          "Connection error — is the backend running?\nStart with: uv run uvicorn main:app --port 8000",
+      });
     };
 
     ws.onclose = () => {
@@ -156,7 +164,7 @@ export default function TextChatPage() {
         setIsLoading(false);
       }
     };
-  }, [input, isLoading, threadId, userId]);
+  }, [input, isLoading, threadId, userId, addMessage, setIsLoading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -200,7 +208,7 @@ export default function TextChatPage() {
           )}
           {messages.length > 0 && !isLoading && (
             <button
-              onClick={() => setMessages([])}
+              onClick={() => clearMessages()}
               className="flex items-center gap-1.5 text-[12px] font-mono text-oc-text-muted hover:text-oc-red transition-colors"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5">
@@ -454,6 +462,9 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
         className="flex flex-wrap items-center gap-2 group text-left"
       >
         <Pill variant="teal">{msg.mode}</Pill>
+        {msg.modality && msg.modality !== "none" && (
+          <Pill variant="teal">{msg.modality}</Pill>
+        )}
         {msg.modeSource && <Pill variant="muted">{msg.modeSource}</Pill>}
         <Pill variant={safetyLabel === "safe" ? "green" : safetyLabel === "crisis" ? "red" : "amber"}>
           {safetyLabel}
@@ -489,6 +500,12 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
               </span>
               <span className="text-oc-warm-600">→</span>
               <span className="text-amber-300">{msg.mode}</span>
+              {msg.modality && msg.modality !== "none" && (
+                <>
+                  <span className="text-oc-warm-600">·</span>
+                  <span className="text-purple-300">{msg.modality}</span>
+                </>
+              )}
             </div>
           </div>
 

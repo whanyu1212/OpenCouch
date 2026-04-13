@@ -360,5 +360,108 @@
     "expected_mode": "psychoeducation",
     "dispatch_tier": "llm",
     "notes": "v0.6 Stage C: boundary case between psychoeducation and guided_exercise. User asks ABOUT grounding (why does it work, what's the point) rather than asking TO DO grounding. This is a confusion about the mechanism, not a request for the intervention — psychoeducation territory, not guided_exercise. Tests the 'asking about mechanism' counter-example in the dispatcher prompt."
+  },
+  {
+    "id": "guided_exercise_breathing",
+    "history": [],
+    "message": "Can you walk me through a breathing exercise? I'm really wound up.",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Explicit breathing exercise request. 'Walk me through' + 'breathing exercise' is unambiguous. Distress context ('wound up') doesn't downgrade to supportive because the explicit request dominates."
+  },
+  {
+    "id": "guided_exercise_muscle_tension",
+    "history": [],
+    "message": "I need to release this tension in my body. Can we do something physical?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "PMR trigger. 'Release tension' + 'do something physical' is a request for a body-based exercise. Should route to guided_exercise for progressive muscle relaxation."
+  },
+  {
+    "id": "guided_exercise_stop_technique",
+    "history": [],
+    "message": "Can we try the STOP technique? I need to slow down.",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Named exercise request. User explicitly asks for 'the STOP technique' — unambiguous guided_exercise trigger."
+  },
+  {
+    "id": "guided_exercise_thought_record",
+    "history": [],
+    "message": "Let's do a thought record. There's a belief I keep coming back to that I want to look at.",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Explicit thought record request. 'Let's do a thought record' is a direct exercise request. The mention of a recurring belief provides context but the trigger is the explicit ask."
+  },
+  {
+    "id": "guided_exercise_behavioral_experiment",
+    "history": [
+      {"role": "user", "content": "I keep thinking that if I ask for help at work, people will think I'm incompetent."},
+      {"role": "assistant", "content": "That thought sounds like it carries a lot of weight. Have you ever tested whether it's actually true?"}
+    ],
+    "message": "No, but I'd like to. Can we figure out a way to test it?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Behavioral experiment trigger. User responds to a therapist prompt about testing a belief with an explicit request to 'figure out a way to test it'. History provides context that this is belief-testing, not general exploration."
+  },
+  {
+    "id": "guided_exercise_tiny_action",
+    "history": [],
+    "message": "I've been stuck all week and I can't make myself do anything. Can we try something small?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Behavioral activation trigger. 'Stuck' + 'can't make myself do anything' + 'can we try something small' is a request for a structured intervention, not just expressing stuckness. The 'can we try' makes it a request."
+  },
+  {
+    "id": "guided_exercise_defusion",
+    "history": [],
+    "message": "I want to try letting go of this thought instead of arguing with it. Can we do something like that?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Defusion/acceptance trigger. 'Letting go of this thought' + 'can we do something' is an exercise request. The ACT framing ('instead of arguing with it') signals defusion rather than thought work."
+  },
+  {
+    "id": "guided_exercise_values",
+    "history": [],
+    "message": "I feel like I've lost my direction. Can we look at what actually matters to me?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Values compass trigger. 'Lost my direction' + 'look at what matters to me' is a request for values clarification, not just expressing confusion. The 'can we look at' makes it a structured request."
+  },
+  {
+    "id": "guided_exercise_self_compassion",
+    "history": [],
+    "message": "I'm being so hard on myself right now. Is there something we can do about that?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Self-compassion trigger. 'Hard on myself' + 'something we can do' is a request for a structured intervention. Without the 'can we do' part, this would be supportive (expressing self-criticism)."
+  },
+  {
+    "id": "guided_exercise_improve_cope",
+    "history": [],
+    "message": "Everything is overwhelming right now. Can we do something to help me cope with this moment?",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "IMPROVE/emotion regulation trigger. 'Overwhelming' + 'can we do something to help me cope' is a request for a coping skill, not just expressing overwhelm. The explicit ask for help coping makes it guided_exercise."
+  },
+  {
+    "id": "guided_exercise_gratitude",
+    "history": [
+      {"role": "user", "content": "I've been really down lately, nothing feels good anymore."},
+      {"role": "assistant", "content": "That heaviness sounds real. Is there anything — even small — that felt okay recently?"},
+      {"role": "user", "content": "I guess my morning coffee is still nice. That's about it."}
+    ],
+    "message": "Can we do something positive? I want to focus on what I'm grateful for instead of what's wrong.",
+    "expected_mode": "guided_exercise",
+    "dispatch_tier": "llm",
+    "notes": "Gratitude exercise trigger. Explicit request to 'focus on what I'm grateful for' + 'can we do something positive' is a structured exercise request. History shows the user is ready to shift from venting to something constructive."
+  },
+  {
+    "id": "supportive_tension_not_request",
+    "history": [],
+    "message": "I'm so tense and nothing is helping. I just feel awful.",
+    "expected_mode": "supportive",
+    "dispatch_tier": "llm",
+    "notes": "Boundary case: expressing tension and frustration, NOT asking for an exercise. 'Nothing is helping' is a frustration signal, not a request for intervention. Should route to supportive, not guided_exercise. Same pattern as supportive_distress_not_request."
   }
 ]
