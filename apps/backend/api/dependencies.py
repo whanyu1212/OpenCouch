@@ -35,7 +35,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 
 from agent.memory.modes import MemoryMode
 from agent.persistence import (
@@ -102,13 +102,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     _llm_client = None
 
 
-def get_runtime(request: Request) -> PersistentAgentRuntime:  # noqa: ARG001
+def get_runtime() -> PersistentAgentRuntime:
     """FastAPI dependency that returns the shared runtime instance.
 
-    Raises ``RuntimeError`` if called before the lifespan handler
-    has opened the runtime (which shouldn't happen in normal
-    operation because FastAPI runs the lifespan before accepting
-    requests).
+    Works with both HTTP and WebSocket endpoints (no Request
+    parameter needed — the runtime is a module-level singleton
+    populated by the lifespan handler).
     """
 
     if _runtime is None:
@@ -119,13 +118,11 @@ def get_runtime(request: Request) -> PersistentAgentRuntime:  # noqa: ARG001
     return _runtime
 
 
-def get_llm_client(request: Request) -> BaseLLMClient | None:  # noqa: ARG001
+def get_llm_client() -> BaseLLMClient | None:
     """FastAPI dependency that returns the shared LLM client.
 
     Returns None when no LLM provider is configured (deterministic
-    mode). Route handlers that require an LLM client should check
-    for None and return a 503 if the operation can't proceed without
-    one.
+    mode).
     """
 
     return _llm_client

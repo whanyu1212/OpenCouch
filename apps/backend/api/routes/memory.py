@@ -74,6 +74,84 @@ async def memory_status(
     )
 
 
+@router.get("/facts")
+async def list_facts(
+    thread_id: str = Query(description="Thread to scope the listing to."),
+    user_id: str | None = Query(default=None, description="Optional owner override."),
+    runtime: PersistentAgentRuntime = Depends(get_runtime),
+) -> list[dict]:
+    """List all semantic facts for this owner."""
+
+    owner_id = _resolve_owner_id(user_id, thread_id)
+    store = runtime.memory_store
+    namespace = (owner_id, "semantic")
+    records = await store.asearch(namespace, query=None, limit=1000)
+    return [
+        {
+            "index": i + 1,
+            "key": r.key,
+            "category": r.value.get("category", ""),
+            "predicate": r.value.get("predicate", ""),
+            "subject": r.value.get("subject", {}).get("identifier", ""),
+            "object": r.value.get("object", {}).get("identifier", ""),
+            "evidence_quote": r.value.get("evidence_quote", ""),
+            "confidence": r.value.get("confidence", ""),
+            "created_at": r.value.get("created_at", ""),
+        }
+        for i, r in enumerate(records)
+    ]
+
+
+@router.get("/sessions")
+async def list_sessions(
+    thread_id: str = Query(description="Thread to scope the listing to."),
+    user_id: str | None = Query(default=None, description="Optional owner override."),
+    runtime: PersistentAgentRuntime = Depends(get_runtime),
+) -> list[dict]:
+    """List all episodic session arcs for this owner."""
+
+    owner_id = _resolve_owner_id(user_id, thread_id)
+    store = runtime.memory_store
+    namespace = (owner_id, "episodic")
+    records = await store.asearch(namespace, query=None, limit=1000)
+    return [
+        {
+            "index": i + 1,
+            "key": r.key,
+            "summary": r.value.get("summary", ""),
+            "themes": r.value.get("primary_themes", []),
+            "mood_opened": (r.value.get("mood_arc") or {}).get("opened", ""),
+            "mood_closed": (r.value.get("mood_arc") or {}).get("closed", ""),
+            "turn_count": r.value.get("turn_count", 0),
+            "ended_at": r.value.get("ended_at", ""),
+        }
+        for i, r in enumerate(records)
+    ]
+
+
+@router.get("/rules")
+async def list_rules(
+    thread_id: str = Query(description="Thread to scope the listing to."),
+    user_id: str | None = Query(default=None, description="Optional owner override."),
+    runtime: PersistentAgentRuntime = Depends(get_runtime),
+) -> list[dict]:
+    """List all procedural rules for this owner."""
+
+    owner_id = _resolve_owner_id(user_id, thread_id)
+    store = runtime.memory_store
+    profile = await aget_procedural_profile(store, user_id=owner_id)
+    return [
+        {
+            "index": i + 1,
+            "rule": rule.rule,
+            "evidence": rule.evidence,
+            "confidence": rule.confidence,
+            "added_at": rule.added_at,
+        }
+        for i, rule in enumerate(profile.rules)
+    ]
+
+
 @router.delete("/facts/{index}", response_model=DeleteResponse)
 async def delete_fact(
     index: int,

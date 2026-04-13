@@ -466,6 +466,22 @@ class PersistentAgentRuntime:
         )
         initial_state = build_initial_state(agent_input)
 
+        # Carry forward multi-turn exercise state from the previous
+        # turn's checkpoint. build_initial_state creates a fresh
+        # progress dict without exercise_type / exercise_step, so
+        # without this merge the dispatcher's active-exercise fast-
+        # path never fires and guided exercises restart every turn.
+        prev_state = await self.get_state(thread_id)
+        if prev_state is not None:
+            prev_progress = prev_state.get("progress", {}) or {}
+            if prev_progress.get("exercise_type") is not None:
+                initial_state["progress"]["exercise_type"] = prev_progress[
+                    "exercise_type"
+                ]
+                initial_state["progress"]["exercise_step"] = prev_progress.get(
+                    "exercise_step", 0
+                )
+
         # v0.8 observability: time the whole turn for the CLI's
         # post-turn diagnostics panel. The per-node timings are
         # stamped into ``state["diagnostics"]`` inside each node,
@@ -652,6 +668,18 @@ class PersistentAgentRuntime:
             installed_skills=list(installed_skills or []),
         )
         initial_state = build_initial_state(agent_input)
+
+        # Carry forward multi-turn exercise state — same as run_turn.
+        prev_state = await self.get_state(thread_id)
+        if prev_state is not None:
+            prev_progress = prev_state.get("progress", {}) or {}
+            if prev_progress.get("exercise_type") is not None:
+                initial_state["progress"]["exercise_type"] = prev_progress[
+                    "exercise_type"
+                ]
+                initial_state["progress"]["exercise_step"] = prev_progress.get(
+                    "exercise_step", 0
+                )
 
         # Map internal graph node names → CLI stage labels. Keeps the
         # naming mismatch between graph internals and CLI vocabulary
