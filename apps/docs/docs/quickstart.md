@@ -76,9 +76,24 @@ uv run python -m opencouch_cli \
     --thread-id alice-s2
 ```
 
+### Voice mode
+
+Natural voice conversations via the OpenAI Realtime API. Requires
+`OPENAI_API_KEY` in `.env.local`.
+
+```bash
+uv run python -m opencouch_cli --voice
+```
+
+This starts the FastAPI server and opens the voice test page in your
+browser. Speak into your microphone to have a voice conversation.
+The crisis gate, memory extraction, and session summarization all
+run automatically. See the [Voice Chat](/docs/voice/overview) page
+for details.
+
 ## Slash commands
 
-Once inside the CLI:
+Once inside the text CLI:
 
 | Command | What it does |
 |---|---|
