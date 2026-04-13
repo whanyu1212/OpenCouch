@@ -35,6 +35,7 @@ def _output_to_chat_response(output) -> ChatResponse:
         response_type=output.response_type.value,
         mode=output.mode,
         mode_source=output.mode_source,
+        modality=output.modality,
         crisis=CrisisInfo(
             level=output.crisis.level,
             confidence=output.crisis.confidence,

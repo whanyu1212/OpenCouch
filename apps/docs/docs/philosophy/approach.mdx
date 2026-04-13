@@ -50,24 +50,17 @@ OpenCouch fills a specific gap: the space between "I need to talk to someone" an
 
 Seven therapeutic modalities are authored as knowledge files in `knowledge/modalities/` and designed to be used as **overlays and stances** — shaping how the agent responds, not defining a treatment plan. They inform tone and structure. They don't constitute therapy.
 
-**Currently active in prompt construction:**
+**All seven modalities are active.** The LLM dispatcher picks both a response mode AND a therapeutic modality per turn. The modality determines which framework's knowledge file is loaded into the system prompt:
 
-| Modality | Used by | Role |
+| Modality | Routed when | Role |
 |---|---|---|
-| **MI** (Motivational Interviewing) | Supportive mode | Conversational stance — reflective listening, respect for autonomy, OARS |
-
-**Authored but not yet wired into prompts** (available for future mode-specific integration during clinical review):
-
-| Modality | Role |
-|---|---|
-| **PFA** (Psychological First Aid) | Baseline for distress — calm presence, stabilization, practical help |
-| **CBT** (Cognitive Behavioral Therapy) | Structured self-help — thought records, cognitive distortions, behavioral activation |
-| **Grief support** | Loss and bereavement — making room without rushing resolution |
-| **IPT** (Interpersonal Therapy) | Relationship-focused — how social roles and communication affect mood |
-| **ACT** (Acceptance & Commitment Therapy) | Values-based flexibility — acceptance, defusion, committed action |
-| **DBT skills** (Dialectical Behavior Therapy) | Distress tolerance and regulation — TIPP, STOP, radical acceptance |
-
-Wiring these into specific modes (e.g., CBT into guided_exercise, grief into supportive when grief signals are present, DBT skills for distress tolerance exercises) is planned alongside clinical review.
+| **MI** (Motivational Interviewing) | Default for supportive; ambivalence, change talk | Conversational stance — reflective listening, respect for autonomy, OARS |
+| **PFA** (Psychological First Aid) | Acute distress, stabilization needed | Calm presence, practical next steps, no forced disclosure |
+| **CBT** (Cognitive Behavioral Therapy) | Thought work, belief examination, wanting structure | Thought records, cognitive distortions, behavioral activation |
+| **Grief support** | Loss, bereavement, missing someone | Making room without rushing resolution, mixed emotions |
+| **IPT** (Interpersonal Therapy) | Relationship strain, role transitions, loneliness | Communication patterns, social roles, relational next steps |
+| **ACT** (Acceptance & Commitment Therapy) | Avoidance, rumination, values disconnection | Acceptance, defusion, committed action |
+| **DBT skills** (Dialectical Behavior Therapy) | Emotional overwhelm, distress tolerance | Concrete coping skills — STOP, IMPROVE, regulation |
 
 ### Modes vs. modalities
 

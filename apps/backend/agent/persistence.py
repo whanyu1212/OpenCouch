@@ -39,15 +39,15 @@ from langgraph.graph.state import CompiledStateGraph
 from services.llm.base import BaseLLMClient
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_THREAD_DB_PATH = BACKEND_ROOT / ".opencouch_threads.sqlite3"
+_STORE_DIR = BACKEND_ROOT / ".store"
+DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
 # v0.8: SQLite file paths for the memory store and crisis log.
 # Kept separate from the thread checkpointer file so LangGraph owns
 # its schema and we own ours — no cross-table coupling or shared-
-# transaction surprises when LangGraph bumps its schema. Named
-# consistently as ``.opencouch_*.sqlite3`` so all three OpenCouch-
-# owned SQLite files sit together in ``apps/backend/``.
-DEFAULT_MEMORY_DB_PATH = BACKEND_ROOT / ".opencouch_memory.sqlite3"
-DEFAULT_CRISIS_LOG_DB_PATH = BACKEND_ROOT / ".opencouch_crisis.sqlite3"
+# transaction surprises when LangGraph bumps its schema. All three
+# live under ``.store/`` to keep the backend root clean.
+DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
+DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "Channel"),
     ("agent.models", "CrisisAssessment"),

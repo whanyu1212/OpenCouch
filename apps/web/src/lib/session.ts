@@ -5,17 +5,29 @@ import { create } from "zustand";
 /**
  * Shared session state across all pages (text, voice, memory, state).
  *
- * The session has two phases:
- * 1. Setup — user picks persistent or incognito mode
- * 2. Active — chat/voice/memory pages are usable
- *
- * In "persistent" mode, the userId and threadId carry over from the
- * sidebar inputs and history/memory is loaded. In "incognito" mode,
- * a random thread ID is generated and no user_id is sent to the
- * backend, which means the memory store has nothing to retrieve.
+ * Chat messages are stored here (not in page-local useState) so they
+ * survive tab navigation. When the user switches from Chat → Memory
+ * → back to Chat, the messages are still there.
  */
 
 export type SessionMode = "persistent" | "incognito";
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  mode?: string | null;
+  modeSource?: string | null;
+  modality?: string | null;
+  responseType?: string | null;
+  crisis?: {
+    level: number;
+    confidence: string;
+    reason: string;
+    needs_crisis_response: boolean;
+    needs_clarification: boolean;
+  } | null;
+  diagnostics?: Record<string, unknown> | null;
+}
 
 interface SessionState {
   /** Whether the user has completed setup for this session */
@@ -24,8 +36,18 @@ interface SessionState {
   sessionMode: SessionMode;
   userId: string;
   threadId: string;
+
+  /** Chat messages — persisted across tab switches */
+  messages: ChatMessage[];
+  /** Whether the agent is currently generating a response */
+  chatLoading: boolean;
+
   setUserId: (id: string) => void;
   setThreadId: (id: string) => void;
+  setMessages: (msgs: ChatMessage[]) => void;
+  addMessage: (msg: ChatMessage) => void;
+  clearMessages: () => void;
+  setChatLoading: (loading: boolean) => void;
   /** Start a session with the given mode */
   startSession: (mode: SessionMode, userId: string, threadId: string) => void;
   /** Reset to setup screen with a new thread */
@@ -42,21 +64,32 @@ export const useSessionStore = create<SessionState>((set) => ({
   sessionMode: "persistent",
   userId: "",
   threadId: "",
+  messages: [],
+  chatLoading: false,
+
   setUserId: (id: string) => set({ userId: id }),
   setThreadId: (id: string) => set({ threadId: id }),
+  setMessages: (msgs: ChatMessage[]) => set({ messages: msgs }),
+  addMessage: (msg: ChatMessage) =>
+    set((state) => ({ messages: [...state.messages, msg] })),
+  clearMessages: () => set({ messages: [] }),
+  setChatLoading: (loading: boolean) => set({ chatLoading: loading }),
+
   startSession: (mode: SessionMode, userId: string, threadId: string) =>
     set({
       isSetup: true,
       sessionMode: mode,
-      // Incognito: no user_id, random thread. Persistent: fall back
-      // to sensible defaults if the user left fields empty.
       userId: mode === "incognito" ? "" : (userId.trim() || "web-user"),
       threadId: mode === "incognito" ? generateThreadId() : (threadId.trim() || generateThreadId()),
+      messages: [],
+      chatLoading: false,
     }),
   newSession: () =>
     set({
       isSetup: false,
       sessionMode: "persistent",
       threadId: generateThreadId(),
+      messages: [],
+      chatLoading: false,
     }),
 }));

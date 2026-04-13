@@ -124,6 +124,7 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
             "mode": "pending",
             "mode_source": "graph_bootstrap",
             "mode_type": ModeType.OPERATIONAL,
+            "modality": None,
             "active_modalities": [],
             "semantic_signals": {},
         },
@@ -157,6 +158,7 @@ def state_to_output(state: AgentState) -> AgentOutput:
         mode=routing_state.get("mode"),
         mode_type=routing_state.get("mode_type"),
         mode_source=routing_state.get("mode_source"),
+        modality=routing_state.get("modality"),
         should_persist_memory=response_state.get("should_persist_memory", False),
         # v0.8 observability: pass the per-turn diagnostics dict
         # through to the CLI / API caller. Empty dict when no node

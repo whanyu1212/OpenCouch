@@ -17,7 +17,18 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Agent',
-      items: ['agent/graph', 'agent/state', 'agent/prompt-assembly', 'agent/context-management', 'agent/scenarios']
+      items: [
+        'agent/graph',
+        'agent/state',
+        'agent/prompt-assembly',
+        'agent/context-management',
+        {
+          type: 'category',
+          label: 'Therapeutic Modes',
+          collapsed: false,
+          items: ['agent/scenarios', 'agent/guided-exercises'],
+        },
+      ]
     },
     {
       type: 'category',

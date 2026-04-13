@@ -50,6 +50,10 @@ nodes as the graph executes:
 - `routing.mode_source` — how the mode was selected (keyword, llm,
   default)
 - `routing.mode_type` — category (therapeutic, operational, crisis)
+- `routing.modality` — therapeutic modality for this turn (MI, CBT,
+  ACT, DBT, grief, IPT, PFA, or none). Selected by the LLM dispatcher
+  alongside the mode. The mode node reads this to load the matching
+  knowledge file into its system prompt.
 - `response` — the generated reply (text, kind, guidance)
 
 **Diagnostics** — `diagnostics: NotRequired[dict[str, Any]]` —

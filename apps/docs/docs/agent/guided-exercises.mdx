@@ -1,0 +1,50 @@
+---
+title: Guided Exercises
+sidebar_position: 6
+---
+
+import ExerciseCatalog from '@site/src/components/ExerciseCatalog';
+
+# Guided Exercises
+
+OpenCouch includes 12 structured exercises spanning 6 therapeutic subtypes. Each exercise is a multi-turn state machine: the node owns the step transitions, the LLM generates response prose, and deterministic fallbacks keep exercises running even without an LLM.
+
+## How it works
+
+1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured technique
+2. **Keyword selector** picks the exercise based on the user's message (e.g., "breathing" → box breathing, "stuck" → tiny action). Defaults to 5-4-3-2-1 grounding when no keyword matches
+3. **Step-state classifier** (regex, not LLM) evaluates each user response as `complete` / `hold` / `stuck` / `exit`
+4. **Node advances or holds** based on the classifier — the LLM never decides state transitions
+5. **Exercise clears** on natural completion or user-initiated exit
+
+### Completion modes
+
+Steps use one of two modes for detecting completion:
+
+| Mode | How it works | Used for |
+|------|-------------|----------|
+| **Item count** | Counts listed items (commas, "and"). Advances when count ≥ `min_count_for_completion` | Sensory listing, naming thoughts, identifying actions |
+| **User confirmation** | Matches bare confirmations ("ok", "done", "yes", "I did it") | Breathing actions, visualization, body exercises |
+
+### Priority ordering
+
+The classifier checks patterns in this order — safety first:
+
+1. **EXIT** — "stop", "quit", "can we just talk" → exit immediately
+2. **STUCK** — "I can't", "this is stupid" → offer a simpler version
+3. **COMPLETE** — item count or confirmation met → advance or finish
+4. **HOLD** — everything else → encourage, don't advance
+
+---
+
+## Exercise catalog
+
+Click any exercise to see its steps and trigger keywords. Use the filter tabs to browse by subtype. To see exercises in context as multi-turn conversations, see [Scenarios](/docs/agent/scenarios).
+
+<ExerciseCatalog />
+
+
+
+:::tip Adding a new exercise
+Define steps in `guided_exercise.py`, register in `_EXERCISE_REGISTRY`, add trigger keywords to `_EXERCISE_SELECTORS`, and add LLM guidance to `knowledge/response_modes/guided_exercise.md`. No dispatcher or graph changes needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
+:::

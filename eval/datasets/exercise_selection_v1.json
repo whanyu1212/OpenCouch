@@ -1,0 +1,146 @@
+[
+  {
+    "id": "select_grounding_explicit",
+    "message": "Can you walk me through a grounding exercise?",
+    "expected_exercise": "grounding_5_4_3_2_1",
+    "notes": "Explicit grounding request. Default exercise."
+  },
+  {
+    "id": "select_grounding_calm_down",
+    "message": "Help me calm down, I need something right now.",
+    "expected_exercise": "grounding_5_4_3_2_1",
+    "notes": "Generic calming request with no specific exercise keyword. Defaults to 5-4-3-2-1."
+  },
+  {
+    "id": "select_breathing_explicit",
+    "message": "I need a breathing exercise.",
+    "expected_exercise": "grounding_box_breathing",
+    "notes": "Explicit 'breathing exercise' keyword."
+  },
+  {
+    "id": "select_breathing_natural",
+    "message": "I can't breathe properly right now, can you help me with that?",
+    "expected_exercise": "grounding_box_breathing",
+    "notes": "'breathe' keyword in natural distress context."
+  },
+  {
+    "id": "select_pmr_explicit",
+    "message": "Can we do progressive muscle relaxation?",
+    "expected_exercise": "grounding_muscle_relaxation",
+    "notes": "Named exercise: 'progressive muscle relaxation'."
+  },
+  {
+    "id": "select_pmr_natural",
+    "message": "I need to release this tension in my shoulders and back.",
+    "expected_exercise": "grounding_muscle_relaxation",
+    "notes": "'tension' keyword in body-focused context."
+  },
+  {
+    "id": "select_stop_explicit",
+    "message": "Let's try the stop technique.",
+    "expected_exercise": "grounding_stop_technique",
+    "notes": "Named exercise: 'stop technique'."
+  },
+  {
+    "id": "select_stop_natural",
+    "message": "I need to pause and slow down before I react.",
+    "expected_exercise": "grounding_stop_technique",
+    "notes": "'slow down' keyword as generic grounding trigger for STOP."
+  },
+  {
+    "id": "select_thought_record_explicit",
+    "message": "Let's do a thought record.",
+    "expected_exercise": "thought_work_simple_record",
+    "notes": "Named exercise: 'thought record'."
+  },
+  {
+    "id": "select_thought_record_natural",
+    "message": "I have this belief that everyone secretly dislikes me and I want to look at it.",
+    "expected_exercise": "thought_work_simple_record",
+    "notes": "'belief' keyword in cognitive work context."
+  },
+  {
+    "id": "select_behavioral_experiment_explicit",
+    "message": "Can we do a behavioral experiment to test this belief?",
+    "expected_exercise": "thought_work_behavioral_experiment",
+    "notes": "Named exercise: 'behavioral experiment'."
+  },
+  {
+    "id": "select_behavioral_experiment_natural",
+    "message": "I want to check if this thought is actually true.",
+    "expected_exercise": "thought_work_behavioral_experiment",
+    "notes": "'check if' keyword for belief testing."
+  },
+  {
+    "id": "select_tiny_action_explicit",
+    "message": "I'm completely stuck. Can we try a tiny action?",
+    "expected_exercise": "behavioral_activation_tiny_action",
+    "notes": "'stuck' keyword routes to behavioral activation."
+  },
+  {
+    "id": "select_tiny_action_natural",
+    "message": "I feel depleted and I can't start anything today.",
+    "expected_exercise": "behavioral_activation_tiny_action",
+    "notes": "'depleted' + 'can't start' keywords."
+  },
+  {
+    "id": "select_leaves_explicit",
+    "message": "Can we try the leaves on a stream exercise?",
+    "expected_exercise": "defusion_leaves_on_stream",
+    "notes": "Named exercise: 'leaves' keyword."
+  },
+  {
+    "id": "select_leaves_natural",
+    "message": "I need to let go of this thought. It's consuming me.",
+    "expected_exercise": "defusion_leaves_on_stream",
+    "notes": "'let go' keyword for defusion."
+  },
+  {
+    "id": "select_self_compassion_explicit",
+    "message": "I need some self-compassion right now.",
+    "expected_exercise": "self_compassion_break",
+    "notes": "'self-compassion' keyword."
+  },
+  {
+    "id": "select_self_compassion_natural",
+    "message": "I'm being so hard on myself about this.",
+    "expected_exercise": "self_compassion_break",
+    "notes": "'hard on myself' keyword for self-compassion."
+  },
+  {
+    "id": "select_improve_explicit",
+    "message": "Can we do the IMPROVE the moment technique?",
+    "expected_exercise": "emotion_regulation_improve",
+    "notes": "'improve' keyword for DBT IMPROVE skill."
+  },
+  {
+    "id": "select_improve_natural",
+    "message": "I need to get through this moment somehow.",
+    "expected_exercise": "emotion_regulation_improve",
+    "notes": "'get through this' keyword for IMPROVE."
+  },
+  {
+    "id": "select_values_explicit",
+    "message": "I want to think about what matters to me in life.",
+    "expected_exercise": "defusion_values_compass",
+    "notes": "'what matters' keyword for values compass."
+  },
+  {
+    "id": "select_values_natural",
+    "message": "I feel like I've lost my purpose and direction.",
+    "expected_exercise": "defusion_values_compass",
+    "notes": "'purpose' + 'direction' keywords."
+  },
+  {
+    "id": "select_gratitude_explicit",
+    "message": "Can we do a gratitude exercise?",
+    "expected_exercise": "emotion_regulation_gratitude",
+    "notes": "'gratitude' keyword."
+  },
+  {
+    "id": "select_gratitude_natural",
+    "message": "I want to think about something positive for a change.",
+    "expected_exercise": "emotion_regulation_gratitude",
+    "notes": "'positive' keyword for gratitude."
+  }
+]

@@ -32,7 +32,7 @@ upper layers are selected at runtime by the graph.
 | Who is this system? | **Core** | `knowledge/soul.md`, `knowledge/identity.md` | Never |
 | What are the hard rules? | **Core** | `knowledge/policy/boundaries.md`, `knowledge/policy/privacy.md` | Never |
 | What mode is it in? | **Mode knowledge** | `knowledge/response_modes/*.md` — one file per therapeutic mode | Yes — selected by the dispatcher |
-| What technique overlay? | **Modality** | `knowledge/modalities/*.md` — MI is wired into supportive mode; 6 more are authored but not yet wired | Per mode |
+| What technique overlay? | **Modality** | `knowledge/modalities/*.md` — all 7 modalities LLM-routed per turn (MI, PFA, CBT, grief, IPT, ACT, DBT) | Per turn |
 | How should it respond? | **Instructions** | Mode-specific instruction blocks in `agent/therapeutic/prompts.py` | Per mode |
 | What does it know about the user? | **Working memory** | Semantic facts + episodic arcs retrieved by `load_memory_node` via hybrid RRF | Yes — re-retrieved each turn |
 | What style rules apply? | **Procedural rules** | Rules from the user's `ProceduralProfile`, injected as system prompt suffix | Yes — loaded each turn |
@@ -70,12 +70,12 @@ the agent's *awareness*, procedural rules shape its *behavior*.
 
 | File | What it does |
 |---|---|
-| `agent/therapeutic/prompts.py` | Knowledge file composition tuples (`_SUPPORTIVE_KNOWLEDGE`, `_REFLECTIVE_KNOWLEDGE`, etc.), mode-specific instruction blocks (`_SUPPORTIVE_INSTRUCTIONS`, etc.), and `build_*_system_prompt()` functions that compose layers into a final system prompt |
+| `agent/therapeutic/prompts.py` | Dynamic knowledge composition via `_knowledge_for_mode(mode, modality)`, mode-specific instruction blocks (`_SUPPORTIVE_INSTRUCTIONS`, etc.), and `build_*_system_prompt()` functions that compose layers into a final system prompt. Each mode's builder reads `routing.modality` from state and loads the matching modality file. |
 | `knowledge/soul.md` | Agent identity, voice, tone, pacing, directness |
 | `knowledge/identity.md` | Product boundaries and positioning |
 | `knowledge/policy/` | Safety and privacy policy |
 | `knowledge/response_modes/` | One file per therapeutic mode (support, reflection, psychoeducation, closing, guided_exercise) |
-| `knowledge/modalities/` | Modality knowledge files (MI is active; PFA, CBT, grief, IPT, ACT, DBT are authored but not yet wired) |
+| `knowledge/modalities/` | All 7 modality knowledge files — dynamically loaded per turn based on `routing.modality` selected by the dispatcher |
 | `agent/nodes/load_memory.py` | Populates `working_memory` and `memory.procedural_rules` for prompt injection |
 | `agent/memory/procedural.py` | Loads the user's procedural profile |
 

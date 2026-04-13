@@ -284,10 +284,18 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "user-trust-damaging in a way that other false-positive mode "
         "choices aren't, so err toward supportive when uncertain.\n"
         "- guided_exercise: start a structured exercise. Use when the "
-        "user explicitly asks for an exercise or technique to calm "
-        "down, ground themselves, or regulate — 'ground me', 'can you "
-        "walk me through a breathing exercise', 'help me calm down', "
-        "'I need to breathe', 'teach me a grounding technique'. The "
+        "user explicitly asks for an exercise or technique — grounding, "
+        "breathing, muscle relaxation, thought work, behavioral "
+        "experiments, behavioral activation, acceptance/defusion, values "
+        "work, self-compassion, emotion regulation, or gratitude. "
+        "Trigger phrases include: 'ground me', 'breathing exercise', "
+        "'help me calm down', 'relax my body', 'release tension', "
+        "'let's do a thought record', 'examine this belief', 'test "
+        "this thought', 'I can't start anything', 'I need to let go "
+        "of this', 'leaves exercise', 'STOP technique', 'values "
+        "compass', 'what matters to me', 'self-compassion', 'I'm so "
+        "hard on myself', 'IMPROVE the moment', 'help me cope', "
+        "'gratitude exercise', 'something I'm thankful for'. The "
         "trigger is a REQUEST for a structured intervention, not a "
         "general description of distress. "
         "Counter-examples that should route to supportive: "
@@ -310,7 +318,27 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "a complete self-report and should NOT route to clarifying. A "
         "session-opening greeting is NOT clarifying territory — route those "
         "to supportive.\n\n"
-        "Pick one mode. Return your decision in the structured schema. "
+        "Pick one mode. "
+        "Additionally, pick the therapeutic modality that best fits this "
+        "turn's content. The modality determines which therapeutic "
+        "framework informs the response:\n"
+        "- motivational_interviewing: user exploring change, ambivalence, "
+        "autonomy, stuck between options\n"
+        "- cbt: user examining thoughts, beliefs, cognitive patterns, "
+        "wanting practical structure or behavioral change\n"
+        "- act: user fighting or avoiding internal experiences, ruminating, "
+        "needing acceptance or values reconnection\n"
+        "- dbt_skills: user in acute emotional overwhelm, needing "
+        "distress tolerance or emotion regulation skills\n"
+        "- grief_support: user processing loss, bereavement, missing "
+        "someone, anniversary reactions\n"
+        "- interpersonal_therapy: user struggling with relationships, "
+        "role transitions, communication breakdowns, loneliness\n"
+        "- pfa: user in acute distress needing stabilization and "
+        "practical support, not deep exploration\n"
+        "- none: clarifying or closing turns, or when no specific "
+        "modality fits better than the default\n\n"
+        "Return your decision in the structured schema. "
         "Keep the reasoning to one short sentence — it's for debugging, "
         "not for the user."
     )
@@ -350,28 +378,14 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
     )
 
 
-async def _pick_mode_with_llm(
+async def _pick_mode_and_modality_with_llm(
     state: AgentState,
     llm_client,
-) -> Literal[
-    "supportive",
-    "reflective",
-    "clarifying",
-    "psychoeducation",
-    "closing",
-    "guided_exercise",
-]:
-    """Call the structured-output LLM classifier to pick a mode.
+) -> tuple[str, str]:
+    """Call the structured-output LLM classifier to pick mode + modality.
 
-    Returns the picked mode string. On any error, raises; callers are
-    responsible for falling back to the regex pathway.
-
-    As of v0.6 Stage C, all six therapeutic modes defined in the
-    ``DispatchDecision.mode`` Literal are wired to real response
-    nodes, so this function simply returns whatever the LLM picks.
-    The deferred-mode normalization block that lived here through
-    v0.6 Stages A and B is removed because there are no deferred
-    modes left.
+    Returns ``(mode, modality)`` as strings. On any error, raises;
+    callers are responsible for falling back to the regex pathway.
     """
 
     raw: DispatchDecision = await llm_client.generate_structured(
@@ -381,7 +395,7 @@ async def _pick_mode_with_llm(
         temperature=0,
     )
 
-    return raw.mode  # type: ignore[return-value]
+    return raw.mode, raw.modality  # type: ignore[return-value]
 
 
 # ─── Node-name mapping ─────────────────────────────────────────────────────
@@ -441,43 +455,47 @@ async def run_therapeutic_dispatch_node(
     lowered = message.lower()
     llm_client = runtime.context.get("llm_client")
 
+    # Helper to build routing update with modality.
+    def _routing_update(modality: str) -> dict:
+        return {"routing": {**state.get("routing", {}), "modality": modality}}
+
     # ── Fast path 0: active multi-turn exercise ──────────────────────────
-    # If a guided exercise is in progress (from a prior turn that
-    # started one and didn't finish), stay in guided_exercise mode
-    # regardless of what the user's current message looks like. The
-    # guided_exercise node itself is responsible for classifying the
-    # user's message as complete/hold/stuck/exit and updating state
-    # accordingly. If we let the LLM classifier see the message, it
-    # would almost certainly re-route to supportive or clarifying on
-    # messages like "I see my lamp, a book, and my coffee cup" —
-    # breaking the multi-turn flow.
+    # Preserve the modality from the turn that started the exercise
+    # rather than overwriting with "none". The first turn picks the
+    # modality via the LLM classifier; continuation turns keep it.
     if _has_active_exercise(state):
         logger.debug("therapeutic_dispatch: active-exercise fast path")
-        return Command(update={}, goto=GUIDED_EXERCISE_NODE)
+        existing_modality = state.get("routing", {}).get("modality") or "none"
+        return Command(
+            update=_routing_update(existing_modality), goto=GUIDED_EXERCISE_NODE
+        )
 
     # ── Fast path 1: high-precision reflective patterns ─────────────────
-    # These patterns only match when the user has explicitly used
-    # pattern-recognition language. Skip the LLM — the regex is more
-    # reliable for these specific phrasings.
     if _matches_any(lowered, REFLECTIVE_PATTERNS):
         logger.debug("therapeutic_dispatch: reflective fast path")
-        return Command(update={}, goto=REFLECTIVE_NODE)
+        return Command(
+            update=_routing_update("interpersonal_therapy"),
+            goto=REFLECTIVE_NODE,
+        )
 
     # ── Fast path 2: explicit confusion markers ──────────────────────────
-    # "Huh?", "what do you mean?" — unambiguous clarification requests.
     if _matches_any(lowered, CONFUSION_PATTERNS):
         logger.debug("therapeutic_dispatch: clarifying confusion-marker fast path")
-        return Command(update={}, goto=CLARIFYING_NODE)
+        return Command(update=_routing_update("none"), goto=CLARIFYING_NODE)
 
     # ── LLM classifier path ──────────────────────────────────────────────
-    # Everything else that has an LLM client goes through the classifier.
-    # This catches subtle cases the regex can't handle: implicit pattern
-    # questions, emotionally nuanced messages, context-dependent routing.
     if llm_client is not None:
         try:
-            mode = await _pick_mode_with_llm(state, llm_client)
-            logger.debug("therapeutic_dispatch: LLM picked mode=%s", mode)
-            return Command(update={}, goto=_MODE_NODE_MAP[mode])
+            mode, modality = await _pick_mode_and_modality_with_llm(state, llm_client)
+            logger.debug(
+                "therapeutic_dispatch: LLM picked mode=%s modality=%s",
+                mode,
+                modality,
+            )
+            return Command(
+                update=_routing_update(modality),
+                goto=_MODE_NODE_MAP[mode],
+            )
         except Exception:
             logger.warning(
                 "therapeutic_dispatch LLM classifier failed; falling back to regex.",
@@ -485,12 +503,11 @@ async def run_therapeutic_dispatch_node(
             )
 
     # ── Regex fallback ───────────────────────────────────────────────────
-    # No LLM client, or LLM call failed: apply the short-message-without-
-    # self-report heuristic for clarifying, and default to supportive.
-    # Note: guided_exercise is NOT reachable via this path because no
-    # regex pattern maps to it — users initiating an exercise during an
-    # LLM outage will get a supportive response instead, which is a
-    # graceful degradation rather than a broken one.
     mode = pick_therapeutic_mode(message)
     logger.debug("therapeutic_dispatch: regex fallback picked mode=%s", mode)
-    return Command(update={}, goto=_MODE_NODE_MAP[mode])
+    # Default modality for regex: MI for supportive, none for others.
+    fallback_modality = "motivational_interviewing" if mode == "supportive" else "none"
+    return Command(
+        update=_routing_update(fallback_modality),
+        goto=_MODE_NODE_MAP[mode],
+    )

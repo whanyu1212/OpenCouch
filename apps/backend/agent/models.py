@@ -76,6 +76,7 @@ class AgentOutput(BaseModel):
     mode: str | None = None
     mode_type: ModeType | None = None
     mode_source: str | None = None
+    modality: str | None = None
     should_persist_memory: bool = False
     # Per-turn diagnostics added for CLI observability. Holds stage
     # timings (``load_memory_ms``, ``crisis_gate_ms``,
