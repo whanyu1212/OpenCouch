@@ -147,6 +147,17 @@ export async function getMemoryRules(
   return res.json();
 }
 
+// ── Thread state (raw agent state dict) ─────────────────────────────
+
+export async function getThreadState(
+  threadId: string
+): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${API_BASE}/threads/${threadId}/state`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Thread state failed: ${res.status}`);
+  return res.json();
+}
+
 // ── WebSocket stream for text chat ───────────────────────────────────
 
 export function createChatStream(

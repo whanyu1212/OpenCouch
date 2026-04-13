@@ -155,25 +155,33 @@ export default function VoicePage() {
     <div className="flex flex-col h-screen">
       {/* Header */}
       <header className="px-6 py-3.5 border-b border-oc-border flex items-center justify-between shrink-0">
-        <h1 className="text-sm font-semibold text-oc-teal-800">Voice Chat</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="font-display text-lg text-oc-teal-900">Voice</h1>
+          {isConnected && (
+            <span className="text-[12px] font-mono text-oc-green">connected</span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {isAgentSpeaking && (
-            <div className="flex items-center gap-2 text-[12px] text-oc-cta">
-              <div className="w-1.5 h-1.5 rounded-full bg-oc-cta animate-pulse" />
-              Speaking
+            <div className="flex items-center gap-2 text-[13px] font-mono text-oc-cta">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-oc-cta opacity-60" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-cta" />
+              </span>
+              speaking
             </div>
           )}
           {!isConnected ? (
             <button
               onClick={connect}
-              className="bg-gradient-to-r from-oc-teal-500 to-oc-teal-400 text-white px-4 py-2 rounded-lg text-[13px] font-medium hover:from-oc-teal-400 hover:to-oc-teal-300 transition-all shadow-sm"
+              className="bg-oc-teal-700 text-white px-5 py-2.5 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-all shadow-sm"
             >
               Connect
             </button>
           ) : (
             <button
               onClick={disconnect}
-              className="bg-oc-red/10 text-oc-red border border-oc-red/20 px-4 py-2 rounded-lg text-[13px] font-medium hover:bg-oc-red/20 transition-all"
+              className="bg-oc-red-subtle text-oc-red border border-oc-red/20 px-5 py-2.5 rounded-xl text-[15px] font-medium hover:bg-red-100 transition-all"
             >
               Disconnect
             </button>
@@ -184,14 +192,14 @@ export default function VoicePage() {
       {/* Voice area */}
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         {!isConnected ? (
-          <div className="text-center">
-            <div className="w-20 h-20 rounded-3xl bg-oc-accent-glow flex items-center justify-center mx-auto mb-5">
+          <div className="text-center animate-fadeIn">
+            <div className="w-24 h-24 rounded-2xl bg-oc-accent-glow flex items-center justify-center mx-auto mb-6">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.5"
-                className="w-10 h-10 text-oc-accent"
+                className="w-12 h-12 text-oc-accent"
               >
                 <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
                 <path d="M19 10v2a7 7 0 01-14 0v-2" />
@@ -199,50 +207,43 @@ export default function VoicePage() {
                 <line x1="8" y1="23" x2="16" y2="23" />
               </svg>
             </div>
-            <p className="text-oc-text-secondary text-sm mb-1">Click Connect to start</p>
-            <p className="text-oc-text-dim text-xs">
-              Your browser will ask for microphone permission.
+            <p className="font-display text-xl text-oc-text-secondary mb-2">Start a voice session</p>
+            <p className="text-oc-text-muted text-sm font-mono">
+              your browser will ask for microphone permission
             </p>
           </div>
         ) : (
-          <div className="text-center">
-            {/* Animated voice indicator */}
-            <div className="relative w-28 h-28 mx-auto mb-6">
-              <div
-                className={`absolute inset-0 rounded-full transition-all duration-500 ease-out ${
-                  isAgentSpeaking
-                    ? "bg-oc-teal-400/20 scale-125"
-                    : "bg-oc-teal-400/5 scale-100"
-                }`}
-              />
-              <div
-                className={`absolute inset-3 rounded-full transition-all duration-400 ease-out ${
-                  isAgentSpeaking
-                    ? "bg-oc-teal-400/30 scale-110"
-                    : "bg-oc-teal-400/10 scale-100"
-                }`}
-              />
-              <div className="absolute inset-6 rounded-full bg-gradient-to-br from-oc-teal-500/40 to-oc-teal-400/20 flex items-center justify-center backdrop-blur-sm">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  className="w-8 h-8 text-oc-accent-hover"
-                >
-                  <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
-                  <path d="M19 10v2a7 7 0 01-14 0v-2" />
-                </svg>
-              </div>
+          <div className="text-center animate-fadeIn">
+            {/* Waveform visualizer */}
+            <div className="flex items-center justify-center gap-1.5 h-28 mb-6">
+              {Array.from({ length: 7 }).map((_, i) => (
+                <div
+                  key={i}
+                  className={`w-1.5 rounded-full transition-all duration-300 ${
+                    isAgentSpeaking
+                      ? "bg-oc-teal-400"
+                      : "bg-oc-warm-300"
+                  }`}
+                  style={{
+                    height: isAgentSpeaking ? `${20 + Math.sin((i + 1) * 0.7) * 50}%` : "12%",
+                    ...(isAgentSpeaking
+                      ? {
+                          animation: `waveBar 0.8s ease-in-out infinite`,
+                          animationDelay: `${i * 0.08}s`,
+                        }
+                      : {}),
+                  }}
+                />
+              ))}
             </div>
-            <p className="text-oc-text-muted text-[13px]">
-              {isAgentSpeaking ? "Agent is speaking..." : "Listening — speak when ready"}
+            <p className="text-oc-text-muted text-[15px] font-mono">
+              {isAgentSpeaking ? "agent speaking…" : "listening — speak when ready"}
             </p>
           </div>
         )}
 
         {error && (
-          <div className="mt-4 px-4 py-2.5 bg-oc-red/10 border border-oc-red/20 rounded-lg text-oc-red text-[13px]">
+          <div className="mt-5 px-5 py-3 bg-oc-red-subtle border border-oc-red/20 rounded-xl text-oc-red text-[15px]">
             {error}
           </div>
         )}
@@ -250,22 +251,29 @@ export default function VoicePage() {
 
       {/* Transcript panel */}
       {transcripts.length > 0 && (
-        <div
-          ref={scrollRef}
-          className="border-t border-oc-border max-h-52 overflow-y-auto px-6 py-3 space-y-2 shrink-0 bg-oc-bg-card/50"
-        >
-          {transcripts.map((t, i) => (
-            <div key={i} className="text-[13px]">
-              <span
-                className={`font-medium mr-2 ${
-                  t.role === "user" ? "text-oc-cta" : "text-oc-accent"
-                }`}
-              >
-                {t.role}:
-              </span>
-              <span className="text-oc-text-muted">{t.text}</span>
-            </div>
-          ))}
+        <div className="border-t border-oc-border shrink-0 bg-oc-bg-card/50">
+          <div className="px-6 py-2.5 border-b border-oc-border-subtle">
+            <span className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-dim">
+              Transcript
+            </span>
+          </div>
+          <div
+            ref={scrollRef}
+            className="max-h-52 overflow-y-auto px-6 py-3 space-y-2.5"
+          >
+            {transcripts.map((t, i) => (
+              <div key={i} className="flex items-start gap-3 text-[15px] animate-fadeIn">
+                <span
+                  className={`text-[12px] font-mono font-medium w-14 shrink-0 pt-0.5 ${
+                    t.role === "user" ? "text-oc-cta" : "text-oc-accent"
+                  }`}
+                >
+                  {t.role}
+                </span>
+                <span className="text-oc-text-secondary leading-relaxed">{t.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
