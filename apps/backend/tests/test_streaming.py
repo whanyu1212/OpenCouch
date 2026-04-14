@@ -11,7 +11,7 @@ stamps the outer ``turn_total_ms`` into diagnostics, and yields a
 These tests cover the new contract:
 
 1. **Per-node StatusEvents.** The stream emits one StatusEvent for
-   each node that runs (load_memory, crisis_gate, therapeutic OR
+   each node that runs (crisis_gate, load_memory, therapeutic OR
    crisis_response+crisis_log, extract_facts, extract_procedural,
    finalize) in execution order.
 
@@ -78,8 +78,8 @@ class TestRunTurnStreamStages:
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
-        Expected stage order:
-            load_memory → crisis_gate → therapeutic →
+        Expected stage order (v0.9 safety reorder):
+            crisis_gate → load_memory → therapeutic →
             extract_facts → extract_procedural → finalize
         """
 
@@ -96,8 +96,8 @@ class TestRunTurnStreamStages:
         # The stages should appear in the order the graph executes them.
         stage_names = [event.stage for event in statuses]
         assert stage_names == [
-            "load_memory",
             "crisis_gate",
+            "load_memory",
             "therapeutic",
             "extract_facts",
             "extract_procedural",

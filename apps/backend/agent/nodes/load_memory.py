@@ -60,6 +60,7 @@ log entry in ROADMAP.md for the algorithm details.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -163,12 +164,10 @@ async def _retrieve_episodic_working_memory(
        for this user regardless of query match, so the session opens
        with a "last time we talked…" context entry.
 
-       v0.8.1 note: the catch-up path still uses ``asearch(query=None)``
-       rather than ``asearch_similar`` because it's a pure enumeration
-       (take the most-recent record), not a similarity search. No
-       embedding is needed — the "most recent" ordering comes from
-       insertion order. Moving this to ``asearch_similar`` would just
-       invoke the hybrid scorer with irrelevant results.
+       v0.9 fix: uses ``store.alatest()`` which does a single
+       ``ORDER BY insertion_order DESC LIMIT 1`` fetch. The previous
+       approach (``asearch(query=None, limit=50)`` + ``[-1]``) silently
+       returned the 50th-oldest record once a user exceeded 50 sessions.
 
     2. **Query-based** (``is_first_turn=False`` or additional matches
        on first turn): goes through the v0.8.1 hybrid retrieval path
@@ -193,14 +192,15 @@ async def _retrieve_episodic_working_memory(
     formatted: list[str] = []
 
     if is_first_turn:
-        # Catch-up: fetch the single most recent arc regardless of query.
-        # `query=None` returns records in insertion order; since episodic
-        # records are written in chronological order (one per session),
-        # the last entry in the list is the most recent. We fetch up to
-        # a safe upper bound and then take the last one.
-        recent_records = await store.asearch(namespace, query=None, limit=50)
-        if recent_records:
-            catch_up = _format_episodic_entry(recent_records[-1].value)
+        # Catch-up: fetch the single most recent arc via alatest().
+        # v0.9 fix: the previous approach (asearch(query=None, limit=50)
+        # + [-1]) silently returned the 50th-oldest record once a user
+        # exceeded 50 sessions. alatest() uses DESC LIMIT 1 and is
+        # correct at any scale. It's a required protocol method — custom
+        # MemoryStore implementations must provide it.
+        latest = await store.alatest(namespace)
+        if latest is not None:
+            catch_up = _format_episodic_entry(latest.value)
             if catch_up is not None:
                 formatted.append(catch_up)
 
@@ -256,6 +256,41 @@ async def _retrieve_procedural_state(
     profile = await aget_procedural_profile(store, user_id=owner_id)
     rule_texts = [rule.rule for rule in profile.rules]
     return rule_texts, profile.proactive_recall_enabled
+
+
+async def _compute_query_embedding(
+    embedding_provider: "EmbeddingProvider | None",
+    query: str,
+) -> tuple[list[float] | None, str | None, str]:
+    """Compute the query embedding, returning (embedding, model, path).
+
+    Extracted from ``run_load_memory_node`` so the embedding API call
+    (50-200ms network I/O) can run concurrently with store calls via
+    ``asyncio.gather``.
+
+    Returns:
+        A 3-tuple of ``(query_embedding, embedding_model, retrieval_path)``
+        where ``retrieval_path`` is one of ``"hybrid_rrf"``,
+        ``"token_recall"``, or ``"token_recall_after_embed_error"``.
+    """
+
+    if embedding_provider is None:
+        return None, None, "token_recall"
+    try:
+        embeddings_out = await embedding_provider.aembed(
+            [query],
+            task_type="RETRIEVAL_QUERY",
+        )
+        if embeddings_out and embeddings_out[0] is not None:
+            return embeddings_out[0], embedding_provider.model_name, "hybrid_rrf"
+        return None, None, "token_recall"
+    except Exception:
+        logger.warning(
+            "load_memory_node: embedding call failed; falling back to "
+            "token-recall only for this turn.",
+            exc_info=True,
+        )
+        return None, None, "token_recall_after_embed_error"
 
 
 async def run_load_memory_node(
@@ -336,84 +371,42 @@ async def run_load_memory_node(
     transcript = state.get("transcript", [])
     is_first_turn = len(transcript) == 1
 
-    # v0.8.1 observability: time the retrieval work so we have a
-    # per-turn latency signal to answer "is retrieval expensive
-    # enough to gate yet?" without committing to any gating
-    # strategy. The timer covers the store interactions
-    # (arecord_count + asearch on both namespaces) — i.e., the work
-    # a gating decision would actually avoid. Python-side token
-    # splitting happens before the timer starts and is microseconds
-    # anyway, so including it would just add noise. The current
-    # guidance (see the retrieval-gating discussion in the v0.8
-    # follow-up notes): revisit gating when dogfood p95 exceeds
-    # ~20ms per turn AND store_size consistently exceeds a few
-    # hundred records. Until then, "always on" is the right call.
     retrieval_start = time.monotonic()
 
-    # v0.8.1: compute the query embedding once per turn so both the
-    # semantic and episodic retrieval paths can reuse it without
-    # duplicating the embedding call. ``task_type="RETRIEVAL_QUERY"``
-    # is the canonical hint for query-side embeddings on asymmetric
-    # retrieval models (Gemini text-embedding-004 specifically tunes
-    # its query vs. document embeddings differently).
-    #
-    # The embedding is optional: when the provider is absent or is a
-    # NullEmbeddingProvider, ``query_embedding`` stays None and the
-    # store's ``asearch_similar`` degenerates cleanly to the v0.3.1
-    # token-recall path. Failures degrade silently — a provider
-    # outage should never break retrieval; it should just fall back
-    # to what v0.3.1 already did.
-    query_embedding: list[float] | None = None
-    query_embedding_model: str | None = None
-    retrieval_path = "token_recall"
-    if embedding_provider is not None:
-        try:
-            embeddings_out = await embedding_provider.aembed(
-                [query],
-                task_type="RETRIEVAL_QUERY",
-            )
-            if embeddings_out and embeddings_out[0] is not None:
-                query_embedding = embeddings_out[0]
-                query_embedding_model = embedding_provider.model_name
-                retrieval_path = "hybrid_rrf"
-        except Exception:
-            logger.warning(
-                "load_memory_node: embedding call failed; falling back to "
-                "token-recall only for this turn.",
-                exc_info=True,
-            )
-            retrieval_path = "token_recall_after_embed_error"
-
-    semantic_store_size = await memory_store.arecord_count(semantic_ns)
-    episodic_store_size = await memory_store.arecord_count(episodic_ns)
-
-    # Episodic retrieval: catch-up on first turn + query-based matches.
-    episodic_entries = await _retrieve_episodic_working_memory(
-        memory_store,
-        owner_id=owner_id,
-        query=query,
-        query_embedding=query_embedding,
-        embedding_model=query_embedding_model,
-        is_first_turn=is_first_turn,
+    # ── Phase 1: all independent work runs concurrently ──────────────
+    # The embedding API call (50-200ms network I/O to Gemini) overlaps
+    # with the store calls (local SQLite, <5ms each). aiosqlite
+    # serializes store calls via a single worker thread, but the real
+    # win is the embedding/store overlap.
+    (
+        (query_embedding, query_embedding_model, retrieval_path),
+        semantic_store_size,
+        episodic_store_size,
+        (procedural_rules, proactive_recall_enabled),
+    ) = await asyncio.gather(
+        _compute_query_embedding(embedding_provider, query),
+        memory_store.arecord_count(semantic_ns),
+        memory_store.arecord_count(episodic_ns),
+        _retrieve_procedural_state(memory_store, owner_id=owner_id),
     )
 
-    # Semantic retrieval: v0.8.1 hybrid RRF path via store.asearch_similar.
-    semantic_entries = await _retrieve_semantic_working_memory(
-        memory_store,
-        owner_id=owner_id,
-        query=query,
-        query_embedding=query_embedding,
-        embedding_model=query_embedding_model,
-    )
-
-    # Procedural retrieval (v0.7 Stage C): always load the full rule set
-    # + the recall toggle. Procedural is NOT query-based — rules are
-    # directives that apply on every turn, and the agent needs to see
-    # all of them to apply them consistently. See schema.yaml §6
-    # retrieval.hot_path.procedural for the rationale.
-    procedural_rules, proactive_recall_enabled = await _retrieve_procedural_state(
-        memory_store,
-        owner_id=owner_id,
+    # ── Phase 2: retrieval that depends on the embedding ─────────────
+    episodic_entries, semantic_entries = await asyncio.gather(
+        _retrieve_episodic_working_memory(
+            memory_store,
+            owner_id=owner_id,
+            query=query,
+            query_embedding=query_embedding,
+            embedding_model=query_embedding_model,
+            is_first_turn=is_first_turn,
+        ),
+        _retrieve_semantic_working_memory(
+            memory_store,
+            owner_id=owner_id,
+            query=query,
+            query_embedding=query_embedding,
+            embedding_model=query_embedding_model,
+        ),
     )
 
     retrieval_duration_ms = (time.monotonic() - retrieval_start) * 1000

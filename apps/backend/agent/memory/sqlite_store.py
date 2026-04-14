@@ -62,6 +62,7 @@ against the schema declared below.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import struct
@@ -268,6 +269,7 @@ class SqliteMemoryStore:
         )
         self._connection: aiosqlite.Connection | None = None
         self._closed = False
+        self._connect_lock = asyncio.Lock()
 
     # ── Connection lifecycle ──────────────────────────────────────────
 
@@ -278,6 +280,13 @@ class SqliteMemoryStore:
         already-open connection. Raises ``RuntimeError`` if the store
         has been closed — matches the in-memory store's ``_ensure_open``
         semantics.
+
+        v0.9: uses an ``asyncio.Lock`` to prevent the initialization
+        race that ``asyncio.gather`` can trigger when multiple store
+        calls start concurrently before the connection exists. Without
+        the lock, each task can race past ``self._connection is None``
+        and open its own connection — especially bad for ``:memory:``
+        databases where each connection gets a separate empty DB.
         """
 
         if self._closed:
@@ -285,21 +294,32 @@ class SqliteMemoryStore:
         if self._connection is not None:
             return self._connection
 
-        # Create parent directory for file-backed SQLite paths. Skip
-        # for ``:memory:`` which has no filesystem footprint.
-        if str(self.sqlite_path) != ":memory:":
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        async with self._connect_lock:
+            # Re-check after acquiring the lock — another task may have
+            # initialized, or aclose() may have run while we waited.
+            if self._closed:
+                raise RuntimeError("SqliteMemoryStore is closed.")
+            if self._connection is not None:
+                return self._connection
 
-        self._connection = await aiosqlite.connect(str(self.sqlite_path))
-        # Return rows as sqlite3.Row so we can index by column name
-        # rather than position. Slightly more readable code at minimal
-        # runtime cost.
-        self._connection.row_factory = aiosqlite.Row
-        # Enable foreign keys (defensive; we don't use FKs yet but
-        # future schema additions might, and it's cheap to turn on).
-        await self._connection.execute("PRAGMA foreign_keys = ON")
-        await self._ensure_schema(self._connection)
-        return self._connection
+            if str(self.sqlite_path) != ":memory:":
+                self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Initialize-then-publish: build into a local var and only
+            # assign to self._connection after full init succeeds. If
+            # PRAGMA setup or schema migration fails, the local is
+            # closed and self._connection stays None so the next call
+            # retries cleanly instead of reusing a broken handle.
+            conn = await aiosqlite.connect(str(self.sqlite_path))
+            try:
+                conn.row_factory = aiosqlite.Row
+                await conn.execute("PRAGMA foreign_keys = ON")
+                await self._ensure_schema(conn)
+            except BaseException:
+                await conn.close()
+                raise
+            self._connection = conn
+            return self._connection
 
     @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
@@ -752,23 +772,34 @@ class SqliteMemoryStore:
         Safe to call on an already-closed store (idempotent no-op,
         matches the in-memory store's contract). After closing, any
         subsequent method call raises ``RuntimeError``.
+
+        Known limitation: if an in-flight store operation (e.g., aput
+        mid-commit) is suspended when aclose() runs, that operation
+        may resume against a closed handle and raise
+        ``ProgrammingError``. In practice this only happens during
+        process shutdown where the runtime closes the store while a
+        turn is still in progress. A full solution requires a
+        read-write lock around every store method — deferred to a
+        future version where graceful shutdown is a first-class
+        concern.
         """
 
         if self._closed:
             return
-        self._closed = True
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            except Exception:
-                # Don't raise on close failures — logging is enough.
-                # A stuck close shouldn't poison the runtime shutdown.
-                logger.warning(
-                    "SqliteMemoryStore: connection close raised; ignoring",
-                    exc_info=True,
-                )
-            finally:
-                self._connection = None
+        # Serialize with _connect_lock so aclose() cannot race with a
+        # concurrent _ensure_connection() that is mid-initialization.
+        async with self._connect_lock:
+            self._closed = True
+            if self._connection is not None:
+                try:
+                    await self._connection.close()
+                except Exception:
+                    logger.warning(
+                        "SqliteMemoryStore: connection close raised; ignoring",
+                        exc_info=True,
+                    )
+                finally:
+                    self._connection = None
 
     # ── Debug / observability helpers ─────────────────────────────────
     #
@@ -825,6 +856,31 @@ class SqliteMemoryStore:
         ) as cursor:
             rows = await cursor.fetchall()
         return [(row["owner_id"], row["namespace_kind"]) for row in rows]
+
+    async def alatest(self, namespace: Namespace) -> StoreRecord | None:
+        """Return the most recently inserted record in ``namespace``.
+
+        Uses ``ORDER BY insertion_order DESC LIMIT 1`` for an efficient
+        single-row fetch regardless of namespace size.
+        """
+
+        if self._closed:
+            return None
+        conn = await self._ensure_connection()
+        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        async with conn.execute(
+            """
+            SELECT id, value, embedding, embedding_model FROM memory_records
+            WHERE owner_id = ? AND namespace_kind = ?
+            ORDER BY insertion_order DESC
+            LIMIT 1
+            """,
+            (owner_id, namespace_kind),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return self._row_to_store_record(row, namespace)
 
     # ── Namespace helpers ─────────────────────────────────────────────
 

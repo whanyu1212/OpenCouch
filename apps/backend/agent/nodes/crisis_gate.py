@@ -397,7 +397,7 @@ def _build_crisis_delta(
 async def run_crisis_gate_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
-) -> Command[Literal["crisis_response_node", "therapeutic_subgraph"]]:
+) -> Command[Literal["crisis_response_node", "load_memory_node"]]:
     """Run the hybrid crisis gate (deterministic + optional LLM fallback).
 
     Returns a :class:`Command` that combines the assessment state update
@@ -471,6 +471,6 @@ async def run_crisis_gate_node(
     next_node = (
         "crisis_response_node"
         if assessment.needs_crisis_response
-        else "therapeutic_subgraph"
+        else "load_memory_node"
     )
     return Command(update=delta, goto=next_node)

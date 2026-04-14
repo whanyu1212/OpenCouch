@@ -216,6 +216,21 @@ async def run_extract_semantic_facts_node(
         }
 
     # ── Early exits ─────────────────────────────────────────────────────
+
+    # v0.9: crisis gate first — fastest check, highest priority. Skip
+    # extraction on crisis turns to avoid delaying crisis response
+    # delivery. The DoneEvent is only yielded after END, so extractor
+    # LLM calls (~3-5s) would block the user from seeing the crisis
+    # response. Crisis responses are templated + PFA overlay, not rich
+    # content worth extracting facts from.
+    route = state.get("routing", {}).get("route")
+    if route == "crisis":
+        logger.debug(
+            "extract_semantic_facts_node: crisis path; skipping to avoid "
+            "delaying crisis response delivery"
+        )
+        return _diagnostics_delta(reason="skipped: crisis_path")
+
     llm_client = runtime.context.get("llm_client")
     memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
 
@@ -230,22 +245,10 @@ async def run_extract_semantic_facts_node(
         return _diagnostics_delta(reason="skipped: incognito")
 
     store = runtime.context["memory_store"]
-    # v0.8.1: embedding provider is optional in the context
-    # (NotRequired in WorkflowContext). When absent or when the
-    # runtime wires a NullEmbeddingProvider, the extractor writes
-    # records without embeddings and the store's hybrid retrieval
-    # degrades to token-recall for those rows. No error path —
-    # embeddings are a quality boost, not a correctness requirement.
     embedding_provider = runtime.context.get("embedding_provider")
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
-    # v0.8.2: pre-extractor small-talk gate. Skip the LLM call
-    # entirely when the message is unambiguously small talk (short +
-    # all tokens in the small-talk vocabulary). Saves ~3-5s per turn
-    # on greetings and acknowledgments. Conservative by design —
-    # false negatives waste one LLM call, false positives silently
-    # lose memory. See ``agent/memory/small_talk_gate.py`` for the
-    # heuristic rationale.
+    # v0.8.2: pre-extractor small-talk gate.
     from agent.memory.small_talk_gate import is_small_talk
 
     if is_small_talk(state["message"]):

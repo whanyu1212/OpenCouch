@@ -307,6 +307,23 @@ class MemoryStore(Protocol):
         """
         ...
 
+    async def alatest(self, namespace: Namespace) -> StoreRecord | None:
+        """Return the most recently inserted record in ``namespace``.
+
+        Returns ``None`` when the namespace is empty or does not exist.
+
+        Added in v0.9 to fix the episodic catch-up bug: the previous
+        approach (``asearch(query=None, limit=50)`` + ``[-1]``) silently
+        returned the 50th-oldest record once a user exceeded 50 episodic
+        sessions, because ``asearch`` returns records in ascending
+        insertion order.
+
+        The in-memory implementation uses ``reversed(dict.values())``
+        (dict preserves insertion order in Python 3.7+). The SQLite
+        implementation uses ``ORDER BY insertion_order DESC LIMIT 1``.
+        """
+        ...
+
 
 class OpenCouchMemoryStore:
     """In-memory implementation of the :class:`MemoryStore` protocol.
@@ -646,3 +663,16 @@ class OpenCouchMemoryStore:
         if self._closed:
             return []
         return [ns for ns, bucket in self._buckets.items() if bucket.records]
+
+    async def alatest(self, namespace: Namespace) -> StoreRecord | None:
+        """Return the most recently inserted record in ``namespace``.
+
+        Dict preserves insertion order in Python 3.7+, so
+        ``reversed(values())`` yields most-recent-first without a sort.
+        """
+
+        self._ensure_open()
+        bucket = self._buckets.get(namespace)
+        if bucket is None or not bucket.records:
+            return None
+        return next(reversed(bucket.records.values()))
