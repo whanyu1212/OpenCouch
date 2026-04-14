@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Literal
 
 from services.llm.base import BaseLLMClient
-from services.llm.google_genai import GeminiLLMClient
-from services.llm.openai_client import OpenAILLMClient
+from services.llm.google_genai import DEFAULT_GEMINI_MODEL, GeminiLLMClient
+from services.llm.openai_client import DEFAULT_OPENAI_MODEL, OpenAILLMClient
 
 LLMProvider = Literal["gemini", "openai"]
 
@@ -19,7 +19,9 @@ def create_llm_client(
 
     Args:
         provider: Normalized provider name.
-        model: Optional explicit model override.
+        model: Optional explicit model override. When ``None``, uses the
+            provider's ``DEFAULT_*_MODEL`` constant as the single source
+            of truth for model defaults.
         api_key: Optional explicit API key override.
 
     Returns:
@@ -32,13 +34,13 @@ def create_llm_client(
     if provider == "gemini":
         return GeminiLLMClient(
             api_key=api_key,
-            model=model or "gemini-3-flash-preview",
+            model=model or DEFAULT_GEMINI_MODEL,
         )
 
     if provider == "openai":
         return OpenAILLMClient(
             api_key=api_key,
-            model=model or "gpt-5.4-nano",
+            model=model or DEFAULT_OPENAI_MODEL,
         )
 
     raise ValueError(f"Unsupported LLM provider: {provider}")

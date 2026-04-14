@@ -105,7 +105,13 @@ class StatusEvent(BaseModel):
 
 
 class ChunkEvent(BaseModel):
-    """Incremental text chunk from response generation."""
+    """Incremental text chunk from response generation.
+
+    v0.9: emitted in real time as the LLM generates tokens. Mode nodes
+    call ``get_stream_writer()`` to push chunks through LangGraph's
+    custom stream channel, which ``run_turn_stream`` maps to ChunkEvents.
+    The frontend renders these incrementally for ~2s time-to-first-token.
+    """
 
     type: Literal["chunk"] = "chunk"
     text: str

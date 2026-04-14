@@ -11,9 +11,10 @@ stamps the outer ``turn_total_ms`` into diagnostics, and yields a
 These tests cover the new contract:
 
 1. **Per-node StatusEvents.** The stream emits one StatusEvent for
-   each node that runs (crisis_gate, load_memory, therapeutic OR
-   crisis_response+crisis_log, extract_facts, extract_procedural,
-   finalize) in execution order.
+   each node that runs (crisis_gate, load_memory, therapeutic,
+   finalize, extract_facts, extract_procedural) in execution order.
+   v0.9: finalize runs BEFORE extractors. A ResponseEvent is emitted
+   after finalize so the user sees the response while extractors run.
 
 2. **DoneEvent carries diagnostics.** The ``DoneEvent.output.diagnostics``
    dict contains both the per-node timings (stamped by each node) and
@@ -34,6 +35,7 @@ from __future__ import annotations
 import pytest
 
 from agent.models import (
+    ChunkEvent,
     DoneEvent,
     StatusEvent,
     StreamEvent,
@@ -49,23 +51,23 @@ async def _collect_stream(
     *,
     thread_id: str,
     message: str,
-) -> tuple[list[StatusEvent], DoneEvent | None]:
-    """Collect all StatusEvents and the terminal DoneEvent from a stream.
+) -> tuple[list[StatusEvent], list[ChunkEvent], DoneEvent | None]:
+    """Collect all events from a stream.
 
-    Returns a tuple ``(status_events, done_event)`` where ``done_event``
-    is None if the stream terminates without one (which would be a bug
-    in ``run_turn_stream`` and the calling test should fail on that
-    assertion).
+    Returns ``(status_events, chunk_events, done_event)``.
     """
 
     statuses: list[StatusEvent] = []
+    chunks: list[ChunkEvent] = []
     done: DoneEvent | None = None
     async for event in runtime.run_turn_stream(thread_id=thread_id, message=message):
         if isinstance(event, StatusEvent):
             statuses.append(event)
+        elif isinstance(event, ChunkEvent):
+            chunks.append(event)
         elif isinstance(event, DoneEvent):
             done = event
-    return statuses, done
+    return statuses, chunks, done
 
 
 # ── Tests ────────────────────────────────────────────────────────────────
@@ -78,9 +80,11 @@ class TestRunTurnStreamStages:
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
-        Expected stage order (v0.9 safety reorder):
+        Expected stage order (v0.9 latency reorder):
             crisis_gate → load_memory → therapeutic →
-            extract_facts → extract_procedural → finalize
+            finalize → extract_facts → extract_procedural
+
+        A ResponseEvent is emitted after finalize, before extractors.
         """
 
         async with PersistentAgentRuntime(
@@ -88,7 +92,7 @@ class TestRunTurnStreamStages:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            statuses, done = await _collect_stream(
+            statuses, chunks, done = await _collect_stream(
                 runtime, thread_id="t-stream-1", message="hi there"
             )
 
@@ -99,10 +103,14 @@ class TestRunTurnStreamStages:
             "crisis_gate",
             "load_memory",
             "therapeutic",
+            "finalize",
             "extract_facts",
             "extract_procedural",
-            "finalize",
         ]
+        # In deterministic mode (no LLM client), no chunks are emitted —
+        # the response comes from the fallback template via DoneEvent only.
+        # When an LLM client is present, chunks stream during the
+        # therapeutic subgraph node and concatenate to the full response.
 
     @pytest.mark.asyncio
     async def test_done_event_comes_last(self) -> None:
@@ -121,10 +129,9 @@ class TestRunTurnStreamStages:
 
         assert len(events) > 0
         assert isinstance(events[-1], DoneEvent)
-        # All earlier events should be StatusEvents (no ChunkEvents yet
-        # in the deterministic path — that's a streaming-LLM future).
+        # All earlier events should be StatusEvents or ChunkEvents.
         for event in events[:-1]:
-            assert isinstance(event, StatusEvent)
+            assert isinstance(event, (StatusEvent, ChunkEvent))
 
 
 class TestRunTurnStreamDiagnostics:
@@ -139,7 +146,7 @@ class TestRunTurnStreamDiagnostics:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            _, done = await _collect_stream(
+            _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-3", message="hi"
             )
 
@@ -170,7 +177,7 @@ class TestRunTurnStreamDiagnostics:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            _, done = await _collect_stream(
+            _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-4", message="hi"
             )
 
@@ -202,7 +209,7 @@ class TestRunTurnStreamDiagnostics:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            _, done = await _collect_stream(
+            _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-5", message="hi"
             )
 
@@ -234,7 +241,7 @@ class TestRunTurnStreamSessionTracking:
             # Before: no start time tracked
             assert "t-stream-6" not in runtime._session_starts
 
-            _, done = await _collect_stream(
+            _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-6", message="hi"
             )
 
@@ -280,7 +287,7 @@ class TestRunTurnStreamParity:
             monolithic = await runtime.run_turn(
                 thread_id="t-parity-mono", message="hello"
             )
-            _, streamed = await _collect_stream(
+            _, _, streamed = await _collect_stream(
                 runtime, thread_id="t-parity-stream", message="hello"
             )
 

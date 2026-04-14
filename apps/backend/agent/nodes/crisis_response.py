@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from agent.models import ModeType, ResponseKind
@@ -82,11 +83,16 @@ async def run_crisis_response_node(
     response_text = _default_crisis_reply(enriched_state)
     if llm_client is not None:
         try:
-            response_text = await llm_client.generate_text(
+            writer = get_stream_writer()
+            chunks: list[str] = []
+            async for chunk in llm_client.generate_text_stream(
                 prompt=build_crisis_response_prompt(enriched_state),
                 system_instruction=build_crisis_response_system_prompt(),
                 temperature=0,
-            )
+            ):
+                chunks.append(chunk)
+                writer({"type": "chunk", "text": chunk})
+            response_text = "".join(chunks)
         except Exception:
             logger.warning(
                 "Crisis LLM response generation failed; using deterministic reply.",

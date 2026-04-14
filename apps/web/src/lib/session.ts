@@ -46,6 +46,10 @@ interface SessionState {
   setThreadId: (id: string) => void;
   setMessages: (msgs: ChatMessage[]) => void;
   addMessage: (msg: ChatMessage) => void;
+  /** Append text to the last message (for token streaming) */
+  appendToLastMessage: (text: string) => void;
+  /** Patch the last message with metadata (for DoneEvent reconciliation) */
+  updateLastMessage: (updates: Partial<ChatMessage>) => void;
   clearMessages: () => void;
   setChatLoading: (loading: boolean) => void;
   /** Start a session with the given mode */
@@ -72,6 +76,24 @@ export const useSessionStore = create<SessionState>((set) => ({
   setMessages: (msgs: ChatMessage[]) => set({ messages: msgs }),
   addMessage: (msg: ChatMessage) =>
     set((state) => ({ messages: [...state.messages, msg] })),
+  appendToLastMessage: (text: string) =>
+    set((state) => {
+      const msgs = [...state.messages];
+      if (msgs.length > 0) {
+        const last = { ...msgs[msgs.length - 1] };
+        last.content = (last.content || "") + text;
+        msgs[msgs.length - 1] = last;
+      }
+      return { messages: msgs };
+    }),
+  updateLastMessage: (updates: Partial<ChatMessage>) =>
+    set((state) => {
+      const msgs = [...state.messages];
+      if (msgs.length > 0) {
+        msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], ...updates };
+      }
+      return { messages: msgs };
+    }),
   clearMessages: () => set({ messages: [] }),
   setChatLoading: (loading: boolean) => set({ chatLoading: loading }),
 

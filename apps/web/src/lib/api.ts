@@ -57,12 +57,17 @@ export interface StreamStatusEvent {
   detail: string;
 }
 
+export interface StreamChunkEvent {
+  type: "chunk";
+  text: string;
+}
+
 export interface StreamDoneEvent {
   type: "done";
   response: ChatResponse;
 }
 
-export type StreamEvent = StreamStatusEvent | StreamDoneEvent;
+export type StreamEvent = StreamStatusEvent | StreamChunkEvent | StreamDoneEvent;
 
 // ── REST helpers ─────────────────────────────────────────────────────
 

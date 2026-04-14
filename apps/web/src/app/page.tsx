@@ -60,7 +60,7 @@ const CONVERSATION_STARTERS = [
 ];
 
 export default function TextChatPage() {
-  const { userId, threadId, sessionMode, setThreadId, messages, setMessages, addMessage, clearMessages, chatLoading: isLoading, setChatLoading: setIsLoading } = useSessionStore();
+  const { userId, threadId, sessionMode, setThreadId, messages, setMessages, addMessage, appendToLastMessage, updateLastMessage, clearMessages, chatLoading: isLoading, setChatLoading: setIsLoading } = useSessionStore();
   const [input, setInput] = useState("");
   const [stages, setStages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -123,27 +123,58 @@ export default function TextChatPage() {
     addMessage({ role: "user", content: msg });
 
     let done = false;
+    let streamingStarted = false;
 
     const ws = createChatStream(msg, threadId, userId, (event: StreamEvent) => {
       if (event.type === "status") {
         setStages((prev) => [...prev, event.stage]);
+      } else if (event.type === "chunk") {
+        // v0.9 token streaming: chunks arrive in real time as the LLM
+        // generates tokens. First chunk creates the message; subsequent
+        // chunks append to it.
+        if (!streamingStarted) {
+          streamingStarted = true;
+          addMessage({ role: "assistant", content: event.text });
+          setStages([]);
+          setIsLoading(false);
+          inputRef.current?.focus();
+        } else {
+          appendToLastMessage(event.text);
+        }
       } else if (event.type === "done") {
         done = true;
         const resp = event.response as ChatResponse;
-        addMessage({
-          role: "assistant",
-          content: resp.response_text,
-          mode: resp.mode,
-          modeSource: resp.mode_source,
-          modality: resp.modality,
-          responseType: resp.response_type,
-          crisis: resp.crisis,
-          diagnostics: resp.diagnostics,
-        });
-        setStages([]);
-        setIsLoading(false);
+        if (streamingStarted) {
+          // Reconcile: patch the streamed message with the authoritative
+          // response text and metadata from DoneEvent. Handles partial-
+          // stream failures (where fallback text differs from chunks)
+          // and attaches diagnostics/crisis/mode info.
+          updateLastMessage({
+            content: resp.response_text,
+            mode: resp.mode,
+            modeSource: resp.mode_source,
+            modality: resp.modality,
+            responseType: resp.response_type,
+            crisis: resp.crisis,
+            diagnostics: resp.diagnostics,
+          });
+        } else {
+          // No chunks arrived — render full response from DoneEvent.
+          addMessage({
+            role: "assistant",
+            content: resp.response_text,
+            mode: resp.mode,
+            modeSource: resp.mode_source,
+            modality: resp.modality,
+            responseType: resp.response_type,
+            crisis: resp.crisis,
+            diagnostics: resp.diagnostics,
+          });
+          setStages([]);
+          setIsLoading(false);
+          inputRef.current?.focus();
+        }
         ws.close();
-        inputRef.current?.focus();
       }
     });
 
