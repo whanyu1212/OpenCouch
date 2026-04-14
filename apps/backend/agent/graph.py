@@ -6,14 +6,15 @@ This module owns the entire agent execution surface in three layers:
   convert between the public ``AgentInput`` / ``AgentOutput`` contract and the
   internal grouped :class:`AgentState` shape used by the graph nodes.
 * **Graph assembly** — :func:`build_agent_workflow` constructs and compiles the
-  LangGraph ``StateGraph`` that wires the full topology: load_memory →
-  crisis_gate → (crisis_response + crisis_log | therapeutic_subgraph) →
+  LangGraph ``StateGraph`` that wires the full topology: crisis_gate →
+  (crisis_response + crisis_log | load_memory → therapeutic_subgraph) →
   extract_semantic_facts → extract_procedural_rules → finalize_turn → END.
-  Crisis-gate routing is encoded directly in the node via
-  :class:`langgraph.types.Command`, not via a conditional edge. The
-  terminal ``finalize_turn`` node appends the assistant response to the
-  transcript so the next turn's ``get_history`` call sees both sides of
-  each exchange.
+  v0.9 safety reorder: crisis gate runs FIRST so safety-critical routing is
+  never blocked by optional memory retrieval. Crisis-gate routing is encoded
+  directly in the node via :class:`langgraph.types.Command`, not via a
+  conditional edge. The terminal ``finalize_turn`` node appends the assistant
+  response to the transcript so the next turn's ``get_history`` call sees both
+  sides of each exchange.
 * **Public entrypoints** — :func:`run_agent` is a one-shot convenience wrapper
   that compiles a fresh workflow, invokes it with sensible defaults, and
   returns a normalized ``AgentOutput``. For thread-persistent execution see
@@ -177,27 +178,34 @@ def build_agent_workflow(
 ) -> CompiledStateGraph:
     """Compile the LangGraph workflow.
 
-    Topology::
+    Topology (v0.9 — crisis gate runs before memory load)::
 
         START
-          → load_memory_node
           → crisis_gate_node  (Command routes to one of the branches)
-          ├─ crisis_response_node → crisis_log_node → extract_semantic_facts_node
-          │                                             → extract_procedural_rules_node
-          │                                             → finalize_turn_node → END
-          └─ therapeutic_subgraph → extract_semantic_facts_node
-                                      → extract_procedural_rules_node
-                                      → finalize_turn_node → END
+          ├─ crisis_response_node → crisis_log_node → finalize_turn_node
+          │                                             → extract_semantic_facts_node
+          │                                             → extract_procedural_rules_node → END
+          └─ load_memory_node → therapeutic_subgraph → finalize_turn_node
+                                                         → extract_semantic_facts_node
+                                                         → extract_procedural_rules_node → END
+
+    v0.9 safety reorder: the crisis gate runs FIRST (directly after
+    START), before any memory retrieval. This ensures that a user in
+    crisis is never blocked by an optional memory feature.
+
+    v0.9 latency reorder: ``finalize_turn_node`` runs BEFORE extractors.
+    This checkpoints the response to transcript/history immediately,
+    allowing ``run_turn_stream`` to emit a ``ResponseEvent`` to the
+    user while the extractor LLM calls (~6.7s) run in the background.
 
     The therapeutic subgraph is embedded as a single node compiled by
     :func:`agent.therapeutic.graph.build_therapeutic_subgraph`. Its
-    internal structure (dispatcher + three mode nodes) is hidden from
-    the parent topology, keeping the top-level graph small and
-    inspectable in LangSmith.
+    internal structure (dispatcher + mode nodes) is hidden from the
+    parent topology, keeping the top-level graph small and inspectable
+    in LangSmith.
 
-    ``finalize_turn_node`` is a small terminal step that appends the
-    assistant response to the transcript before END. It runs on both
-    branches via the converge-before-END structure, and pairs with
+    ``finalize_turn_node`` appends the assistant response to the
+    transcript. It runs on both branches and pairs with
     :func:`build_initial_state` (which appends the user message) to
     keep transcript ownership explicit and out of the response nodes.
 
@@ -228,29 +236,28 @@ def build_agent_workflow(
     )
     workflow.add_node("finalize_turn_node", run_finalize_turn_node)
 
-    # Spine: entry → memory load → crisis gate (which Command-routes).
-    workflow.add_edge(START, "load_memory_node")
-    workflow.add_edge("load_memory_node", "crisis_gate_node")
+    # Spine: entry → crisis gate (safety first, Command-routes).
+    workflow.add_edge(START, "crisis_gate_node")
 
-    # Crisis branch: crisis_response → crisis_log → extract_facts → finalize → END.
-    # The crisis_log_node runs ONLY on the crisis branch (it's the
-    # always-on safety audit trail, not a cross-cutting concern).
+    # Crisis branch: crisis_response → crisis_log → finalize → extractors → END.
+    # Memory load is SKIPPED — crisis nodes use zero memory state.
     workflow.add_edge("crisis_response_node", "crisis_log_node")
-    workflow.add_edge("crisis_log_node", "extract_semantic_facts_node")
+    workflow.add_edge("crisis_log_node", "finalize_turn_node")
 
-    # Therapeutic branch: subgraph → extract_facts → finalize → END.
-    workflow.add_edge("therapeutic_subgraph", "extract_semantic_facts_node")
+    # Therapeutic branch: memory load → subgraph → finalize → extractors → END.
+    workflow.add_edge("load_memory_node", "therapeutic_subgraph")
+    workflow.add_edge("therapeutic_subgraph", "finalize_turn_node")
 
-    # Shared terminal: extract_facts → extract_procedural_rules → finalize_turn
-    # → END. Both branches converge through the two side-effect writer nodes
-    # (semantic first, procedural second) before transcript finalization. The
-    # serial ordering is deliberate: parallel fan-out wouldn't help because
-    # both nodes run AFTER the response is composed (they don't affect user
-    # latency), and serial ordering gives deterministic log interleaving so
-    # dogfood traces are easier to read. Procedural writing is new in v0.7.
+    # Shared terminal: finalize FIRST (checkpoints the response to
+    # transcript/history), THEN extractors (side-effect LLM calls that
+    # don't affect user-visible output). v0.9 reorder: finalize runs
+    # before extractors so the response is persisted and can be emitted
+    # to the user immediately via ResponseEvent while extractors run in
+    # the background. The extractors remain serial (both write to the
+    # diagnostics dict which has no reducer — parallel would race).
+    workflow.add_edge("finalize_turn_node", "extract_semantic_facts_node")
     workflow.add_edge("extract_semantic_facts_node", "extract_procedural_rules_node")
-    workflow.add_edge("extract_procedural_rules_node", "finalize_turn_node")
-    workflow.add_edge("finalize_turn_node", END)
+    workflow.add_edge("extract_procedural_rules_node", END)
 
     return workflow.compile(checkpointer=checkpointer)
 

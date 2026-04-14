@@ -25,6 +25,7 @@ from agent.models import (
     AgentInput,
     AgentOutput,
     Channel,
+    ChunkEvent,
     DoneEvent,
     Message,
     MessageRole,
@@ -700,26 +701,51 @@ class PersistentAgentRuntime:
 
         turn_start = time.monotonic()
         final_state: AgentState | None = None
+        chunks_emitted = False
 
-        async for mode, payload in graph.astream(
+        # v0.9: subgraphs=True propagates custom stream events from
+        # inside the compiled therapeutic_subgraph. version="v2" gives
+        # a unified StreamPart dict format: chunk["type"], chunk["ns"],
+        # chunk["data"]. Without subgraphs=True, get_stream_writer()
+        # chunks from subgraph nodes are silently swallowed.
+        async for chunk in graph.astream(
             initial_state,
             config=self._config_for_thread(thread_id),
             context=self._context_for_turn(llm_client=llm_client),
-            stream_mode=["updates", "values"],
+            stream_mode=["custom", "updates", "values"],
+            subgraphs=True,
+            version="v2",
         ):
-            if mode == "updates":
-                # ``updates`` payloads are ``{node_name: delta}`` dicts,
-                # usually with a single key. Emit one StatusEvent per
-                # node completion. Unknown node names (e.g., therapeutic
-                # subgraph internals) fall through to the raw name.
-                for node_name in payload:
+            if chunk["type"] == "custom":
+                # Token streaming: mode nodes emit per-token chunks via
+                # get_stream_writer(). Forward from any namespace (root
+                # or subgraph — all are response tokens).
+                payload = chunk["data"]
+                if isinstance(payload, dict) and payload.get("type") == "chunk":
+                    yield ChunkEvent(text=payload["text"])
+                    chunks_emitted = True
+            elif chunk["type"] == "updates" and chunk["ns"] == ():
+                # Root-level node completions only — skip subgraph
+                # internals to avoid duplicate StatusEvents.
+                for node_name in chunk["data"]:
                     stage = _NODE_TO_STAGE.get(node_name, node_name)
                     yield StatusEvent(stage=stage)
-            elif mode == "values":
-                # ``values`` payloads carry the full accumulated state
-                # after each step. We hold onto the latest one and use
-                # it as the final state once the stream ends.
-                final_state = payload  # type: ignore[assignment]
+                    # Fallback for deterministic mode (no LLM, no
+                    # streaming): emit the full response as a single
+                    # ChunkEvent after finalize so the user sees it
+                    # before extractors run.
+                    if (
+                        node_name == "finalize_turn_node"
+                        and not chunks_emitted
+                        and final_state is not None
+                    ):
+                        resp_text = final_state.get("response", {}).get("text", "")
+                        if resp_text:
+                            yield ChunkEvent(text=resp_text)
+                            chunks_emitted = True
+            elif chunk["type"] == "values" and chunk["ns"] == ():
+                # Root-level state snapshots only.
+                final_state = chunk["data"]  # type: ignore[assignment]
 
         turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
 

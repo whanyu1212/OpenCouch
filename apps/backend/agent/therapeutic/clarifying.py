@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from agent.models import ModeType, ResponseKind
@@ -41,11 +42,16 @@ async def run_clarifying_response_node(
     response_text = _DEFAULT_CLARIFYING_REPLY
     if llm_client is not None:
         try:
-            response_text = await llm_client.generate_text(
+            writer = get_stream_writer()
+            chunks: list[str] = []
+            async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(state, mode="clarifying"),
                 system_instruction=build_clarifying_system_prompt(state),
                 temperature=0.7,
-            )
+            ):
+                chunks.append(chunk)
+                writer({"type": "chunk", "text": chunk})
+            response_text = "".join(chunks)
         except Exception:
             logger.warning(
                 "Clarifying response LLM call failed; using deterministic fallback.",

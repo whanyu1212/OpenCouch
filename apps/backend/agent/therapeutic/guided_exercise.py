@@ -76,6 +76,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
+from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
@@ -1372,7 +1373,9 @@ async def _build_stuck_delta(
     response_text = _FALLBACK_STUCK_REPHRASE
     if llm_client is not None:
         try:
-            response_text = await llm_client.generate_text(
+            writer = get_stream_writer()
+            chunks: list[str] = []
+            async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(
                     state,
                     mode="guided_exercise",
@@ -1380,7 +1383,10 @@ async def _build_stuck_delta(
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
-            )
+            ):
+                chunks.append(chunk)
+                writer({"type": "chunk", "text": chunk})
+            response_text = "".join(chunks)
         except Exception:
             logger.warning(
                 "Guided exercise stuck-path LLM call failed; "
@@ -1426,7 +1432,9 @@ async def _build_hold_delta(
     response_text = _FALLBACK_HOLD
     if llm_client is not None:
         try:
-            response_text = await llm_client.generate_text(
+            writer = get_stream_writer()
+            chunks: list[str] = []
+            async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(
                     state,
                     mode="guided_exercise",
@@ -1434,7 +1442,10 @@ async def _build_hold_delta(
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
-            )
+            ):
+                chunks.append(chunk)
+                writer({"type": "chunk", "text": chunk})
+            response_text = "".join(chunks)
         except Exception:
             logger.warning(
                 "Guided exercise hold-path LLM call failed; "
@@ -1486,7 +1497,9 @@ async def _build_advance_delta(
 
     if llm_client is not None:
         try:
-            response_text = await llm_client.generate_text(
+            writer = get_stream_writer()
+            chunks: list[str] = []
+            async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(
                     state,
                     mode="guided_exercise",
@@ -1494,7 +1507,10 @@ async def _build_advance_delta(
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
-            )
+            ):
+                chunks.append(chunk)
+                writer({"type": "chunk", "text": chunk})
+            response_text = "".join(chunks)
         except Exception:
             logger.warning(
                 "Guided exercise advance-path LLM call failed; "
@@ -1550,7 +1566,9 @@ async def _build_complete_delta(
     response_text = fallback_complete
     if llm_client is not None:
         try:
-            response_text = await llm_client.generate_text(
+            writer = get_stream_writer()
+            chunks: list[str] = []
+            async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(
                     state,
                     mode="guided_exercise",
@@ -1558,7 +1576,10 @@ async def _build_complete_delta(
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
                 temperature=0.7,
-            )
+            ):
+                chunks.append(chunk)
+                writer({"type": "chunk", "text": chunk})
+            response_text = "".join(chunks)
         except Exception:
             logger.warning(
                 "Guided exercise complete-path LLM call failed; "

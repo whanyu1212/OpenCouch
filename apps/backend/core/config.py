@@ -9,8 +9,15 @@ from dotenv import load_dotenv
 
 from services.llm.base import BaseLLMClient
 from services.llm.factory import create_llm_client
+from services.llm.google_genai import DEFAULT_GEMINI_MODEL
+from services.llm.openai_client import DEFAULT_OPENAI_MODEL
 
 LLMProvider = Literal["gemini", "openai"]
+
+# Single source of truth for the default provider when LLM_PROVIDER
+# env var is unset. Used by both the Settings dataclass default and
+# get_settings() fallback so they always agree.
+DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 
 _DOTENV_LOADED = False
 
@@ -41,9 +48,9 @@ class Settings:
     Keep this focused on provider selection and model defaults, not domain policy.
     """
 
-    llm_provider: LLMProvider = "openai"
-    gemini_model: str = "gemini-3-flash-preview"
-    openai_model: str = "gpt-5.4-mini"
+    llm_provider: LLMProvider = DEFAULT_LLM_PROVIDER
+    gemini_model: str = DEFAULT_GEMINI_MODEL
+    openai_model: str = DEFAULT_OPENAI_MODEL
 
 
 def get_settings() -> Settings:
@@ -58,14 +65,14 @@ def get_settings() -> Settings:
 
     load_runtime_env()
 
-    provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", DEFAULT_LLM_PROVIDER).strip().lower()
     if provider not in {"gemini", "openai"}:
         raise ValueError(f"Unsupported LLM_PROVIDER value: {provider}")
 
     return Settings(
         llm_provider=provider,  # type: ignore[arg-type]
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+        gemini_model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+        openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
     )
 
 

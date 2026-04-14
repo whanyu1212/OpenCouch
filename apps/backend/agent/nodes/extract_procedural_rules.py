@@ -119,6 +119,16 @@ async def run_extract_procedural_rules_node(
         }
 
     # ── Early exits ─────────────────────────────────────────────────────
+
+    # v0.9: crisis gate first — same rationale as extract_facts.
+    route = state.get("routing", {}).get("route")
+    if route == "crisis":
+        logger.debug(
+            "extract_procedural_rules_node: crisis path; skipping to avoid "
+            "delaying crisis response delivery"
+        )
+        return _diagnostics_delta(reason="skipped: crisis_path")
+
     llm_client = runtime.context.get("llm_client")
     memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
 
@@ -135,10 +145,6 @@ async def run_extract_procedural_rules_node(
     store = runtime.context["memory_store"]
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
-    # v0.8.2: pre-extractor small-talk gate — same gate as the semantic
-    # extractor. Procedural rules are even less likely on small-talk
-    # turns than semantic facts (a rule requires an explicit "please
-    # change how you respond" request, which is never a greeting).
     from agent.memory.small_talk_gate import is_small_talk
 
     if is_small_talk(state["message"]):

@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from agent.models import Channel, DoneEvent, StatusEvent
+from agent.models import Channel, ChunkEvent, DoneEvent, StatusEvent
 from agent.persistence import PersistentAgentRuntime
 from api.dependencies import get_llm_client, get_runtime
 from api.models import (
     ChatRequest,
     ChatResponse,
     CrisisInfo,
+    StreamChunkMessage,
     StreamDoneMessage,
     StreamStatusMessage,
 )
@@ -123,6 +124,10 @@ async def chat_stream(
                     stage=event.stage,
                     detail=event.detail,
                 )
+                await websocket.send_json(msg.model_dump())
+
+            elif isinstance(event, ChunkEvent):
+                msg = StreamChunkMessage(text=event.text)
                 await websocket.send_json(msg.model_dump())
 
             elif isinstance(event, DoneEvent):

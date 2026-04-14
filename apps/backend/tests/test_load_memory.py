@@ -937,6 +937,46 @@ class TestEpisodicRetrieval:
         assert delta["working_memory"] == []
         assert delta["memory"]["summary"] == "Guest session without long-term memory."
 
+    @pytest.mark.asyncio
+    async def test_catch_up_returns_newest_arc_beyond_50_sessions(self) -> None:
+        """Regression test for the 50-session catch-up bug.
+
+        Before v0.9, the catch-up path used ``asearch(query=None, limit=50)``
+        and took ``[-1]``, which returned the 50th-oldest record (not the
+        newest) once the user exceeded 50 episodic sessions. The fix uses
+        ``store.alatest()`` which does ``ORDER BY insertion_order DESC LIMIT 1``.
+        """
+
+        store = OpenCouchMemoryStore()
+        namespace = ("thread-test", "episodic")
+
+        # Write 55 episodic arcs — exceeding the old limit=50 ceiling.
+        for i in range(55):
+            await store.aput(
+                namespace,
+                f"arc-{i}",
+                _make_episodic_record_value(
+                    session_id=f"session-{i}",
+                    summary=f"Session {i} summary.",
+                    primary_themes=[f"topic-{i}"],
+                ),
+            )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(
+            message="hi",
+            transcript=_single_turn_transcript("hi"),
+        )
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        # The catch-up entry MUST be the newest arc (session-54), not the
+        # 50th-oldest (session-49) which the old code would have returned.
+        assert len(delta["working_memory"]) >= 1
+        catch_up = delta["working_memory"][0]
+        assert "Session 54 summary" in catch_up
+        assert "topic-54" in catch_up
+
 
 # ─── finalize_turn_node tests ───────────────────────────────────────────
 
