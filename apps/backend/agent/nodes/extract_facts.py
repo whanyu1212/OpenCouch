@@ -207,7 +207,6 @@ async def run_extract_semantic_facts_node(
 
         return {
             "diagnostics": {
-                **state.get("diagnostics", {}),
                 "extract_facts_ms": round((time.monotonic() - start) * 1000, 2),
                 "semantic_writes": semantic_writes,
                 "semantic_bumps": semantic_bumps,
@@ -231,8 +230,8 @@ async def run_extract_semantic_facts_node(
         )
         return _diagnostics_delta(reason="skipped: crisis_path")
 
-    llm_client = runtime.context.get("llm_client")
-    memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
+    llm_client = runtime.context.llm_client
+    memory_mode = runtime.context.memory_mode
 
     if llm_client is None:
         logger.debug("extract_semantic_facts_node: no llm_client; skipping")
@@ -244,8 +243,8 @@ async def run_extract_semantic_facts_node(
         )
         return _diagnostics_delta(reason="skipped: incognito")
 
-    store = runtime.context["memory_store"]
-    embedding_provider = runtime.context.get("embedding_provider")
+    store = runtime.context.memory_store
+    embedding_provider = runtime.context.embedding_provider
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
     # v0.8.2: pre-extractor small-talk gate.

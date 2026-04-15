@@ -41,6 +41,7 @@ from langgraph.types import Command
 from agent.memory.models import DispatchDecision
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from agent.working_memory import format_working_memory_entries
 
 logger = logging.getLogger(__name__)
 
@@ -362,7 +363,10 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
         or "(no prior history)"
     )
 
-    working_memory = state.get("working_memory", [])
+    working_memory = format_working_memory_entries(
+        state.get("working_memory", []),
+        limit=3,
+    )
     if working_memory:
         memory_block = "Relevant context from past sessions:\n" + "\n".join(
             f"- {snippet}" for snippet in working_memory[:3]
@@ -453,7 +457,7 @@ async def run_therapeutic_dispatch_node(
 
     message = state.get("message", "")
     lowered = message.lower()
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     # Helper to build routing update with modality.
     def _routing_update(modality: str) -> dict:

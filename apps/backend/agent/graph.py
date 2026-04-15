@@ -27,6 +27,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import RetryPolicy
 
 from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
@@ -55,36 +56,72 @@ from services.llm.base import BaseLLMClient
 # ── State plumbing ───────────────────────────────────────────────────────────
 
 
-def build_initial_state(agent_input: AgentInput) -> AgentState:
+def build_initial_state(
+    agent_input: AgentInput,
+    *,
+    prior_turn_count: int | None = None,
+    include_input_history: bool = False,
+) -> AgentState:
     """Convert external input into the internal state dictionary.
 
-    Transcript handling: the prior exchanges from ``agent_input.history``
-    are serialized into the transcript, and then the **current user
-    message** is appended so downstream nodes see a transcript ending
-    in the user's latest turn. The assistant side is appended later by
+    Transcript handling defaults to reducer-backed persistence mode:
+    only the **current user message** is emitted into ``history`` and
+    ``transcript``. Both fields use an ``operator.add`` reducer, so
+    when a checkpointer is active the prior turns are restored from the
+    checkpoint and the reducer appends the new user turn automatically.
+    The assistant side is appended later by
     :func:`agent.nodes.finalize_turn.run_finalize_turn_node` once the
-    response is ready. This split (user side at init, assistant side
-    at finalize) keeps transcript ownership clear and avoids the
-    phantom-assistant-turn bug that the pre-refactor ``load_memory_node``
-    introduced by trying to append both halves during a single step.
+    response is ready.
+
+    One-shot callers can opt into ``include_input_history=True`` to
+    seed ``agent_input.history`` directly into state for classifiers
+    and prompt builders that need prior-turn context without a
+    checkpointer.
+
+    ``prior_turn_count`` is optional: persistent runtimes can pass the
+    previous checkpoint's ``progress.turn_count`` directly and avoid
+    reloading the transcript just to count user turns. When omitted,
+    the function falls back to counting prior user turns from
+    ``agent_input.history``.
 
     Routing and response scaffolds are left as empty/placeholder values
-    that the dispatcher and response nodes overwrite. They used to carry
-    misleading labels like ``memory_bootstrap`` and
-    ``startup_memory_bootstrap``, which showed up in CLI diagnostics
-    every turn even though they were never real states the graph
-    actually occupied. The current labels describe the genuine
-    pre-dispatch state: routing unresolved, no response generated yet.
+    that the dispatcher and response nodes overwrite. For persistent
+    sessions (``PersistentAgentRuntime``), the checkpointer restores
+    prior values of ``progress``, ``routing``, ``response``, etc.
+    from the previous turn's checkpoint — those fields are omitted
+    from the input on subsequent turns so the checkpoint's values
+    are preserved rather than overwritten.
     """
 
-    prior_transcript = [
-        message.model_dump(mode="json") for message in agent_input.history
-    ]
     current_user_turn = {
         "role": MessageRole.USER.value,
         "content": agent_input.message,
     }
-    transcript_with_user = [*prior_transcript, current_user_turn]
+    prior_history_turns = [
+        message.model_dump(mode="json") for message in agent_input.history
+    ]
+    visible_history = (
+        [*prior_history_turns, current_user_turn]
+        if include_input_history
+        else [current_user_turn]
+    )
+
+    # Compute turn_count from the previous checkpoint when the caller
+    # already has it. Falling back to ``agent_input.history`` keeps the
+    # one-shot API stable and preserves older tests that still pass
+    # prior messages directly.
+    if prior_turn_count is None:
+        prior_user_turns = sum(
+            1
+            for msg in agent_input.history
+            if (
+                msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            )
+            == "user"
+        )
+        turn_count = prior_user_turns + 1
+    else:
+        turn_count = prior_turn_count + 1
 
     state = AgentState(
         message=agent_input.message,
@@ -92,8 +129,11 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
         user_id=agent_input.user_id,
         session_id=agent_input.session_id,
         installed_skills=list(agent_input.installed_skills),
-        history=list(transcript_with_user),
-        transcript=list(transcript_with_user),
+        # Persistent reducer path emits only the current user turn.
+        # One-shot callers can opt into seeding the provided input
+        # history directly via ``include_input_history=True``.
+        history=visible_history,
+        transcript=visible_history,
         working_memory=list(agent_input.working_memory),
         memory={
             "summary": "",
@@ -114,9 +154,7 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
             "stage": "opening",
             "stage_source": "deterministic",
             "stage_reason": "turn_start",
-            "turn_count": sum(
-                1 for turn in transcript_with_user if turn.get("role") == "user"
-            ),
+            "turn_count": turn_count,
             "is_guest": False,
         },
         crisis=CrisisAssessment(),
@@ -137,10 +175,8 @@ def build_initial_state(agent_input: AgentInput) -> AgentState:
         },
         # v0.8 observability: start each turn with a fresh, empty
         # diagnostics dict that nodes can write timings and write-
-        # counts into. Explicitly seeded (rather than left absent)
-        # so node code can use ``state["diagnostics"][key] = value``
-        # without a ``setdefault`` or KeyError check — the dict is
-        # always present during a real graph invocation.
+        # counts into. Uses a merge reducer so multiple nodes can
+        # write independently.
         diagnostics={},
     )
     return state
@@ -224,15 +260,35 @@ def build_agent_workflow(
     # automatically.
     therapeutic_subgraph = build_therapeutic_subgraph()
 
+    # Retry policy for nodes that perform I/O (LLM calls, store access,
+    # embedding API, web search). Acts as defense-in-depth: most nodes
+    # already catch expected exceptions internally and fall back to
+    # deterministic behavior, so retries fire only for *unexpected*
+    # transient failures outside the node's own error handling (e.g.,
+    # framework-level deserialization errors, store connection resets,
+    # or exceptions raised before the node reaches its try/except).
+    # finalize_turn_node is excluded (pure state, no I/O).
+    # therapeutic_subgraph is excluded (compiled graph — its child
+    # nodes have their own retry policies).
+    _io_retry = RetryPolicy(max_attempts=2)
+
     # Register all top-level nodes.
-    workflow.add_node("load_memory_node", run_load_memory_node)
-    workflow.add_node("crisis_gate_node", run_crisis_gate_node)
-    workflow.add_node("crisis_response_node", run_crisis_response_node)
-    workflow.add_node("crisis_log_node", run_crisis_log_node)
-    workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
-    workflow.add_node("extract_semantic_facts_node", run_extract_semantic_facts_node)
+    workflow.add_node("load_memory_node", run_load_memory_node, retry_policy=_io_retry)
+    workflow.add_node("crisis_gate_node", run_crisis_gate_node, retry_policy=_io_retry)
     workflow.add_node(
-        "extract_procedural_rules_node", run_extract_procedural_rules_node
+        "crisis_response_node", run_crisis_response_node, retry_policy=_io_retry
+    )
+    workflow.add_node("crisis_log_node", run_crisis_log_node, retry_policy=_io_retry)
+    workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
+    workflow.add_node(
+        "extract_semantic_facts_node",
+        run_extract_semantic_facts_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        "extract_procedural_rules_node",
+        run_extract_procedural_rules_node,
+        retry_policy=_io_retry,
     )
     workflow.add_node("finalize_turn_node", run_finalize_turn_node)
 
@@ -253,10 +309,12 @@ def build_agent_workflow(
     # don't affect user-visible output). v0.9 reorder: finalize runs
     # before extractors so the response is persisted and can be emitted
     # to the user immediately via ResponseEvent while extractors run in
-    # the background. The extractors remain serial (both write to the
-    # diagnostics dict which has no reducer — parallel would race).
+    # the background. Both extractors fan out in parallel from finalize
+    # — the diagnostics dict uses a merge reducer so they can write
+    # independently without racing.
     workflow.add_edge("finalize_turn_node", "extract_semantic_facts_node")
-    workflow.add_edge("extract_semantic_facts_node", "extract_procedural_rules_node")
+    workflow.add_edge("finalize_turn_node", "extract_procedural_rules_node")
+    workflow.add_edge("extract_semantic_facts_node", END)
     workflow.add_edge("extract_procedural_rules_node", END)
 
     return workflow.compile(checkpointer=checkpointer)
@@ -306,12 +364,12 @@ async def run_agent(
     crisis_log = crisis_log_backend or InMemoryCrisisLogBackend()
 
     final_state = await workflow.ainvoke(
-        build_initial_state(agent_input),
-        context={
-            "llm_client": llm_client,
-            "memory_store": store,
-            "crisis_log_backend": crisis_log,
-            "memory_mode": memory_mode,
-        },
+        build_initial_state(agent_input, include_input_history=True),
+        context=WorkflowContext(
+            llm_client=llm_client,
+            memory_store=store,
+            crisis_log_backend=crisis_log,
+            memory_mode=memory_mode,
+        ),
     )
     return state_to_output(final_state)

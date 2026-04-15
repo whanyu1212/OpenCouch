@@ -20,10 +20,8 @@ History / migration note (v0.3.1 → v0.4):
 v0.4 added episodic retrieval alongside semantic retrieval. The node
 now queries two namespaces — ``(owner, "semantic")`` and
 ``(owner, "episodic")`` — and merges the results into a single
-``working_memory`` list with distinct formatting:
-
-- ``"Previously noted: {quote}"`` for semantic facts
-- ``"Last session ({themes}): {summary}"`` for episodic arcs
+``working_memory`` list of structured dicts. Prompt builders and CLI
+surfaces format those dicts on demand.
 
 The two paths share the same token-recall scorer in ``store.asearch``,
 so retrieval calibration stays consistent across record types. The
@@ -36,12 +34,12 @@ turn's prompt with catch-up text.
 
 Scope today:
 - Semantic namespace (v0.3): real extraction with hot-path dedup.
-  Loaded via token-recall scoring into ``working_memory`` as
-  ``"Previously noted: ..."`` entries.
+  Loaded via token-recall scoring into ``working_memory`` as raw
+  semantic-entry dicts.
 - Episodic namespace (v0.4): single session arc per completed session,
   written by the summarizer function at session end. Loaded via
   token-recall scoring (with first-turn catch-up) into
-  ``working_memory`` as ``"Last session (...): ..."`` entries.
+  ``working_memory`` as raw episodic-entry dicts.
 - Procedural namespace (v0.7): style rules + recall toggle loaded
   from the user's :class:`ProceduralProfile`. Attached to
   ``state["memory"]["procedural_rules"]`` and
@@ -73,6 +71,11 @@ from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from agent.working_memory import (
+    WorkingMemoryEntry,
+    make_episodic_working_memory_entry,
+    make_semantic_working_memory_entry,
+)
 
 if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
@@ -87,8 +90,8 @@ async def _retrieve_semantic_working_memory(
     query: str,
     query_embedding: list[float] | None,
     embedding_model: str | None,
-) -> list[str]:
-    """Fetch the top semantic facts for this user and format them as strings.
+) -> list[WorkingMemoryEntry]:
+    """Fetch the top semantic facts for this user as structured entries.
 
     v0.8.1: routes through the store's hybrid retrieval path
     (:meth:`MemoryStore.asearch_similar`). When ``query_embedding`` is
@@ -115,34 +118,49 @@ async def _retrieve_semantic_working_memory(
         embedding_model=embedding_model,
         limit=5,
     )
-    formatted: list[str] = []
+    entries: list[WorkingMemoryEntry] = []
     for record in records:
         quote = record.value.get("evidence_quote")
         if quote:
-            formatted.append(f"Previously noted: {quote}")
-    return formatted
+            entries.append(
+                make_semantic_working_memory_entry(
+                    evidence_quote=quote,
+                )
+            )
+    return entries
 
 
-def _format_episodic_entry(record_value: dict[str, Any]) -> str | None:
-    """Render a stored session arc as a single working_memory line.
-
-    The format is ``"Last session (<themes>): <summary>"`` where themes
-    is a comma-joined list (or ``untagged`` when empty). This format
-    mirrors ``"Previously noted: <quote>"`` for semantic entries, so
-    the downstream response prompts can recognize both kinds by their
-    prefix without needing a structured working_memory list.
-
-    Returns None when the record is missing a summary (which shouldn't
-    happen for well-formed records, but the guard keeps the function
-    robust against schema drift).
-    """
+def _episodic_entry_from_record(
+    record_value: dict[str, Any],
+    *,
+    is_catch_up: bool,
+) -> WorkingMemoryEntry | None:
+    """Convert a stored session arc into a structured working-memory entry."""
 
     summary = record_value.get("summary")
     if not summary:
         return None
-    themes_list = record_value.get("primary_themes") or []
-    themes_str = ", ".join(themes_list) if themes_list else "untagged"
-    return f"Last session ({themes_str}): {summary}"
+    return make_episodic_working_memory_entry(
+        summary=summary,
+        primary_themes=record_value.get("primary_themes") or [],
+        is_catch_up=is_catch_up,
+    )
+
+
+def _episodic_entry_identity(entry: WorkingMemoryEntry) -> tuple[str, tuple[str, ...]]:
+    """Return the dedup identity for an episodic working-memory entry.
+
+    ``is_catch_up`` is deliberately excluded. The same stored arc can be
+    surfaced by both the catch-up path and the query-match path on turn 1,
+    and we want that to collapse to a single entry.
+    """
+
+    if entry.get("type") != "episodic":
+        return "", ()
+    return (
+        entry.get("summary", ""),
+        tuple(entry.get("primary_themes") or []),
+    )
 
 
 async def _retrieve_episodic_working_memory(
@@ -153,8 +171,8 @@ async def _retrieve_episodic_working_memory(
     query_embedding: list[float] | None,
     embedding_model: str | None,
     is_first_turn: bool,
-) -> list[str]:
-    """Fetch relevant episodic session arcs and format them as strings.
+) -> list[WorkingMemoryEntry]:
+    """Fetch relevant episodic session arcs as structured entries.
 
     Two branches:
 
@@ -189,7 +207,7 @@ async def _retrieve_episodic_working_memory(
     """
 
     namespace = (owner_id, "episodic")
-    formatted: list[str] = []
+    entries: list[WorkingMemoryEntry] = []
 
     if is_first_turn:
         # Catch-up: fetch the single most recent arc via alatest().
@@ -200,9 +218,12 @@ async def _retrieve_episodic_working_memory(
         # MemoryStore implementations must provide it.
         latest = await store.alatest(namespace)
         if latest is not None:
-            catch_up = _format_episodic_entry(latest.value)
+            catch_up = _episodic_entry_from_record(
+                latest.value,
+                is_catch_up=True,
+            )
             if catch_up is not None:
-                formatted.append(catch_up)
+                entries.append(catch_up)
 
     # Query-based retrieval — always runs, but on the first turn the
     # catch-up entry is already in `formatted` so we dedupe by comparing
@@ -215,11 +236,16 @@ async def _retrieve_episodic_working_memory(
         limit=2,
     )
     for record in query_records:
-        entry = _format_episodic_entry(record.value)
-        if entry is not None and entry not in formatted:
-            formatted.append(entry)
+        entry = _episodic_entry_from_record(
+            record.value,
+            is_catch_up=False,
+        )
+        if entry is not None and _episodic_entry_identity(entry) not in {
+            _episodic_entry_identity(existing) for existing in entries
+        }:
+            entries.append(entry)
 
-    return formatted
+    return entries
 
 
 async def _retrieve_procedural_state(
@@ -316,10 +342,8 @@ async def run_load_memory_node(
 
     v0.4 added episodic retrieval. The ``working_memory`` list is a
     merged result: episodic entries first (catch-up and/or query-
-    matched summaries), then semantic entries. Downstream response
-    nodes can read the whole list without caring about the split;
-    the two string prefixes (``"Last session"`` and ``"Previously
-    noted"``) provide the visible distinction.
+    matched summaries), then semantic entries. The state keeps these
+    entries RAW; prompt/CLI surfaces format them on demand.
 
     v0.7 Stage C added procedural retrieval as a SEPARATE state field.
     Rules are directives (silent style shaping) rather than content to
@@ -337,11 +361,9 @@ async def run_load_memory_node(
     at a glance.
     """
 
-    memory_store = runtime.context["memory_store"]
-    memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
-    embedding_provider: EmbeddingProvider | None = runtime.context.get(
-        "embedding_provider"
-    )
+    memory_store = runtime.context.memory_store
+    memory_mode = runtime.context.memory_mode
+    embedding_provider: EmbeddingProvider | None = runtime.context.embedding_provider
     is_guest_mode = memory_mode == MemoryMode.INCOGNITO
 
     if is_guest_mode:
@@ -411,12 +433,11 @@ async def run_load_memory_node(
 
     retrieval_duration_ms = (time.monotonic() - retrieval_start) * 1000
 
-    # Merge: episodic entries first (they're the "context prefix" that
-    # frames the session), then semantic entries. Downstream response
-    # nodes see the whole list and can reference either kind. Procedural
-    # rules are NOT in working_memory — they live on memory.procedural_rules
-    # and get injected into the system prompt suffix by Stage D prompt
-    # builders, not referenced as content.
+    # Merge: episodic entries first (they frame the session), then
+    # semantic entries. Procedural rules are NOT in working_memory —
+    # they live on memory.procedural_rules and get injected into the
+    # system prompt suffix by Stage D prompt builders, not referenced
+    # as content.
     working_memory = [*episodic_entries, *semantic_entries]
 
     summary = (
@@ -454,10 +475,10 @@ async def run_load_memory_node(
         },
         # v0.8 observability: flow the retrieval timing + per-layer
         # counts into the diagnostics dict so the CLI can render them
-        # in the post-turn panel. Other nodes append their own
-        # timings into this same dict; LangGraph replaces the
-        # top-level ``diagnostics`` key so each node must spread the
-        # existing dict before adding its own keys.
+        # in the post-turn panel. The ``diagnostics`` field uses a
+        # merge reducer (``_merge_dicts`` in state.py), so each node
+        # returns only its own keys and LangGraph merges them
+        # automatically — no manual dict spreading needed.
         #
         # v0.8.1: ``retrieval_path`` reports which scorer actually
         # ran — one of ``"hybrid_rrf"`` (embedding + token-recall
@@ -467,7 +488,6 @@ async def run_load_memory_node(
         # and we fell back). Dogfood can watch this to verify the
         # hybrid path is actually running under normal operation.
         "diagnostics": {
-            **state.get("diagnostics", {}),
             "load_memory_ms": round(retrieval_duration_ms, 2),
             "semantic_hits": len(semantic_entries),
             "semantic_store_size": semantic_store_size,

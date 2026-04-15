@@ -21,6 +21,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
+from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 
@@ -47,12 +50,12 @@ class _RecordingMemoryStore:
 
 class _MockRuntime:
     def __init__(self, memory_store: Any, memory_mode: str) -> None:
-        self.context = {
-            "llm_client": None,
-            "memory_store": memory_store,
-            "crisis_log_backend": None,
-            "memory_mode": memory_mode,
-        }
+        self.context = WorkflowContext(
+            llm_client=None,
+            memory_store=memory_store,
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=MemoryMode(memory_mode),
+        )
 
 
 def _load_cases(path: Path) -> list[dict[str, Any]]:

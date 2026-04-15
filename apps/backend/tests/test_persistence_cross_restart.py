@@ -487,10 +487,11 @@ async def test_all_three_layers_persist_across_full_lifecycle(
         # fact because the query overlaps tokens with the stored
         # evidence quote.
         working_memory = result.state.get("working_memory", [])
-        assert any("Sarah" in entry for entry in working_memory), (
-            f"expected working_memory to contain a Sarah reference, "
-            f"got {working_memory}"
-        )
+        assert any(
+            entry.get("type") == "semantic"
+            and "Sarah" in entry.get("evidence_quote", "")
+            for entry in working_memory
+        ), f"expected working_memory to contain a Sarah reference, got {working_memory}"
 
 
 @pytest.mark.asyncio
@@ -572,10 +573,11 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
         # The working_memory should contain Emma because the query
         # shares the token "Emma" with the stored evidence quote.
         working_memory = result.state.get("working_memory", [])
-        assert any("Emma" in entry for entry in working_memory), (
-            f"expected working_memory to contain an Emma reference, "
-            f"got {working_memory}"
-        )
+        assert any(
+            entry.get("type") == "semantic"
+            and "Emma" in entry.get("evidence_quote", "")
+            for entry in working_memory
+        ), f"expected working_memory to contain an Emma reference, got {working_memory}"
 
 
 @pytest.mark.asyncio

@@ -1185,9 +1185,9 @@ async def run_guided_exercise_response_node(
     full 5-4-3-2-1 exercise end-to-end with no LLM — not just start.
     """
 
-    llm_client = runtime.context.get("llm_client")
-    memory_store = runtime.context.get("memory_store")
-    memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
+    llm_client = runtime.context.llm_client
+    memory_store = runtime.context.memory_store
+    memory_mode = runtime.context.memory_mode
     progress = state.get("progress", {})
     exercise_type = progress.get("exercise_type")
     step_index = progress.get("exercise_step")

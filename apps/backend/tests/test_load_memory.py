@@ -25,12 +25,15 @@ from typing import Any
 
 import pytest
 
+from agent.memory.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.load_memory import run_load_memory_node
+from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from agent.working_memory import format_working_memory_entry
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────
@@ -40,12 +43,43 @@ class _FakeRuntime:
     """Minimal runtime stand-in that mimics langgraph.runtime.Runtime.
 
     The real Runtime is a pydantic-backed object with a ``context``
-    attribute; these tests only need ``runtime.context.get(key)`` and
-    ``runtime.context[key]``, which a plain dict-wrapper satisfies.
+    attribute. These tests accept context overrides and materialize a
+    correctly-shaped :class:`WorkflowContext` instance on
+    ``runtime.context``.
     """
 
     def __init__(self, context: dict[str, Any]) -> None:
-        self.context = context
+        defaults: dict[str, Any] = {
+            "llm_client": None,
+            "memory_store": OpenCouchMemoryStore(),
+            "crisis_log_backend": InMemoryCrisisLogBackend(),
+            "memory_mode": MemoryMode.LOCAL,
+            "embedding_provider": None,
+        }
+        defaults.update(context)
+        self.context = WorkflowContext(**defaults)
+
+
+def _assert_semantic_entry(entry: dict[str, Any], *, evidence_quote: str) -> None:
+    """Assert that ``entry`` is a semantic working-memory dict."""
+
+    assert entry["type"] == "semantic"
+    assert entry["evidence_quote"] == evidence_quote
+
+
+def _assert_episodic_entry(
+    entry: dict[str, Any],
+    *,
+    summary: str,
+    primary_themes: list[str] | None = None,
+    is_catch_up: bool,
+) -> None:
+    """Assert that ``entry`` is an episodic working-memory dict."""
+
+    assert entry["type"] == "episodic"
+    assert entry["summary"] == summary
+    assert entry["primary_themes"] == (primary_themes or [])
+    assert entry["is_catch_up"] is is_catch_up
 
 
 def _make_state(
@@ -144,9 +178,8 @@ class TestLoadMemoryNode:
         assert delta["memory"]["summary"] == "Guest session without long-term memory."
 
     @pytest.mark.asyncio
-    async def test_retrieval_hit_produces_formatted_snippet(self) -> None:
-        """A query that hits a stored fact should return the formatted
-        snippet in working_memory and a matching summary."""
+    async def test_retrieval_hit_produces_structured_semantic_entry(self) -> None:
+        """A query hit should return a raw semantic entry in working_memory."""
 
         store = OpenCouchMemoryStore()
         await store.aput(
@@ -161,8 +194,12 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert len(delta["working_memory"]) == 1
+        _assert_semantic_entry(
+            delta["working_memory"][0],
+            evidence_quote="I have a sister named Sarah",
+        )
         assert (
-            delta["working_memory"][0]
+            format_working_memory_entry(delta["working_memory"][0])
             == "Previously noted: I have a sister named Sarah"
         )
         # v0.4 structured summary: hits / store size / query token count
@@ -685,9 +722,12 @@ class TestEpisodicRetrieval:
 
         assert len(delta["working_memory"]) == 1
         entry = delta["working_memory"][0]
-        assert entry.startswith("Last session")
-        assert "grief, sleep" in entry
-        assert "grief and sleep" in entry  # summary text
+        _assert_episodic_entry(
+            entry,
+            summary="User talked about grief and sleep difficulties.",
+            primary_themes=["grief", "sleep"],
+            is_catch_up=True,
+        )
 
     @pytest.mark.asyncio
     async def test_catch_up_does_not_fire_on_later_turns(self) -> None:
@@ -748,7 +788,12 @@ class TestEpisodicRetrieval:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert len(delta["working_memory"]) == 1
-        assert delta["working_memory"][0].startswith("Last session")
+        _assert_episodic_entry(
+            delta["working_memory"][0],
+            summary="User talked about work anxiety and an upcoming meeting.",
+            primary_themes=["work stress"],
+            is_catch_up=False,
+        )
 
     @pytest.mark.asyncio
     async def test_catch_up_returns_most_recent_arc_when_multiple(self) -> None:
@@ -801,8 +846,12 @@ class TestEpisodicRetrieval:
         # so we can check the catch-up target directly.
         assert len(delta["working_memory"]) == 1
         catch_up_entry = delta["working_memory"][0]
-        assert "Most recent session" in catch_up_entry
-        assert "sleep" in catch_up_entry
+        _assert_episodic_entry(
+            catch_up_entry,
+            summary="Most recent session — talked about sleep problems.",
+            primary_themes=["sleep"],
+            is_catch_up=True,
+        )
 
     @pytest.mark.asyncio
     async def test_merged_working_memory_puts_episodic_first(self) -> None:
@@ -839,9 +888,17 @@ class TestEpisodicRetrieval:
         # query-based retrieval (not catch-up, since this is multi-turn).
         assert len(delta["working_memory"]) == 2
         # Episodic entry first
-        assert delta["working_memory"][0].startswith("Last session")
+        _assert_episodic_entry(
+            delta["working_memory"][0],
+            summary="User talked about sister Sarah visiting.",
+            primary_themes=["family"],
+            is_catch_up=False,
+        )
         # Semantic entry second
-        assert delta["working_memory"][1].startswith("Previously noted")
+        _assert_semantic_entry(
+            delta["working_memory"][1],
+            evidence_quote="I have a sister named Sarah",
+        )
 
     @pytest.mark.asyncio
     async def test_catch_up_deduplicates_against_query_match(self) -> None:
@@ -974,8 +1031,12 @@ class TestEpisodicRetrieval:
         # 50th-oldest (session-49) which the old code would have returned.
         assert len(delta["working_memory"]) >= 1
         catch_up = delta["working_memory"][0]
-        assert "Session 54 summary" in catch_up
-        assert "topic-54" in catch_up
+        _assert_episodic_entry(
+            catch_up,
+            summary="Session 54 summary.",
+            primary_themes=["topic-54"],
+            is_catch_up=True,
+        )
 
 
 # ─── finalize_turn_node tests ───────────────────────────────────────────
@@ -988,12 +1049,17 @@ class TestFinalizeTurnNode:
     async def test_appends_assistant_response_to_transcript_and_history(
         self,
     ) -> None:
-        """The node should append a single assistant turn containing the
-        response text to both transcript and history.
+        """The node should return a single-turn delta for both transcript
+        and history.
 
         v0.8 observability: the assistant turn dict also carries a
         ``mode`` field sourced from ``state["routing"]["mode"]``. This
         state has no routing, so the mode resolves to ``None``.
+
+        Phase C changed transcript/history to reducer-backed fields, so
+        finalize_turn_node must emit ONLY the assistant turn. Returning
+        the full reconstructed transcript would duplicate prior entries
+        when the reducer merges the delta into checkpointed state.
         """
 
         state: dict[str, Any] = {
@@ -1005,9 +1071,8 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert len(delta["transcript"]) == 2
-        assert delta["transcript"][0] == {"role": "user", "content": "Hi"}
-        assert delta["transcript"][1] == {
+        assert len(delta["transcript"]) == 1
+        assert delta["transcript"][0] == {
             "role": MessageRole.ASSISTANT.value,
             "content": "Hello, how can I help?",
             "mode": None,

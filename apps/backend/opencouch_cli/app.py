@@ -190,6 +190,7 @@ from agent.models import (
     StatusEvent,
 )
 from agent.state import AgentState
+from agent.working_memory import format_working_memory_entries
 from core.config import create_configured_llm_client
 from rich import box
 from rich.console import Console
@@ -765,10 +766,9 @@ def render_context(state: AgentState | None) -> None:
 
     # v0.8: bullet-wrap the working-memory entries so each entry is
     # on its own line. Rich will wrap each bullet's text within the
-    # cell width, keeping long "Previously noted: ..." or "Last session
-    # (...): ..." strings readable. Joining with " | " made each turn's
-    # panel scroll-heavy and hid entries behind truncation.
-    working_memory = state.get("working_memory") or []
+    # cell width, keeping long entries readable. The state carries raw
+    # memory dicts; we format them here for display.
+    working_memory = format_working_memory_entries(state.get("working_memory") or [])
     if working_memory:
         table.add_row(
             "working_memory",

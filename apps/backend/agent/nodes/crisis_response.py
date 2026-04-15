@@ -51,7 +51,7 @@ async def run_crisis_response_node(
     observability. Falls back to a deterministic template on any error.
     """
 
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     # ── Step 1: Attempt location-aware resource lookup (silent on failure) ─
     inferred_location = ""

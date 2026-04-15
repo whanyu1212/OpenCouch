@@ -1,9 +1,27 @@
 """Internal state container for the OpenCouch agent graph."""
 
-from typing import Any, NotRequired, TypedDict
+import operator
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from agent.memory.models import CrisisClassifierPath, CrisisOverrideKind
 from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
+from agent.working_memory import WorkingMemoryEntry
+
+
+def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Reducer that merges two dicts with right-side precedence.
+
+    Used for the ``diagnostics`` and ``progress`` state fields so
+    multiple nodes can independently write their own keys without
+    manually spreading the existing dict. LangGraph calls this
+    reducer automatically when merging node deltas into the
+    accumulated state.
+
+    Defensive against ``None`` — if either side is ``None`` (e.g.,
+    a node returns ``{"diagnostics": None}``), we treat it as an
+    empty dict rather than raising ``TypeError``.
+    """
+    return {**(left or {}), **(right or {})}
 
 
 class SessionMemoryState(TypedDict):
@@ -157,16 +175,28 @@ class AgentState(TypedDict):
     # Skill names are loaded externally, then resolved into prompt behavior by the graph.
     installed_skills: list[str]
 
-    # Prior turns that may be injected into the model context for continuity.
-    history: list[dict[str, str]]
-    # Full durable transcript for rebuilding the next turn's session context.
-    transcript: NotRequired[list[dict[str, str]]]
-    # Scratch space for retrieved facts or interim context once memory exists.
-    working_memory: list[str]
+    # Prior turns accumulated via ``operator.add`` reducer. Each turn
+    # emits only the new entries (current user message at init, assistant
+    # response at finalize); the checkpointer + reducer accumulates them
+    # across turns automatically. One-shot callers (``run_agent``) without
+    # a checkpointer see only the entries emitted within that single turn.
+    history: Annotated[list[dict[str, str]], operator.add]
+    # Full durable transcript — same reducer semantics as ``history``.
+    transcript: NotRequired[Annotated[list[dict[str, str]], operator.add]]
+    # Raw retrieved memory entries for the current turn. Prompt/CLI
+    # surfaces format these on demand rather than storing pre-rendered
+    # prose in state.
+    working_memory: list[WorkingMemoryEntry]
 
     # Grouped long-horizon memory and progression fields.
     memory: SessionMemoryState
-    progress: SessionProgressState
+    # Uses ``_merge_dicts`` reducer so that ``build_initial_state`` can
+    # set per-turn fields (``turn_count``, ``stage``) while the
+    # checkpoint preserves cross-turn fields (``exercise_type``,
+    # ``exercise_step``). Without the reducer, the fresh progress dict
+    # from the input would overwrite the checkpoint's progress and
+    # destroy any in-progress exercise state.
+    progress: Annotated[SessionProgressState, _merge_dicts]
 
     # Safety, routing, and output groupings for the current turn.
     crisis: CrisisAssessment
@@ -185,4 +215,4 @@ class AgentState(TypedDict):
     # NotRequired because only the CLI reads it today; other callers
     # (unit tests, eval runners) can leave it unset and everything
     # downstream falls back to an empty dict via ``state.get``.
-    diagnostics: NotRequired[dict[str, Any]]
+    diagnostics: NotRequired[Annotated[dict[str, Any], _merge_dicts]]

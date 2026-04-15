@@ -69,7 +69,8 @@ async def _evaluate_case(
         AgentInput(
             message=case["message"],
             history=case["history"],
-        )
+        ),
+        include_input_history=True,
     )
 
     # Drive the classifier helpers directly so the eval mirrors the node's

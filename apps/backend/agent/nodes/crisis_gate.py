@@ -386,7 +386,6 @@ def _build_crisis_delta(
         # The CLI renders this alongside load_memory_ms and the
         # other stage timings in the post-turn diagnostics panel.
         "diagnostics": {
-            **state.get("diagnostics", {}),
             "crisis_gate_ms": round(duration_ms, 2),
             "crisis_classifier_path": classifier_path,
             "crisis_level": assessment.level,
@@ -407,7 +406,7 @@ async def run_crisis_gate_node(
     response mode (supportive, reflective, or clarifying in v0.1).
     """
 
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     # v0.8 observability: time the whole gate call so the CLI can
     # render it in the post-turn diagnostics panel. The timer covers

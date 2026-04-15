@@ -62,7 +62,8 @@ def test_uses_recent_user_history_for_context() -> None:
         AgentInput(
             message="I keep thinking about it.",
             history=[{"role": "user", "content": "Sometimes I want to kill myself."}],
-        )
+        ),
+        include_input_history=True,
     )
 
     assessment = assess_crisis_risk_deterministically(state)
@@ -73,7 +74,8 @@ def test_detects_imminent_override_separately() -> None:
     """Imminent-risk override detection should work independently of the classifier."""
 
     state = build_initial_state(
-        AgentInput(message="I have a plan to kill myself tonight.")
+        AgentInput(message="I have a plan to kill myself tonight."),
+        include_input_history=True,
     )
 
     override = detect_crisis_override(state)
@@ -86,7 +88,10 @@ def test_detects_imminent_override_separately() -> None:
 def test_detects_idiomatic_safe_override_separately() -> None:
     """Idiomatic-safe override detection should suppress false crisis positives."""
 
-    state = build_initial_state(AgentInput(message="Work is killing me this week."))
+    state = build_initial_state(
+        AgentInput(message="Work is killing me this week."),
+        include_input_history=True,
+    )
 
     override = detect_crisis_override(state)
     assert override is not None

@@ -40,7 +40,7 @@ async def run_supportive_response_node(
     available (common in tests and deterministic-mode CLI runs).
     """
 
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     response_text = _DEFAULT_SUPPORTIVE_REPLY
     if llm_client is not None:

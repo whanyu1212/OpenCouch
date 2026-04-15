@@ -22,6 +22,8 @@ import pytest
 
 from agent.graph import run_agent
 from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.models import CrisisLogRecord
 from agent.models import AgentInput, CrisisAssessment, ResponseKind
 from agent.nodes.crisis_log import _hash_session_id, run_crisis_log_node
@@ -36,12 +38,12 @@ class _MockRuntime:
     """Minimal runtime stand-in exposing ``.context`` only."""
 
     def __init__(self, *, crisis_log_backend: InMemoryCrisisLogBackend) -> None:
-        self.context: WorkflowContext = {
-            "llm_client": None,
-            "memory_store": None,  # type: ignore[typeddict-item]
-            "crisis_log_backend": crisis_log_backend,
-            "memory_mode": None,  # type: ignore[typeddict-item]
-        }
+        self.context = WorkflowContext(
+            llm_client=None,
+            memory_store=OpenCouchMemoryStore(),
+            crisis_log_backend=crisis_log_backend,
+            memory_mode=MemoryMode.LOCAL,
+        )
 
 
 def _build_crisis_state(

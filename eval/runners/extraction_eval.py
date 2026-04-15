@@ -64,6 +64,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from agent.memory.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
@@ -92,12 +93,12 @@ class _MockRuntime:
         llm_client: BaseLLMClient,
         memory_store: OpenCouchMemoryStore,
     ) -> None:
-        self.context: WorkflowContext = {
-            "llm_client": llm_client,
-            "memory_store": memory_store,
-            "crisis_log_backend": None,  # type: ignore[typeddict-item]
-            "memory_mode": MemoryMode.LOCAL,
-        }
+        self.context = WorkflowContext(
+            llm_client=llm_client,
+            memory_store=memory_store,
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=MemoryMode.LOCAL,
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
