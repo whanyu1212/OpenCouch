@@ -62,7 +62,7 @@ async def run_closing_response_node(
     talking to you'", and the fallback string avoids that trap.
     """
 
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     response_text = _DEFAULT_CLOSING_REPLY
     if llm_client is not None:

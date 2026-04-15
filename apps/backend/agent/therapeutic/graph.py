@@ -39,11 +39,14 @@ Mode rollout history:
 
 from __future__ import annotations
 
+from typing import NotRequired, TypedDict
+
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import RetryPolicy
 
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentState, ResponseState, RoutingState, SessionProgressState
 from agent.therapeutic.clarifying import run_clarifying_response_node
 from agent.therapeutic.closing import run_closing_response_node
 from agent.therapeutic.dispatcher import (
@@ -63,6 +66,26 @@ from agent.therapeutic.supportive import run_supportive_response_node
 # Dispatcher node name exported so the parent graph (or tests) can
 # reference it without importing from dispatcher.py directly.
 DISPATCH_NODE = "therapeutic_dispatch_node"
+
+
+class TherapeuticSubgraphOutput(TypedDict):
+    """Parent-visible delta emitted by the therapeutic subgraph.
+
+    The compiled subgraph is registered as a single parent-graph node.
+    If we let it default to the full ``AgentState`` output schema,
+    LangGraph bubbles the entire accumulated state back to the parent
+    on subgraph completion. That becomes a problem once ``history`` and
+    ``transcript`` are reducer-backed: the parent sees those full lists
+    as a node delta and appends them again, duplicating the transcript.
+
+    Restricting the subgraph's output schema to only the fields it owns
+    keeps the parent merge semantic correct while preserving the full
+    input state inside the subgraph itself.
+    """
+
+    routing: NotRequired[RoutingState]
+    response: NotRequired[ResponseState]
+    progress: NotRequired[SessionProgressState]
 
 
 def build_therapeutic_subgraph() -> CompiledStateGraph:
@@ -87,15 +110,38 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
         parent graph.
     """
 
-    subgraph = StateGraph(AgentState, context_schema=WorkflowContext)
+    subgraph = StateGraph(
+        AgentState,
+        context_schema=WorkflowContext,
+        output_schema=TherapeuticSubgraphOutput,
+    )
 
-    subgraph.add_node(DISPATCH_NODE, run_therapeutic_dispatch_node)
-    subgraph.add_node(SUPPORTIVE_NODE, run_supportive_response_node)
-    subgraph.add_node(REFLECTIVE_NODE, run_reflective_response_node)
-    subgraph.add_node(CLARIFYING_NODE, run_clarifying_response_node)
-    subgraph.add_node(PSYCHOEDUCATION_NODE, run_psychoeducation_response_node)
-    subgraph.add_node(CLOSING_NODE, run_closing_response_node)
-    subgraph.add_node(GUIDED_EXERCISE_NODE, run_guided_exercise_response_node)
+    # Retry policy for therapeutic nodes that make LLM calls. Acts as
+    # defense-in-depth: each mode node catches LLM exceptions internally
+    # and falls back to deterministic responses, so retries fire only
+    # for unexpected transient failures outside the node's own error
+    # handling (framework-level errors, connection resets, etc.).
+    _io_retry = RetryPolicy(max_attempts=2)
+
+    subgraph.add_node(
+        DISPATCH_NODE, run_therapeutic_dispatch_node, retry_policy=_io_retry
+    )
+    subgraph.add_node(
+        SUPPORTIVE_NODE, run_supportive_response_node, retry_policy=_io_retry
+    )
+    subgraph.add_node(
+        REFLECTIVE_NODE, run_reflective_response_node, retry_policy=_io_retry
+    )
+    subgraph.add_node(
+        CLARIFYING_NODE, run_clarifying_response_node, retry_policy=_io_retry
+    )
+    subgraph.add_node(
+        PSYCHOEDUCATION_NODE, run_psychoeducation_response_node, retry_policy=_io_retry
+    )
+    subgraph.add_node(CLOSING_NODE, run_closing_response_node, retry_policy=_io_retry)
+    subgraph.add_node(
+        GUIDED_EXERCISE_NODE, run_guided_exercise_response_node, retry_policy=_io_retry
+    )
 
     subgraph.add_edge(START, DISPATCH_NODE)
     # therapeutic_dispatch_node returns Command(goto=<mode>); no

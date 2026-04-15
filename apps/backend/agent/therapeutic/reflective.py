@@ -38,7 +38,7 @@ async def run_reflective_response_node(
     Falls back to a deterministic template when no LLM client is available.
     """
 
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     response_text = _DEFAULT_REFLECTIVE_REPLY
     if llm_client is not None:

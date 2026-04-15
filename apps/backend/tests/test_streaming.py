@@ -98,15 +98,20 @@ class TestRunTurnStreamStages:
 
         assert done is not None
         # The stages should appear in the order the graph executes them.
+        # The first four stages are sequential and must appear in order.
+        # The extractors run in parallel after finalize, so their order
+        # relative to each other is non-deterministic.
         stage_names = [event.stage for event in statuses]
-        assert stage_names == [
+        assert stage_names[:4] == [
             "crisis_gate",
             "load_memory",
             "therapeutic",
             "finalize",
-            "extract_facts",
-            "extract_procedural",
         ]
+        assert len(stage_names) == 6, (
+            f"Expected exactly 6 stages, got {len(stage_names)}: {stage_names}"
+        )
+        assert set(stage_names[4:]) == {"extract_facts", "extract_procedural"}
         # In deterministic mode (no LLM client), no chunks are emitted —
         # the response comes from the fallback template via DoneEvent only.
         # When an LLM client is present, chunks stream during the

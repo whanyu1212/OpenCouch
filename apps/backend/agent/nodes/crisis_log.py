@@ -73,7 +73,7 @@ async def run_crisis_log_node(
         logger.debug("crisis_log_node called on non-crisis turn; skipping write")
         return {}
 
-    backend = runtime.context["crisis_log_backend"]
+    backend = runtime.context.crisis_log_backend
 
     # Read the crisis debug metadata from routing state. The crisis gate
     # writes these three fields in its delta for every crisis-path turn

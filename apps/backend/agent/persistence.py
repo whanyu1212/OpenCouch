@@ -33,6 +33,7 @@ from agent.models import (
     StreamEvent,
 )
 from agent.nodes.summarize_session import run_summarize_session
+from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -311,14 +312,14 @@ class PersistentAgentRuntime:
         self,
         *,
         llm_client: BaseLLMClient | None,
-    ) -> dict[str, object]:
+    ) -> WorkflowContext:
         """Build LangGraph runtime context for one turn."""
 
-        return {
-            "llm_client": llm_client,
-            "memory_store": self._memory_store,
-            "crisis_log_backend": self._crisis_log_backend,
-            "memory_mode": self.memory_mode,
+        return WorkflowContext(
+            llm_client=llm_client,
+            memory_store=self._memory_store,
+            crisis_log_backend=self._crisis_log_backend,
+            memory_mode=self.memory_mode,
             # v0.8.1: make the embedding provider visible to graph
             # nodes via runtime.context. The extractor nodes read
             # this to compute embeddings at write time; the
@@ -326,8 +327,8 @@ class PersistentAgentRuntime:
             # for the hybrid retrieval path. Always present (even as
             # NullEmbeddingProvider) so nodes don't need to guard
             # against the key being missing from the dict.
-            "embedding_provider": self._embedding_provider,
-        }
+            embedding_provider=self._embedding_provider,
+        )
 
     @staticmethod
     def _messages_from_transcript(
@@ -432,6 +433,15 @@ class PersistentAgentRuntime:
             )
         return summaries
 
+    @staticmethod
+    def _turn_count_from_state(state: AgentState | None) -> int:
+        """Extract the persisted turn count from a checkpoint snapshot."""
+
+        if state is None:
+            return 0
+        progress = state.get("progress", {}) or {}
+        return int(progress.get("turn_count", 0) or 0)
+
     async def run_turn(
         self,
         *,
@@ -445,7 +455,6 @@ class PersistentAgentRuntime:
         """Run one conversation turn through the minimal workflow."""
 
         graph = self._get_graph()
-        history = await self.get_history(thread_id)
 
         # v0.4: track the session start time for this thread. Populated
         # lazily on the first turn we see for each thread within the
@@ -456,32 +465,26 @@ class PersistentAgentRuntime:
         if thread_id not in self._session_starts:
             self._session_starts[thread_id] = _iso_now()
 
+        # Load only the persisted turn counter. The checkpointer restores
+        # the accumulated transcript/history via reducers, so we do NOT
+        # need to deserialize the full transcript just to compute
+        # ``progress.turn_count`` for the next turn.
+        prior_state = await self.get_state(thread_id)
+        prior_turn_count = self._turn_count_from_state(prior_state)
+
         agent_input = AgentInput(
             message=message,
             channel=channel,
             user_id=user_id,
             session_id=thread_id,
-            history=history,
+            history=[],
             working_memory=[],
             installed_skills=list(installed_skills or []),
         )
-        initial_state = build_initial_state(agent_input)
-
-        # Carry forward multi-turn exercise state from the previous
-        # turn's checkpoint. build_initial_state creates a fresh
-        # progress dict without exercise_type / exercise_step, so
-        # without this merge the dispatcher's active-exercise fast-
-        # path never fires and guided exercises restart every turn.
-        prev_state = await self.get_state(thread_id)
-        if prev_state is not None:
-            prev_progress = prev_state.get("progress", {}) or {}
-            if prev_progress.get("exercise_type") is not None:
-                initial_state["progress"]["exercise_type"] = prev_progress[
-                    "exercise_type"
-                ]
-                initial_state["progress"]["exercise_step"] = prev_progress.get(
-                    "exercise_step", 0
-                )
+        initial_state = build_initial_state(
+            agent_input,
+            prior_turn_count=prior_turn_count,
+        )
 
         # v0.8 observability: time the whole turn for the CLI's
         # post-turn diagnostics panel. The per-node timings are
@@ -651,7 +654,6 @@ class PersistentAgentRuntime:
         """
 
         graph = self._get_graph()
-        history = await self.get_history(thread_id)
 
         # v0.4: track session start on the first turn we see for this
         # thread. Same logic as ``run_turn`` — see that method for the
@@ -659,28 +661,25 @@ class PersistentAgentRuntime:
         if thread_id not in self._session_starts:
             self._session_starts[thread_id] = _iso_now()
 
+        # Same turn-count optimization as ``run_turn``: read only the
+        # persisted counter from the checkpoint snapshot rather than
+        # deserializing the full transcript.
+        prior_state = await self.get_state(thread_id)
+        prior_turn_count = self._turn_count_from_state(prior_state)
+
         agent_input = AgentInput(
             message=message,
             channel=channel,
             user_id=user_id,
             session_id=thread_id,
-            history=history,
+            history=[],
             working_memory=[],
             installed_skills=list(installed_skills or []),
         )
-        initial_state = build_initial_state(agent_input)
-
-        # Carry forward multi-turn exercise state — same as run_turn.
-        prev_state = await self.get_state(thread_id)
-        if prev_state is not None:
-            prev_progress = prev_state.get("progress", {}) or {}
-            if prev_progress.get("exercise_type") is not None:
-                initial_state["progress"]["exercise_type"] = prev_progress[
-                    "exercise_type"
-                ]
-                initial_state["progress"]["exercise_step"] = prev_progress.get(
-                    "exercise_step", 0
-                )
+        initial_state = build_initial_state(
+            agent_input,
+            prior_turn_count=prior_turn_count,
+        )
 
         # Map internal graph node names → CLI stage labels. Keeps the
         # naming mismatch between graph internals and CLI vocabulary

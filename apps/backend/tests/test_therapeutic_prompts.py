@@ -46,6 +46,7 @@ from agent.therapeutic.prompts import (
     build_psychoeducation_system_prompt,
     build_reflective_system_prompt,
     build_supportive_system_prompt,
+    build_therapeutic_response_prompt,
 )
 
 
@@ -56,7 +57,7 @@ def _make_state(
     *,
     rules: list[str] | None = None,
     recall_enabled: bool | None = None,
-    working_memory: list[str] | None = None,
+    working_memory: list[Any] | None = None,
 ) -> AgentState:
     """Build a minimal AgentState with procedural fields configured.
 
@@ -420,3 +421,42 @@ class TestCrisisBuilderExemption:
 
         prompt = build_crisis_response_system_prompt()
         assert "proactive recall" not in prompt
+
+
+class TestTherapeuticResponsePrompt:
+    """Tests for the shared therapeutic user-prompt builder."""
+
+    def test_formats_structured_working_memory_on_demand(self) -> None:
+        """Raw working-memory dicts should be rendered at prompt time."""
+
+        state = _make_state(
+            working_memory=[
+                {
+                    "type": "semantic",
+                    "evidence_quote": "I have a sister named Sarah.",
+                },
+                {
+                    "type": "episodic",
+                    "summary": "talked about grief after my dog died.",
+                    "primary_themes": ["grief"],
+                    "is_catch_up": True,
+                },
+            ]
+        )
+
+        prompt = build_therapeutic_response_prompt(state, mode="supportive")
+        assert "Relevant context from past sessions:" in prompt
+        assert "- Previously noted: I have a sister named Sarah." in prompt
+        assert "- Last session (grief): talked about grief after my dog died." in prompt
+
+    def test_legacy_string_working_memory_entries_render_unchanged(self) -> None:
+        """Legacy ``str`` entries (from older checkpoints or manual fixtures)
+        should pass through the formatter unchanged."""
+
+        state = _make_state(
+            working_memory=[
+                "Previously noted: legacy fact about the user.",  # type: ignore[list-item]
+            ]
+        )
+        prompt = build_therapeutic_response_prompt(state, mode="supportive")
+        assert "legacy fact about the user" in prompt

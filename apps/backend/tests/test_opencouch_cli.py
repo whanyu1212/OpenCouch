@@ -1345,8 +1345,16 @@ class TestRenderContext:
             "memory": {"summary": "", "current_goal": None},
             "response": {"guidance": "-"},
             "working_memory": [
-                "Previously noted: I have a sister named Sarah.",
-                "Last session (grief): talked about my dog passing.",
+                {
+                    "type": "semantic",
+                    "evidence_quote": "I have a sister named Sarah.",
+                },
+                {
+                    "type": "episodic",
+                    "summary": "talked about my dog passing.",
+                    "primary_themes": ["grief"],
+                    "is_catch_up": False,
+                },
             ],
         }
         render_context(state)  # type: ignore[arg-type]

@@ -20,7 +20,10 @@ from typing import Any, cast
 import pytest
 
 from agent.graph import run_agent
+from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
 from agent.memory.models import DispatchDecision
+from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput, ResponseKind
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -110,12 +113,12 @@ class _MockRuntime:
     """
 
     def __init__(self, *, llm_client: BaseLLMClient | None = None) -> None:
-        self.context: WorkflowContext = {
-            "llm_client": llm_client,
-            "memory_store": None,  # type: ignore[typeddict-item]
-            "crisis_log_backend": None,  # type: ignore[typeddict-item]
-            "memory_mode": None,  # type: ignore[typeddict-item]
-        }
+        self.context = WorkflowContext(
+            llm_client=llm_client,
+            memory_store=OpenCouchMemoryStore(),
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=MemoryMode.LOCAL,
+        )
 
 
 def _build_state(

@@ -20,6 +20,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from agent.state import AgentState
+from agent.working_memory import format_working_memory_entries
 
 
 # ─── Knowledge file composition (same pattern as prompts/crisis.py) ─────────
@@ -131,10 +132,10 @@ def _format_working_memory(state: AgentState) -> str:
     rather than showing an empty list.
     """
 
-    snippets = state.get("working_memory", [])
+    snippets = format_working_memory_entries(state.get("working_memory", []))
     if not snippets:
         return ""
-    joined = "\n".join(f"- {s}" for s in snippets)
+    joined = "\n".join(f"- {snippet}" for snippet in snippets)
     return f"\nRelevant context from past sessions:\n{joined}\n"
 
 

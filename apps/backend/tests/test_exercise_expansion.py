@@ -14,6 +14,10 @@ from typing import Any, cast
 
 import pytest
 
+from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
+from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
 # ── Helper ────────────────────────────────────────────────────────────
@@ -42,14 +46,14 @@ class _MockRuntime:
         self,
         llm_client: Any = None,
         memory_store: Any = None,
-        memory_mode: str = "incognito",
+        memory_mode: MemoryMode = MemoryMode.INCOGNITO,
     ) -> None:
-        self.context = {
-            "llm_client": llm_client,
-            "memory_store": memory_store,
-            "crisis_log_backend": None,
-            "memory_mode": memory_mode,
-        }
+        self.context = WorkflowContext(
+            llm_client=llm_client,
+            memory_store=memory_store or OpenCouchMemoryStore(),
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=memory_mode,
+        )
 
 
 def _make_state(

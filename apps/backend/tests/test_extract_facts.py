@@ -205,12 +205,12 @@ class _MockRuntime:
         memory_store: OpenCouchMemoryStore | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
     ) -> None:
-        self.context: WorkflowContext = {
-            "llm_client": llm_client,
-            "memory_store": memory_store or OpenCouchMemoryStore(),
-            "crisis_log_backend": None,  # type: ignore[typeddict-item]
-            "memory_mode": memory_mode,
-        }
+        self.context = WorkflowContext(
+            llm_client=llm_client,
+            memory_store=memory_store or OpenCouchMemoryStore(),
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=memory_mode,
+        )
 
 
 # ─── 1. _memory_write_to_semantic_fact helper tests ─────────────────────

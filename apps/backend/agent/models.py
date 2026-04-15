@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agent.working_memory import WorkingMemoryEntry
+
 
 # Normalizes the surface the message came from so routing can stay provider-agnostic.
 class Channel(str, Enum):
@@ -64,7 +66,7 @@ class AgentInput(BaseModel):
     user_id: str | None = None
     session_id: str | None = None
     history: list[Message] = Field(default_factory=list)
-    working_memory: list[str] = Field(default_factory=list)
+    working_memory: list[WorkingMemoryEntry] = Field(default_factory=list)
     installed_skills: list[str] = Field(default_factory=list)
 
 

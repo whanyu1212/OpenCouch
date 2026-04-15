@@ -111,7 +111,6 @@ async def run_extract_procedural_rules_node(
 
         return {
             "diagnostics": {
-                **state.get("diagnostics", {}),
                 "extract_procedural_ms": round((time.monotonic() - start) * 1000, 2),
                 "procedural_writes": procedural_writes,
                 "extract_procedural_reason": reason,
@@ -129,8 +128,8 @@ async def run_extract_procedural_rules_node(
         )
         return _diagnostics_delta(reason="skipped: crisis_path")
 
-    llm_client = runtime.context.get("llm_client")
-    memory_mode = runtime.context.get("memory_mode", MemoryMode.INCOGNITO)
+    llm_client = runtime.context.llm_client
+    memory_mode = runtime.context.memory_mode
 
     if llm_client is None:
         logger.debug("extract_procedural_rules_node: no llm_client; skipping")
@@ -142,7 +141,7 @@ async def run_extract_procedural_rules_node(
         )
         return _diagnostics_delta(reason="skipped: incognito")
 
-    store = runtime.context["memory_store"]
+    store = runtime.context.memory_store
     owner_id = state.get("user_id") or state.get("session_id") or "local-default"
 
     from agent.memory.small_talk_gate import is_small_talk

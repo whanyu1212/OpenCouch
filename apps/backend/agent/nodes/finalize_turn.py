@@ -53,14 +53,15 @@ async def run_finalize_turn_node(
 ) -> dict[str, Any]:
     """Append the final assistant response to the transcript.
 
-    The user message was already appended to ``transcript`` and
-    ``history`` in :func:`agent.graph.build_initial_state` at turn
-    start. This node's only job is to complete the exchange by
-    appending the assistant side once the response nodes have
-    finished writing to ``state["response"]["text"]``.
+    The user message was already emitted into ``transcript`` and
+    ``history`` by :func:`agent.graph.build_initial_state` at turn
+    start. Both fields use an ``operator.add`` reducer, so this node
+    returns a single-element list containing just the new assistant
+    turn — the reducer appends it to the accumulated state from
+    the checkpoint.
 
     Returns a delta containing ``transcript`` and ``history`` with
-    the assistant turn appended. If the response text is empty (which
+    the new assistant turn. If the response text is empty (which
     should only happen if a branch short-circuits without producing
     a reply), returns an empty delta so the transcript stays clean.
     """
@@ -88,9 +89,10 @@ async def run_finalize_turn_node(
         "mode": routing_mode,
     }
 
-    current_transcript = list(state.get("transcript", []))
-    current_history = list(state.get("history", []))
+    # Return only the new assistant turn. The ``operator.add`` reducer
+    # on ``transcript`` and ``history`` appends it to the accumulated
+    # state from the checkpoint automatically.
     return {
-        "transcript": [*current_transcript, assistant_turn],
-        "history": [*current_history, assistant_turn],
+        "transcript": [assistant_turn],
+        "history": [assistant_turn],
     }

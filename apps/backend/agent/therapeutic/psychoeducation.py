@@ -47,7 +47,7 @@ async def run_psychoeducation_response_node(
     default when the LLM can't produce a context-aware framing.
     """
 
-    llm_client = runtime.context.get("llm_client")
+    llm_client = runtime.context.llm_client
 
     response_text = _DEFAULT_PSYCHOEDUCATION_REPLY
     if llm_client is not None:
