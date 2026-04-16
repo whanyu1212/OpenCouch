@@ -265,9 +265,9 @@ class RealtimeVoiceSession:
             procedural_rules=procedural_rules,
         )
 
-        from datetime import UTC, datetime
+        from agent.memory.hashing import iso_now
 
-        self._session_started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self._session_started_at = iso_now()
 
         logger.info(
             "realtime session: starting for user=%s thread=%s prompt_len=%d",
@@ -374,8 +374,8 @@ class RealtimeVoiceSession:
             return
 
         try:
+            from agent.memory.hashing import iso_now
             from agent.nodes.summarize_session import run_summarize_session
-            from datetime import UTC, datetime
 
             # Build a minimal state with the transcript
             minimal_state = {
@@ -384,7 +384,7 @@ class RealtimeVoiceSession:
                 "session_id": self._thread_id,
             }
 
-            ended_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            ended_at = iso_now()
 
             arc = await run_summarize_session(
                 minimal_state,

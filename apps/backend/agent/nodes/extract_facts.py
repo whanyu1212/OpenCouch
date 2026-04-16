@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -47,6 +46,7 @@ from agent.memory.extraction_prompts import (
     build_extraction_system_prompt,
     build_extraction_user_prompt,
 )
+from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.models import ExtractionResult, MemoryWrite, SemanticFact
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
@@ -54,12 +54,6 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
 logger = logging.getLogger(__name__)
-
-
-def _iso_now() -> str:
-    """Return the current UTC time in ISO-8601 format with 'Z' suffix."""
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _memory_write_to_semantic_fact(write: MemoryWrite) -> SemanticFact:

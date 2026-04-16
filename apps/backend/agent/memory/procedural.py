@@ -61,8 +61,7 @@ either yet.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
+from agent.memory.hashing import iso_now
 from agent.memory.models import ProceduralProfile, ProceduralRule
 from agent.memory.store import MemoryStore, Namespace
 
@@ -228,6 +227,6 @@ def build_procedural_rule(
         rule=rule_text,
         evidence=evidence,
         confidence=confidence,  # type: ignore[arg-type]
-        added_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        added_at=iso_now(),
         source=source,  # type: ignore[arg-type]
     )

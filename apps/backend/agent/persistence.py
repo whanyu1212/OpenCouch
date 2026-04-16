@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import (
     EmbeddingProvider,
     NullEmbeddingProvider,
@@ -56,12 +56,6 @@ ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "ModeType"),
     ("agent.models", "ResponseKind"),
 ]
-
-
-def _iso_now() -> str:
-    """Return the current UTC time in ISO-8601 format with 'Z' suffix."""
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @dataclass(slots=True)
