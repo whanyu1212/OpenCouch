@@ -2,23 +2,36 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import (
     EmbeddingProvider,
     NullEmbeddingProvider,
     create_configured_embedding_provider,
 )
-from agent.memory.models import StoredSessionArc
+from agent.memory.models import (
+    FeedbackLabel,
+    FeedbackSource,
+    SessionFeedbackRecord,
+    StoredSessionArc,
+)
 from agent.memory.modes import MemoryMode
+from agent.memory.session_feedback import (
+    InMemorySessionFeedbackBackend,
+    SessionFeedbackBackend,
+)
 from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.memory.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
@@ -40,6 +53,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from services.llm.base import BaseLLMClient
 
+logger = logging.getLogger(__name__)
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _STORE_DIR = BACKEND_ROOT / ".store"
 DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
@@ -50,6 +65,9 @@ DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
 # live under ``.store/`` to keep the backend root clean.
 DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
 DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
+# v0.10: session-feedback SQLite path. Fourth file under ``.store/``,
+# separate from the other three for the same isolation reasons.
+DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "Channel"),
     ("agent.models", "CrisisAssessment"),
@@ -109,9 +127,11 @@ class PersistentAgentRuntime:
         *,
         memory_store: MemoryStore | None = None,
         crisis_log_backend: CrisisLogBackend | None = None,
+        session_feedback_backend: SessionFeedbackBackend | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
         memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
         crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
+        feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH,
         embedding_provider: "EmbeddingProvider | None" = None,
     ) -> None:
         """Initialize the runtime.
@@ -149,6 +169,20 @@ class PersistentAgentRuntime:
                 the caller didn't pass an explicit
                 ``crisis_log_backend``. Defaults to
                 :data:`DEFAULT_CRISIS_LOG_DB_PATH`.
+            session_feedback_backend: Optional session-feedback backend.
+                Same mode-based selection as ``crisis_log_backend``:
+                :class:`InMemorySessionFeedbackBackend` for INCOGNITO,
+                :class:`SqliteSessionFeedbackBackend` for LOCAL/SYNCED.
+                Always-on regardless of memory mode; in incognito
+                ``user_id_or_null`` is scrubbed to None by
+                :meth:`record_session_feedback`. Tests can override
+                with :class:`NullSessionFeedbackBackend` to assert
+                "no feedback was written".
+            feedback_sqlite_path: SQLite database path for the session
+                feedback store. Only used when ``memory_mode`` is
+                LOCAL/SYNCED and the caller didn't pass an explicit
+                ``session_feedback_backend``. Defaults to
+                :data:`DEFAULT_FEEDBACK_DB_PATH`.
         """
 
         self.memory_mode = memory_mode
@@ -186,6 +220,18 @@ class PersistentAgentRuntime:
             self._crisis_log_backend = InMemoryCrisisLogBackend()
         else:
             self._crisis_log_backend = SqliteCrisisLogBackend(crisis_log_sqlite_path)
+
+        # v0.10: session-feedback backend. Same mode-based selection as
+        # crisis_log — the two subsystems have parallel privacy and
+        # persistence contracts. Explicit override wins for tests.
+        if session_feedback_backend is not None:
+            self._session_feedback_backend = session_feedback_backend
+        elif is_incognito:
+            self._session_feedback_backend = InMemorySessionFeedbackBackend()
+        else:
+            self._session_feedback_backend = SqliteSessionFeedbackBackend(
+                feedback_sqlite_path,
+            )
 
         # v0.8.1: embedding provider for hybrid retrieval. Resolution
         # order: (1) explicit override, (2) NullEmbeddingProvider in
@@ -261,6 +307,7 @@ class PersistentAgentRuntime:
 
         await self._memory_store.aclose()
         await self._crisis_log_backend.aclose()
+        await self._session_feedback_backend.aclose()
         if self._saver_cm is not None:
             await self._saver_cm.__aexit__(exc_type, exc, tb)
 
@@ -296,6 +343,19 @@ class PersistentAgentRuntime:
         """
 
         return self._crisis_log_backend
+
+    @property
+    def session_feedback_backend(self) -> SessionFeedbackBackend:
+        """Return the runtime's session-feedback backend.
+
+        Exposed for CLI and debug-tooling use (``/memory status``,
+        observability panels). Always-on regardless of memory mode;
+        in incognito mode the ``record_session_feedback`` method
+        scrubs ``user_id_or_null`` so feedback is still recorded but
+        without owner-identifying information.
+        """
+
+        return self._session_feedback_backend
 
     def _config_for_thread(self, thread_id: str) -> dict[str, dict[str, str]]:
         """Build LangGraph config payload for one thread."""
@@ -611,6 +671,94 @@ class PersistentAgentRuntime:
         self._max_crisis_levels.pop(thread_id, None)
 
         return stored_arc
+
+    async def record_session_feedback(
+        self,
+        thread_id: str,
+        *,
+        label: FeedbackLabel,
+        source: FeedbackSource,
+    ) -> SessionFeedbackRecord | None:
+        """Record an explicit end-of-session feedback label.
+
+        Called by end-session surfaces (CLI ``/end``, CLI ``/exit`` with
+        save=y, HTTP ``POST /threads/{id}/end`` with a feedback body)
+        BEFORE invoking :meth:`end_session`. Never raises — any
+        exception is logged and swallowed. Returns ``None`` on any
+        failure. The end-session flow continues regardless, so a
+        backend outage never blocks the summary or the farewell.
+
+        Owner identity (``user_id_or_null``) is derived from persisted
+        thread state, not from the caller — the authoritative source is
+        the same ``state.user_id`` that powers memory and crisis_log
+        writes. **Scrubbed to None in incognito mode** regardless of
+        what state carries, mirroring the
+        :class:`CrisisLogRecord` privacy contract.
+
+        Turn count is read from ``state.progress.turn_count`` via the
+        existing :meth:`_turn_count_from_state` helper. When the thread
+        has no state (e.g., ``/end`` immediately after ``/new`` with
+        zero turns) we still write the record with
+        ``turn_count_at_end=0``.
+
+        Idempotency: none in Phase 1. Two calls produce two rows. The
+        CLI prompt flow is single-shot and the HTTP endpoint is
+        single-request, so accidental duplicates require an explicit
+        double-click / double-POST. If explicit idempotency becomes
+        necessary later, the fix is an idempotency-key column on
+        :class:`SessionFeedbackRecord`, not a UNIQUE constraint on
+        the opaque ``id``.
+
+        Args:
+            thread_id: The thread whose session is ending. Hashed
+                into ``session_id_opaque`` before the record is
+                written — the raw thread id never touches the store.
+            label: The explicit feedback label the user provided.
+            source: Which end-session surface produced this feedback.
+
+        Returns:
+            The written :class:`SessionFeedbackRecord` on success, or
+            ``None`` on any failure (backend write error, state
+            lookup failure, etc.). Callers should ignore the return
+            value for control flow — the contract is "best effort".
+        """
+
+        try:
+            state = await self.get_state(thread_id)
+            turn_count = self._turn_count_from_state(state)
+
+            # Privacy: scrub user_id in incognito mode. Even though
+            # state may carry a user_id in incognito (nothing
+            # prevents the caller from passing one), we never
+            # persist it here. Mirrors CrisisLogRecord's
+            # incognito-scrub contract.
+            if self.memory_mode == MemoryMode.INCOGNITO:
+                user_id: str | None = None
+            elif state is not None:
+                user_id = state.get("user_id")
+            else:
+                user_id = None
+
+            record = SessionFeedbackRecord(
+                id=str(uuid4()),
+                session_id_opaque=hash_session_id(thread_id),
+                user_id_or_null=user_id,
+                recorded_at=iso_now(),
+                label=label,
+                turn_count_at_end=turn_count,
+                source=source,
+                schema_version=1,
+            )
+
+            await self._session_feedback_backend.aappend(record)
+            return record
+        except Exception:
+            logger.warning(
+                "session feedback write failed for thread %s",
+                thread_id,
+                exc_info=True,
+            )
+            return None
 
     async def run_turn_stream(
         self,

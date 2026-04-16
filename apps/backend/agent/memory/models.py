@@ -813,6 +813,63 @@ class DispatchDecision(BaseModel):
     confidence: ConfidenceLevel
 
 
+# ─── §9 session feedback ────────────────────────────────────────────────────
+#
+# Explicit end-of-session feedback captured by ``PersistentAgentRuntime.
+# record_session_feedback`` from the end-session surfaces: CLI ``/end``,
+# CLI ``/exit`` (save=y branch), and HTTP ``POST /threads/{id}/end`` via
+# ``EndSessionRequest.feedback``. Mirrors :class:`CrisisLogRecord` in
+# shape and privacy posture — always-on, session-opaque, label-only.
+# See schema.yaml §2 namespaces.session_feedback (to be added) for the
+# full privacy rationale.
+
+FeedbackLabel = Literal["positive", "negative", "skip"]
+
+FeedbackSource = Literal["cli_end", "cli_exit", "api_end"]
+
+
+class SessionFeedbackRecord(BaseModel):
+    """One end-of-session feedback record.
+
+    Written by ``PersistentAgentRuntime.record_session_feedback`` when
+    a user provides an explicit thumbs rating at session end. Always-on
+    regardless of memory mode, but ``user_id_or_null`` is ALWAYS ``None``
+    in incognito (enforced by the runtime method, not trusted from
+    state) — even though state may carry a user_id in incognito mode,
+    the feedback record scrubs it. In LOCAL / SYNCED modes the record
+    stores the persisted ``state.user_id`` unchanged.
+
+    Storage identity: ``id`` is a non-unique opaque UUID used for
+    external correlation (log lines, eventual idempotency keys). The
+    SQLite backend uses ``insertion_order`` as the primary key for
+    stable chronological reads, matching the crisis_log layout.
+
+    Two calls produce two rows. Phase 1 does not provide idempotency —
+    if we need it later, we add an explicit idempotency key without
+    changing this record shape.
+
+    Retention: 180 days per-user records (longer than crisis_log's 90
+    because feedback analytics benefit from a wider lookback window).
+    """
+
+    id: str  # uuid4 — opaque, non-unique at the DB layer
+    # SHA-256 of session_id, no reverse mapping. Safe to retain even in
+    # incognito mode because it can't be traced back to a user.
+    session_id_opaque: str
+    # Populated only in local/synced modes. ALWAYS null in incognito,
+    # regardless of what state carries.
+    user_id_or_null: str | None = None
+    recorded_at: str  # ISO-8601 ('Z' suffix via ``iso_now()``)
+
+    label: FeedbackLabel
+    # From ``state.progress.turn_count`` at write time via the runtime's
+    # ``_turn_count_from_state`` helper. 0 when the thread has no state
+    # (e.g., /end immediately after /new with zero turns).
+    turn_count_at_end: int
+    source: FeedbackSource
+    schema_version: int = 1
+
+
 # ─── Type exports ───────────────────────────────────────────────────────────
 #
 # Explicit __all__ list so `from agent.memory.models import *` imports
@@ -864,4 +921,8 @@ __all__ = [
     # §8 therapeutic
     "TherapeuticMode",
     "DispatchDecision",
+    # §9 session feedback
+    "FeedbackLabel",
+    "FeedbackSource",
+    "SessionFeedbackRecord",
 ]

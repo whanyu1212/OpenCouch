@@ -167,7 +167,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from agent.memory.models import StoredSessionArc
+from agent.memory.models import FeedbackLabel, FeedbackSource, StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.persistence import (
     DEFAULT_CRISIS_LOG_DB_PATH,
@@ -927,6 +927,7 @@ async def render_memory_status(
 
     store = runtime.memory_store
     crisis_log = runtime.crisis_log_backend
+    session_feedback = runtime.session_feedback_backend
 
     # Aggregate store record counts by namespace kind. Namespaces are
     # (user_id, kind) tuples; group by the kind for a clean summary.
@@ -946,6 +947,15 @@ async def render_memory_status(
     arecord_count_fn = getattr(crisis_log, "arecord_count", None)
     if callable(arecord_count_fn):
         crisis_log_count = await arecord_count_fn()
+
+    # v0.10: session feedback record count — also always-on, same
+    # defensive-attr pattern as crisis_log so the panel keeps
+    # rendering if a caller passes a runtime without the feedback
+    # backend wired up (e.g., very old test fixtures).
+    session_feedback_count = 0
+    feedback_arecord_count_fn = getattr(session_feedback, "arecord_count", None)
+    if callable(feedback_arecord_count_fn):
+        session_feedback_count = await feedback_arecord_count_fn()
 
     # v0.7: read the procedural profile for the active thread so the
     # recall toggle row shows the real state. Also used to show the
@@ -971,6 +981,7 @@ async def render_memory_status(
     table.add_row("procedural rules", str(counts_by_kind["procedural"]))
     table.add_row("total memory records", str(total_records))
     table.add_row("crisis log events", str(crisis_log_count))
+    table.add_row("session feedback records", str(session_feedback_count))
     # v0.7 Stage E: real proactive-recall state from the profile.
     recall_state = "on" if profile.proactive_recall_enabled else "off"
     table.add_row("proactive recall", recall_state)
@@ -2667,32 +2678,92 @@ async def switch_thread(
     return True
 
 
+def _prompt_for_session_feedback() -> FeedbackLabel | None:
+    """Ask the user once for a thumbs rating at end-of-session.
+
+    v0.10 feedback capture — the first collection surface for the
+    session-feedback dataset. The prompt is opt-in by design:
+
+    - Explicit ``y``, ``n``, ``s`` → ``"positive"``, ``"negative"``,
+      ``"skip"``. All three produce a labeled record so analytics can
+      distinguish "user actively skipped" from "user said nothing".
+    - Empty input (bare Enter) → ``None``. No record written.
+    - ``Ctrl-C`` / ``EOF`` (piped stdin, aborted prompt) → ``None``.
+      No record written.
+
+    No default value. Defaulting to ``"skip"`` would turn accidental
+    Enter keypresses into explicit-skip records and inflate the skip
+    rate in analytics; defaulting to anything else would bias toward
+    that label. The explicit-no-default design means Enter is a
+    no-op both for the user and for the dataset.
+    """
+
+    try:
+        response = Prompt.ask(
+            "[muted]Quick check — did today feel helpful?[/muted] "
+            "[accent][y/n/s] (or Enter to skip without recording)[/accent]",
+            choices=["y", "n", "s", ""],
+            default="",
+            show_choices=False,
+            show_default=False,
+        )
+    except (KeyboardInterrupt, EOFError):
+        return None
+
+    response = response.strip().lower()
+    if response == "y":
+        return "positive"
+    if response == "n":
+        return "negative"
+    if response == "s":
+        return "skip"
+    return None  # empty input → no record
+
+
 async def _summarize_and_render(
     session: RunnerSession,
     runtime: PersistentAgentRuntime,
+    *,
+    source: FeedbackSource,
 ) -> None:
-    """Call the runtime's session summarizer and render the result.
+    """End-session orchestration: capture feedback, then summarize.
 
-    Shared helper for the ``/end`` and ``/exit`` commands — both
-    trigger a session-end summary, but they have slightly different
-    UX paths (``/end`` is silent-then-farewell, ``/exit`` prompts
-    for consent first). Both end up here once the decision to
-    summarize is made.
+    Shared helper for the ``/end`` and ``/exit`` (save=y branch)
+    commands. Both trigger the same three-step end flow:
 
-    When the summarizer returns a stored arc, we render it via
-    ``render_session_summary`` so the user sees exactly what got
-    saved. When it returns None — incognito mode, no LLM, or the LLM
-    judged the session too thin to summarize — we render a plain
-    farewell instead, with a reason-hinting line so the operator
-    knows why nothing was saved.
+    1. Best-effort feedback prompt. User can decline by hitting Enter
+       or Ctrl-C; explicit ``y``/``n``/``s`` produces a labeled
+       record. ``source`` distinguishes which command triggered the
+       flow (``"cli_end"`` or ``"cli_exit"``).
+    2. Feedback persistence via ``runtime.record_session_feedback``.
+       The runtime never raises — a backend outage means no record
+       is written and the flow continues.
+    3. Summarization via ``runtime.end_session``. If it returns a
+       stored arc we render it; if it returns ``None`` (incognito,
+       no LLM, thin session) we render a plain farewell.
 
-    Failures inside the summarizer degrade silently (see
-    ``run_summarize_session`` for the contract); this wrapper does
-    NOT try to catch additional errors. A silent None return is
-    indistinguishable from "ran but nothing to save", which is the
-    right user-visible behavior.
+    v0.4 note (kept for reference): failures inside the summarizer
+    degrade silently — a silent ``None`` return is indistinguishable
+    from "ran but nothing to save", which is the right user-visible
+    behavior.
+
+    v0.10: this helper is no longer strictly summary-only. It owns
+    the full end-session sequence. ``/exit`` save=n does NOT route
+    through here (no feedback prompt, no summary) — see the
+    command handler for that branch's rationale.
     """
 
+    # Step 1 + 2: best-effort feedback capture. Silent input / aborted
+    # prompt → no record; explicit label → record written.
+    label = _prompt_for_session_feedback()
+    if label is not None:
+        await runtime.record_session_feedback(
+            session.thread_id,
+            label=label,
+            source=source,
+        )
+
+    # Step 3: existing summarization flow, unchanged.
     try:
         stored_arc = await runtime.end_session(
             session.thread_id,
@@ -2759,16 +2830,23 @@ async def handle_command(
             show_default=False,
         )
         if save.strip().lower() != "n":
-            await _summarize_and_render(session, runtime)
+            # save=y branch → full end-session flow (feedback + summary).
+            await _summarize_and_render(session, runtime, source="cli_exit")
+        # save=n branch intentionally skips both feedback prompt and
+        # summary. If the user declined to save, asking for a rating
+        # on that branch would be inconsistent — "don't save my
+        # conversation" covers rating data too.
         return False
 
     if command == "/end":
         # v0.4: trigger the session summarizer before exiting. Unlike
-        # /exit this does NOT prompt — the user explicitly chose /end,
-        # which means they want to wrap up the session properly. The
-        # summarizer runs, the resulting arc is rendered as a farewell,
-        # and the loop exits.
-        await _summarize_and_render(session, runtime)
+        # /exit this does NOT prompt for save consent — the user
+        # explicitly chose /end, which means they want to wrap up the
+        # session properly. The summarizer runs, the resulting arc is
+        # rendered as a farewell, and the loop exits.
+        # v0.10: _summarize_and_render now also captures optional
+        # feedback before summarization.
+        await _summarize_and_render(session, runtime, source="cli_end")
         return False
 
     if command == "/memory":
