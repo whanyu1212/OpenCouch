@@ -49,6 +49,7 @@ retry — it's pure state, no I/O.
 | Knowledge | `knowledge/*.md` files | Reviewed content outside code; composed at runtime |
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn |
 | Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics |
+| Observability | LangSmith + local diagnostics | LangSmith for trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
 | Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records |
 
 ---

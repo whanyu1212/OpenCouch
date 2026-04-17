@@ -41,7 +41,7 @@
 
 ## Overview
 
-OpenCouch is a conversational support agent built on [LangGraph](https://langchain-ai.github.io/langgraph/) for text orchestration and the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) for low-latency voice.
+OpenCouch is a conversational support agent built on [LangGraph](https://langchain-ai.github.io/langgraph/) for text orchestration and the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) for low-latency voice. It supports eval-driven development with [LangSmith](https://www.langchain.com/langsmith) for observability and evaluation across the text graph.
 
 It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, six therapeutic response modes, and seven LLM-routed modalities keep responses safe, grounded, and adaptive.
 
@@ -49,7 +49,8 @@ It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (
 
 - **Persistent Memory:** Stores semantic facts, episodic session arcs, and procedural rules across sessions.
 - **Safety by Default:** Evaluates every user input with a crisis gate before response generation, with a persistent audit trail.
-- **Adaptive Responses:** Selects among six response modes and seven modalities based on context and intent.
+- **Traceable Execution:** Uses LangSmith to inspect graph execution, route selection, and per-turn text traces.
+- **Evaluation-Ready:** Combines local eval runners with LangSmith projects for regression tracking and failure analysis.
 - **Multimodal Interaction:** Supports text, web, and natural voice conversations (~300ms via OpenAI Realtime).
 - **Guided Exercises:** Provides multi-turn, state-tracked exercises (e.g., grounding and reflection) for structured practice.
 
@@ -71,6 +72,24 @@ uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id al
 
 # Voice mode (Requires OPENAI_API_KEY in .env.local)
 uv run python -m opencouch_cli --voice
+```
+
+### Eval-driven development
+
+#### Observability & evaluation
+
+To enable LangSmith-backed observability and evaluation for local text runs, add the following to `.env` before running the CLI or API:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=opencouch-dev
+
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=...
+LANGCHAIN_PROJECT=opencouch-dev
 ```
 
 ### 2. Web Interface

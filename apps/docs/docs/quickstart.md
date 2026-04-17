@@ -22,6 +22,24 @@ cd OpenCouch/apps/backend
 uv sync`}
 </TerminalWindow>
 
+## Eval-driven development
+
+To enable LangSmith tracing for local text runs, add the following to your `.env` before starting the CLI or API:
+
+<TerminalWindow title="env — LangSmith tracing">
+{`LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=opencouch-dev
+
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=...
+LANGCHAIN_PROJECT=opencouch-dev`}
+</TerminalWindow>
+
+With tracing enabled, OpenCouch emits LangGraph text runs to LangSmith for observability and evaluation workflows. The existing `eval/runners/*` scripts remain the source of truth for behavioral regression checks; LangSmith adds trace inspection, run filtering, and experiment review.
+
 ## Run the CLI
 
 ### Deterministic mode (no API key needed)
@@ -120,7 +138,9 @@ Once inside the text CLI:
 {`uv run pytest tests/`}
 </TerminalWindow>
 
-## Run the eval harnesses
+### Observability & evaluation
+
+If LangSmith tracing is enabled, these eval runs also emit traces to your configured LangSmith project, which makes it easier to inspect failures and compare behavior across prompt or model changes.
 
 <TerminalWindow title="bash — eval harnesses">
 {`# Retrieval quality (token-recall baseline, no API key needed)

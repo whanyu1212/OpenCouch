@@ -357,10 +357,28 @@ class PersistentAgentRuntime:
 
         return self._session_feedback_backend
 
-    def _config_for_thread(self, thread_id: str) -> dict[str, dict[str, str]]:
+    def _config_for_thread(
+        self,
+        thread_id: str,
+        *,
+        channel: Channel | None = None,
+        user_id: str | None = None,
+        streaming: bool = False,
+    ) -> dict[str, Any]:
         """Build LangGraph config payload for one thread."""
 
-        return {"configurable": {"thread_id": thread_id}}
+        metadata = {
+            "thread_id": thread_id,
+            "modality": "text",
+            "streaming": streaming,
+            "channel": channel.value if channel is not None else None,
+            "user_scope": "persistent" if user_id else "guest",
+            "memory_mode": self.memory_mode.value,
+        }
+        return {
+            "configurable": {"thread_id": thread_id},
+            "metadata": metadata,
+        }
 
     def _context_for_turn(
         self,
@@ -549,7 +567,12 @@ class PersistentAgentRuntime:
         turn_start = time.monotonic()
         final_state = await graph.ainvoke(
             initial_state,
-            config=self._config_for_thread(thread_id),
+            config=self._config_for_thread(
+                thread_id,
+                channel=channel,
+                user_id=user_id,
+                streaming=False,
+            ),
             context=self._context_for_turn(llm_client=llm_client),
         )
         turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
@@ -851,7 +874,12 @@ class PersistentAgentRuntime:
         # chunks from subgraph nodes are silently swallowed.
         async for chunk in graph.astream(
             initial_state,
-            config=self._config_for_thread(thread_id),
+            config=self._config_for_thread(
+                thread_id,
+                channel=channel,
+                user_id=user_id,
+                streaming=True,
+            ),
             context=self._context_for_turn(llm_client=llm_client),
             stream_mode=["custom", "updates", "values"],
             subgraphs=True,

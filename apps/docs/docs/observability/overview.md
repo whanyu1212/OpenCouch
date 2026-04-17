@@ -1,9 +1,14 @@
 ---
-title: Observability
+title: Eval-driven development
 sidebar_position: 1
 ---
 
-# Observability
+# Eval-driven development
+
+OpenCouch uses two complementary surfaces for eval-driven development:
+
+1. **LangSmith** for external trace-level observability, run search, and evaluation review.
+2. **CLI diagnostics** for local, turn-by-turn visibility into timings, routing, and memory writes.
 
 The CLI shows you **why** the agent did what it did, not just what
 it said. Every turn produces diagnostics panels plus on-demand
@@ -45,6 +50,21 @@ Both extractors write simultaneously after finalize. Because
 `diagnostics` uses a `_merge_dicts` reducer, their keys merge
 without racing — no node needs to know what other nodes wrote.
 :::
+
+---
+
+## Observability & evaluation
+
+For text runs, LangSmith captures the LangGraph execution trace, including the top-level run plus child spans for graph nodes and subgraphs. In OpenCouch, LangSmith is the primary external surface for:
+
+- inspecting graph execution paths
+- filtering runs by thread and runtime metadata
+- reviewing failures from local eval harnesses
+- comparing behavior across prompt, model, or routing changes
+
+OpenCouch also attaches runtime metadata such as `thread_id`, `channel`, `memory_mode`, `streaming`, and `user_scope` to text runs to make traces easier to search.
+
+LangSmith complements the local diagnostics panels below; it does not replace the project's deterministic eval runners or local debugging commands.
 
 ---
 
