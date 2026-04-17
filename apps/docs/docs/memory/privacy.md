@@ -82,6 +82,22 @@ The crisis log writes **regardless of memory mode** (privacy
 asymmetry for safety audit). In incognito mode it uses an in-memory
 backend that dies at CLI exit.
 
+## Session feedback retention
+
+Session feedback (a single thumbs-up / down / skip label per
+end-of-session event) is also **always-on regardless of memory
+mode** — same privacy asymmetry as the crisis log. In incognito
+mode, feedback uses an in-memory backend that dies at CLI exit, and
+`user_id_or_null` is always scrubbed to `None`.
+
+No user text is stored in feedback records — only the label and
+structural metadata (turn count, source surface, opaque session
+hash). Default retention: 180 days. Purging is operator-initiated
+(not yet surfaced as a CLI command in Phase 1).
+
+See [Session Feedback](/docs/observability/session-feedback) for the
+full subsystem documentation.
+
 ## Recall toggle
 
 ```
