@@ -47,10 +47,15 @@
   --oc-border:    rgba(33, 95, 90, 0.12);
   --oc-border-strong: rgba(33, 95, 90, 0.28);
 
-  /* Type tokens */
+  /* Type tokens — contrast-checked against --oc-surface-1
+     Light mode: text on #ffffff
+       primary   #0d2422 → 16.5:1 (AAA)
+       secondary #2c3533 → 12.1:1 (AAA)
+       muted     #566460 → 6.0:1  (AA)
+  */
   --oc-text-primary:   var(--oc-teal-900);
-  --oc-text-secondary: var(--oc-warm-700);
-  --oc-text-muted:     var(--oc-warm-500);
+  --oc-text-secondary: #2c3533;
+  --oc-text-muted:     #566460;
   --oc-text-inverse:   #ffffff;
 
   /* Shadows */
@@ -120,9 +125,14 @@ html[data-theme='dark'] {
   --oc-border:      rgba(120, 184, 175, 0.12);
   --oc-border-strong: rgba(120, 184, 175, 0.28);
 
+  /* Dark mode contrast — text on --oc-surface-1 (#162624)
+       primary   #e8f5f3 → 12.8:1 (AAA)
+       secondary #c2ddd9 → 9.5:1  (AAA)
+       muted     #82aaa4 → 5.3:1  (AA)
+  */
   --oc-text-primary:   #e8f5f3;
-  --oc-text-secondary: #a8cdc9;
-  --oc-text-muted:     #6b9e99;
+  --oc-text-secondary: #c2ddd9;
+  --oc-text-muted:     #82aaa4;
 
   --oc-shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.3);
   --oc-shadow-md:  0 4px 12px rgba(0, 0, 0, 0.35);
@@ -183,22 +193,16 @@ html[data-theme='dark'] .navbar {
   text-decoration: none !important;
 }
 
-/* Animated brand mark — a subtle pulse dot */
+/* Brand icon — inline SVG couch matching the favicon */
 .navbar__brand::before {
   content: '';
   display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--oc-accent);
-  box-shadow: 0 0 0 0 var(--oc-accent-glow);
-  animation: pulse-dot 3s var(--oc-ease-out) infinite;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { box-shadow: 0 0 0 0 var(--oc-accent-glow); }
-  50%       { box-shadow: 0 0 0 6px transparent; }
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Crect x='4' y='14' width='24' height='8' rx='3' fill='%23215f5a'/%3E%3Cpath d='M6 14V9a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v5' fill='%233d8b84'/%3E%3Crect x='2' y='11' width='4' height='11' rx='2' fill='%23215f5a'/%3E%3Crect x='26' y='11' width='4' height='11' rx='2' fill='%23215f5a'/%3E%3Crect x='7' y='22' width='2.5' height='4' rx='1' fill='%2378b8af'/%3E%3Crect x='22.5' y='22' width='2.5' height='4' rx='1' fill='%2378b8af'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
 }
 
 .navbar__items--right .navbar__link {
@@ -712,6 +716,15 @@ html[data-theme='dark'] .hero--opencouch::after {
   max-width: 680px;
   opacity: 0;
   animation: fade-up var(--oc-duration-slower) var(--oc-ease-out) 140ms both;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hero__logo {
+  width: clamp(36px, 5vw, 52px);
+  height: auto;
+  flex-shrink: 0;
 }
 
 html[data-theme='dark'] .hero__title { color: var(--oc-text-inverse) !important; }
@@ -740,17 +753,17 @@ html[data-theme='dark'] .hero__subtitle { color: var(--oc-teal-200) !important; 
   animation: fade-up var(--oc-duration-slower) var(--oc-ease-out) 260ms both;
 }
 
-/* Buttons */
+/* Buttons — teal primary, matching the site palette */
 .button--primary {
-  background: var(--oc-cta) !important;
-  border: 1.5px solid var(--oc-cta-border) !important;
+  background: var(--oc-accent) !important;
+  border: 1.5px solid var(--oc-accent-hover) !important;
   border-radius: 9px !important;
   font-weight: 650 !important;
   font-size: 0.9rem !important;
   letter-spacing: -0.005em !important;
   color: #fff !important;
   padding: 10px 22px !important;
-  box-shadow: 0 4px 14px var(--oc-cta-glow), inset 0 1px 0 rgba(255,255,255,0.14) !important;
+  box-shadow: 0 4px 14px var(--oc-accent-glow), inset 0 1px 0 rgba(255,255,255,0.14) !important;
   transition: background var(--oc-duration-fast), border-color var(--oc-duration-fast), transform var(--oc-duration-fast), box-shadow var(--oc-duration-fast) !important;
   position: relative;
   overflow: hidden;
@@ -763,10 +776,10 @@ html[data-theme='dark'] .hero__subtitle { color: var(--oc-teal-200) !important; 
   pointer-events: none;
 }
 .button--primary:hover {
-  background: var(--oc-cta-hover) !important;
-  border-color: var(--oc-cta-hover) !important;
+  background: var(--oc-accent-hover) !important;
+  border-color: var(--oc-teal-400) !important;
   transform: translateY(-1px) !important;
-  box-shadow: 0 8px 24px var(--oc-cta-glow), inset 0 1px 0 rgba(255,255,255,0.16) !important;
+  box-shadow: 0 8px 24px var(--oc-accent-glow), inset 0 1px 0 rgba(255,255,255,0.16) !important;
   text-decoration: none !important;
   color: #fff !important;
 }

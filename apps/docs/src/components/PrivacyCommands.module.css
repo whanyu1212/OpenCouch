@@ -1,0 +1,214 @@
+/* ================================================================
+   PrivacyCommands — Three-tier escalating command visualization
+   ================================================================ */
+
+.root {
+  margin: 1.5rem 0;
+  border: 1px solid #222;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0a0a0a;
+}
+
+[data-theme='light'] .root {
+  background: #fafbfc;
+  border-color: #dde1e6;
+}
+
+/* ── Tier tabs ───────────────────────────────────────────────────── */
+
+.tierBar {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border-bottom: 1px solid #1e1e1e;
+}
+
+[data-theme='light'] .tierBar {
+  border-bottom-color: #dde1e6;
+}
+
+.tierTab {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-right: 1px solid #1e1e1e;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s ease, border-bottom 0.15s ease;
+  position: relative;
+}
+
+[data-theme='light'] .tierTab {
+  border-right-color: #dde1e6;
+}
+
+.tierTab:last-child {
+  border-right: none;
+}
+
+.tierTab:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme='light'] .tierTab:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.tierTabActive::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 16px;
+  right: 16px;
+  height: 2px;
+  background: var(--tier-color);
+  border-radius: 1px 1px 0 0;
+}
+
+.tierIcon {
+  font-size: 16px;
+  color: var(--tier-color);
+}
+
+.tierLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--oc-text-secondary);
+}
+
+.tierTabActive .tierLabel {
+  color: var(--tier-color);
+}
+
+/* Risk-level color tokens */
+.risk_low   { --tier-color: #3d9990; }
+.risk_medium { --tier-color: #d78b5f; }
+.risk_high  { --tier-color: #e46e62; }
+
+[data-theme='light'] .risk_low   { --tier-color: #1b7a73; }
+[data-theme='light'] .risk_medium { --tier-color: #b06d3f; }
+[data-theme='light'] .risk_high  { --tier-color: #b84a40; }
+
+/* ── Tier body (expanded content) ────────────────────────────────── */
+
+.tierBody {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: fadeIn 0.18s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Meta row (confirmation method) */
+.tierMeta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--tier-color);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme='light'] .tierMeta {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.metaKey {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tier-color);
+  flex-shrink: 0;
+}
+
+.metaVal {
+  font-size: 0.8rem;
+  color: var(--oc-text-secondary);
+}
+
+/* Command list */
+.cmdList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+[data-theme='light'] .cmdList {
+  border-color: #e4e8ec;
+}
+
+.cmdRow {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1e1e1e;
+  transition: background 0.1s ease;
+}
+
+[data-theme='light'] .cmdRow {
+  border-bottom-color: #e4e8ec;
+}
+
+.cmdRow:last-child {
+  border-bottom: none;
+}
+
+.cmdRow:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme='light'] .cmdRow:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.cmdCode {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 12px !important;
+  font-weight: 600;
+  color: var(--oc-text-primary) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  white-space: nowrap;
+  min-width: 230px;
+  flex-shrink: 0;
+}
+
+.cmdDesc {
+  font-size: 0.8rem;
+  color: var(--oc-text-muted);
+  line-height: 1.4;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 580px) {
+  .cmdRow {
+    flex-direction: column;
+    gap: 3px;
+  }
+  .cmdCode {
+    min-width: 0;
+  }
+}

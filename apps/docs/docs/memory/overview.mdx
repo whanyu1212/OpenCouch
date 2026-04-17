@@ -1,0 +1,55 @@
+---
+title: Memory Layers
+sidebar_position: 1
+---
+
+import MemoryArchitecture from '@site/src/components/MemoryArchitecture';
+
+# Memory Layers
+
+Three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory
+layers give the agent persistent context across sessions. Click a
+layer to see how it writes, reads, and stores.
+
+<MemoryArchitecture />
+
+:::tip Parallel extraction
+Both extractors (semantic + procedural) fan out simultaneously from
+`finalize_turn_node`. They write diagnostics via `_merge_dicts`
+reducer — no racing, no manual dict spreading.
+:::
+
+:::info Working memory is structured
+`load_memory_node` returns `WorkingMemoryEntry` dicts — not
+pre-formatted strings. Formatting happens on demand at prompt-build
+time via `format_working_memory_entries()`.
+:::
+
+---
+
+## Memory modes
+
+| Mode | Writes to disk | Embeddings | Crisis log | Feedback |
+|---|---|---|---|---|
+| **Incognito** | No | No | In-memory (ephemeral) | In-memory (ephemeral) |
+| **Persistent** | Yes (SQLite) | Yes | SQLite (90-day) | SQLite (180-day) |
+
+The `--user-id` flag decouples memory identity from thread identity
+— switching threads preserves memory across sessions.
+
+---
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `agent/memory/store.py` | `MemoryStore` protocol — `asearch_similar`, `aput`, `alatest` |
+| `agent/memory/sqlite_store.py` | SQLite backend with embedding BLOB storage |
+| `agent/memory/retrieval.py` | RRF fusion helper |
+| `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
+| `agent/memory/procedural.py` | `ProceduralProfile` load/save helpers |
+| `agent/working_memory.py` | `WorkingMemoryEntry` types + formatters |
+| `agent/nodes/load_memory.py` | Per-turn retrieval across all three namespaces |
+| `agent/nodes/extract_facts.py` | Semantic fact extraction |
+| `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction |
+| `agent/nodes/summarize_session.py` | Session-end summarization |

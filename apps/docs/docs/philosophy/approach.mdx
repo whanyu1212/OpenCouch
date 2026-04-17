@@ -1,84 +1,71 @@
 ---
 title: Therapeutic Approach
+sidebar_position: 1
 ---
 
 import TherapyApproach from '@site/src/components/TherapyApproach';
 
 # Therapeutic Approach
 
-OpenCouch is not a therapist. It's an AI mental health support tool — built to be genuinely helpful within strict professional and safety limits, and to defer to human professionals when risk, diagnosis, or clinical authority is needed.
-
-This page explains what we offer, how we approach it, and what we deliberately don't do.
-
-## What OpenCouch is
-
-A calm, direct, and humane support assistant for talking through difficult moments, reflecting on patterns, practicing self-help techniques, and getting routed to crisis resources when needed. Its voice is grounded, warm but not sugary, concise, and emotionally accurate — defined in detail in `knowledge/soul.md`, which covers response shape, pacing, directness calibration, language texture, and acknowledgment principles.
-
-## What it is not
-
-- Not a licensed therapist
-- Not a replacement for therapy
-- Not a diagnostic tool
-- Not an emergency service
-- Not a source of medication or legal advice
-
-It says so clearly — in onboarding, in prompts, and in every crisis response. This isn't a disclaimer buried in a footer. It's a design principle enforced in code.
-
----
+Not a therapist. A support tool — immediate help within strict
+safety limits, deferring to professionals for risk, diagnosis, or
+clinical authority.
 
 <TherapyApproach />
 
 ---
 
-## How AI fits in
+## What AI handles well here
 
-OpenCouch fills a specific gap: the space between "I need to talk to someone" and actually having access to a therapist. It provides immediate support, structured practice, and stabilization — not deep clinical work.
+| Capability | How it works |
+|---|---|
+| Reflective listening | At any hour, for any duration |
+| Structured exercises | 12 exercises: grounding, thought work, activation, ACT, self-compassion, regulation |
+| Attuned acknowledgment | Reflects the user's specific situation — no generic empathy |
+| Psychoeducation | Brief normalizing explanations of anxiety, stress, grief |
+| Pattern reflection | Connects themes across a conversation |
+| Crisis routing | Web-searched local hotlines surfaced automatically |
 
-**What AI does well here:**
-- Reflective listening at any hour
-- Structured self-help exercises (grounding, thought records, behavioral activation, acceptance/defusion)
-- Attuned acknowledgment — reflecting the user's specific situation, not generic empathy phrases
-- Psychoeducation — brief, normalizing explanations of anxiety, stress, grief, and emotional responses
-- Pattern reflection across a conversation
-- Immediate crisis resource routing
+## What AI should not attempt
 
-**What AI should not attempt:**
-- Diagnosis or clinical interpretation
-- Medication guidance
-- Deep trauma processing
-- Replacing the therapeutic relationship
+| Boundary | Why |
+|---|---|
+| Diagnosis | No clinical authority to assess |
+| Medication guidance | Requires medical license |
+| Trauma processing | Requires trained human relationship |
+| Replacing therapy | Bridge, not substitute |
 
-Seven therapeutic modalities are authored as knowledge files in `knowledge/modalities/` and designed to be used as **overlays and stances** — shaping how the agent responds, not defining a treatment plan. They inform tone and structure. They don't constitute therapy.
+---
 
-**All seven modalities are active.** The LLM dispatcher picks both a response mode AND a therapeutic modality per turn. The modality determines which framework's knowledge file is loaded into the system prompt:
+## Modes vs. modalities
 
-| Modality | Routed when | Role |
-|---|---|---|
-| **MI** (Motivational Interviewing) | Default for supportive; ambivalence, change talk | Conversational stance — reflective listening, respect for autonomy, OARS |
-| **PFA** (Psychological First Aid) | Acute distress, stabilization needed | Calm presence, practical next steps, no forced disclosure |
-| **CBT** (Cognitive Behavioral Therapy) | Thought work, belief examination, wanting structure | Thought records, cognitive distortions, behavioral activation |
-| **Grief support** | Loss, bereavement, missing someone | Making room without rushing resolution, mixed emotions |
-| **IPT** (Interpersonal Therapy) | Relationship strain, role transitions, loneliness | Communication patterns, social roles, relational next steps |
-| **ACT** (Acceptance & Commitment Therapy) | Avoidance, rumination, values disconnection | Acceptance, defusion, committed action |
-| **DBT skills** (Dialectical Behavior Therapy) | Emotional overwhelm, distress tolerance | Concrete coping skills — STOP, IMPROVE, regulation |
+Two axes, selected independently per turn:
 
-### Modes vs. modalities
+| Axis | What it is | How many | Selected by |
+|---|---|---|---|
+| **Mode** | Response style (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing) | 6 | Hybrid dispatcher: regex fast paths + LLM structured output |
+| **Modality** | Therapeutic framework overlay (MI, PFA, CBT, grief, IPT, ACT, DBT) | 7 | LLM dispatcher, alongside the mode |
 
-**Modes** (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing) are response styles picked per turn. They are not session phases, not modality overlays, and not conversation stages. Each turn gets exactly one mode.
+**Modes** shape *what* the agent does this turn. **Modalities**
+shape *how* — which knowledge file loads into the system prompt.
 
-The four reflective-style modes — supportive, reflective, clarifying, and psychoeducation — form an intentional continuum. Label fuzziness at the edges (e.g. "is this reflective or clarifying?") is by design, not a bug. The router picks the best fit; the response quality does not depend on the boundary being razor-sharp.
+Three modes have hard structural contracts: `guided_exercise` (must
+produce a step), `closing` (must wrap up), `crisis` (must follow
+safety protocol). The other three form a soft continuum where label
+fuzziness at the edges is by design.
 
-Three modes have **hard structural contracts**: `guided_exercise` (must produce a complete exercise), `closing` (must wrap up), and `crisis` (must follow the safety protocol). These are not on a spectrum — they either fire or they don't.
+---
 
-## The safety contract
+## Safety contract
 
-Crisis detection is not a feature — it's a hard gate that runs before every single response. It cannot be skipped, overridden by modality settings, or weakened by tone preferences.
+The crisis gate is the **first node in the graph** — runs before
+memory, before routing, before any response. See
+[Crisis Gate](/docs/philosophy/crisis-gate) for the full flow.
 
-When the gate detects risk:
-1. Normal conversation stops immediately
-2. The agent acknowledges directly and calmly
-3. Emergency services and crisis resources are surfaced
-4. At most one safety question is asked
-5. No attempt to "handle" the crisis therapeutically
-
-This is enforced at the architecture level (see [Crisis Gate](/docs/philosophy/crisis-gate)), not through prompt engineering alone.
+| When risk is detected | What happens |
+|---|---|
+| Normal conversation | Stops immediately |
+| Acknowledgment | Direct and calm — no evasion |
+| Resources | Emergency services + local hotlines surfaced |
+| Follow-up | At most one safety question |
+| Therapeutic intervention | None — not attempted |

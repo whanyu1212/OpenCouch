@@ -1,0 +1,294 @@
+/* ================================================================
+   VoiceArchitecture — Three-party pipeline + async side-effects
+   ================================================================ */
+
+.root {
+  margin: 1.5rem 0;
+  padding: 1.5rem;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 14px;
+}
+
+[data-theme='light'] .root {
+  background: #fafbfc;
+  border-color: #dde1e6;
+}
+
+/* ── Main pipeline (horizontal) ──────────────────────────────────── */
+
+.pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  justify-content: center;
+}
+
+@media (max-width: 720px) {
+  .pipeline {
+    flex-direction: column;
+  }
+}
+
+/* Actor boxes */
+.actor {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 20px;
+  border-radius: 10px;
+  border: 1px solid #222;
+  background: #0d0d0d;
+  min-width: 120px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+[data-theme='light'] .actor {
+  background: #fff;
+  border-color: #e4e8ec;
+}
+
+.actorIcon {
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.actorLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.actorSub {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: var(--oc-text-muted);
+}
+
+/* Actor color variants */
+.actorBrowser {
+  border-color: rgba(113, 113, 122, 0.3);
+}
+
+.actorServer {
+  border-color: rgba(45, 212, 191, 0.3);
+}
+
+.actorServer .actorLabel {
+  color: #2dd4bf;
+}
+
+[data-theme='light'] .actorServer .actorLabel {
+  color: #0d9488;
+}
+
+.actorRealtime {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(96, 165, 250, 0.04);
+}
+
+.actorRealtime .actorLabel {
+  color: #60a5fa;
+}
+
+[data-theme='light'] .actorRealtime {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.03);
+}
+
+[data-theme='light'] .actorRealtime .actorLabel {
+  color: #2563eb;
+}
+
+/* Links between actors */
+.link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  flex-shrink: 1;
+  min-width: 80px;
+}
+
+@media (max-width: 720px) {
+  .link {
+    transform: rotate(90deg);
+    min-width: auto;
+    padding: 8px 0;
+  }
+}
+
+.linkLine {
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to right, #52525b40, #52525b, #52525b40);
+  position: relative;
+}
+
+/* Left arrowhead (pointing left ◁) */
+.linkLine::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-right: 6px solid #52525b;
+}
+
+/* Right arrowhead (pointing right ▷) */
+.linkLine::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid #52525b;
+}
+
+.linkLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--oc-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.linkSub {
+  font-size: 9px;
+  color: #52525b;
+}
+
+/* ── Side-effects (below pipeline) ───────────────────────────────── */
+
+.sideEffects {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.seConn {
+  width: 2px;
+  height: 14px;
+  background: #52525b40;
+}
+
+.seRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+@media (max-width: 580px) {
+  .seRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.seBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px dashed #2a2a2a;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+[data-theme='light'] .seBox {
+  border-color: #d4d4d8;
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.seIcon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.seContent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.seLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+}
+
+.seSub {
+  font-size: 10px;
+  color: var(--oc-text-muted);
+}
+
+/* Side-effect color variants */
+.seCrisis {
+  border-color: rgba(228, 110, 98, 0.25);
+}
+
+.seCrisis .seIcon {
+  color: #e46e62;
+}
+
+.seCrisis .seLabel {
+  color: #e46e62;
+}
+
+[data-theme='light'] .seCrisis .seIcon,
+[data-theme='light'] .seCrisis .seLabel {
+  color: #b84a40;
+}
+
+.seExtract {
+  border-color: rgba(215, 139, 95, 0.25);
+}
+
+.seExtract .seIcon {
+  color: #d78b5f;
+}
+
+.seExtract .seLabel {
+  color: #d78b5f;
+}
+
+[data-theme='light'] .seExtract .seIcon,
+[data-theme='light'] .seExtract .seLabel {
+  color: #b06d3f;
+}
+
+.seMemory {
+  border-color: rgba(61, 153, 144, 0.25);
+}
+
+.seMemory .seIcon {
+  color: #3d9990;
+}
+
+.seMemory .seLabel {
+  color: #3d9990;
+}
+
+[data-theme='light'] .seMemory .seIcon,
+[data-theme='light'] .seMemory .seLabel {
+  color: #1b7a73;
+}

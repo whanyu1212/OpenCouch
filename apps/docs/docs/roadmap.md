@@ -5,75 +5,71 @@ sidebar_position: 99
 
 # Roadmap
 
-What's planned but not yet shipped.
+What's shipped, what's in progress, and what's planned.
 
-## Web Frontend
+---
 
-A proper web UI that replaces the CLI as the primary user-facing
-surface. The backend already exposes the full agent pipeline through
-`PersistentAgentRuntime` — the frontend would call it via a FastAPI
-layer with WebSocket streaming for real-time response delivery.
-Likely stack: React/Next.js with a clean chat interface, session
-management, and memory inspection panels mirroring what the CLI's
-`/memory list`, `/context`, and `/debug state` provide today.
+## Shipped
 
-## Messaging Channels
+| Feature | What landed |
+|---|---|
+| **Web Frontend** | Next.js chat UI with streaming, thread management, and memory inspection. Lives in `apps/web/`. |
+| **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
+| **Voice Chat** | OpenAI Realtime API integration with crisis gate, memory extraction, and web-searched crisis resources. Lives in `apps/backend/voice/`. |
+| **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /threads/{id}/end`. SQLite-backed, incognito-safe. *(Branch: `feat/session-feedback-phase-1`)* |
 
-Adapters for messaging platforms so users can interact with the
-agent where they already are:
+---
 
-- **Telegram** — bot API with webhook-based message handling
-- **WhatsApp** — via the WhatsApp Business API or a provider like
-  Twilio
-- **Discord** — bot with slash commands and thread-based sessions
+## In progress
 
-Each channel adapter would map platform-specific message formats to
-the existing `AgentInput` / `AgentOutput` contract and the
-`Channel` enum (`Channel.TELEGRAM`, `Channel.WHATSAPP`,
-`Channel.DISCORD`). The `Channel` field already exists on
-`AgentInput` — the agent graph is channel-agnostic by design, so
-adding a new channel is a transport adapter, not a graph change.
+| Feature | Status | What's left |
+|---|---|---|
+| **Session feedback — closing mode** | Designed, not wired | Add a regex fast path for obvious closings ("bye", "I'm done") so the feedback prompt can also fire during natural closing turns, not just CLI/API end commands |
+| **Session feedback — voice** | Designed, not wired | Voice disconnect bypasses `end_session()` — needs to either route through the runtime or gain its own feedback hook |
 
-Crisis responses would need channel-specific formatting (e.g.,
-inline buttons for crisis hotline links on Telegram, embeds on
-Discord).
+---
 
-## Acoustic Crisis Detection
+## Planned
 
-The current voice mode uses transcript-only crisis detection (regex
-patterns on the transcribed text). Paralinguistic signals — voice
-cracking, sobbing, pressured speech, prosodic flatness — are real
-gaps that transcript-only classification cannot capture. A user
-saying "I'm fine" through tears is classified as level 0 by the
-text gate.
+### Messaging Channels
 
-Shipping this requires either a curated distressed-voice dataset
-(ethically fraught to gather) or a validated off-the-shelf acoustic
-classifier (not a solved problem). Calendar-gated on dataset and
-model maturity.
+Adapters for Telegram, WhatsApp, and Discord. The `Channel` enum
+already has slots (`Channel.TELEGRAM`, `Channel.WHATSAPP`); the
+agent graph is channel-agnostic. Each adapter maps platform message
+formats to `AgentInput` / `AgentOutput`. Crisis responses would need
+channel-specific formatting (inline buttons, embeds).
 
-## Graph Memory
+### Acoustic Crisis Detection
+
+Voice mode currently uses transcript-only crisis detection. Real
+gaps: voice cracking, sobbing, pressured speech, prosodic flatness.
+A user saying "I'm fine" through tears scores level 0.
+
+Requires either a curated distressed-voice dataset (ethically
+fraught) or a validated off-the-shelf acoustic classifier (not a
+solved problem). Calendar-gated on dataset and model maturity.
+
+### Graph Memory
 
 Graphiti + Neo4j for entity/relationship extraction from semantic
 facts. Enables relational reasoning: "you mentioned your sister and
-your work stress — they tend to co-occur." Replaces flat semantic
-fact retrieval with 1-hop graph expansion in `load_memory_node`.
+your work stress — they tend to co-occur." The wire frame exists
+(`agent/memory/graph_store.py` with `NullGraphMemoryStore`); the
+`graphiti-core` dependency is in `pyproject.toml` but the
+integration is intentionally disabled pending design.
 
-## Clinical Review
+### Background Consolidation
 
-A trained clinician reads the `knowledge/response_modes/*.md` files
-and `agent/therapeutic/prompts.py`, reviews the agent's responses
-across several dogfood sessions, and provides feedback on clinical
-quality. This is the last gate before "a trusted friend could try
-it" becomes a defensible claim. Requires a clinician's time, which
-is a calendar dependency more than an engineering one.
+Automatic fact merging, dormant marking, and a `consolidation_runs`
+log. Schema is defined (`ConsolidationProposal`,
+`ConsolidationRunRecord` in `agent/memory/models.py`); the
+implementation node is sketched but not wired into the graph. Adds
+`/memory restore` as an undo for destructive operations.
 
-## Background Consolidation
+### Clinical Review
 
-Automatic fact merging, dormant marking, and a
-`consolidation_runs` log. Adds `/memory restore` as an undo for
-destructive operations (`/memory forget`, `/memory clear`). The
-consolidation pass runs on a looser dedup threshold (0.85 Jaccard)
-than the hot-path dedup (0.95) because consolidation mistakes are
-observable via the log and correctable, while hot-path mistakes are
-not.
+A trained clinician reviews the `knowledge/response_modes/*.md`
+files, the prompt builders in `agent/therapeutic/prompts.py`, and
+agent responses across dogfood sessions. This is the gate before
+"a trusted friend could try it" becomes a defensible claim. Calendar
+dependency, not engineering.

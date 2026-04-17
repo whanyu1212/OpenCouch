@@ -1,74 +1,93 @@
 ---
 title: Crisis Gate
+sidebar_position: 2
 ---
 
 # Crisis Gate
 
-The crisis gate is the first non-negotiable safety boundary in OpenCouch.
+First node in the graph. Every message passes through it before
+memory loads, before routing, before response generation. Cannot be
+skipped.
 
-Every inbound turn is assessed before normal support continues.
+---
 
-## Current flow
+## Classification flow
 
-```text
-deterministic override check
-  -> obvious imminent risk or idiomatic safe case
-  -> otherwise classifier path
-  -> normalized crisis assessment
-  -> route decision
-```
+Four layers, each able to short-circuit:
 
-### Deterministic fast paths
+| Layer | What it does | Short-circuits when |
+|---|---|---|
+| **1. Override** | Imminent-risk or idiomatic-safe patterns | Obvious boundary case detected |
+| **2. Regex ladder** | Deterministic self-harm patterns | Clear match without ambiguity |
+| **3. LLM classifier** | Structured output with sharp level boundaries | LLM client available, no fast-path match |
+| **4. Normalization** | Final `CrisisAssessment` | Always runs — produces the route decision |
 
-Three hard-coded overrides fire before the LLM classifier is ever invoked:
+Most turns resolve at layer 1 or 2 without invoking the LLM.
+
+---
+
+## Fast paths
 
 | Path | Condition | Result |
 |---|---|---|
-| **Imminent-risk override** | Matches imminent self-harm or suicide patterns | Level 3 — immediate crisis response |
-| **Clear self-harm patterns** | Matches unambiguous self-harm language | Level 2 — safety check |
-| **Idiomatic-safe override** | Common safe phrases that happen to contain trigger words (e.g. "dying to try it") | Level 0 — no risk |
+| **Imminent risk** | Plan/intent language for self-harm or suicide | Level 3 — crisis response |
+| **Idiomatic safe** | Trigger words in safe phrases ("dying to try it") | Level 0 — pass through |
+| **Clear self-harm** | Unambiguous self-harm language | Level 2 — crisis response |
 
-### LLM fallback
+---
 
-When no deterministic path matches, the message is sent to a lightweight LLM classifier. The classifier returns a level with sharp boundaries — there is no fuzzy middle ground. Each level maps directly to a route decision.
+## Route decision
 
-## Why it exists
+| Route | Condition | Pipeline |
+|---|---|---|
+| `crisis` | `needs_crisis_response = true` | crisis_response → crisis_log → finalize |
+| `therapeutic` | `needs_crisis_response = false` | load_memory → therapeutic_subgraph → finalize |
 
-OpenCouch is not an emergency service, but users may disclose:
-- suicidal ideation
-- self-harm
-- imminent intent
-- ambiguous but concerning distress
+Expressed as `Command(goto=...)` — the only branching node in the
+graph.
 
-If those are treated as ordinary support turns, the failure is serious.
-
-## Response outcomes
-
-- `crisis_response`
-  - when clear risk requires immediate safety-oriented handling
-- `safety_check`
-  - when the message is concerning but still ambiguous
-- `support`
-  - when no crisis behavior is required
+---
 
 ## Privacy asymmetry
 
-The crisis log writes regardless of the user's memory mode. Even if the user has opted out of memory persistence or turned off proactive recall, crisis assessments are always recorded. This is an intentional asymmetry — safety telemetry is not subject to user memory preferences.
+Crisis log writes **regardless of memory mode**:
 
-The `/memory purge-crisis [days]` command enforces a 90-day retention policy: crisis log entries older than the specified window are permanently deleted.
+| In incognito | Behavior |
+|---|---|
+| `user_id_or_null` | `None` — no identity persisted |
+| `session_id_opaque` | SHA-256 hash, no reverse mapping |
+| Event recorded? | **Yes** — safety audit trail preserved |
+
+Retention: 90 days. `/memory purge-crisis [days]` enforces the
+window (exclusive boundary — cutoff date itself preserved).
+
+---
 
 ## Diagnostics
 
-The crisis gate populates three keys in `state["diagnostics"]`:
-
 | Key | Value |
 |---|---|
-| `crisis_gate_ms` | Wall-clock time for the full crisis assessment |
-| `crisis_classifier_path` | Which path resolved the assessment: `deterministic` or `llm` |
-| `crisis_level` | Final normalized level (0–3) |
+| `crisis_gate_ms` | Wall-clock time for the full assessment |
+| `crisis_classifier_path` | `deterministic` / `llm_fallback` / `override` |
+| `crisis_level` | Normalized level (0–3) |
 
-## Important rule
+---
 
-The normal reply path should not proceed until the crisis gate finishes.
+## Design rules
 
-Safety sequencing matters more than shaving latency off the first response.
+| Rule | Why |
+|---|---|
+| Response pipeline waits for the gate | Safety sequencing > latency |
+| RetryPolicy(max_attempts=2) | Defense-in-depth for transient failures |
+| 42-case eval dataset | Covers imminent risk, clear self-harm, idiomatic-safe, boundary cases |
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `agent/nodes/crisis_gate.py` | Override detection, deterministic ladder, LLM fallback, normalization |
+| `agent/nodes/crisis_response.py` | PFA-overlay response + web-searched local resources |
+| `agent/nodes/crisis_log.py` | Always-on audit record writer |
+| `agent/memory/crisis_log.py` | Backend protocol + in-memory + null |
+| `agent/memory/sqlite_crisis_log.py` | SQLite backend with 90-day retention |
+| `eval/runners/crisis_gate_eval.py` | Deterministic eval runner |
