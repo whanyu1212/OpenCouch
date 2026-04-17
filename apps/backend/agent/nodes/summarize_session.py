@@ -52,10 +52,11 @@ Design rules (mirror the extract_facts conventions):
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.models import (
     SessionArc,
     StoredSessionArc,
@@ -74,12 +75,6 @@ if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
-
-
-def _iso_now() -> str:
-    """Return the current UTC time in ISO-8601 format with 'Z' suffix."""
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _session_arc_to_stored(

@@ -2,6 +2,7 @@
 
 import pytest
 
+from agent.memory.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.models import Message, MessageRole
 from opencouch_cli.app import RunnerSession, handle_command
 
@@ -31,6 +32,19 @@ class FakeRuntime:
         self.end_session_returns: object | None = None
         self.end_session_calls: list[str] = []
 
+        # v0.10: session-feedback tracking. Same split pattern as
+        # end_session. ``record_feedback_returns`` controls what the
+        # stub returns; ``record_feedback_calls`` captures the args.
+        self.record_feedback_returns: SessionFeedbackRecord | None = None
+        self.record_feedback_calls: list[tuple[str, FeedbackLabel, FeedbackSource]] = []
+
+        # v0.10: unified cross-method call log so tests can assert
+        # cross-method ordering (e.g., "feedback must be recorded
+        # before end_session"). Every stubbed method appends to this
+        # shared log. Per-method lists are kept for backward compat
+        # with existing assertions.
+        self.call_log: list[tuple[str, ...]] = []
+
     async def get_state(self, thread_id: str):
         return self.states.get(thread_id)
 
@@ -53,7 +67,21 @@ class FakeRuntime:
         """v0.4 stub: record the call and return the canned result."""
 
         self.end_session_calls.append(thread_id)
+        self.call_log.append(("end_session", thread_id))
         return self.end_session_returns
+
+    async def record_session_feedback(
+        self,
+        thread_id: str,
+        *,
+        label: FeedbackLabel,
+        source: FeedbackSource,
+    ) -> SessionFeedbackRecord | None:
+        """v0.10 stub: record the call and return the canned result."""
+
+        self.record_feedback_calls.append((thread_id, label, source))
+        self.call_log.append(("record_feedback", thread_id, label, source))
+        return self.record_feedback_returns
 
 
 def _session() -> RunnerSession:
@@ -297,11 +325,102 @@ async def test_memory_unknown_subcommand_warns(monkeypatch) -> None:
 # monkey-patched, same pattern as the existing CLI tests.
 
 
+def _patch_feedback_prompt_skip(monkeypatch) -> None:
+    """Stub the v0.10 feedback prompt to return ``None`` (user skipped).
+
+    Prevents the real ``Prompt.ask`` from blocking on stdin during
+    tests. Every test that exercises ``/end`` or ``/exit`` save=y
+    needs this.
+    """
+    monkeypatch.setattr("opencouch_cli.app._prompt_for_session_feedback", lambda: None)
+
+
+# ─── v0.10 feedback-prompt helper (direct unit tests) ────────────────
+#
+# These tests exercise the label-mapping and decline-path contracts
+# of ``_prompt_for_session_feedback`` directly. The end-to-end CLI
+# tests above stub the helper out to avoid stdin blocking; here we
+# patch ``Prompt.ask`` itself so the helper's own branching is
+# actually covered.
+
+
+@pytest.mark.parametrize(
+    "response, expected",
+    [
+        ("y", "positive"),
+        ("n", "negative"),
+        ("s", "skip"),
+        ("Y", "positive"),  # case-insensitive
+        ("N", "negative"),
+        ("S", "skip"),
+        ("  y  ", "positive"),  # whitespace-tolerant
+        ("", None),  # bare Enter
+        ("garbage", None),  # out-of-set → declined
+    ],
+)
+def test_prompt_for_session_feedback_maps_responses(
+    monkeypatch, response, expected
+) -> None:
+    """The helper maps explicit ``y``/``n``/``s`` (case- and whitespace-
+    tolerant) to the correct label, and anything else — including an
+    empty string — returns ``None``.
+
+    This is the label-mapping half of the contract; the exception
+    half is covered by the dedicated KeyboardInterrupt / EOFError
+    tests below.
+    """
+
+    from opencouch_cli.app import _prompt_for_session_feedback
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.Prompt.ask",
+        staticmethod(lambda *args, **kwargs: response),
+    )
+    assert _prompt_for_session_feedback() == expected
+
+
+def test_prompt_for_session_feedback_handles_keyboard_interrupt(
+    monkeypatch,
+) -> None:
+    """Ctrl-C during the prompt must be swallowed by the helper and
+    surface as ``None`` — the caller writes no record, the farewell
+    still fires. Prevents a user's accidental Ctrl-C from crashing
+    the session-end flow."""
+
+    from opencouch_cli.app import _prompt_for_session_feedback
+
+    def _raise_kbi(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_raise_kbi))
+    # Must return None, NOT propagate.
+    assert _prompt_for_session_feedback() is None
+
+
+def test_prompt_for_session_feedback_handles_eof(monkeypatch) -> None:
+    """EOFError (piped stdin, subprocess invocation without a TTY)
+    must be swallowed the same way as KeyboardInterrupt.
+
+    Without this guard, running ``echo 'hi' | opencouch_cli ... /end``
+    would crash the CLI at the prompt step even though the user
+    never saw the prompt.
+    """
+
+    from opencouch_cli.app import _prompt_for_session_feedback
+
+    def _raise_eof(*args, **kwargs):
+        raise EOFError
+
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_raise_eof))
+    assert _prompt_for_session_feedback() is None
+
+
 @pytest.mark.asyncio
 async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
     """/end should invoke runtime.end_session(thread_id) and then
     terminate the session by returning False from handle_command."""
 
+    _patch_feedback_prompt_skip(monkeypatch)
     monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
         "opencouch_cli.app.render_info", lambda message, style="panel": None
@@ -315,6 +434,8 @@ async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
 
     assert should_continue is False
     assert runtime.end_session_calls == [session.thread_id]
+    # No feedback prompted (stubbed to None) → no record written
+    assert runtime.record_feedback_calls == []
 
 
 @pytest.mark.asyncio
@@ -324,6 +445,7 @@ async def test_end_command_renders_summary_when_arc_returned(
     """When the summarizer returns a StoredSessionArc, the CLI should
     render it via render_session_summary before the farewell."""
 
+    _patch_feedback_prompt_skip(monkeypatch)
     rendered_arcs: list[object] = []
     farewell_calls: list[str] = []
 
@@ -360,6 +482,7 @@ async def test_end_command_skips_summary_render_when_none_returned(
     or silent failure), render_session_summary should NOT be called.
     Only the farewell is rendered."""
 
+    _patch_feedback_prompt_skip(monkeypatch)
     rendered_arcs: list[object] = []
     farewell_calls: list[str] = []
 
@@ -389,6 +512,8 @@ async def test_end_command_degrades_on_runtime_exception(monkeypatch) -> None:
     should catch it, render an info message, and still exit cleanly
     rather than crashing the loop."""
 
+    _patch_feedback_prompt_skip(monkeypatch)
+
     async def _raising_end_session(thread_id, *, llm_client=None):
         raise RuntimeError("simulated runtime crash")
 
@@ -413,6 +538,154 @@ async def test_end_command_degrades_on_runtime_exception(monkeypatch) -> None:
         style == "warning" and "Something went wrong" in msg
         for style, msg in info_messages
     )
+
+
+# ─── v0.10 session-feedback capture ──────────────────────────────────
+#
+# The v0.10 session-feedback collector captures an optional thumbs
+# rating before summarization. Tests exercise both end-session
+# surfaces that route through ``_summarize_and_render``: ``/end`` and
+# ``/exit`` (save=y branch). ``/exit`` save=n is covered separately
+# to pin the "no feedback prompt, no summary" contract.
+
+
+@pytest.mark.asyncio
+async def test_end_command_records_feedback_before_summary(monkeypatch) -> None:
+    """When the user provides a feedback label at ``/end``, the CLI
+    must call ``record_session_feedback`` with the correct source
+    BEFORE ``end_session``. The ordering invariant is the whole
+    point of the feedback-first contract — a backend outage during
+    feedback must not block summarization, but feedback must be
+    attempted first so the label still lands when summary fails."""
+
+    # User says "positive" — feedback prompt returns "positive".
+    monkeypatch.setattr(
+        "opencouch_cli.app._prompt_for_session_feedback", lambda: "positive"
+    )
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info", lambda message, style="panel": None
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.end_session_returns = None
+
+    should_continue = await handle_command("/end", session, runtime)
+
+    assert should_continue is False
+    # Feedback recorded with source="cli_end".
+    assert runtime.record_feedback_calls == [(session.thread_id, "positive", "cli_end")]
+    # end_session also fired.
+    assert runtime.end_session_calls == [session.thread_id]
+    # Ordering invariant: feedback before summary.
+    # Filter the unified call_log down to the two methods we care about
+    # and check the first two entries' method names.
+    ordered = [entry[0] for entry in runtime.call_log]
+    assert ordered == ["record_feedback", "end_session"], (
+        f"Expected feedback before summary, got {ordered}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_end_command_skips_feedback_when_prompt_returns_none(
+    monkeypatch,
+) -> None:
+    """When the user declines to rate (Enter / Ctrl-C / EOF),
+    ``_prompt_for_session_feedback`` returns None and no feedback
+    record is written. Summarization still runs."""
+
+    monkeypatch.setattr("opencouch_cli.app._prompt_for_session_feedback", lambda: None)
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info", lambda message, style="panel": None
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/end", session, runtime)
+
+    assert should_continue is False
+    # No feedback recorded.
+    assert runtime.record_feedback_calls == []
+    # But summary still ran.
+    assert runtime.end_session_calls == [session.thread_id]
+
+
+@pytest.mark.asyncio
+async def test_exit_save_yes_records_feedback_with_cli_exit_source(
+    monkeypatch,
+) -> None:
+    """``/exit`` with save=y should trigger the same feedback capture
+    flow as ``/end``, but with ``source="cli_exit"`` to distinguish
+    the two surfaces in analytics."""
+
+    # Prompt.ask answers the save confirmation with "y". The feedback
+    # helper is patched directly (not through Prompt.ask) so this
+    # test doesn't depend on the prompt-to-label mapping.
+    monkeypatch.setattr(
+        "opencouch_cli.app.Prompt.ask",
+        staticmethod(lambda *args, **kwargs: "y"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app._prompt_for_session_feedback", lambda: "negative"
+    )
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info", lambda message, style="panel": None
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/exit", session, runtime)
+
+    assert should_continue is False
+    # Feedback recorded with source="cli_exit" (not cli_end).
+    assert runtime.record_feedback_calls == [
+        (session.thread_id, "negative", "cli_exit")
+    ]
+    assert runtime.end_session_calls == [session.thread_id]
+    # Ordering invariant holds here too.
+    ordered = [entry[0] for entry in runtime.call_log]
+    assert ordered == ["record_feedback", "end_session"]
+
+
+@pytest.mark.asyncio
+async def test_exit_save_no_skips_both_feedback_and_summary(monkeypatch) -> None:
+    """``/exit`` with save=n must skip BOTH the feedback prompt AND
+    the summary. The user said "don't save my conversation"; asking
+    for a rating on that branch would be inconsistent."""
+
+    # Prompt.ask returns "n" for the save confirmation.
+    monkeypatch.setattr(
+        "opencouch_cli.app.Prompt.ask",
+        staticmethod(lambda *args, **kwargs: "n"),
+    )
+
+    # Feedback prompt should never fire — stub to a raising callable
+    # so the test fails loudly if it does.
+    def _fail_if_called() -> None:
+        raise AssertionError("feedback prompt should not fire on /exit save=n")
+
+    monkeypatch.setattr(
+        "opencouch_cli.app._prompt_for_session_feedback", _fail_if_called
+    )
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info", lambda message, style="panel": None
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/exit", session, runtime)
+
+    assert should_continue is False
+    # Neither feedback nor summary should have been invoked.
+    assert runtime.record_feedback_calls == []
+    assert runtime.end_session_calls == []
 
 
 # ─── v0.8 /memory list rendering — object column ──────────────────────
@@ -561,9 +834,11 @@ class FakeProceduralRuntime:
     store starts empty and each test writes to it via the helpers
     before running the CLI command.
 
-    Also exposes ``crisis_log_backend`` and ``memory_mode`` because
-    ``render_memory_status`` reads those; they can be any non-None
-    value since the status command just renders their string form.
+    Also exposes ``crisis_log_backend``, ``session_feedback_backend``,
+    and ``memory_mode`` because ``render_memory_status`` reads all
+    three. They can be any value including ``None``; the panel uses
+    defensive ``getattr(..., "arecord_count", None)`` so a missing
+    backend falls through to the 0 default.
     """
 
     def __init__(self) -> None:
@@ -571,6 +846,7 @@ class FakeProceduralRuntime:
 
         self.memory_store = OpenCouchMemoryStore()
         self.crisis_log_backend = None
+        self.session_feedback_backend = None
         self.memory_mode = "persistent"
 
 

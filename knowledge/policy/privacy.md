@@ -11,6 +11,10 @@ Operational preference:
 - explicit user control
 - clear distinction between transcript history and extracted memory
 
+Always-on subsystems (write regardless of memory mode):
+- crisis log: classifier metadata + outcome flags, no user text, 90-day retention
+- session feedback: end-of-session thumbs label only (positive/negative/skip), no user text, 180-day retention
+
 Memory quality preference:
 - prefer typed memory over free-text memory when possible
 - only store information that is stable, repeated, or explicitly stated

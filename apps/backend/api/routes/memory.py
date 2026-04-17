@@ -56,12 +56,14 @@ async def memory_status(
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
     crisis_log = runtime.crisis_log_backend
+    session_feedback = runtime.session_feedback_backend
 
     counts: dict[str, int] = {}
     for kind in ("semantic", "episodic", "procedural"):
         counts[kind] = await store.arecord_count((owner_id, kind))
 
     crisis_count = await crisis_log.arecord_count()
+    feedback_count = await session_feedback.arecord_count()
 
     profile = await aget_procedural_profile(store, user_id=owner_id)
 
@@ -70,6 +72,7 @@ async def memory_status(
         owner_id=owner_id,
         counts=counts,
         crisis_log_count=crisis_count,
+        session_feedback_count=feedback_count,
         proactive_recall_enabled=profile.proactive_recall_enabled,
     )
 
