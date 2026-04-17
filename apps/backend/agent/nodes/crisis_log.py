@@ -20,33 +20,27 @@ Phase 1 v0.1 scope:
 
 from __future__ import annotations
 
-import hashlib
 import logging
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from langgraph.runtime import Runtime
 
+from agent.memory.hashing import hash_session_id as _hash_session_id
+from agent.memory.hashing import iso_now
 from agent.memory.models import CrisisLogRecord
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
+# Backward-compat: ``_hash_session_id`` used to live in this module.
+# It's now shared across memory subsystems (see agent/memory/hashing.py),
+# but existing imports like ``from agent.nodes.crisis_log import
+# _hash_session_id`` keep working via the alias above. The semantics
+# are identical — None/empty -> ``"__no_session_id__"`` placeholder,
+# otherwise SHA-256 of the UTF-8 bytes.
+__all__ = ["_hash_session_id", "run_crisis_log_node"]
+
 logger = logging.getLogger(__name__)
-
-
-def _hash_session_id(session_id: str | None) -> str:
-    """Return a SHA-256 hash of the session id, padded if None.
-
-    Used for the ``session_id_opaque`` field. A stable hash means two
-    records from the same session share an opaque identifier without
-    exposing the original session id. When session_id is None (very
-    rare, but possible in bare-minimum test fixtures), we hash a
-    placeholder so the field is always populated.
-    """
-
-    source = session_id or "__no_session_id__"
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
 async def run_crisis_log_node(
@@ -103,7 +97,7 @@ async def run_crisis_log_node(
         id=str(uuid4()),
         session_id_opaque=_hash_session_id(state.get("session_id")),
         user_id_or_null=state.get("user_id"),
-        detected_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        detected_at=iso_now(),
         level=crisis.level,  # type: ignore[arg-type]
         override_kind=override_kind,
         classifier_path=classifier_path,

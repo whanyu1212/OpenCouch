@@ -10,11 +10,20 @@ callers.
 Instead, the API models are thin wrappers that map to/from the
 internal types in the route handlers. This keeps the API surface
 stable even if the internal state schema evolves.
+
+Narrow exception: :data:`agent.memory.models.FeedbackLabel` is
+re-exported directly into ``EndSessionRequest.feedback``. It is a
+three-choice string literal (``"positive"`` / ``"negative"`` /
+``"skip"``) that IS the public contract for session feedback —
+there's no internal detail to hide, so a thin wrapper would be
+pure duplication.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+
+from agent.memory.models import FeedbackLabel
 
 
 # ── Request models ──────────────────────────────────────────────────
@@ -38,12 +47,23 @@ class ChatRequest(BaseModel):
 
 
 class EndSessionRequest(BaseModel):
-    """POST /api/threads/{thread_id}/end request body."""
+    """POST /api/threads/{thread_id}/end request body.
 
-    # No required fields — thread_id comes from the path parameter.
-    # The body exists so we can add optional fields later (e.g.,
-    # a custom farewell message) without changing the endpoint shape.
-    pass
+    All fields optional — the body exists so we can add per-request
+    hints without changing the endpoint shape. Requests posting an
+    empty body (``{}`` or no body at all) still work.
+    """
+
+    feedback: FeedbackLabel | None = Field(
+        default=None,
+        description=(
+            "Optional end-of-session rating: 'positive', 'negative', "
+            "or 'skip'. When set, written to the session_feedback "
+            "store before summarization runs. When null or omitted, "
+            "no feedback record is created — summarization proceeds "
+            "as usual."
+        ),
+    )
 
 
 # ── Response models ─────────────────────────────────────────────────
@@ -129,6 +149,14 @@ class MemoryStatusResponse(BaseModel):
         "semantic, episodic, procedural.",
     )
     crisis_log_count: int
+    session_feedback_count: int = Field(
+        default=0,
+        description=(
+            "Total number of session-feedback records across all "
+            "sessions. Surfaced for observability dashboards and the "
+            "CLI's ``/memory status`` panel."
+        ),
+    )
     proactive_recall_enabled: bool
 
 

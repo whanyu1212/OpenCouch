@@ -26,6 +26,7 @@ async def runtime():
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
     )
     async with rt:
         yield rt
@@ -230,6 +231,110 @@ class TestThreads:
         # Mode should be a string (the therapeutic mode that shaped the reply)
         assert assistant_msgs[0]["mode"] is not None
 
+    # ── v0.10 end-session feedback ──────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_end_session_without_body_writes_no_feedback(
+        self, client, runtime
+    ) -> None:
+        """POST /end with no body should skip the feedback write.
+
+        Backward-compat: clients that never update to POSTing a body
+        must keep working. No feedback record should land in the
+        store.
+        """
+
+        # Seed one turn so there's state to summarize.
+        await client.post(
+            "/api/chat",
+            json={"message": "hello", "thread_id": "end-no-body"},
+        )
+
+        resp = await client.post("/api/threads/end-no-body/end")
+        assert resp.status_code == 200
+
+        # No feedback record.
+        assert await runtime.session_feedback_backend.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_end_session_with_null_feedback_writes_no_record(
+        self, client, runtime
+    ) -> None:
+        """Explicit ``{"feedback": null}`` is equivalent to no body.
+
+        Forces us to cover the ``body.feedback is not None`` guard in
+        the route handler — missing vs. explicitly-null should both
+        short-circuit before calling ``record_session_feedback``.
+        """
+
+        await client.post(
+            "/api/chat",
+            json={"message": "hello", "thread_id": "end-null-fb"},
+        )
+
+        resp = await client.post(
+            "/api/threads/end-null-fb/end", json={"feedback": None}
+        )
+        assert resp.status_code == 200
+        assert await runtime.session_feedback_backend.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_end_session_with_positive_feedback_writes_record(
+        self, client, runtime
+    ) -> None:
+        """POST with ``{"feedback": "positive"}`` should write one
+        record with ``source="api_end"`` BEFORE summarization runs.
+        Summarization proceeds as usual (HTTP response shape unchanged).
+        """
+
+        await client.post(
+            "/api/chat",
+            json={"message": "hello", "thread_id": "end-with-fb"},
+        )
+
+        resp = await client.post(
+            "/api/threads/end-with-fb/end",
+            json={"feedback": "positive"},
+        )
+        assert resp.status_code == 200
+        # The response shape is unchanged — feedback write status is
+        # NOT surfaced. Summarization may return None (incognito / no
+        # LLM / thin session) which the handler converts to a plain
+        # dict; either shape is accepted.
+        data = resp.json()
+        assert "summary" in data or "themes" in data
+
+        # Exactly one feedback record in the store.
+        from agent.memory.hashing import hash_session_id
+
+        records = await runtime.session_feedback_backend.alist_by_session(
+            hash_session_id("end-with-fb")
+        )
+        assert len(records) == 1
+        assert records[0].label == "positive"
+        assert records[0].source == "api_end"
+
+    @pytest.mark.asyncio
+    async def test_end_session_rejects_invalid_feedback_label(
+        self, client, runtime
+    ) -> None:
+        """A feedback value that isn't ``positive``/``negative``/``skip``
+        should be rejected at the Pydantic boundary with HTTP 422,
+        BEFORE any graph or persistence code runs."""
+
+        await client.post(
+            "/api/chat",
+            json={"message": "hello", "thread_id": "end-bad-fb"},
+        )
+
+        resp = await client.post(
+            "/api/threads/end-bad-fb/end",
+            json={"feedback": "awesome"},
+        )
+        assert resp.status_code == 422
+        # Nothing written on a 422.
+        assert await runtime.session_feedback_backend.arecord_count() == 0
+
 
 # ── Memory ──────────────────────────────────────────────────────────
 
@@ -250,6 +355,33 @@ class TestMemory:
         assert "episodic" in data["counts"]
         assert "procedural" in data["counts"]
         assert "proactive_recall_enabled" in data
+        # v0.10: feedback count surfaced alongside crisis_log_count.
+        assert "crisis_log_count" in data
+        assert "session_feedback_count" in data
+        assert data["session_feedback_count"] == 0  # empty on fresh runtime
+
+    @pytest.mark.asyncio
+    async def test_memory_status_reflects_recorded_feedback(
+        self, client, runtime
+    ) -> None:
+        """After POST /end with a feedback label, /memory/status should
+        report session_feedback_count >= 1."""
+
+        await client.post(
+            "/api/chat",
+            json={"message": "hello", "thread_id": "fb-status-test"},
+        )
+        await client.post(
+            "/api/threads/fb-status-test/end",
+            json={"feedback": "skip"},
+        )
+
+        resp = await client.get(
+            "/api/memory/status",
+            params={"thread_id": "fb-status-test"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["session_feedback_count"] >= 1
 
     @pytest.mark.asyncio
     async def test_delete_fact_404_when_empty(self, client) -> None:

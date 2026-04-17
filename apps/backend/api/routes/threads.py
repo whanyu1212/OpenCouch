@@ -8,11 +8,12 @@ POST /api/threads/{id}/end — end session and summarize
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from agent.persistence import PersistentAgentRuntime
 from api.dependencies import get_llm_client, get_runtime
 from api.models import (
+    EndSessionRequest,
     MessageResponse,
     SessionArcResponse,
     ThreadSummaryResponse,
@@ -96,6 +97,7 @@ async def get_thread_history(
 @router.post("/{thread_id}/end")
 async def end_session(
     thread_id: str,
+    body: EndSessionRequest = Body(default_factory=EndSessionRequest),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
 ) -> SessionArcResponse | dict:
@@ -105,8 +107,31 @@ async def end_session(
     and writes a ``StoredSessionArc`` to episodic memory. Returns
     the arc data on success, or a message explaining why no summary
     was produced (too few turns, no LLM client, incognito mode).
+
+    Optional ``body.feedback`` accepts a feedback label
+    (``"positive"``, ``"negative"``, ``"skip"``). When provided, it
+    is written to the session-feedback store via
+    :meth:`PersistentAgentRuntime.record_session_feedback` BEFORE
+    summarization runs, with ``source="api_end"``. Clients POSTing
+    with no body or ``{"feedback": null}`` skip the feedback step
+    — summarization runs unchanged. Feedback write failures are
+    best-effort and never block summarization.
+
+    The response shape is unchanged from prior versions — feedback
+    write status is not surfaced. Feedback persistence is orthogonal
+    to summarization.
     """
 
+    # Step 1: optional best-effort feedback capture. Runtime never
+    # raises — a backend outage returns None, we continue.
+    if body.feedback is not None:
+        await runtime.record_session_feedback(
+            thread_id,
+            label=body.feedback,
+            source="api_end",
+        )
+
+    # Step 2: existing summarization flow, unchanged.
     arc = await runtime.end_session(thread_id, llm_client=llm_client)
 
     if arc is None:

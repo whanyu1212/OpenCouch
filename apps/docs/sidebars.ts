@@ -52,7 +52,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Observability',
-      items: ['observability/overview']
+      items: ['observability/overview', 'observability/session-feedback']
     },
     'roadmap',
   ]

@@ -26,11 +26,17 @@ import pytest
 
 from agent.memory.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.modes import MemoryMode
+from agent.memory.session_feedback import (
+    InMemorySessionFeedbackBackend,
+    NullSessionFeedbackBackend,
+)
 from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.memory.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import (
     DEFAULT_CRISIS_LOG_DB_PATH,
+    DEFAULT_FEEDBACK_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     PersistentAgentRuntime,
 )
@@ -47,19 +53,27 @@ def test_default_memory_db_path_is_distinct_from_thread_db() -> None:
 
     from agent.persistence import DEFAULT_THREAD_DB_PATH
 
-    assert DEFAULT_MEMORY_DB_PATH != DEFAULT_THREAD_DB_PATH
-    assert DEFAULT_CRISIS_LOG_DB_PATH != DEFAULT_THREAD_DB_PATH
-    assert DEFAULT_MEMORY_DB_PATH != DEFAULT_CRISIS_LOG_DB_PATH
+    # All four OpenCouch-owned SQLite files must be distinct from
+    # each other AND from the LangGraph thread DB. Crossed paths
+    # would mix schemas in ways that break on future migrations.
+    paths = {
+        DEFAULT_THREAD_DB_PATH,
+        DEFAULT_MEMORY_DB_PATH,
+        DEFAULT_CRISIS_LOG_DB_PATH,
+        DEFAULT_FEEDBACK_DB_PATH,
+    }
+    assert len(paths) == 4, f"expected 4 distinct paths, got {paths}"
 
 
 def test_default_paths_live_next_to_thread_db() -> None:
-    """All three OpenCouch-owned SQLite files should sit in the same
+    """All four OpenCouch-owned SQLite files should sit in the same
     directory (``apps/backend/``) so operators can find them together."""
 
     from agent.persistence import DEFAULT_THREAD_DB_PATH
 
     assert DEFAULT_MEMORY_DB_PATH.parent == DEFAULT_THREAD_DB_PATH.parent
     assert DEFAULT_CRISIS_LOG_DB_PATH.parent == DEFAULT_THREAD_DB_PATH.parent
+    assert DEFAULT_FEEDBACK_DB_PATH.parent == DEFAULT_THREAD_DB_PATH.parent
 
 
 def test_default_paths_are_in_store_dir() -> None:
@@ -68,8 +82,10 @@ def test_default_paths_are_in_store_dir() -> None:
 
     assert DEFAULT_MEMORY_DB_PATH.parent.name == ".store"
     assert DEFAULT_CRISIS_LOG_DB_PATH.parent.name == ".store"
+    assert DEFAULT_FEEDBACK_DB_PATH.parent.name == ".store"
     assert DEFAULT_MEMORY_DB_PATH.suffix == ".sqlite3"
     assert DEFAULT_CRISIS_LOG_DB_PATH.suffix == ".sqlite3"
+    assert DEFAULT_FEEDBACK_DB_PATH.suffix == ".sqlite3"
 
 
 # ─── Incognito mode — in-memory backings ───────────────────────────────
@@ -276,3 +292,109 @@ async def test_init_without_enter_still_closes_cleanly() -> None:
     # Closing them should not raise.
     await runtime.memory_store.aclose()
     await runtime.crisis_log_backend.aclose()
+    await runtime.session_feedback_backend.aclose()
+
+
+# ─── v0.10 session-feedback backend selection ──────────────────────────
+
+
+def test_incognito_mode_uses_in_memory_feedback_by_default() -> None:
+    """Incognito mode should pick the in-memory feedback backend —
+    nothing hits disk. The feedback collector is always-on regardless
+    of mode, but incognito keeps it ephemeral."""
+
+    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
+    assert not isinstance(
+        runtime.session_feedback_backend, SqliteSessionFeedbackBackend
+    )
+
+
+def test_local_mode_uses_sqlite_feedback_by_default() -> None:
+    """Local mode should pick the SQLite feedback backend at the
+    default feedback path."""
+
+    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
+    assert runtime.session_feedback_backend.sqlite_path == Path(
+        DEFAULT_FEEDBACK_DB_PATH
+    )
+
+
+def test_synced_mode_uses_sqlite_feedback_by_default() -> None:
+    """SYNCED mode behaves like LOCAL for v0.10 — SQLite-backed
+    feedback at the default path. Pins the behavior so SYNCED mode
+    callers don't silently lose feedback when the remote backend
+    eventually ships."""
+
+    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.SYNCED)
+    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
+
+
+def test_local_mode_accepts_custom_feedback_sqlite_path(tmp_path: Path) -> None:
+    """Operators and test fixtures can override the default path —
+    useful for pointing feedback at an isolated tmp file."""
+
+    custom = tmp_path / "custom_feedback.sqlite3"
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,
+        feedback_sqlite_path=custom,
+    )
+    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
+    assert runtime.session_feedback_backend.sqlite_path == custom
+
+
+def test_explicit_feedback_backend_overrides_mode_based_selection() -> None:
+    """Passing an explicit ``session_feedback_backend`` should bypass
+    the mode-based default — matches the crisis_log and memory_store
+    override contract so tests can inject Null/Mock backends
+    regardless of mode."""
+
+    custom_backend = NullSessionFeedbackBackend()
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,  # would normally pick SQLite
+        session_feedback_backend=custom_backend,
+    )
+    assert runtime.session_feedback_backend is custom_backend
+
+
+def test_feedback_backend_lazy_connection_in_init() -> None:
+    """The SQLite feedback backend should NOT open its connection
+    during ``__init__``. Matches the crisis_log and memory_store
+    lazy-open contract."""
+
+    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    backend = runtime.session_feedback_backend
+    assert isinstance(backend, SqliteSessionFeedbackBackend)
+    assert backend._connection is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_aexit_closes_feedback_backend() -> None:
+    """``PersistentAgentRuntime.__aexit__`` must call ``aclose`` on
+    the feedback backend, symmetric to the memory store and
+    crisis_log lifecycle. A leaked aiosqlite connection on exit
+    would accumulate across CLI / API sessions."""
+
+    class _CountingBackend(InMemorySessionFeedbackBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_calls = 0
+
+        async def aclose(self) -> None:  # type: ignore[override]
+            self.close_calls += 1
+            await super().aclose()
+
+    backend = _CountingBackend()
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        session_feedback_backend=backend,
+    )
+    async with runtime:
+        # Fine — nothing to assert here; we just want __aexit__ to fire.
+        pass
+
+    # Exactly one close call on the feedback backend.
+    assert backend.close_calls == 1
