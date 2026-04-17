@@ -166,6 +166,10 @@ body {
               border-color var(--oc-duration-base) var(--oc-ease-out);
 }
 
+html[data-theme='dark'] .navbar {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
 .navbar--fixed-top { position: sticky; top: 0; z-index: 200; }
 
 .navbar__brand {
@@ -335,6 +339,7 @@ html[data-theme='dark'] .prism-code {
 /* Code block header / title bar */
 .codeBlockTitle_node_modules-\\@docusaurus-theme-classic-lib-theme-CodeBlock-Content-styles-module,
 [class*='codeBlockTitle'] {
+  position: relative;
   font-family: var(--ifm-font-family-monospace) !important;
   font-size: 0.78rem !important;
   font-weight: 500 !important;
@@ -343,8 +348,22 @@ html[data-theme='dark'] .prism-code {
   border-bottom: 1px solid rgba(120, 184, 175, 0.14) !important;
   border-radius: var(--ifm-pre-border-radius) var(--ifm-pre-border-radius) 0 0 !important;
   color: var(--oc-teal-300) !important;
-  padding: 0.55rem 1.2rem !important;
+  padding: 0.55rem 1.2rem 0.55rem 3.45rem !important;
   letter-spacing: 0.02em;
+}
+
+.codeBlockTitle_node_modules-\\@docusaurus-theme-classic-lib-theme-CodeBlock-Content-styles-module::before,
+[class*='codeBlockTitle']::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 1.15rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ff5f56;
+  transform: translateY(-50%);
+  box-shadow: 14px 0 0 #ffbd2e, 28px 0 0 #27c93f;
 }
 
 /* Token colours — warm teal palette */
@@ -852,6 +871,11 @@ html[data-theme='dark'] .doc-card:hover {
   border-color: rgba(120, 184, 175, 0.36);
 }
 
+/* Disable the sweeping shimmer in dark mode to keep it calm and glare-free */
+html[data-theme='dark'] .doc-card::before {
+  display: none;
+}
+
 .doc-card__header {
   display: flex;
   align-items: center;
@@ -1260,6 +1284,61 @@ html[data-theme='dark'] .flow-badge {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ─── Mermaid overflow & responsiveness ─────────────────────────────────────── */
+.docusaurus-mermaid-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.5rem;
+  margin-bottom: var(--ifm-spacing-vertical);
+}
+
+.docusaurus-mermaid-container svg {
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+/* ─── TOC polish ─────────────────────────────────────────────────────────────── */
+.table-of-contents {
+  -webkit-mask-image: linear-gradient(to bottom, black 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 82%, transparent 100%);
+}
+
+.table-of-contents__link--active {
+  border-left: 2px solid var(--oc-accent);
+  padding-left: calc(1rem - 2px);
+  font-weight: 600;
+}
+
+/* ─── Footer gradient + glow ─────────────────────────────────────────────────── */
+.footer {
+  position: relative;
+  background: linear-gradient(180deg, #0f2927 0%, #0d2422 62%, #0b1f1d 100%);
+}
+
+.footer::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(120, 184, 175, 0.58) 24%,
+    rgba(120, 184, 175, 0.58) 76%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* ─── Dark mode depth refinements ───────────────────────────────────────────── */
+html[data-theme='dark'] .hero-visual {
+  box-shadow: var(--oc-shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme='dark'] .doc-card {
+  box-shadow: var(--oc-shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 /* ─── Scrollbar ──────────────────────────────────────────────────────────────── */

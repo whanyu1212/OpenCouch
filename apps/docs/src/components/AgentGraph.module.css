@@ -224,12 +224,43 @@
   color: #fca5a5;
 }
 
+.badgeRetry {
+  background: rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+}
+[data-theme='dark'] .badgeRetry {
+  background: rgba(96, 165, 250, 0.12);
+  color: #93c5fd;
+}
+
+.badgeReducer {
+  background: rgba(168, 85, 247, 0.08);
+  color: #7c3aed;
+}
+[data-theme='dark'] .badgeReducer {
+  background: rgba(192, 132, 252, 0.12);
+  color: #c4b5fd;
+}
+
+.badgeParallel {
+  background: rgba(245, 158, 11, 0.08);
+  color: #b45309;
+}
+[data-theme='dark'] .badgeParallel {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fcd34d;
+}
+
 /* ── Branch indicator ──────────────────────────────────────────────────────── */
+
+.branchContainer {
+  margin-top: 6px;
+}
 
 .branchRow {
   display: flex;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 4px;
   align-items: center;
   flex-wrap: wrap;
 }

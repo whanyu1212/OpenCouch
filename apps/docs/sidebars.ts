@@ -18,8 +18,17 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Agent',
       items: [
-        'agent/graph',
-        'agent/state',
+        {
+          type: 'category',
+          label: 'Agent Graph',
+          link: { type: 'doc', id: 'agent/graph' },
+          collapsed: false,
+          items: [
+            'agent/state',
+            'agent/nodes',
+            'agent/tools',
+          ],
+        },
         'agent/prompt-assembly',
         'agent/context-management',
         {

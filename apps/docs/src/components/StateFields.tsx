@@ -3,7 +3,7 @@ import styles from './StateFields.module.css';
 
 /* ── Data ───────────────────────────────────────────────────────────────────── */
 
-type Lifecycle = 'input' | 'persisted' | 'derived' | 'turn' | 'reserved';
+type Lifecycle = 'input' | 'persisted' | 'reducer' | 'turn' | 'loaded';
 
 interface FieldDef {
   name: string;
@@ -11,6 +11,7 @@ interface FieldDef {
   setBy: string;
   lifecycle: Lifecycle;
   desc: string;
+  reducer?: string;
 }
 
 interface GroupDef {
@@ -26,7 +27,7 @@ const GROUPS: GroupDef[] = [
     fields: [
       { name: 'message', type: 'str', setBy: 'caller', lifecycle: 'input', desc: 'Current user message being processed' },
       { name: 'channel', type: 'Channel', setBy: 'caller', lifecycle: 'input', desc: 'Normalized transport: TEST, WEB, SMS, WHATSAPP, TELEGRAM, VOICE' },
-      { name: 'user_id', type: 'str | None', setBy: 'caller', lifecycle: 'input', desc: 'Reserved for future auth and ownership checks' },
+      { name: 'user_id', type: 'str | None', setBy: 'caller', lifecycle: 'input', desc: 'Optional until auth/session plumbing exists, reserved for ownership checks' },
       { name: 'session_id', type: 'str | None', setBy: 'caller', lifecycle: 'input', desc: 'Thread identifier used by the persistence layer' },
       { name: 'installed_skills', type: 'list[str]', setBy: 'caller', lifecycle: 'input', desc: 'Skill names resolved into prompt behavior by the graph' },
     ],
@@ -34,65 +35,66 @@ const GROUPS: GroupDef[] = [
   {
     id: 'transcript', label: 'Transcript & history', icon: '\u2630',
     fields: [
-      { name: 'transcript', type: 'list[dict]', setBy: 'finalize_turn', lifecycle: 'persisted', desc: 'Full durable conversation record \u2014 source of truth for all context' },
-      { name: 'history', type: 'list[dict]', setBy: 'prepare_turn', lifecycle: 'derived', desc: 'Last 8 turns sliced from transcript, injected into prompts' },
-      { name: 'turn_count', type: 'int', setBy: 'prepare_turn', lifecycle: 'derived', desc: 'Count of user turns including current message' },
+      { name: 'history', type: 'Annotated[list[dict], operator.add]', setBy: 'build_initial_state + finalize_turn', lifecycle: 'reducer', desc: 'Accumulated via operator.add reducer. Each turn emits only new entries; the checkpointer merges them automatically across turns.', reducer: 'operator.add' },
+      { name: 'transcript', type: 'Annotated[list[dict], operator.add]', setBy: 'build_initial_state + finalize_turn', lifecycle: 'reducer', desc: 'Full durable conversation record. Same reducer semantics as history — each turn appends, never reconstructs.', reducer: 'operator.add' },
     ],
   },
   {
-    id: 'context', label: 'Session context', icon: '\u2261',
+    id: 'memory', label: 'Memory & working context', icon: '\u2261',
     fields: [
-      { name: 'active_concerns', type: 'list[str]', setBy: 'prepare_turn', lifecycle: 'derived', desc: 'Up to 3 labeled concerns: overwhelm, anxiety, grief, etc.' },
-      { name: 'open_loops', type: 'list[str]', setBy: 'prepare_turn', lifecycle: 'derived', desc: 'Up to 3 unresolved threads the agent should track' },
-      { name: 'current_goal', type: 'str | None', setBy: 'prepare_turn', lifecycle: 'derived', desc: 'Best-effort guess at what the user wants this session' },
-      { name: 'session_summary', type: 'str', setBy: 'prepare_turn', lifecycle: 'derived', desc: 'Rolling summary of concerns, goal, and recent themes' },
+      { name: 'working_memory', type: 'list[WorkingMemoryEntry]', setBy: 'load_memory_node', lifecycle: 'loaded', desc: 'Structured dicts: SemanticWorkingMemoryEntry (evidence_quote) and EpisodicWorkingMemoryEntry (summary, themes, is_catch_up). Formatted on demand by prompt builders and CLI.' },
+      { name: 'memory.summary', type: 'str', setBy: 'load_memory_node', lifecycle: 'loaded', desc: 'Retrieval summary for diagnostics: hit counts, store sizes, retrieval path' },
+      { name: 'memory.procedural_rules', type: 'list[str]', setBy: 'load_memory_node', lifecycle: 'loaded', desc: 'Style rules from the user\'s procedural profile — directives that shape response style' },
+      { name: 'memory.proactive_recall_enabled', type: 'bool', setBy: 'load_memory_node', lifecycle: 'loaded', desc: 'Whether to surface recalled context proactively. From the procedural profile\'s recall toggle.' },
     ],
   },
   {
-    id: 'intent', label: 'Session intent & stage', icon: '\u2736',
+    id: 'progress', label: 'Session progress', icon: '\u2736',
     fields: [
-      { name: 'session_intent', type: 'str | None', setBy: 'prepare_turn', lifecycle: 'persisted', desc: 'Sticky session direction: CBT work, grounding, pattern reflection, venting, supportive conversation' },
-      { name: 'session_intent_source', type: 'str | None', setBy: 'prepare_turn', lifecycle: 'persisted', desc: 'How intent was set: "explicit" or "inferred"' },
-      { name: 'session_stage', type: 'str', setBy: 'session_stage node', lifecycle: 'persisted', desc: 'Conversation arc: opening, deepening, stabilizing, closing' },
-      { name: 'session_stage_source', type: 'str | None', setBy: 'session_stage node', lifecycle: 'persisted', desc: 'Deterministic logic or LLM refinement' },
-      { name: 'session_stage_reason', type: 'str', setBy: 'session_stage node', lifecycle: 'persisted', desc: 'Short rationale for debugging and evals' },
+      { name: 'progress', type: 'Annotated[SessionProgressState, _merge_dicts]', setBy: 'build_initial_state + nodes', lifecycle: 'reducer', desc: 'Uses _merge_dicts reducer so per-turn fields (turn_count, stage) merge with cross-turn fields (exercise_type, exercise_step) from the checkpoint.', reducer: '_merge_dicts' },
+      { name: 'progress.turn_count', type: 'int', setBy: 'build_initial_state', lifecycle: 'reducer', desc: 'Persistent callers derive from checkpoint; one-shot callers count from history' },
+      { name: 'progress.stage', type: 'str', setBy: 'build_initial_state', lifecycle: 'reducer', desc: 'Conversation arc: opening, deepening, stabilizing, closing' },
+      { name: 'progress.exercise_type', type: 'str | None', setBy: 'guided_exercise_node', lifecycle: 'reducer', desc: 'Multi-turn exercise identifier. Persists via merge reducer across turns without manual carry-forward.' },
+      { name: 'progress.exercise_step', type: 'int | None', setBy: 'guided_exercise_node', lifecycle: 'reducer', desc: 'Current step index within the active exercise. Cleared when exercise completes.' },
     ],
   },
   {
     id: 'safety', label: 'Safety & routing', icon: '\u26A0',
     fields: [
-      { name: 'crisis', type: 'CrisisAssessment', setBy: 'crisis_gate', lifecycle: 'turn', desc: 'Level 0\u20133, confidence, reason, needs_crisis_response, needs_clarification' },
-      { name: 'route', type: 'str', setBy: 'crisis_gate', lifecycle: 'turn', desc: '"crisis" or "therapeutic" \u2014 decides which subgraph runs' },
+      { name: 'crisis', type: 'CrisisAssessment', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: 'Level 0\u20133, confidence, reason, needs_crisis_response, needs_clarification' },
+      { name: 'routing.route', type: 'str', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: '"crisis" or "therapeutic" \u2014 decides which branch runs' },
+      { name: 'routing.mode', type: 'str', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'supportive, reflective, clarifying, psychoeducation, guided_exercise, closing' },
+      { name: 'routing.mode_source', type: 'str', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'How the mode was selected: keyword, llm, default, or crisis_gate' },
+      { name: 'routing.mode_type', type: 'ModeType', setBy: 'crisis_gate / dispatch', lifecycle: 'turn', desc: 'THERAPEUTIC, OPERATIONAL, or CRISIS' },
+      { name: 'routing.modality', type: 'str | None', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'Therapeutic modality: MI, CBT, ACT, DBT, grief, IPT, PFA, or None' },
     ],
   },
   {
     id: 'response', label: 'Response', icon: '\u2190',
     fields: [
-      { name: 'mode', type: 'str', setBy: 'router / crisis subgraph', lifecycle: 'turn', desc: 'supportive_conversation, safety_check, orientation, guided_exercise, psychoeducation, pattern_reflection, out_of_scope, realignment, crisis_response' },
-      { name: 'mode_source', type: 'str | None', setBy: 'therapeutic router', lifecycle: 'turn', desc: 'How the mode was selected: keyword, session_intent, llm, or default' },
-      { name: 'mode_type', type: 'ModeType', setBy: 'therapeutic/crisis router', lifecycle: 'turn', desc: 'Higher-level mode category: therapeutic, operational, or crisis' },
-      { name: 'active_modalities', type: 'list[str]', setBy: 'modality_selector', lifecycle: 'turn', desc: 'Active overlays: pfa (+ DBT skills), cbt, grief_support, act. MI applied as baseline via MODE_BASELINE_FILES.' },
-      { name: 'semantic_signals', type: 'dict[str, bool]', setBy: 'prepare_turn / routing', lifecycle: 'turn', desc: 'Cached semantic interpretation (13 boolean fields) shared by routing, modality selection, and prompt shaping' },
-      { name: 'response_guidance', type: 'str', setBy: 'therapeutic router', lifecycle: 'turn', desc: 'Turn-specific prompt shaping derived after mode selection' },
-      { name: 'response_type', type: 'ResponseKind', setBy: 'response node', lifecycle: 'turn', desc: '"therapeutic" or "crisis"' },
-      { name: 'response_text', type: 'str', setBy: 'response node', lifecycle: 'turn', desc: 'Generated reply from whichever node wins the route' },
+      { name: 'response.text', type: 'str', setBy: 'mode node / crisis_response', lifecycle: 'turn', desc: 'Generated reply from whichever node wins the route' },
+      { name: 'response.kind', type: 'ResponseKind', setBy: 'mode node', lifecycle: 'turn', desc: 'THERAPEUTIC or CRISIS' },
+      { name: 'response.guidance', type: 'str', setBy: 'mode node', lifecycle: 'turn', desc: 'Turn-specific prompt shaping hint' },
     ],
   },
   {
-    id: 'reserved', label: 'Reserved', icon: '\u2026',
+    id: 'diagnostics', label: 'Diagnostics', icon: '\u2699',
     fields: [
-      { name: 'working_memory', type: 'list[str]', setBy: '(future)', lifecycle: 'reserved', desc: 'Scratch space for retrieved facts \u2014 currently empty every turn' },
-      { name: 'should_persist_memory', type: 'bool', setBy: '(future)', lifecycle: 'reserved', desc: 'Signal to persist after turn \u2014 currently always false' },
+      { name: 'diagnostics', type: 'Annotated[dict, _merge_dicts]', setBy: 'all I/O nodes', lifecycle: 'reducer', desc: 'Per-turn timing and write-count metadata. Uses _merge_dicts reducer so nodes write their own keys independently \u2014 no manual dict spreading needed. Parallel extractors write simultaneously without racing.', reducer: '_merge_dicts' },
+      { name: 'diagnostics.load_memory_ms', type: 'float', setBy: 'load_memory_node', lifecycle: 'reducer', desc: 'Total time for memory retrieval (all 3 namespaces)' },
+      { name: 'diagnostics.crisis_gate_ms', type: 'float', setBy: 'crisis_gate_node', lifecycle: 'reducer', desc: 'Time for crisis classification (regex + optional LLM)' },
+      { name: 'diagnostics.extract_facts_ms', type: 'float', setBy: 'extract_facts_node', lifecycle: 'reducer', desc: 'Time for semantic fact extraction (LLM call)' },
+      { name: 'diagnostics.extract_procedural_ms', type: 'float', setBy: 'extract_procedural_node', lifecycle: 'reducer', desc: 'Time for procedural rule extraction (LLM call)' },
     ],
   },
 ];
 
 const LC: Record<Lifecycle, { label: string; cls: string }> = {
-  input:     { label: 'input',       cls: 'lcInput' },
-  persisted: { label: 'persisted',   cls: 'lcPersisted' },
-  derived:   { label: 're-derived',  cls: 'lcDerived' },
-  turn:      { label: 'turn-scoped', cls: 'lcTurn' },
-  reserved:  { label: 'reserved',    cls: 'lcReserved' },
+  input:  { label: 'input',        cls: 'lcInput' },
+  persisted: { label: 'persisted', cls: 'lcPersisted' },
+  reducer: { label: 'reducer',     cls: 'lcReducer' },
+  turn:   { label: 'turn-scoped',  cls: 'lcTurn' },
+  loaded: { label: 'loaded',       cls: 'lcLoaded' },
 };
 
 /* ── Component ──────────────────────────────────────────────────────────────── */
@@ -150,6 +152,9 @@ export default function StateFields() {
                           <code className={styles.fieldName}>{f.name}</code>
                           <span className={styles.fieldType}>{f.type}</span>
                           <span className={[styles.pill, styles.pillSmall, styles[lc.cls]].join(' ')}>{lc.label}</span>
+                          {f.reducer && (
+                            <span className={[styles.pill, styles.pillSmall, styles.lcReducer].join(' ')}>{f.reducer}</span>
+                          )}
                         </div>
                         <div className={styles.fieldRight}>
                           <span className={styles.fieldDesc}>{f.desc}</span>

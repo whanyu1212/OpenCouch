@@ -1,0 +1,71 @@
+---
+title: Tools
+sidebar_position: 3
+---
+
+import ToolRegistry from '@site/src/components/ToolRegistry';
+
+# Tools
+
+OpenCouch treats tools narrowly: a **tool** is an agent-invokable
+capability that reaches outside the graph's own state — today that
+means provider-native web search for crisis resources. Tools are
+deliberately scarce because every external call is a safety surface.
+
+Unlike most LangGraph tutorials, tools here are **not registered
+with the graph as `@tool`-decorated functions**. Instead, a node
+calls the tool directly when its condition is met. Benefits:
+
+- **Explicit call sites.** You always know which node will invoke
+  which tool — no LLM-driven tool-selection layer to debug.
+- **Provider-native grounding.** Web search uses Google Search
+  (Gemini) or `web_search` (OpenAI) via `use_search=True` on
+  `generate_text()`, not a custom tool attachment.
+- **Graceful degradation by construction.** A tool failure returns
+  empty results; the caller decides whether to continue without them.
+
+<ToolRegistry />
+
+---
+
+## When does a capability become a tool?
+
+Not every external call is a tool. The memory store, the crisis
+log, the embedding provider — these are all **injected
+dependencies** on `WorkflowContext`, not tools. The distinction:
+
+| Type | Example | Lives on |
+|---|---|---|
+| **Injected dependency** | `memory_store`, `crisis_log_backend`, `embedding_provider` | `WorkflowContext` (dataclass) |
+| **Tool** | `find_local_crisis_resources` | `agent/tools/*.py` module |
+
+A capability qualifies as a **tool** when:
+
+1. It reaches **outside local infrastructure** (public web, third-party API, model-provider search grounding)
+2. It can **fail and must degrade gracefully** without blocking the turn
+3. It has **conditional invocation** — a node decides at runtime whether to call it
+
+If a capability is used on every turn (like the memory store) or
+fails hard when unavailable (like the database), it's a dependency,
+not a tool.
+
+## Adding a new tool
+
+1. Create `agent/tools/your_tool.py` with the tool function.
+   Accept `AgentState` and the injected deps it needs; return
+   structured data. Never raise — return empty/default values on
+   any failure and log a warning.
+2. Export it from `agent/tools/__init__.py`.
+3. Import and call it from the node that needs it — typically
+   guarded by a condition like `if llm_client is not None`.
+4. Add unit tests for any parsing helpers. LLM-calling code paths
+   belong in dogfood scripts, not the unit test suite.
+5. If the tool writes state, add the fields to `ResponseState` (or
+   wherever they belong in `AgentState`) and update the relevant
+   prompt builders to consume them.
+
+## Related
+
+- [Agent Graph](/docs/agent/graph) — where tools fire from
+- [Nodes](/docs/agent/nodes) — `crisis_response_node` is the only node that invokes a tool today
+- [Crisis Gate philosophy](/docs/philosophy/crisis-gate) — why crisis-resource surfacing is worth an external call

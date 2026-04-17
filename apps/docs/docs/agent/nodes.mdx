@@ -1,0 +1,40 @@
+---
+title: Nodes
+sidebar_position: 2
+---
+
+import NodeCatalog from '@site/src/components/NodeCatalog';
+
+# Nodes
+
+Every graph node, filterable by category or capability. Each card is
+a technical datasheet: what it consumes, what it produces, which
+policies apply, and which file owns the implementation.
+
+Five categories map to distinct responsibilities:
+
+- **Safety** — cannot be bypassed by mode, modality, or tone
+- **Memory** — retrieval and structured working context
+- **Routing** — dispatch to the right response pathway
+- **Extraction** — post-response LLM side effects that run in parallel
+- **Terminal** — transcript finalization, pure state manipulation
+
+<NodeCatalog />
+
+---
+
+## Adding a new node
+
+When you add a node to the graph, think through three things:
+
+**Does it do I/O?** If yes, register it with `retry_policy=RetryPolicy(max_attempts=2)` in `build_agent_workflow`. The retry policy is defense-in-depth for transient failures that escape the node's own error handling.
+
+**Does it write to a shared state field?** If multiple nodes write to the same field (like `diagnostics` or `progress`), the field needs a reducer (`_merge_dicts` for dicts, `operator.add` for lists) in `AgentState`. Without a reducer, nodes will clobber each other's writes.
+
+**Can it run in parallel?** If the node has no ordering dependency with its siblings (the way the two extractors don't), wire it as a fan-out edge from its parent. The reducers handle concurrent writes safely.
+
+## Related
+
+- [Agent Graph](/docs/agent/graph) — full topology overview and design principles
+- [Agent State](/docs/agent/state) — what flows through the nodes
+- [Therapeutic Modes](/docs/agent/scenarios) — the 6 modes inside the therapeutic subgraph
