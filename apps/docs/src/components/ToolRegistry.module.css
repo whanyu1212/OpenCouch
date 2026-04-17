@@ -1,0 +1,777 @@
+/* ================================================================
+   ToolRegistry — Technical registry / monitoring dashboard aesthetic
+   ================================================================ */
+
+.root {
+  margin: 1rem 0 2rem;
+  font-family: var(--ifm-font-family-base);
+}
+
+/* ── Registry header ─────────────────────────────────────────────── */
+
+.registryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 10px 10px 0 0;
+  border-bottom: none;
+}
+
+[data-theme='light'] .registryHeader {
+  background: #0e1015;
+  border-color: #1a1d24;
+}
+
+.registryTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.titleBrand {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.25em;
+  color: #f5f5f4;
+  text-shadow: 0 0 18px rgba(45, 212, 191, 0.3);
+}
+
+.titleSub {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #71717a;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.registryStats {
+  display: flex;
+  gap: 14px;
+}
+
+.regStat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #d4d4d8;
+}
+
+.regStatDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.regStatValue {
+  font-weight: 700;
+  font-size: 12px;
+  color: #f5f5f4;
+}
+
+.regStatLabel {
+  font-size: 10px;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Pattern note ────────────────────────────────────────────────── */
+
+.patternNote {
+  padding: 12px 18px;
+  background: #111318;
+  border: 1px solid #222;
+  border-top: none;
+  border-radius: 0;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+[data-theme='light'] .patternNote {
+  background: #f5f7fa;
+  border-color: #dde1e6;
+}
+
+.patternNoteLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+[data-theme='light'] .patternNoteLabel {
+  color: #b45309;
+}
+
+.patternNoteText {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: #d4d4d8;
+}
+
+[data-theme='light'] .patternNoteText {
+  color: #3f3f46;
+}
+
+.patternNoteText code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  color: #2dd4bf;
+}
+
+[data-theme='light'] .patternNoteText code {
+  background: rgba(0, 0, 0, 0.04);
+  color: #0d9488;
+}
+
+/* ── Tool list ───────────────────────────────────────────────────── */
+
+.toolList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid #222;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+}
+
+[data-theme='light'] .toolList {
+  border-color: #dde1e6;
+}
+
+/* ── Tool card ───────────────────────────────────────────────────── */
+
+.toolCard {
+  background: #0d0d0d;
+  border-bottom: 1px solid #1e1e1e;
+  transition: background 0.2s ease;
+}
+
+[data-theme='light'] .toolCard {
+  background: #ffffff;
+  border-bottom-color: #e4e8ec;
+}
+
+.toolCard:last-of-type {
+  border-bottom: none;
+}
+
+.toolCardExpanded {
+  background: #0b0b0c;
+}
+
+[data-theme='light'] .toolCardExpanded {
+  background: #fafbfc;
+}
+
+/* Tool header (clickable) */
+
+.toolHeader {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  transition: background 0.2s ease;
+}
+
+.toolHeader:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme='light'] .toolHeader:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.toolHeaderLeft {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusActive {
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.statusPlanned {
+  background: #52525b;
+}
+
+.toolName {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+  margin: 0;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.toolPath {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10.5px;
+  color: var(--oc-text-muted);
+}
+
+.toolProviders {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.providerChip {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.providerGemini {
+  background: rgba(96, 165, 250, 0.1);
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.2);
+}
+[data-theme='light'] .providerGemini {
+  color: #1d4ed8;
+  background: rgba(29, 78, 216, 0.08);
+  border-color: rgba(29, 78, 216, 0.2);
+}
+
+.providerOpenai {
+  background: rgba(45, 212, 191, 0.1);
+  color: #5eead4;
+  border-color: rgba(45, 212, 191, 0.2);
+}
+[data-theme='light'] .providerOpenai {
+  color: #0d9488;
+  background: rgba(13, 148, 136, 0.08);
+  border-color: rgba(13, 148, 136, 0.2);
+}
+
+.providerAnthropic {
+  background: rgba(251, 146, 60, 0.1);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.2);
+}
+[data-theme='light'] .providerAnthropic {
+  color: #c2410c;
+  background: rgba(194, 65, 12, 0.08);
+  border-color: rgba(194, 65, 12, 0.2);
+}
+
+.providerNone {
+  background: rgba(113, 113, 122, 0.1);
+  color: #a1a1aa;
+  border-color: rgba(113, 113, 122, 0.2);
+}
+
+.chevron {
+  font-size: 12px;
+  color: var(--oc-text-muted);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* ── Tool body (expanded) ────────────────────────────────────────── */
+
+.toolBody {
+  padding: 0 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: expandIn 0.25s ease;
+}
+
+@keyframes expandIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Meta row (trigger condition) */
+
+.metaRow {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-left: 2px solid #2dd4bf;
+  border-radius: 0 6px 6px 0;
+}
+
+[data-theme='light'] .metaRow {
+  background: rgba(0, 0, 0, 0.02);
+  border-left-color: #0d9488;
+}
+
+.metaKey {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #2dd4bf;
+}
+
+[data-theme='light'] .metaKey {
+  color: #0d9488;
+}
+
+.metaVal {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  color: var(--oc-text-primary);
+  line-height: 1.5;
+}
+
+/* Description */
+
+.description {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--oc-text-secondary);
+}
+
+/* ── Pipeline ────────────────────────────────────────────────────── */
+
+.pipelineLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #fbbf24;
+  margin-top: 4px;
+}
+
+[data-theme='light'] .pipelineLabel {
+  color: #b45309;
+}
+
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.pipeArrow {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 1.3rem;
+  color: #fbbf24;
+  align-self: center;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+[data-theme='light'] .pipeArrow {
+  color: #b45309;
+}
+
+/* Stage */
+
+.stage {
+  flex: 1;
+  min-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid #1e1e1e;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-theme='light'] .stage {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: #e4e8ec;
+}
+
+.stageHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px dashed #1e1e1e;
+}
+
+[data-theme='light'] .stageHeader {
+  border-bottom-color: #e4e8ec;
+}
+
+.stageIdx {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fbbf24;
+  padding: 1px 6px;
+  background: rgba(251, 191, 36, 0.08);
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme='light'] .stageIdx {
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.08);
+}
+
+.stageLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.stageProps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stageProp {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.stagePropInline {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.stagePropKey {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--oc-text-muted);
+}
+
+.stagePropVal {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--oc-text-secondary);
+}
+
+.stagePropValMuted {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--oc-text-muted);
+  font-style: italic;
+}
+
+.stageCode {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 10px !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  padding: 1px 5px !important;
+  border-radius: 3px !important;
+  color: var(--oc-text-primary) !important;
+}
+
+[data-theme='light'] .stageCode {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+.stagePill {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+}
+
+.stagePillGrounding {
+  background: rgba(45, 212, 191, 0.12);
+  color: #5eead4;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+}
+
+[data-theme='light'] .stagePillGrounding {
+  background: rgba(13, 148, 136, 0.1);
+  color: #0d9488;
+  border-color: rgba(13, 148, 136, 0.2);
+}
+
+.stagePillDeterministic {
+  background: rgba(168, 85, 247, 0.12);
+  color: #c4b5fd;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+[data-theme='light'] .stagePillDeterministic {
+  background: rgba(124, 58, 237, 0.1);
+  color: #7c3aed;
+  border-color: rgba(124, 58, 237, 0.2);
+}
+
+.stagePillNeutral {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--oc-text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='light'] .stagePillNeutral {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* ── Output block ────────────────────────────────────────────────── */
+
+.outputBlock {
+  padding: 10px 12px;
+  border: 1px solid #1e1e1e;
+  border-radius: 7px;
+  background: rgba(45, 212, 191, 0.03);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+[data-theme='light'] .outputBlock {
+  background: rgba(13, 148, 136, 0.03);
+  border-color: #e4e8ec;
+}
+
+.outputLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #2dd4bf;
+  flex-shrink: 0;
+}
+
+[data-theme='light'] .outputLabel {
+  color: #0d9488;
+}
+
+.outputFields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outputField {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 11px !important;
+  color: var(--oc-text-primary) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+/* ── Degradation ─────────────────────────────────────────────────── */
+
+.degradation {
+  padding: 10px 12px;
+  border: 1px dashed #3f3f46;
+  border-radius: 7px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: rgba(251, 191, 36, 0.02);
+}
+
+[data-theme='light'] .degradation {
+  border-color: #d4d4d8;
+  background: rgba(180, 83, 9, 0.02);
+}
+
+.degradationLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+
+[data-theme='light'] .degradationLabel {
+  color: #b45309;
+}
+
+.degradationText {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--oc-text-secondary);
+}
+
+/* ── Fingerprint ─────────────────────────────────────────────────── */
+
+.fingerprint {
+  padding: 8px 0 0;
+  border-top: 1px dashed #1e1e1e;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10.5px;
+  flex-wrap: wrap;
+}
+
+[data-theme='light'] .fingerprint {
+  border-top-color: #e4e8ec;
+}
+
+.fpFile { color: var(--oc-text-muted); }
+
+.fpDivider {
+  color: #2dd4bf;
+  opacity: 0.6;
+}
+[data-theme='light'] .fpDivider { color: #0d9488; }
+
+.fpFn {
+  color: #2dd4bf;
+  font-weight: 600;
+}
+[data-theme='light'] .fpFn { color: #0d9488; }
+
+.fpSep {
+  color: var(--oc-text-muted);
+  opacity: 0.5;
+}
+
+.fpTests {
+  color: var(--oc-text-muted);
+  font-style: italic;
+}
+
+/* ── Ghost / placeholder tool ────────────────────────────────────── */
+
+.toolCardGhost {
+  padding: 16px;
+  border-top: 1px dashed #2a2a2a;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 12px,
+    rgba(255, 255, 255, 0.01) 12px,
+    rgba(255, 255, 255, 0.01) 24px
+  );
+}
+
+[data-theme='light'] .toolCardGhost {
+  border-top-color: #dde1e6;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 12px,
+    rgba(0, 0, 0, 0.015) 12px,
+    rgba(0, 0, 0, 0.015) 24px
+  );
+}
+
+.ghostHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ghostDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px dashed #52525b;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.ghostLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--oc-text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ghostHint {
+  font-size: 0.76rem;
+  color: var(--oc-text-muted);
+  flex: 1;
+  min-width: 200px;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .registryHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .toolHeader {
+    flex-wrap: wrap;
+  }
+  .toolProviders {
+    margin-left: auto;
+  }
+  .metaRow {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

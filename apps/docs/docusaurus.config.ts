@@ -44,6 +44,7 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
 
+
     mermaid: {
       theme: {light: 'base', dark: 'dark'},
       options: {

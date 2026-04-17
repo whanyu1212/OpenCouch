@@ -55,15 +55,13 @@
   color: #b8e0da;
 }
 
-.lcDerived {
-  background: transparent;
-  color: var(--oc-accent);
-  border: 1px dashed var(--oc-accent);
-  padding: 2px 8px;
+.lcReducer {
+  background: rgba(168, 85, 247, 0.12);
+  color: #7c3aed;
 }
-[data-theme='dark'] .lcDerived {
-  color: var(--oc-accent);
-  border-color: var(--oc-border-strong);
+[data-theme='dark'] .lcReducer {
+  background: rgba(192, 132, 252, 0.14);
+  color: #c4b5fd;
 }
 
 .lcTurn {
@@ -75,13 +73,15 @@
   color: #6bb0a8;
 }
 
-.lcReserved {
-  background: #e0ddd6;
-  color: #6b6760;
+.lcLoaded {
+  background: transparent;
+  color: var(--oc-accent);
+  border: 1px dashed var(--oc-accent);
+  padding: 2px 8px;
 }
-[data-theme='dark'] .lcReserved {
-  background: rgba(160,156,144,0.12);
-  color: #7a7668;
+[data-theme='dark'] .lcLoaded {
+  color: var(--oc-accent);
+  border-color: var(--oc-border-strong);
 }
 
 /* ── Section groups ─────────────────────────────────────────────────────────── */

@@ -1,6 +1,6 @@
 ---
 title: Agent State
-sidebar_position: 2
+sidebar_position: 1
 ---
 
 import StateFields from '@site/src/components/StateFields';
@@ -9,8 +9,14 @@ import StateFields from '@site/src/components/StateFields';
 
 One `AgentState` TypedDict flows through the entire graph. Every
 node reads from it and writes back partial updates (deltas).
-LangGraph merges deltas by replacing top-level keys, so each node
-must spread existing dicts before adding its own keys.
+
+Fields with **reducers** (`operator.add`, `_merge_dicts`) are
+merged automatically by LangGraph — nodes return only their own
+keys and the reducer handles accumulation across the graph and
+across turns via the checkpointer.
+
+Fields without reducers use **last-write-wins** — the most recent
+delta replaces the previous value.
 
 Click any field below to see what it does, who sets it, and its
 type.
@@ -24,20 +30,31 @@ type.
 Not all fields survive between turns. Understanding which persist
 and which are re-derived matters for debugging and eval design.
 
-**Input** — set by `build_initial_state()` from `AgentInput`. The
-current user message is appended to the transcript at this stage;
-the assistant side is appended later by `finalize_turn_node`.
+**Input** — set by `build_initial_state()` from `AgentInput`. Only
+the current user turn is emitted into `history` and `transcript` —
+the `operator.add` reducer appends it to the checkpoint's
+accumulated list.
 
-**Persisted** — stored in the LangGraph checkpoint between turns.
-The transcript is the source of truth. Progress fields (turn_count,
-stage) carry forward.
+**Reducer-backed** — fields with `Annotated[..., reducer]` that
+accumulate across the graph and across turns:
+
+- `history` / `transcript` — `operator.add` appends new turns.
+  `build_initial_state` emits `[user_turn]`; `finalize_turn_node`
+  emits `[assistant_turn]`. The checkpointer restores prior turns.
+- `progress` — `_merge_dicts` merges per-turn fields (`turn_count`,
+  `stage`) with cross-turn fields (`exercise_type`, `exercise_step`)
+  from the checkpoint. This is how exercise state persists without
+  a manual carry-forward hack.
+- `diagnostics` — `_merge_dicts` lets all I/O nodes write their own
+  timing/write-count keys independently. Parallel extractors write
+  simultaneously without racing.
 
 **Loaded per turn** — `load_memory_node` populates `working_memory`
-(semantic + episodic snippets via hybrid RRF retrieval),
-`memory.procedural_rules` (full rule set from the user's procedural
-profile), and `memory.proactive_recall_enabled` (the recall toggle).
-These are loaded from the memory store, not derived from the
-transcript.
+with structured `WorkingMemoryEntry` dicts (semantic facts + episodic
+arcs via hybrid RRF retrieval), `memory.procedural_rules` (full rule
+set from the user's procedural profile), and
+`memory.proactive_recall_enabled` (the recall toggle). These are raw
+structured data — formatting happens on demand at prompt-build time.
 
 **Turn-scoped** — reset at the start of each turn, then filled by
 nodes as the graph executes:
@@ -51,18 +68,23 @@ nodes as the graph executes:
   default)
 - `routing.mode_type` — category (therapeutic, operational, crisis)
 - `routing.modality` — therapeutic modality for this turn (MI, CBT,
-  ACT, DBT, grief, IPT, PFA, or none). Selected by the LLM dispatcher
-  alongside the mode. The mode node reads this to load the matching
-  knowledge file into its system prompt.
+  ACT, DBT, grief, IPT, PFA, or none)
 - `response` — the generated reply (text, kind, guidance)
 
-**Diagnostics** — `diagnostics: NotRequired[dict[str, Any]]` —
-per-turn timing and write-count metadata populated by each node.
-Keys include `load_memory_ms`, `crisis_gate_ms`, `extract_facts_ms`,
-`extract_procedural_ms`, `turn_total_ms`, `semantic_writes`,
-`procedural_writes`, `retrieval_path`, and `crisis_classifier_path`.
-Flows through to `AgentOutput.diagnostics` for the CLI's Stage
-Timings panel.
+## Working memory structure
+
+`working_memory` carries structured `WorkingMemoryEntry` dicts,
+not pre-formatted strings. Two entry types:
+
+| Type | Fields | Example formatted output |
+|---|---|---|
+| `SemanticWorkingMemoryEntry` | `type="semantic"`, `evidence_quote` | "Previously noted: I have a sister named Sarah." |
+| `EpisodicWorkingMemoryEntry` | `type="episodic"`, `summary`, `primary_themes`, `is_catch_up` | "Last session (grief): talked about loss after my dog died." |
+
+Formatting happens via `format_working_memory_entries()` at three
+surfaces: the therapeutic prompt builder, the dispatcher prompt, and
+the CLI's context panel. Legacy `str` entries from older checkpoints
+pass through unchanged.
 
 ## Public contract
 
@@ -76,11 +98,27 @@ The external API sees `AgentInput` and `AgentOutput` — not
 | `CrisisAssessment` | level (0-3), confidence, reason, needs_crisis_response, needs_clarification |
 | `Message` | role, content, **mode** (`str | None`) — optional per-turn annotation stamped onto assistant transcript entries by `finalize_turn_node` |
 
+## Runtime context
+
+`WorkflowContext` is a frozen dataclass (`@dataclass(slots=True,
+frozen=True)`) injected via `runtime.context`. All nodes access it
+via attribute access (`runtime.context.llm_client`), not dict
+access.
+
+| Field | Type | Default |
+|---|---|---|
+| `llm_client` | `BaseLLMClient | None` | required |
+| `memory_store` | `MemoryStore` | required |
+| `crisis_log_backend` | `CrisisLogBackend` | required |
+| `memory_mode` | `MemoryMode` | required |
+| `embedding_provider` | `EmbeddingProvider | None` | `None` |
+
 ## Key files
 
 | File | What it defines |
 |---|---|
-| `agent/state.py` | `AgentState` TypedDict |
+| `agent/state.py` | `AgentState` TypedDict with reducer annotations (`operator.add`, `_merge_dicts`) |
+| `agent/working_memory.py` | `WorkingMemoryEntry` types, factory functions, `format_working_memory_entry/entries` |
 | `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, stream event types |
-| `agent/graph.py` | `build_initial_state()` (input → state), `state_to_output()` (state → output) |
-| `agent/runtime_context.py` | `WorkflowContext` TypedDict — runtime dependencies injected via `runtime.context` |
+| `agent/graph.py` | `build_initial_state()` (input -> state), `state_to_output()` (state -> output) |
+| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |

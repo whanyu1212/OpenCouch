@@ -4,11 +4,12 @@ sidebar_position: 1
 ---
 
 import AgentGraph from '@site/src/components/AgentGraph';
+import GraphTopology from '@site/src/components/GraphTopology';
 
 # Agent Graph
 
-Every message follows the same pipeline: memory retrieval first,
-then safety check, then routing, then response, then memory writes.
+Every message follows the same pipeline: safety check first,
+then memory retrieval, then routing, then response, then memory writes.
 Click any step below to see what it does.
 
 <AgentGraph />
@@ -20,35 +21,17 @@ Click any step below to see what it does.
 The parent graph has 8 nodes. The therapeutic subgraph (compiled as
 a single parent-level node) hides 7 internal nodes (dispatcher + 6
 mode nodes). The crisis gate routes between branches via
-`Command(goto=...)`.
+`Command(goto=...)`. The two extractors fan out in parallel after
+finalize, saving 3-5s per turn when LLM extraction is active.
 
-```text
-START
-  -> load_memory_node             retrieve semantic + episodic + procedural context
-  -> crisis_gate_node             hybrid regex + LLM safety classification
-  -> [crisis branch]              crisis_response_node -> crisis_log_node
-     OR
-     [therapeutic branch]         therapeutic_subgraph (dispatcher -> mode node)
-  -> extract_semantic_facts_node  LLM structured output, gated by small-talk check
-  -> extract_procedural_rules_node  same gate, writes style rules
-  -> finalize_turn_node           append assistant reply + mode to transcript
-END
-```
-
-Both branches converge at the shared extraction + finalize spine.
+<GraphTopology />
 
 ## Node responsibilities
 
-| Node | What it does |
-|---|---|
-| `load_memory_node` | Retrieves semantic + episodic + procedural context via hybrid RRF retrieval. Computes the query embedding. Populates `working_memory` and `memory.procedural_rules`. |
-| `crisis_gate_node` | Hybrid regex + LLM crisis classification. Three deterministic fast paths (imminent-risk, clear self-harm, idiomatic-safe) before the LLM fallback. Routes via `Command(goto=...)`. |
-| `crisis_response_node` | Generates the crisis response with PFA overlay. Writes to `state["response"]`. |
-| `crisis_log_node` | Appends a `CrisisLogRecord` to the always-on audit log. Writes regardless of memory mode. |
-| `therapeutic_subgraph` | Dispatcher picks one of 6 modes, the mode node generates the response. See below. |
-| `extract_semantic_facts_node` | LLM structured-output call to extract persistent facts from the turn. Gated by the small-talk check. Batch-embeds candidates before writing. |
-| `extract_procedural_rules_node` | LLM structured-output call to extract style rules. Same small-talk gate. Writes to the procedural profile. |
-| `finalize_turn_node` | Appends the assistant reply to the transcript with the routing `mode` stamped on it (so `/history` shows which mode shaped each reply). |
+Each node has its own datasheet on the [Nodes page](/docs/agent/nodes) —
+filterable by category (safety, memory, routing, extraction, terminal)
+or capability (LLM, retry, reducer, parallel). Every card shows the
+node's inputs, outputs, skip conditions, and source file.
 
 ## Therapeutic subgraph
 
@@ -64,53 +47,74 @@ The dispatcher picks exactly one mode per turn:
 | `closing` | User signals wind-down ("I should go", "thanks, this helped") |
 
 The dispatcher uses hybrid classification: high-precision regex fast
-paths for obvious cases (confusion markers → clarifying, active
-exercise re-entry → guided_exercise), LLM classifier for the
+paths for obvious cases (confusion markers -> clarifying, active
+exercise re-entry -> guided_exercise), LLM classifier for the
 ambiguous middle, regex fallback when no LLM is available.
 
 ## Design principles
 
-**Safety is sequential.** The crisis gate runs before any response
-generation. There is no path through the graph that produces a
-response without passing the safety check.
+**Safety is sequential.** The crisis gate runs before any memory
+retrieval or response generation. There is no path through the graph
+that loads context without first passing the safety check.
 
 **Routing is deterministic-first.** Regex patterns fire before the
 LLM. Most turns never need an LLM classification call.
 
-**Post-response extraction is a side effect.** The two extractor
-nodes run after the response is composed. They write to memory for
-future turns. A failure in extraction never fails the parent turn.
+**Parallel post-response extraction.** The two extractor nodes fan
+out in parallel from `finalize_turn_node`. Both write to the
+`diagnostics` dict via a `_merge_dicts` reducer — no manual dict
+spreading needed, no race conditions.
+
+**Reducer-backed accumulation.** `history` and `transcript` use
+`operator.add` reducers. Each turn emits only the new entries
+(user turn at init, assistant turn at finalize); the checkpointer
+accumulates prior turns automatically. No `get_history()` calls
+on the hot path.
+
+**Structured working memory.** `load_memory_node` returns raw
+`WorkingMemoryEntry` dicts (semantic and episodic types). Formatting
+happens on demand at prompt-build time and CLI render time — not
+in the graph.
+
+**Defense-in-depth retry.** All I/O nodes have
+`RetryPolicy(max_attempts=2)`. Nodes catch their own expected
+exceptions internally; the retry policy covers unexpected transient
+failures outside the node's error handling.
 
 **Small-talk gate saves cost.** Both extractors check whether the
 message is obviously small talk before making the LLM call.
 Greetings and acknowledgments skip extraction entirely.
 
 **Per-turn diagnostics.** Every node stamps timing and decision
-metadata into `state["diagnostics"]`. Each node spreads the existing
-dict before adding its keys (LangGraph replaces top-level keys, not
-merges them).
+metadata into `state["diagnostics"]` via the `_merge_dicts` reducer.
+Keys include `load_memory_ms`, `crisis_gate_ms`, `extract_facts_ms`,
+`extract_procedural_ms`, and `turn_total_ms`.
+
+## Runtime context
+
+Dependencies are injected via `WorkflowContext`, a frozen dataclass
+with attribute access (`runtime.context.llm_client`, not dict access).
+Fields: `llm_client`, `memory_store`, `crisis_log_backend`,
+`memory_mode`, `embedding_provider`.
 
 ## Key files
 
 | File | What it does |
 |---|---|
 | `agent/graph.py` | `build_agent_workflow()`, `build_initial_state()`, `state_to_output()` |
-| `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` — dispatcher + 6 mode nodes |
+| `agent/state.py` | `AgentState` TypedDict with reducer annotations |
+| `agent/working_memory.py` | `WorkingMemoryEntry` types, factory functions, formatters |
+| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` with `TherapeuticSubgraphOutput` |
 | `agent/therapeutic/dispatcher.py` | Hybrid regex + LLM mode classification |
-| `agent/therapeutic/prompts.py` | Knowledge composition + mode-specific instructions |
-| `agent/therapeutic/supportive.py` | Supportive mode node |
-| `agent/therapeutic/reflective.py` | Reflective mode node |
-| `agent/therapeutic/clarifying.py` | Clarifying mode node |
-| `agent/therapeutic/psychoeducation.py` | Psychoeducation mode node |
-| `agent/therapeutic/guided_exercise.py` | Guided exercise with multi-turn step tracking |
-| `agent/therapeutic/closing.py` | Closing mode node |
+| `agent/therapeutic/prompts.py` | Knowledge composition + on-demand working memory formatting |
 | `agent/nodes/load_memory.py` | Memory retrieval + query embedding |
 | `agent/nodes/crisis_gate.py` | Crisis classification + routing |
 | `agent/nodes/crisis_response.py` | Crisis response generation |
 | `agent/nodes/crisis_log.py` | Audit log writer |
 | `agent/nodes/extract_facts.py` | Semantic fact extraction |
 | `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction |
-| `agent/nodes/finalize_turn.py` | Transcript finalization |
+| `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
 | `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
 | `agent/persistence.py` | `PersistentAgentRuntime` — SQLite-backed thread state |
 

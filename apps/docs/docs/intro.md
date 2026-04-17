@@ -3,6 +3,9 @@ sidebar_position: 1
 title: Overview
 ---
 
+import FlowVisualizer from '@site/src/components/FlowVisualizer';
+import MemoryLayers from '@site/src/components/MemoryLayers';
+
 # OpenCouch
 
 OpenCouch is an open-source mental health support agent built on
@@ -48,23 +51,7 @@ Every user message passes through the same pipeline. Safety runs
 first, memory loads before response generation, and extraction runs
 after — so the agent always has context and never skips safety.
 
-```mermaid
-graph LR
-    A["User message"] --> B["Load Memory"]
-    B --> C{"Crisis Gate"}
-    C -->|safe| D["Therapeutic\nSubgraph"]
-    C -->|crisis| E["Crisis\nResponse"]
-    D --> F["Extract Facts\n& Rules"]
-    E --> G["Crisis Log"]
-    G --> F
-    F --> H["Finalize Turn"]
-
-    style C fill:#e46e62,stroke:#b84a40,color:#fff
-    style E fill:#e46e62,stroke:#b84a40,color:#fff
-    style D fill:#65b8af,stroke:#3d9990,color:#fff
-    style B fill:#d78b5f,stroke:#b06d3f,color:#fff
-    style F fill:#d78b5f,stroke:#b06d3f,color:#fff
-```
+<FlowVisualizer />
 
 ## Three memory layers
 
@@ -72,41 +59,7 @@ The agent remembers you across sessions through three distinct
 memory types, each with its own write trigger and retrieval
 strategy.
 
-```mermaid
-graph TB
-    subgraph Semantic["Semantic Memory"]
-        direction LR
-        S1["KNOWS Sarah"]
-        S2["USES fluoxetine"]
-        S3["WORRIES_ABOUT work"]
-    end
-
-    subgraph Episodic["Episodic Memory"]
-        direction LR
-        E1["Session 1: talked about\npanic attacks, did grounding"]
-        E2["Session 2: discussed\nwork stress and sleep"]
-    end
-
-    subgraph Procedural["Procedural Memory"]
-        direction LR
-        P1["Don't suggest meditation"]
-        P2["Prefer shorter responses"]
-    end
-
-    Semantic -->|"retrieved per turn\nvia hybrid search"| WM["Working Memory\n(prompt context)"]
-    Episodic -->|"catch-up on first turn\n+ query matches"| WM
-    Procedural -->|"always loaded\n(style directives)"| SP["System Prompt\nSuffix"]
-
-    WM --> R["Response\nGeneration"]
-    SP --> R
-
-    style Semantic fill:#3d9990,stroke:#2d7a74,color:#fff
-    style Episodic fill:#d78b5f,stroke:#b06d3f,color:#fff
-    style Procedural fill:#65b8af,stroke:#3d9990,color:#fff
-    style WM fill:#f5f3ea,stroke:#838881,color:#143432
-    style SP fill:#f5f3ea,stroke:#838881,color:#143432
-    style R fill:#4a90d9,stroke:#3570b0,color:#fff
-```
+<MemoryLayers />
 
 ## Capabilities
 
