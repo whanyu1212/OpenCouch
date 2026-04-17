@@ -9,17 +9,14 @@ import AssemblyPreview from '@site/src/components/AssemblyPreview';
 
 # Prompt Assembly
 
-OpenCouch does not use one giant prompt string.
-
-Instead, every system prompt is assembled in discrete layers — each
-with a clear source of truth, a defined scope, and explicit
-separation of concerns. This makes safety reviews, eval design, and
-prompt iteration tractable.
+Not one giant string. Every system prompt is assembled in discrete
+layers — each with a clear source, defined scope, and explicit
+separation of concerns.
 
 ## Layer architecture
 
-The layers stack in a fixed order. Lower layers are always present;
-upper layers are selected at runtime by the graph.
+Lower layers are always present. Upper layers are selected at
+runtime by the graph.
 
 <PromptLayerStack />
 
@@ -27,65 +24,53 @@ upper layers are selected at runtime by the graph.
 
 ## How the layers combine
 
-| Question | What answers it | Source | Changes per turn? |
+| Layer | Question it answers | Source | Per turn? |
 |---|---|---|---|
-| Who is this system? | **Core** | `knowledge/soul.md`, `knowledge/identity.md` | Never |
-| What are the hard rules? | **Core** | `knowledge/policy/boundaries.md`, `knowledge/policy/privacy.md` | Never |
-| What mode is it in? | **Mode knowledge** | `knowledge/response_modes/*.md` — one file per therapeutic mode | Yes — selected by the dispatcher |
-| What technique overlay? | **Modality** | `knowledge/modalities/*.md` — all 7 modalities LLM-routed per turn (MI, PFA, CBT, grief, IPT, ACT, DBT) | Per turn |
-| How should it respond? | **Instructions** | Mode-specific instruction blocks in `agent/therapeutic/prompts.py` | Per mode |
-| What does it know about the user? | **Working memory** | Semantic facts + episodic arcs retrieved by `load_memory_node` via hybrid RRF | Yes — re-retrieved each turn |
-| What style rules apply? | **Procedural rules** | Rules from the user's `ProceduralProfile`, injected as system prompt suffix | Yes — loaded each turn |
+| **Core** | Who is this system? What are the hard rules? | `soul.md`, `identity.md`, `policy/*.md` | Never changes |
+| **Mode** | What mode is it in? | `response_modes/*.md` — one file per mode | Selected by dispatcher |
+| **Modality** | What technique overlay? | `modalities/*.md` — 7 modalities, LLM-routed | Per turn |
+| **Instructions** | How should it respond? | Mode-specific blocks in `prompts.py` | Per mode |
+| **Working memory** | What does it know about the user? | Semantic + episodic entries from `load_memory_node` | Re-retrieved each turn |
+| **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
 
-## Procedural rule injection
+:::info Two kinds of injected context
+**Working memory** shapes the agent's *awareness* — "Previously
+noted: user has a sister named Sarah." **Procedural rules** shape
+its *behavior* — "this user prefers shorter responses." Rules are
+always applied regardless of the proactive recall toggle.
+:::
 
-Rules from the user's `ProceduralProfile` are injected into the
-system prompt suffix as *"You have the following style rules from
-past conversations..."*. These are behavioral directives — e.g.,
-"this user prefers shorter responses" or "don't suggest meditation."
+---
 
-Rules are **always applied** regardless of the proactive recall
-toggle. They are operating instructions, not optional content.
+## Why layers
 
-## Working memory injection
+| Property | How layers enforce it |
+|---|---|
+| Safety policy can't be overwritten | Core layer is always first; no mode/modality can weaken it |
+| Mode knowledge is reviewable | Each mode's knowledge is a standalone `.md` in `knowledge/response_modes/` |
+| Procedural rules can't be overridden | Injected last as system prompt suffix |
+| Each layer has a clear owner | `knowledge/` for content, `prompts.py` for assembly |
 
-Semantic facts and episodic snippets (the "working memory" populated
-by `load_memory_node`) are injected into the prompt context as
-content to reference ("Previously noted: ...", "Last session (...):
-..."). This is distinct from procedural rules: working memory shapes
-the agent's *awareness*, procedural rules shape its *behavior*.
-
-## Why layers, not one prompt
-
-- **Safety policy (core) can't be accidentally overwritten** by a
-  mode or modality change
-- **Mode knowledge is reviewable** — each mode's knowledge file is
-  a standalone markdown document in `knowledge/response_modes/`
-- **Procedural rules are injected last** and can't be overridden by
-  earlier layers
-- **Each layer has a clear owner**: `knowledge/` markdown for
-  content, `agent/therapeutic/prompts.py` for assembly
+---
 
 ## Implementation
 
 | File | What it does |
 |---|---|
-| `agent/therapeutic/prompts.py` | Dynamic knowledge composition via `_knowledge_for_mode(mode, modality)`, mode-specific instruction blocks (`_SUPPORTIVE_INSTRUCTIONS`, etc.), and `build_*_system_prompt()` functions that compose layers into a final system prompt. Each mode's builder reads `routing.modality` from state and loads the matching modality file. |
-| `knowledge/soul.md` | Agent identity, voice, tone, pacing, directness |
+| `agent/therapeutic/prompts.py` | `_knowledge_for_mode()`, per-mode instruction blocks, `build_*_system_prompt()` |
+| `knowledge/soul.md` | Identity, voice, tone, pacing, directness |
 | `knowledge/identity.md` | Product boundaries and positioning |
-| `knowledge/policy/` | Safety and privacy policy |
-| `knowledge/response_modes/` | One file per therapeutic mode (support, reflection, psychoeducation, closing, guided_exercise) |
-| `knowledge/modalities/` | All 7 modality knowledge files — dynamically loaded per turn based on `routing.modality` selected by the dispatcher |
-| `agent/nodes/load_memory.py` | Populates `working_memory` and `memory.procedural_rules` for prompt injection |
-| `agent/memory/procedural.py` | Loads the user's procedural profile |
+| `knowledge/policy/` | Safety + privacy policy |
+| `knowledge/response_modes/` | One file per therapeutic mode |
+| `knowledge/modalities/` | 7 modality knowledge files, dynamically loaded per turn |
+| `agent/nodes/load_memory.py` | Populates `working_memory` and `memory.procedural_rules` |
 
 ---
 
 ## Compatibility and live assembly
 
-The following interactive components show how modes and modalities
-combine, and what a fully assembled prompt looks like for different
-scenarios.
+See how modes and modalities combine, and what a fully assembled
+prompt looks like.
 
 <CompatMatrix />
 

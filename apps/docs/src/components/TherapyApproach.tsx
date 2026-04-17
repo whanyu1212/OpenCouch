@@ -94,7 +94,7 @@ const MODES: Mode[] = [
   { id: 'reflective', label: 'Reflective', when: 'User is describing a recurring pattern they\'ve already named', goal: 'Name 1–2 patterns carefully. Tentative, testable. Preserve user\'s framing.' },
   { id: 'clarifying', label: 'Clarifying', when: 'Ambiguous message — agent doesn\'t know what "it" refers to', goal: 'One context-gathering question. About context, not content. No assumptions.' },
   { id: 'psychoeducation', label: 'Psychoeducation', when: 'User describes a reaction AND seeks understanding ("why am I crying?")', goal: 'One short normalizing explanation. Pivot back to user\'s experience. No clinical jargon.' },
-  { id: 'guided_exercise', label: 'Guided exercise', when: 'User requests a structured technique — 12 exercises across 6 subtypes (grounding, thought work, activation, ACT, self-compassion, emotion regulation)', goal: 'One exercise at a time. Multi-turn step tracking. Check pace between steps.' },
+  { id: 'guided_exercise', label: 'Guided exercise', when: 'User requests a structured technique (12 exercises available)', goal: 'One exercise at a time. Multi-turn step tracking. Check pace between steps.' },
   { id: 'closing', label: 'Closing', when: 'User signals wind-down ("I should go", "thanks, this helped")', goal: 'Warm wrap-up. Don\'t ask a new question or pivot to a new topic.' },
 ];
 
@@ -185,10 +185,8 @@ export default function TherapyApproach() {
         <div className={styles.modeTable}>
           {MODES.map(m => (
             <div key={m.id} className={styles.modeRow}>
-              <div className={styles.modeLeft}>
-                <code className={styles.modeName}>{m.label}</code>
-                <span className={styles.modeWhen}>{m.when}</span>
-              </div>
+              <span className={styles.modeName}>{m.label}</span>
+              <span className={styles.modeWhen}>{m.when}</span>
               <span className={styles.modeGoal}>{m.goal}</span>
             </div>
           ))}

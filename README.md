@@ -1,8 +1,6 @@
 <div align="center">
 
-<br/>
-
-<img src="apps/docs/static/img/favicon.svg" width="64" alt="OpenCouch" />
+<img src="apps/docs/static/img/favicon.svg" width="80" alt="OpenCouch Logo" />
 
 # OpenCouch
 
@@ -15,152 +13,240 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
-[Documentation](apps/docs/) · [Quick Start](#quick-start) · [Architecture](#architecture)
-
-</div>
+[Documentation](https://whanyu1212.github.io/OpenCouch/) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 <br/>
 
+<!-- Add a product screenshot or demo GIF here -->
+<!-- <img src="docs/static/img/demo.gif" width="100%" alt="OpenCouch Demo" /> -->
+
+> [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
-> A support assistant for talking through difficult moments, reflecting on patterns, and practicing structured exercises — with real memory that carries across sessions.
+> OpenCouch is a support assistant for difficult moments, reflective dialogue, and structured exercises, with memory continuity across sessions.
+
+</div>
+
+---
+
+## Table of Contents
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Contributing](#contributing)
+- [Roadmap](#roadmap)
 
 ---
 
 ## Overview
 
-OpenCouch is built on [LangGraph](https://langchain-ai.github.io/langgraph/) for text and the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) for voice. It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, procedural rules), an always-on crisis safety gate, six therapeutic response modes, and seven LLM-routed modalities.
+OpenCouch is a conversational support agent built on [LangGraph](https://langchain-ai.github.io/langgraph/) for text orchestration and the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) for low-latency voice.
 
-### Capabilities
+It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, six therapeutic response modes, and seven LLM-routed modalities keep responses safe, grounded, and adaptive.
 
-| Area | What it does |
-|:---|:---|
-| **Interaction** | Text CLI, WebSocket streaming, OpenAI Realtime voice (~300ms), Next.js web UI |
-| **Memory** | Semantic facts · episodic session arcs · procedural style rules — inspectable, deletable, portable |
-| **Safety** | Hybrid regex + LLM crisis gate on every turn · persistent audit log · web search for regional hotlines |
-| **Modes** | Supportive · reflective · clarifying · psychoeducation · guided exercise · closing |
-| **Modalities** | MI · CBT · ACT · DBT skills · grief · IPT · PFA — selected per turn by the LLM dispatcher |
-| **Exercises** | 12 multi-turn structured exercises across 6 subtypes (grounding, thought work, activation, ACT, self-compassion, emotion regulation) |
-| **Retrieval** | Embedding similarity + token-recall fused via Reciprocal Rank Fusion |
-| **Privacy** | Persistent vs incognito sessions · per-fact deletion · full memory wipe |
-| **Quality** | 545+ tests · 10 eval datasets · 9 assertion-based eval harnesses |
+## Key Features
+
+- **Persistent Memory:** Stores semantic facts, episodic session arcs, and procedural rules across sessions.
+- **Safety by Default:** Evaluates every user input with a crisis gate before response generation, with a persistent audit trail.
+- **Adaptive Responses:** Selects among six response modes and seven modalities based on context and intent.
+- **Multimodal Interaction:** Supports text, web, and natural voice conversations (~300ms via OpenAI Realtime).
+- **Guided Exercises:** Provides multi-turn, state-tracked exercises (e.g., grounding and reflection) for structured practice.
 
 ---
 
 ## Quick Start
 
-### CLI
+### 1. Command Line Interface (CLI)
+The CLI provides the fastest way to interact with OpenCouch locally.
 
 ```bash
 cd apps/backend && uv sync
 
-# text
+# Deterministic text mode (No API key needed, useful for local validation)
+uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread-id scratch
+
+# Full text mode with persistent memory (Requires provider API keys)
 uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
 
-# voice (requires OPENAI_API_KEY)
+# Voice mode (Requires OPENAI_API_KEY in .env.local)
 uv run python -m opencouch_cli --voice
 ```
 
-### Web
+### 2. Web Interface
+Run the full stack with the Next.js frontend and FastAPI backend.
 
+**Terminal 1 — API Server:**
 ```bash
-# terminal 1 — API server
-cd apps/backend && uv run uvicorn main:app --port 8000 --reload
-
-# terminal 2 — frontend
-cd apps/web && pnpm install && pnpm dev
+cd apps/backend
+uv run uvicorn main:app --port 8000 --reload
 ```
 
-Open [localhost:3000](http://localhost:3000) and choose **Persistent** (loads memory and history) or **Incognito** (fresh thread, nothing saved).
+**Terminal 2 — Frontend:**
+```bash
+cd apps/web
+pnpm install && pnpm dev
+```
+Open [localhost:3000](http://localhost:3000) in your browser.
 
-### Docs
+### 3. Documentation Site
+Run the Docusaurus-powered docs site locally.
 
 ```bash
-cd apps/docs && pnpm install && npx docusaurus start --port 3001
+cd apps/docs
+pnpm install && npx docusaurus start --port 3001
 ```
 
 ---
 
 ## Architecture
 
+OpenCouch uses a directed graph that enforces safety checks before therapeutic generation and runs memory extraction after each finalized turn.
+
 ```mermaid
-flowchart TB
-    User([" 🧑 User (text · voice · web)"]):::user
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#1a3a38",
+    "primaryTextColor": "#e8f5f3",
+    "primaryBorderColor": "#3d8b84",
+    "lineColor": "#64CCC5",
+    "secondaryColor": "#0f2422",
+    "tertiaryColor": "#0d1f1e",
+    "background": "#0d1f1e",
+    "mainBkg": "#1a3a38",
+    "nodeBorder": "#3d8b84",
+    "clusterBkg": "#0b1716",
+    "clusterBorder": "#3d8b84",
+    "titleColor": "#64CCC5",
+    "edgeLabelBackground": "#0f2422",
+    "fontFamily": "ui-monospace, monospace"
+  }
+}}%%
+flowchart TD
+    %% Define Node Styles
+    classDef inputNode fill:#1E293B,stroke:#94A3B8,stroke-width:2px,color:#F8FAFC
+    classDef gateNode fill:#450A0A,stroke:#F87171,stroke-width:2px,color:#FEF2F2
+    classDef safeNode fill:#064E3B,stroke:#34D399,stroke-width:2px,color:#ECFDF5
+    classDef riskNode fill:#312E81,stroke:#A78BFA,stroke-width:2px,color:#F5F3FF
+    classDef sysNode fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#F0F9FF
+    classDef bgTask fill:#172554,stroke:#60A5FA,stroke-width:2px,color:#DBEAFE,stroke-dasharray: 5 5
+    classDef dbNode fill:#14532D,stroke:#4ADE80,stroke-width:2px,color:#F0FDF4
 
-    subgraph pipeline["Agent Pipeline"]
-        direction TB
-        MEM["🔍 Load Memory<br/><sub>semantic + episodic + procedural<br/>hybrid RRF retrieval</sub>"]
-        CRISIS{"🛡️ Crisis Gate<br/><sub>regex + LLM · always-on</sub>"}
+    IN(["User message"]):::inputNode
 
-        CRISIS_R["🚨 Crisis Response<br/><sub>PFA overlay · hotline search<br/>audit log</sub>"]
-
-        subgraph therapeutic["Therapeutic Subgraph"]
-            direction TB
-            DISPATCH["⚡ Dispatcher<br/><sub>mode + modality selection<br/>regex → LLM → fallback</sub>"]
-            MODES["💬 Response Mode<br/><sub>supportive · reflective · clarifying<br/>psychoeducation · guided exercise · closing</sub>"]
-            MODALITY["📚 Modality Overlay<br/><sub>MI · CBT · ACT · DBT<br/>grief · IPT · PFA</sub>"]
-        end
-
-        EXTRACT["🧠 Memory Extractors<br/><sub>semantic facts · procedural rules<br/>gated by small-talk check</sub>"]
-        PERSIST[("💾 SQLite .store/<br/><sub>threads · memory · crisis log</sub>")]
+    subgraph GATE ["Safety Gate"]
+        CG{"crisis_gate\nregex + LLM"}:::gateNode
     end
 
-    User --> MEM
-    MEM --> CRISIS
-    CRISIS -- safe --> DISPATCH
-    CRISIS -- risk --> CRISIS_R
-    DISPATCH --> MODES
-    MODALITY -.-> MODES
-    MODES --> EXTRACT
-    CRISIS_R --> EXTRACT
-    EXTRACT --> PERSIST
+    subgraph SAFE ["Therapeutic Branch"]
+        direction TB
+        LM["load_memory\nsemantic · episodic · procedural"]:::safeNode
+        TS[["therapeutic_subgraph\n6 modes · 7 modalities"]]:::safeNode
+        LM ==> TS
+    end
 
-    classDef user fill:#215f5a,stroke:#143432,color:#fff,font-weight:bold
-    classDef default fill:#f6f4f0,stroke:#d6d2cb,color:#1a1815
+    subgraph RISK ["Crisis Branch"]
+        CR[["crisis_response\nPFA overlay · local hotlines"]]:::riskNode
+    end
+
+    FT{{"finalize_turn\noperator.add reducer"}}:::sysNode
+
+    subgraph EXTRACT ["Parallel Extraction"]
+        direction LR
+        EF[/"extract_facts"/]:::bgTask
+        EP[/"extract_rules"/]:::bgTask
+    end
+
+    DB[("SQLite .store/\nthreads · memory · crisis log · feedback")]:::dbNode
+
+    %% Logic Flows
+    IN ==> CG
+    CG ==>|Safe| LM
+    CG -.->|Risk| CR
+    TS ==> FT
+    CR -.-> FT
+    FT -.-> EF & EP
+    EF & EP -.-> DB
+```
+
+---
+
+## Project Structure
+
+This repository is a monorepo managed with `uv` and `pnpm`.
+
+```text
+OpenCouch/
+├── apps/
+│   ├── backend/                # Python backend (FastAPI, LangGraph)
+│   │   ├── agent/              # Conversation graph, nodes, state, runtime context
+│   │   │   ├── nodes/          # Individual graph nodes
+│   │   │   ├── memory/         # Memory retrieval, deduplication, embeddings
+│   │   │   └── therapeutic/    # Therapeutic subgraph, modes, prompt logic
+│   │   ├── services/llm/       # LLM adapters (Gemini, OpenAI, etc.)
+│   │   ├── opencouch_cli/      # Interactive terminal CLI
+│   │   ├── voice/              # OpenAI Realtime voice handlers
+│   │   ├── api/                # FastAPI REST + WebSocket routes
+│   │   └── tests/              # 630+ pytest unit/integration tests
+│   ├── web/                    # Next.js chat application
+│   └── docs/                   # Docusaurus documentation site
+├── eval/                       # Evaluation harnesses + curated datasets
+└── knowledge/                  # Therapeutic prompts, policy, and source-of-truth content
 ```
 
 ---
 
 ## Contributing
 
+We welcome contributions. Please review the contribution guidelines before submitting a Pull Request.
+
+### Development Setup
+
 ```bash
-# setup
 cd apps/backend && uv sync --group dev
 
-# tests (must pass before PR)
+# Run the test suite (must pass before opening a PR)
 uv run pytest tests/
 
-# evals
-python eval/runners/therapeutic_routing_eval.py --mode deterministic
-python eval/runners/exercise_selection_eval.py
+# Run evaluation checks
+uv run python eval/runners/crisis_gate_eval.py --mode deterministic
+uv run python eval/runners/therapeutic_routing_eval.py --mode deterministic
 
-# lint (runs automatically via pre-commit)
-uv run ruff check . && uv run ruff format --check .
+# Run linters and formatters
+pre-commit run --all-files
 ```
 
-**Branch conventions:** `feature/*` for new capabilities, `fix/*` for bugs, `chore/*` for docs/infra. PRs target `develop`, releases merge `develop` → `main`.
+**Branch Conventions:**
+- `feature/*` for new capabilities
+- `fix/*` for bug fixes
+- `refactor/*` for architectural changes
+- `docs/*` for documentation updates
 
-**What to include in a PR:** clear title, summary of what changed and why, test plan checklist. If you're adding a guided exercise, include eval cases. If you're touching the crisis gate, include safety eval results.
+*(Note: All PRs should target the `develop` branch.)*
 
 ---
 
 ## Roadmap
 
-| Status | Area | What |
-|:---:|:---|:---|
-| 🟢 | Web frontend | Next.js UI with chat, voice, memory, state inspector |
-| 🟢 | Guided exercises | 12 exercises across 6 subtypes with multi-turn state tracking |
-| 🟢 | Modality routing | All 7 modalities LLM-routed per turn |
-| 🟡 | Messaging channels | Telegram, WhatsApp, Discord adapters via `Channel` enum |
-| 🟡 | Graph memory | Graphiti + Neo4j for entity-relationship reasoning |
-| 🟡 | Background consolidation | Automatic fact merging, dormant marking, undo support |
-| 🟡 | Acoustic crisis detection | Paralinguistic signals (voice cracking, prosodic flatness) |
-| 🔵 | Clinical review | Clinician audit of knowledge files, prompts, and response quality |
-| 🔵 | Deployment | Docker Compose, one-command setup, hosted demo |
-
-🟢 shipped · 🟡 planned · 🔵 blocked on external dependency
+| Status | Component | Initiative |
+|:---|:---|:---|
+| ✓ Shipped | **Web Frontend** | Next.js UI with chat, threading, and memory inspection |
+| ✓ Shipped | **Voice Chat** | OpenAI Realtime integration with crisis gate and memory |
+| ✓ Shipped | **Guided Exercises** | 12 interactive exercises with multi-turn state tracking |
+| ✓ Shipped | **Session Feedback** | End-of-session rating system via UI and CLI |
+| ✓ Shipped | **API Layer** | FastAPI REST + WebSocket streaming |
+| ○ Planned | **Messaging Channels** | Adapters for Telegram, WhatsApp, and Discord |
+| ○ Planned | **Graph Memory** | Graphiti + Neo4j for entity-relationship reasoning |
+| ○ Planned | **Consolidation** | Background fact merging, dormant marking, and undo support |
+| ○ Planned | **Acoustic Safety** | Paralinguistic crisis detection (prosodic flatness, etc.) |
+| ⏸ Blocked | **Clinical Review** | Expert clinician audit of knowledge files and safety logic |
 
 ---
 
 <div align="center">
-<sub>Built with care. Use with care.</sub>
+<sub>Built responsibly. Use responsibly.</sub>
+<br/>
+<br/>
+<a href="LICENSE">AGPL-3.0 License</a>
 </div>

@@ -1,0 +1,70 @@
+---
+title: Privacy Controls
+sidebar_position: 3
+---
+
+import PrivacyCommands from '@site/src/components/PrivacyCommands';
+
+# Privacy Controls
+
+Users can inspect, delete, or wipe anything the agent remembers.
+Three escalating tiers — each with stronger confirmation gates.
+
+<PrivacyCommands />
+
+---
+
+## Confirmation design
+
+| Tier | Gate | Why |
+|---|---|---|
+| **Inspect** | None | Read-only, no side effects |
+| **Delete** | Preview panel + `y/N` (default N) | Single-record deletion is recoverable only from backup |
+| **Wipe** | Must type the literal word `clear` or `purge` | Muscle-memory `y` confirmation would be dangerous for namespace-wide deletion. `y`, `yes`, and `CLEAR` all cancel — only the exact lowercase word proceeds. |
+
+:::note `/memory clear rules` preserves settings
+The recall toggle (`proactive_recall_enabled`) is a user preference,
+not content. Clearing rules wipes the directives but keeps the
+toggle state.
+:::
+
+---
+
+## Always-on subsystems
+
+Two subsystems write **regardless of memory mode** — privacy
+asymmetry for safety and product quality:
+
+| Subsystem | Incognito behavior | Retention |
+|---|---|---|
+| **Crisis log** | In-memory (dies at exit), `user_id = None` | 90 days, purge via `/memory purge-crisis` |
+| **Session feedback** | In-memory (dies at exit), `user_id = None` | 180 days (no CLI purge in Phase 1) |
+
+No user text is stored in either subsystem — only classification
+labels and structural metadata.
+
+---
+
+## Recall toggle
+
+```
+/memory recall on      # agent may reference past content proactively
+/memory recall off     # agent uses stored context only when user brings it up
+```
+
+**Procedural rules always apply** regardless of the toggle — the
+distinction is between *content recall* (referencing what was said)
+and *directive application* (following style rules).
+
+---
+
+## Owner scoping
+
+All destructive operations are scoped to `session.owner_id()`:
+
+| Flag | Scope |
+|---|---|
+| Without `--user-id` | Thread_id (backward-compatible) |
+| With `--user-id alice` | Alice's memory only |
+
+Cross-user deletion is not reachable through the CLI.

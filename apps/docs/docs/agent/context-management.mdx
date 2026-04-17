@@ -10,115 +10,63 @@ import PromptInjectionMatrix from '@site/src/components/PromptInjectionMatrix';
 # Context Management
 
 Every turn, the agent retrieves long-term memory, loads the
-conversation transcript from the LangGraph checkpoint, and assembles
-the context that the response node will see. Memory retrieval uses
-hybrid RRF; transcript and progress fields persist via the
-checkpointer.
+conversation via checkpointer + reducers, and assembles the context
+that the response node will see.
+
+---
 
 ## Per-turn retrieval
 
-The `load_memory_node` runs at the start of every turn and populates
-three things:
+`load_memory_node` runs on the therapeutic branch and populates:
 
-1. **Working memory** — semantic facts + episodic arcs retrieved via
-   hybrid RRF (embedding + token-recall). Rendered as
-   `"Previously noted: ..."` and `"Last session (...): ..."` entries.
-2. **Procedural rules** — the full set of style rules from the
-   user's `ProceduralProfile`, loaded unconditionally (not
-   query-based). Placed on `memory.procedural_rules`.
-3. **Retrieval summary** — a diagnostic string reporting hit counts,
-   store sizes, recall toggle state, and the retrieval path
-   (hybrid_rrf or token_recall).
+| Output | What it contains | Retrieval method |
+|---|---|---|
+| `working_memory` | `WorkingMemoryEntry` dicts (semantic + episodic) | Hybrid RRF (embedding + token-recall) |
+| `memory.procedural_rules` | Style directives from `ProceduralProfile` | Full profile load (not query-based) |
+| `diagnostics` | Hit counts, store sizes, retrieval path | Written via `_merge_dicts` reducer |
 
-On the **first turn of a new session** (transcript length = 1), the
+:::tip First-turn catch-up
+On the first turn of a new session (transcript length = 1), the
 most recent episodic arc is automatically injected as a catch-up
-entry regardless of query match — the "last time we talked..."
-experience.
+entry — the "last time we talked..." experience — regardless of
+query match.
+:::
+
+---
 
 ## What the response node sees
 
-The dispatcher and mode nodes read from assembled state:
-
-| Field | Source | What it contains |
-|---|---|---|
-| `message` | User input | The current user message |
-| `history` / `transcript` | LangGraph checkpoint | Full conversation so far (user + assistant turns) |
-| `working_memory` | `load_memory_node` | Semantic and episodic snippets relevant to this turn |
-| `memory.procedural_rules` | `load_memory_node` | Style directives always applied |
-| `memory.proactive_recall_enabled` | `load_memory_node` | Whether to proactively reference stored content |
-| `progress.turn_count` | `build_initial_state` | Number of user turns in the session |
-| `progress.stage` | `build_initial_state` | Session stage (currently always `"opening"`) |
-| `crisis` | `crisis_gate_node` | Safety assessment (level, confidence, reason, flags) |
-| `routing.mode` | Dispatcher | Which therapeutic mode was selected |
-| `routing.mode_source` | Dispatcher | How it was selected (keyword, llm, default) |
-
-## Extraction pipeline
-
-The interactive diagram below shows the context extraction steps
-that run before the graph executes.
-
 <ContextPipeline />
+
+| Field | Source | Per turn? |
+|---|---|---|
+| `message` | User input | Yes |
+| `history` / `transcript` | Checkpointer + `operator.add` reducer | Accumulated across turns |
+| `working_memory` | `load_memory_node` | Re-retrieved each turn |
+| `memory.procedural_rules` | `load_memory_node` | Re-loaded each turn |
+| `crisis` | `crisis_gate_node` | Fresh each turn |
+| `routing.mode` | Dispatcher | Fresh each turn |
+| `progress` | Checkpointer + `_merge_dicts` reducer | Merged across turns (exercise state persists) |
 
 ---
 
 ## Session stage
 
-The session stage tracks where the conversation is in its arc. The
-interactive diagram below shows the stages and their transitions.
-
 <SessionStageArc />
 
-Currently, the session stage is set to `"opening"` at the start of
-every turn in `build_initial_state` and is not dynamically updated
-during the turn. Dynamic stage inference (opening → deepening →
-working → closing) is a planned enhancement — the state field and
-knowledge file (`knowledge/session_stages.md`) exist but the
-inference logic is not yet wired into the graph.
+:::note Not yet dynamic
+The session stage is set to `"opening"` at the start of every turn.
+Dynamic stage inference (opening → deepening → working → closing)
+is a planned enhancement — the state field and knowledge file
+(`knowledge/session_stages.md`) exist but the inference logic is
+not yet wired into the graph.
+:::
 
 ---
 
-## Prompt injection
+## Prompt injection by mode
 
-Not every mode sees the same context. The matrix below shows which
+Not every mode sees the same context. Click a cell to see which
 context fields are injected into each mode's prompt.
 
 <PromptInjectionMatrix />
-
----
-
-## Dispatcher signals
-
-The therapeutic dispatcher uses **pattern matching** on the user
-message to classify turns. It does not compute a separate set of
-cached semantic signals — the pattern matching happens inline in
-`agent/therapeutic/dispatcher.py`.
-
-The dispatcher's classification hierarchy:
-
-1. **Regex fast paths** — high-precision patterns for obvious cases
-   (confusion markers → clarifying, explicit exercise requests →
-   guided_exercise, wind-down signals → closing, reflective
-   patterns → reflective)
-2. **Active exercise override** — if `routing.exercise_type` is set
-   from a prior turn, the dispatcher stays in guided_exercise
-3. **LLM classifier** — for ambiguous messages, the dispatcher
-   calls the LLM with a system prompt describing all 6 modes and
-   their trigger conditions
-4. **Regex fallback** — when no LLM is available, a broader set of
-   regex patterns catches more cases
-5. **Default** — `supportive` when nothing else matches
-
-The `state.routing.semantic_signals` field exists in the state schema
-but is currently an empty dict — the planned 14-signal extraction
-system was designed but not implemented. The dispatcher handles
-classification without it.
-
-## Memory identity
-
-The `--user-id` flag controls which owner's memory is retrieved.
-Without it, each thread is its own isolated namespace — memory
-written in one thread is invisible to another. With it, all threads
-sharing the same user ID read and write the same memory store.
-
-See the [Memory Layers](/docs/memory/overview) page for the full
-CoALA-inspired architecture.

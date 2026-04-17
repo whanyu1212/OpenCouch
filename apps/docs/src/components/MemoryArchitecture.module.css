@@ -1,0 +1,329 @@
+/* ================================================================
+   MemoryArchitecture — Write/read flow + expandable layer cards
+   ================================================================ */
+
+.root {
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+[data-theme='light'] .root {
+  background: #fafbfc;
+  border-color: #dde1e6;
+}
+
+/* ── Flow header ─────────────────────────────────────────────────── */
+
+.flowHeader {
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #1e1e1e;
+}
+
+[data-theme='light'] .flowHeader {
+  border-bottom-color: #dde1e6;
+}
+
+.flowDirection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.dirLabel {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #2dd4bf;
+}
+
+[data-theme='light'] .dirLabel {
+  color: #0d9488;
+}
+
+.dirArrow {
+  font-size: 14px;
+  color: #52525b;
+}
+
+.dirSub {
+  color: #52525b;
+  font-weight: 400;
+}
+
+/* ── Layer cards ─────────────────────────────────────────────────── */
+
+.layers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layerCard {
+  border: 1px solid #222;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d0d0d;
+  transition: border-color 0.2s ease;
+}
+
+[data-theme='light'] .layerCard {
+  background: #ffffff;
+  border-color: #e4e8ec;
+}
+
+.layerCardExpanded {
+  border-color: var(--layer-color, #2dd4bf);
+}
+
+/* Color variants */
+.semantic { --layer-color: #3d9990; }
+.episodic { --layer-color: #d78b5f; }
+.procedural { --layer-color: #65b8af; }
+
+[data-theme='light'] .semantic { --layer-color: #1b7a73; }
+[data-theme='light'] .episodic { --layer-color: #b06d3f; }
+[data-theme='light'] .procedural { --layer-color: #3d9990; }
+
+/* ── Layer header (clickable) ────────────────────────────────────── */
+
+.layerHeader {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.layerHeader:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme='light'] .layerHeader:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.layerIcon {
+  font-size: 14px;
+  color: var(--layer-color);
+  width: 20px;
+  text-align: center;
+}
+
+.layerLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+  flex: 1;
+  letter-spacing: -0.01em;
+}
+
+.chevron {
+  font-size: 12px;
+  color: var(--oc-text-muted);
+  transition: transform 0.2s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+/* ── Layer body (expanded) ───────────────────────────────────────── */
+
+.layerBody {
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: expandIn 0.2s ease;
+  border-top: 1px solid var(--layer-color);
+  padding-top: 14px;
+}
+
+@keyframes expandIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Examples */
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.example {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 11px !important;
+  padding: 4px 10px !important;
+  border-radius: 5px !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: var(--oc-text-primary) !important;
+}
+
+[data-theme='light'] .example {
+  background: rgba(0, 0, 0, 0.03) !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Write/Read grid */
+.flowGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 580px) {
+  .flowGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flowCol {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid #1e1e1e;
+}
+
+[data-theme='light'] .flowCol {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: #e4e8ec;
+}
+
+.flowLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--layer-color);
+}
+
+.flowValue {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--oc-text-primary);
+}
+
+.flowSub {
+  font-size: 0.72rem;
+  color: var(--oc-text-muted);
+  line-height: 1.45;
+}
+
+/* Output shape */
+.outputRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.outputLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--layer-color);
+  flex-shrink: 0;
+}
+
+.outputCode {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 11px !important;
+  color: var(--oc-text-secondary) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+/* Storage */
+.storageRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.storageLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--oc-text-muted);
+  flex-shrink: 0;
+}
+
+.storageValue {
+  font-size: 0.78rem;
+  color: var(--oc-text-muted);
+}
+
+/* ── Convergence (bottom) ────────────────────────────────────────── */
+
+.convergence {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.convConn {
+  width: 2px;
+  height: 16px;
+  background: linear-gradient(to bottom, #2dd4bf40, #2dd4bf15);
+}
+
+[data-theme='light'] .convConn {
+  background: linear-gradient(to bottom, #0d948850, #0d948820);
+}
+
+.convNode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid #2dd4bf30;
+  background: linear-gradient(135deg, #0d2d2a, #111);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2dd4bf;
+}
+
+[data-theme='light'] .convNode {
+  border-color: #0d948840;
+  background: linear-gradient(135deg, #f0fdfa, #fff);
+  color: #0d9488;
+}
+
+.convIcon {
+  font-size: 14px;
+  opacity: 0.7;
+}

@@ -44,7 +44,7 @@
   text-align: center;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.72rem;
-  color: #89b7b2;
+  color: #b0d4cf;
   letter-spacing: 0.02em;
 }
 
@@ -59,8 +59,15 @@
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.8rem;
   line-height: 1.6;
-  color: #ffffff;
+  color: #e8f5f3;
   background: #081312;
+}
+
+/* Override Docusaurus code-block styles that assume a light background
+   in light mode. The terminal is always dark regardless of theme. */
+.body code {
+  color: inherit !important;
+  background: transparent !important;
 }
 
 html[data-theme='light'] .terminal {
@@ -74,4 +81,12 @@ html[data-theme='light'] .titleBar {
 
 html[data-theme='light'] .body {
   background: #0c201e;
+  color: #e8f5f3;
+}
+
+/* Force code inside the terminal to inherit the terminal's light text,
+   not Docusaurus's light-mode code color (which assumes a white bg). */
+html[data-theme='light'] .body code {
+  color: #e8f5f3 !important;
+  background: transparent !important;
 }

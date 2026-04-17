@@ -1,50 +1,132 @@
 ---
 title: Runtime & Persistence
+sidebar_position: 2
 ---
 
-import RuntimeLayers from '@site/src/components/RuntimeLayers';
-import ThreadLifecycle from '@site/src/components/ThreadLifecycle';
+import TerminalWindow from '@site/src/components/TerminalWindow';
 
 # Runtime & Persistence
 
-The agent has two entry points that share the same core pipeline. The stateless layer is for simple request/response. The persistent layer adds thread-aware checkpointing so conversations survive across sessions.
+Two entry points, one pipeline. The stateless layer is for
+single-turn requests. The persistent layer adds thread-aware
+checkpointing.
 
-## Two layers, one pipeline
+---
 
-Both layers run the same nodes in the same order. The difference is what happens between turns.
+## Two layers
 
-<RuntimeLayers />
+```text
+                        ┌──────────────────────────────┐
+   run_agent()  ───────►│                              │
+                        │     Same graph nodes,        │
+                        │     same ordering,           │──────►  AgentOutput
+                        │     same safety contract     │
+   run_turn()   ───────►│                              │
+   (+ checkpoint)       └──────────────────────────────┘
+```
 
-The stateless path (`run_agent`) is a single async function — the caller passes in history and gets back a response. The persistent path (`PersistentAgentRuntime`) manages a SQLite-backed checkpoint store. It loads the previous state, runs the turn, and saves the result automatically.
+| Layer | Entry point | Persistence | Used by |
+|---|---|---|---|
+| **Stateless** | `run_agent(input)` | None — caller manages history | Tests, evals, one-shot scripts |
+| **Persistent** | `PersistentAgentRuntime.run_turn(thread_id, msg)` | SQLite via LangGraph checkpointer | CLI, API, multi-turn sessions |
 
-The runtime now wires three collaborators at startup: an LLM client, an `EmbeddingProvider` (used for semantic retrieval in the memory layer), and a memory store. All three are injected into the graph so nodes never construct their own clients.
+:::tip The difference is between turns, not within a turn
+Both layers run identical graph nodes in identical order. The
+persistent layer saves state to SQLite after each turn and restores
+it via reducers on the next.
+:::
+
+---
+
+## How state accumulates
+
+:::info No `get_history()` on the hot path
+`build_initial_state()` emits only the current user turn. The
+checkpointer restores prior turns automatically via reducers. This
+eliminated the O(n) transcript deserialization that ran on every
+persistent turn.
+:::
+
+| Field | Reducer | Behavior |
+|---|---|---|
+| `history` | `operator.add` | Each turn appends new entries; checkpointer accumulates |
+| `transcript` | `operator.add` | finalize_turn appends a 1-element delta |
+| `progress` | `_merge_dicts` | Per-turn fields merge with cross-turn fields (exercise state) |
+| `diagnostics` | `_merge_dicts` | Parallel extractors write independently |
+
+**Non-reducer fields** (`routing`, `response`, `crisis`) are
+overwritten fresh each turn — they're turn-scoped by design.
 
 ---
 
 ## Thread lifecycle
 
-Hover a turn to see what persists versus what gets re-derived. Persisted fields survive between turns; re-derived fields are recomputed from the transcript by `prepare_turn_state` each turn.
+<TerminalWindow title="session lifecycle">
+{`# Session 1 — 3 turns + end
+$ opencouch --thread-id alice-s1 --user-id alice
+> Hi there                            # turn 1: checkpoint created
+> I've been feeling anxious           # turn 2: transcript accumulates
+> Can we do a grounding exercise?     # turn 3: exercise state persists via progress reducer
+> /end                                # feedback prompt → summarize → episodic arc written
 
-<ThreadLifecycle />
+# Session 2 — same user, new thread
+$ opencouch --thread-id alice-s2 --user-id alice
+> Hey                                 # first-turn catch-up fires: "Last session (anxiety)..."
+                                      # alice's semantic facts + procedural rules visible`}
+</TerminalWindow>
 
-The `compact_persisted_state` step runs at the end of every turn. It strips the derived `history` field before the checkpoint is saved — the transcript is the source of truth, and history is just a trimmed view of it.
+| Event | What happens |
+|---|---|
+| **First turn** | Checkpoint created. `build_initial_state()` provides defaults. |
+| **Subsequent turns** | Checkpointer restores accumulated state. Only the new user turn is emitted. |
+| **`/end`** | Optional feedback prompt → `record_session_feedback()` → `end_session()` → episodic arc written. Session metadata cleared. |
+| **Resume after `/end`** | Same thread_id works. Transcript persists. Next turn starts a fresh session. |
+| **Incognito** | All four backends in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). |
 
 ---
 
 ## The `--user-id` flag
 
-By default, each thread is its own isolated namespace — memory created in one thread is invisible to another. The `--user-id` flag decouples memory identity from thread identity: when set, every thread sharing the same user ID reads and writes the same memory store. This means switching threads (e.g. starting a fresh conversation) preserves accumulated semantic facts, procedural rules, and episodic arcs.
+<TerminalWindow title="memory scoping">
+{`# Without --user-id: memory scoped to thread
+$ opencouch --thread-id thread-a      # facts written to "thread-a" namespace
+$ opencouch --thread-id thread-b      # can't see thread-a's facts
+
+# With --user-id: memory scoped to user across threads
+$ opencouch --thread-id s1 --user-id alice   # facts written to "alice"
+$ opencouch --thread-id s2 --user-id alice   # sees alice's facts from s1`}
+</TerminalWindow>
 
 ---
 
-## Privacy controls
+## WorkflowContext
 
-Three CLI commands call through to the store/backend layer for memory management:
+Runtime dependencies injected as a **frozen dataclass**. Nodes
+access via `runtime.context.llm_client` — not dict access.
 
-| Command | Effect |
+```python
+@dataclass(slots=True, frozen=True)
+class WorkflowContext:
+    llm_client: BaseLLMClient | None
+    memory_store: MemoryStore
+    crisis_log_backend: CrisisLogBackend
+    memory_mode: MemoryMode
+    embedding_provider: EmbeddingProvider | None = None
+```
+
+:::note Why frozen?
+Immutability guarantees that no node can accidentally modify a
+shared dependency during a turn. The `slots=True` flag reduces
+memory overhead. Both are free correctness wins.
+:::
+
+---
+
+## Key files
+
+| File | Purpose |
 |---|---|
-| `/memory forget` | Deletes a specific fact or rule from the user's memory |
-| `/memory clear` | Wipes all memory for the current user identity |
-| `/memory purge-crisis [days]` | Removes crisis log entries older than the specified retention window |
-
-See the [Memory](/docs/memory/overview) section for the full architecture.
+| `agent/persistence.py` | `PersistentAgentRuntime` — run_turn, run_turn_stream, end_session, record_session_feedback |
+| `agent/graph.py` | build_agent_workflow, build_initial_state, state_to_output, run_agent |
+| `agent/state.py` | `AgentState` TypedDict with reducer annotations |
+| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
