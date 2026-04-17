@@ -51,6 +51,14 @@ class Settings:
     llm_provider: LLMProvider = DEFAULT_LLM_PROVIDER
     gemini_model: str = DEFAULT_GEMINI_MODEL
     openai_model: str = DEFAULT_OPENAI_MODEL
+    langsmith_tracing: bool = False
+    langsmith_endpoint: str | None = None
+    langsmith_api_key: str | None = None
+    langsmith_project: str | None = None
+    langchain_tracing_v2: bool = False
+    langchain_endpoint: str | None = None
+    langchain_api_key: str | None = None
+    langchain_project: str | None = None
 
 
 def get_settings() -> Settings:
@@ -73,6 +81,16 @@ def get_settings() -> Settings:
         llm_provider=provider,  # type: ignore[arg-type]
         gemini_model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
         openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+        langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),
+        langsmith_api_key=os.getenv("LANGSMITH_API_KEY"),
+        langsmith_project=os.getenv("LANGSMITH_PROJECT"),
+        langchain_tracing_v2=os.getenv("LANGCHAIN_TRACING_V2", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        langchain_endpoint=os.getenv("LANGCHAIN_ENDPOINT"),
+        langchain_api_key=os.getenv("LANGCHAIN_API_KEY"),
+        langchain_project=os.getenv("LANGCHAIN_PROJECT"),
     )
 
 
