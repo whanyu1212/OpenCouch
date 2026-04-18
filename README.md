@@ -35,6 +35,7 @@
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [Contributing](#contributing)
+- [Changelog](#changelog)
 - [Roadmap](#roadmap)
 
 ---
@@ -213,6 +214,17 @@ OpenCouch/
 ├── eval/                       # Evaluation harnesses + curated datasets
 └── knowledge/                  # Therapeutic prompts, policy, and source-of-truth content
 ```
+
+---
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
+
+- **Voice session persistence** — voice chat now survives in-app tab switches and browser tab backgrounding
+- **Session trajectory evals** — unified eval runner with 25 long-trajectory cases covering safety, modality, and mode transitions
+- **Crisis gate hardening** — LLM-primary architecture with regex fallback, shadow monitoring, and adversarial-resistant prompt
+- **Therapeutic dispatcher rewrite** — LLM-primary routing for all 6 modes and 7 modalities, mid-exercise exit detection
 
 ---
 

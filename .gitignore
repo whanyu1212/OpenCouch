@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -222,7 +222,6 @@ notes/
 # (kept at root level for convenience but not tracked in git)
 ROADMAP.md
 AGENTS.md
-CHANGELOG.md
 llms.txt
 *_plan.md
 *_report.md
