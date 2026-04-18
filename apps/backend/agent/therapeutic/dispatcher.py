@@ -1,32 +1,32 @@
 """Therapeutic dispatch node — picks which mode handles the current turn.
 
-Phase 1 v0.1 uses a **hybrid dispatcher**: high-precision regex patterns
-short-circuit the decision for obvious cases, and an LLM structured-output
-classifier handles everything else when a provider client is available.
-If no LLM client is present, the regex pathway is the sole source of
-truth (default-to-supportive for anything unmatched).
+Uses an **LLM-primary** architecture: the LLM structured-output
+classifier is the default decision path for all routing, including
+mid-exercise continuation/exit, closing detection, and mode/modality
+selection. Regex patterns are demoted to fallback-only, used when no
+LLM client is available or the LLM call fails.
 
 Dispatch flow:
-    1. REFLECTIVE fast path — if a high-precision pattern-recognition
-       regex matches, go straight to reflective. Bypass the LLM.
-    2. Explicit CONFUSION markers — "huh?", "what do you mean?" etc.
-       route to clarifying without consulting the LLM.
-    3. LLM classifier — if an llm_client is available and no fast path
-       fired, call ``generate_structured`` with the ``DispatchDecision``
-       schema and the last ~6 turns of history. Trust the LLM's pick.
-    4. Regex fallback — no LLM client, or LLM call failed: apply the
-       short-message-without-self-report heuristic for clarifying, and
-       default to supportive otherwise.
+    1. Exercise exit overrides (deterministic) — narrow, high-precision
+       regex for unambiguous exercise opt-out ("quit", "cancel",
+       "never mind"). Fire before the LLM to honor clear exit intent
+       instantly.
+    2. LLM classifier (primary) — handles all other routing. Picks one
+       of six modes plus a therapeutic modality. For mid-exercise turns,
+       the LLM sees exercise context in the prompt and decides whether
+       to continue or exit.
+    3. Regex fallback (degraded) — when no LLM client is available or
+       the call fails. Uses narrow reflective/confusion patterns and
+       defaults to supportive.
 
-This mirrors the hybrid pattern in ``agent/nodes/crisis_gate.py``:
-deterministic rules first, LLM fallback for ambiguous cases, graceful
-degradation when the LLM is unavailable.
+This mirrors the LLM-primary pattern in ``agent/nodes/crisis_gate.py``:
+deterministic overrides for critical boundary cases, LLM as primary
+classifier, regex as graceful degradation.
 
-The dispatcher returns ``Command(goto=<node_name>)`` with an empty
-update dict — the individual mode nodes are responsible for setting
-``routing.mode``, ``routing.mode_source``, and ``routing.mode_type``
-in their own deltas. This keeps each mode self-documenting and makes
-the LangSmith trace clearly show which mode ran.
+The dispatcher returns ``Command(goto=<node_name>)`` with a routing
+update that includes the selected modality. The individual mode nodes
+set ``routing.mode``, ``routing.mode_source``, and ``routing.mode_type``
+in their own deltas.
 """
 
 from __future__ import annotations
@@ -58,15 +58,19 @@ GUIDED_EXERCISE_NODE = "guided_exercise_response_node"
 
 # ─── Dispatch patterns ─────────────────────────────────────────────────────
 
-# Reflective mode is triggered when the user is naming a recurring pattern,
-# asking "why does this keep happening" type questions, or surfacing a
-# theme across multiple turns. These patterns are deliberately specific —
-# we want high precision (few false positives) more than high recall,
-# because a false-positive reflective response ("I notice you keep doing
-# X" when the user hasn't been doing X) is the worst failure mode.
+# Reflective fast-path patterns — ONLY for forms where the user is
+# explicitly naming their OWN recurring behavioral pattern with
+# first-person framing + repetition marker. Broader patterns like
+# "every time I", "same thing", "is there a pattern" are demoted to
+# the LLM classifier because they produce harmful false positives
+# on non-pattern contexts:
+#   - "Every time I try your grounding exercise it helps" → NOT reflective
+#   - "Is there a pattern to panic attacks?" → psychoeducation, not reflective
+#   - "Same thing my therapist said" → NOT reflective
 #
-# A regex hit on these patterns is treated as a HIGH-CONFIDENCE fast path
-# that bypasses the LLM dispatcher entirely.
+# The LLM dispatcher prompt already has the right reflective/psychoeducation
+# distinction, so demoting broad patterns to LLM-primary improves accuracy
+# without losing recall.
 REFLECTIVE_PATTERNS: tuple[str, ...] = (
     r"\bwhy do(?:es)? (?:i|this|it) keep\b",
     r"\bwhy does (?:this|it) (?:keep|always) happen\b",
@@ -77,34 +81,64 @@ REFLECTIVE_PATTERNS: tuple[str, ...] = (
     # original alternation only listed "ending up". Regression pin:
     # the reflective_i_always test case in therapeutic_routing_v0.json.
     r"\bi (?:always|keep)\b.{0,20}\b(?:doing|saying|feeling|ending up|end up)\b",
-    r"\bevery time i\b",
-    r"\bsame (?:thing|pattern|story|cycle)\b",
     r"\bthis (?:keeps|always) happen(?:ing|s)\b",
     r"\bi('m| am) stuck in (?:this|the same|a) (?:pattern|cycle|loop)\b",
     r"\bi notice (?:i|myself) (?:always|keep|often)\b",
-    r"\bis there a pattern\b",
 )
 
-# Explicit confusion markers — the user is signaling they didn't
-# understand something, or their message is pure noise. These are
-# unambiguous and also fast-path (bypass the LLM).
+# Explicit confusion markers — ONLY ultra-short, unambiguous,
+# assistant-directed signals. Broader patterns like "can you explain",
+# "I don't understand", "I'm confused" are demoted to the LLM
+# classifier because they produce harmful false positives on
+# psychoeducation requests:
+#   - "Can you explain why my body does this?" → psychoeducation, not clarifying
+#   - "I don't understand what's happening in my body" → psychoeducation
+#   - "I'm confused about why my chest gets tight" → psychoeducation
+#
+# The LLM dispatcher prompt already has the right clarifying/psychoeducation
+# distinction (including the "confusion about reaction" vs "assistant-directed
+# confusion" boundary), so demoting broad patterns improves accuracy.
 CONFUSION_PATTERNS: tuple[str, ...] = (
     r"^\s*huh\??\s*$",
     r"^\s*what\??\s*$",
     r"^\s*what do you mean\b",
-    # v0.6 Stage A: exclude the "I don't understand WHY X" narrative form.
-    # "I don't understand why that happened" is a narrative about the
-    # user's own confusion with their reaction, not a clarification
-    # request. The negative lookahead (?!\s+why\b) preserves the
-    # short-clarification form ("I don't understand") and the
-    # assistant-directed form ("I don't understand what you said")
-    # while excluding narrative confusion that belongs in
-    # psychoeducation. Regression pin: the
-    # psychoeducation_grief_confusion case in therapeutic_routing_v0.json.
-    r"\bi don'?t (?:understand|get it|follow)(?!\s+why\b)\b",
-    r"\bcan you (?:explain|clarify)\b",
-    r"\bi'?m (?:not sure|confused)\b",
 )
+
+# Explicit exit signals for mid-exercise turns. These fire ONLY when
+# an exercise is active (checked by the caller), so they're scoped to
+# exercise context. Patterns are tightened to avoid false positives on
+# non-exit language used during exercises:
+#   - "I need to stop spiraling" → NOT an exit request, user is processing
+#   - "I don't want to feel this way anymore" → NOT an exit, expressing distress
+#   - "stop, let me think" → NOT an exit, user is pausing within the exercise
+#
+# The patterns now require either a clear opt-out verb ("quit", "cancel",
+# "never mind") or an explicit "don't want to do this/continue" framing.
+# Deterministic exercise exit patterns — ONLY unambiguous opt-out
+# signals that should fire instantly without waiting for the LLM.
+# All other exit signals (ambiguous stops, soft wrap-ups, topic changes)
+# are handled by the LLM classifier, which sees exercise context and
+# can distinguish "I want to stop the exercise" from "I need to stop
+# spiraling" or "I should quit my job."
+EXERCISE_EXIT_PATTERNS: tuple[str, ...] = (
+    r"\bnever[\s-]?mind\b",
+    r"\bnvm\b",
+    r"\b(?:stop|end|skip|quit|cancel) (?:the |this )?(?:exercise|activity|technique)\b",
+    r"\b(?:can|could) we just talk\b",
+    # Bare "quit", "cancel", "stop" are intentionally excluded — they
+    # match non-exit content like "I should quit my job" or "I had to
+    # cancel dinner" or "I need to stop spiraling."
+    # Bare "I don't want to" is excluded — it matches "I don't want to
+    # feel this way anymore" which is distress, not an exit request.
+)
+
+# CLOSING_PATTERNS removed — closing detection is fully LLM-classified.
+# With LLM-primary dispatch, mid-exercise closing signals (e.g., "Before
+# we wrap up, what's the main point?") are handled by the LLM, which
+# picks the closing mode and triggers exercise state cleanup via the
+# non-guided_exercise exit path above. Regex-based closing patterns had
+# substring false-positive problems ("before I go deeper", "before we
+# close that loop") that the LLM avoids by reading full message context.
 
 # A short message routes to clarifying in the FALLBACK path only (when
 # no LLM is available) ONLY IF it's not a complete self-report. A
@@ -176,22 +210,19 @@ def pick_therapeutic_mode(
     isolation from the LangGraph runtime.
 
     This is the **regex-only** fallback path used when no LLM client is
-    available, or when the LLM call fails. When an LLM client is
-    available, ``run_therapeutic_dispatch_node`` uses a hybrid approach
-    that first checks the high-precision fast-path patterns below and
-    then consults the LLM for anything else.
+    available, or when the LLM call fails. It uses only the narrowest,
+    highest-precision patterns. Broader classification (psychoeducation,
+    closing, guided_exercise, and ambiguous reflective/clarifying cases)
+    is handled by the LLM classifier in the primary path.
     """
 
     lowered = message.lower()
 
-    # Reflective wins first — pattern recognition beats terseness.
-    # "Why do I keep doing this?" is short but clearly a pattern question.
+    # Reflective: only the narrowest self-referential pattern forms.
     if _matches_any(lowered, REFLECTIVE_PATTERNS):
         return "reflective"
 
-    # Explicit confusion markers always route to clarifying, regardless
-    # of length. "I don't really understand what you mean by that" is
-    # a long message that still needs clarification.
+    # Clarifying: only exact-message confusion cues (huh?, what?).
     if _matches_any(lowered, CONFUSION_PATTERNS):
         return "clarifying"
 
@@ -326,9 +357,22 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "- motivational_interviewing: user exploring change, ambivalence, "
         "autonomy, stuck between options\n"
         "- cbt: user examining thoughts, beliefs, cognitive patterns, "
-        "wanting practical structure or behavioral change\n"
+        "wanting practical structure or behavioral change. "
+        "Concrete CBT signals: 'let's look at the evidence', 'I want "
+        "to examine this thought', 'help me test this belief', 'what "
+        "would be a realistic step'. The user wants to WORK ON the "
+        "thought or behavior, not escape it.\n"
         "- act: user fighting or avoiding internal experiences, ruminating, "
-        "needing acceptance or values reconnection\n"
+        "needing acceptance or values reconnection. "
+        "Concrete ACT signals: 'I keep fighting this feeling', 'the more "
+        "I try to make it go away the worse it gets', 'I want to step "
+        "back from this thought', 'I keep avoiding because of anxiety', "
+        "'I'm exhausted from battling my own head', 'what do I do with "
+        "this instead of fighting it'. The tell: the user is struggling "
+        "WITH the experience itself — the avoidance, the rumination, "
+        "or the control effort is the problem, not a specific distorted "
+        "thought. If avoidance is driven by fighting internal states "
+        "rather than wanting to restructure a belief, pick act over cbt.\n"
         "- dbt_skills: user in acute emotional overwhelm, needing "
         "distress tolerance or emotion regulation skills\n"
         "- grief_support: user processing loss, bereavement, missing "
@@ -374,9 +418,25 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
     else:
         memory_block = "(no working memory for this turn)"
 
+    # Signal active exercise context so the LLM can decide whether the
+    # user is continuing the exercise or exiting.
+    progress = state.get("progress", {}) or {}
+    exercise_type = progress.get("exercise_type")
+    if exercise_type:
+        exercise_block = (
+            f"\nActive exercise: {exercise_type} "
+            f"(step {progress.get('exercise_step', '?')}). "
+            "If the user is responding to the exercise, pick guided_exercise. "
+            "If the user is exiting, wrapping up, or changing topic, pick the "
+            "appropriate non-exercise mode.\n"
+        )
+    else:
+        exercise_block = ""
+
     return (
         f"Recent conversation:\n{history_block}\n\n"
-        f"{memory_block}\n\n"
+        f"{memory_block}\n"
+        f"{exercise_block}\n"
         f"Current user message:\nuser: {state['message']}\n\n"
         "Which therapeutic mode should handle this turn?"
     )
@@ -437,22 +497,24 @@ async def run_therapeutic_dispatch_node(
 
     Hybrid dispatch with an active-exercise override layered on top:
 
-    1. Active-exercise fast path — if ``progress.exercise_type`` and
-       ``progress.exercise_step`` are both set, a multi-turn exercise
-       is in progress and the user's message is a step response.
-       Route directly to ``guided_exercise_response_node`` without
-       classifying the message. This is the mechanism that keeps
-       multi-turn exercises coherent across turns (v0.6 Stage C).
-    2. Regex fast paths — high-precision patterns for reflective and
-       clarifying modes.
-    3. LLM classifier — for everything else that doesn't match a
-       fast path, the LLM picks one of the six modes.
-    4. Regex fallback — when no LLM client is available, or the LLM
-       call errored.
+    LLM-primary dispatch with deterministic fallback:
 
-    The update dict is empty — the individual mode nodes are responsible
-    for setting ``routing.mode``, ``routing.mode_source``, and
-    ``routing.mode_type`` in their own deltas.
+    1. **Active-exercise exit overrides** (deterministic) — high-precision
+       regex for unambiguous exit/closing signals during exercises. These
+       fire instantly to honor clear opt-out intent without waiting for
+       an LLM round-trip.
+    2. **LLM classifier** (primary) — for ALL other messages, including
+       mid-exercise turns. The LLM picks mode + modality with full
+       conversation context, handling nuance that regex cannot parse
+       (psychoeducation vs reflective, exercise continuation vs exit,
+       closing vs continuation, negation, sarcasm).
+    3. **Regex fallback** (degraded) — only when no LLM client is
+       available or the LLM call fails. Uses narrow, high-precision
+       patterns for basic routing.
+
+    For mid-exercise turns where the LLM picks a non-exercise mode,
+    the dispatcher interprets this as an exit signal and clears exercise
+    state before routing to the LLM's chosen mode.
     """
 
     message = state.get("message", "")
@@ -463,31 +525,31 @@ async def run_therapeutic_dispatch_node(
     def _routing_update(modality: str) -> dict:
         return {"routing": {**state.get("routing", {}), "modality": modality}}
 
-    # ── Fast path 0: active multi-turn exercise ──────────────────────────
-    # Preserve the modality from the turn that started the exercise
-    # rather than overwriting with "none". The first turn picks the
-    # modality via the LLM classifier; continuation turns keep it.
-    if _has_active_exercise(state):
-        logger.debug("therapeutic_dispatch: active-exercise fast path")
-        existing_modality = state.get("routing", {}).get("modality") or "none"
+    def _clear_active_exercise_update(modality: str) -> dict:
+        progress = state.get("progress", {}) or {}
+        return {
+            **_routing_update(modality),
+            "progress": {
+                **progress,
+                "exercise_type": None,
+                "exercise_step": None,
+            },
+        }
+
+    exercise_active = _has_active_exercise(state)
+
+    # ── Deterministic exit overrides (active exercise only) ──────────
+    # These fire before the LLM for unambiguous opt-out signals.
+    # Kept deterministic because honoring "quit" / "cancel" instantly
+    # is the right UX — the user shouldn't wait 1-2s to exit.
+    if exercise_active and _matches_any(lowered, EXERCISE_EXIT_PATTERNS):
+        logger.debug("therapeutic_dispatch: active-exercise exit override")
         return Command(
-            update=_routing_update(existing_modality), goto=GUIDED_EXERCISE_NODE
+            update=_clear_active_exercise_update("none"),
+            goto=SUPPORTIVE_NODE,
         )
 
-    # ── Fast path 1: high-precision reflective patterns ─────────────────
-    if _matches_any(lowered, REFLECTIVE_PATTERNS):
-        logger.debug("therapeutic_dispatch: reflective fast path")
-        return Command(
-            update=_routing_update("interpersonal_therapy"),
-            goto=REFLECTIVE_NODE,
-        )
-
-    # ── Fast path 2: explicit confusion markers ──────────────────────────
-    if _matches_any(lowered, CONFUSION_PATTERNS):
-        logger.debug("therapeutic_dispatch: clarifying confusion-marker fast path")
-        return Command(update=_routing_update("none"), goto=CLARIFYING_NODE)
-
-    # ── LLM classifier path ──────────────────────────────────────────────
+    # ── LLM classifier (primary path) ────────────────────────────────
     if llm_client is not None:
         try:
             mode, modality = await _pick_mode_and_modality_with_llm(state, llm_client)
@@ -496,6 +558,43 @@ async def run_therapeutic_dispatch_node(
                 mode,
                 modality,
             )
+
+            if exercise_active:
+                if mode == "guided_exercise":
+                    # LLM says continue — preserve the entry modality.
+                    existing_modality = (
+                        state.get("routing", {}).get("modality") or modality
+                    )
+                    return Command(
+                        update=_routing_update(existing_modality),
+                        goto=GUIDED_EXERCISE_NODE,
+                    )
+
+                if mode == "clarifying":
+                    # Mid-exercise repair turn ("what do you mean by
+                    # notice?"). Keep exercise state alive so the user
+                    # can resume after the clarification. Route to
+                    # clarifying WITHOUT clearing exercise state.
+                    logger.debug(
+                        "therapeutic_dispatch: mid-exercise clarification "
+                        "(exercise state preserved)"
+                    )
+                    return Command(
+                        update=_routing_update(modality),
+                        goto=CLARIFYING_NODE,
+                    )
+
+                # Any other non-exercise mode is an exit signal —
+                # clear exercise state and route to the chosen mode.
+                logger.debug(
+                    "therapeutic_dispatch: LLM exit from active exercise → %s",
+                    mode,
+                )
+                return Command(
+                    update=_clear_active_exercise_update(modality),
+                    goto=_MODE_NODE_MAP[mode],
+                )
+
             return Command(
                 update=_routing_update(modality),
                 goto=_MODE_NODE_MAP[mode],
@@ -506,10 +605,19 @@ async def run_therapeutic_dispatch_node(
                 exc_info=True,
             )
 
-    # ── Regex fallback ───────────────────────────────────────────────────
+    # ── Regex fallback (no LLM available or LLM failed) ──────────────
+    # For active exercises without LLM, default to continuing the
+    # exercise — the regex can't reliably detect exit intent beyond
+    # the explicit patterns already checked above.
+    if exercise_active:
+        logger.debug("therapeutic_dispatch: regex fallback — continuing exercise")
+        existing_modality = state.get("routing", {}).get("modality") or "none"
+        return Command(
+            update=_routing_update(existing_modality), goto=GUIDED_EXERCISE_NODE
+        )
+
     mode = pick_therapeutic_mode(message)
     logger.debug("therapeutic_dispatch: regex fallback picked mode=%s", mode)
-    # Default modality for regex: MI for supportive, none for others.
     fallback_modality = "motivational_interviewing" if mode == "supportive" else "none"
     return Command(
         update=_routing_update(fallback_modality),

@@ -258,6 +258,13 @@
     "notes": "'This week' marks transient context. The stress isn't framed as a recurring pattern — it's a specific week's state. Must skip."
   },
   {
+    "id": "skip_early_emerging_failure_pattern",
+    "message": "I always assume one mistake means everyone will see I'm incompetent.",
+    "history": [],
+    "expected_outcome": "skip",
+    "notes": "Early-session emerging cognitive pattern. Even though the wording sounds recurring, this should be explored first rather than persisted immediately as long-term semantic memory."
+  },
+  {
     "id": "extract_loss_grandmother",
     "message": "My grandmother passed away last month and I'm still not okay with it.",
     "history": [],

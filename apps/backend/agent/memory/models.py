@@ -536,7 +536,9 @@ class RelatesToEdge(BaseModel):
 
 
 CrisisOverrideKind = Literal["imminent_risk", "idiomatic_safe", "none"]
-CrisisClassifierPath = Literal["deterministic", "llm_fallback", "override"]
+CrisisClassifierPath = Literal[
+    "deterministic", "llm_primary", "llm_fallback", "override"
+]
 
 
 class CrisisLogRecord(BaseModel):

@@ -56,6 +56,66 @@ from agent.state import AgentState
 logger = logging.getLogger(__name__)
 
 
+_EARLY_PATTERN_LANGUAGE = (
+    "it keeps happening",
+    "every new task makes me feel like",
+    "every task makes me feel like",
+    "i'm about to fail",
+    "im about to fail",
+)
+
+_NEGATIVE_SELF_BELIEF_LANGUAGE = (
+    "i always assume",
+    "everyone will see i'm",
+    "everyone will see im",
+    "everyone will think i'm",
+    "everyone will think im",
+    "one mistake means",
+    "i'm incompetent",
+    "im incompetent",
+    "i'm a failure",
+    "im a failure",
+)
+
+_DURABILITY_MARKERS = (
+    "for years",
+    "for a long time",
+    "i always",
+    "i usually",
+    "every time",
+    "whenever",
+    "ever since",
+)
+
+
+def _should_skip_early_emerging_pattern(message: str, turn_index: int) -> bool:
+    """Return whether an early-turn emerging pattern should skip extraction.
+
+    This is a narrow product guard for fresh, in-session interpretations that
+    are reflective-worthy but not yet durable enough for long-term semantic
+    memory. Prompt guidance should catch most of these cases; this helper adds
+    a deterministic backstop for the highest-friction failure mode.
+
+    Negative global self-beliefs get extra protection in early turns: even
+    when phrased with durability markers like "I always", they are often
+    better treated as fresh therapeutic material to explore first rather than
+    stable semantic memory to persist immediately.
+    """
+
+    lowered = message.lower()
+    if turn_index > 1:
+        return False
+
+    if any(marker in lowered for marker in _NEGATIVE_SELF_BELIEF_LANGUAGE):
+        return True
+
+    if not any(marker in lowered for marker in _EARLY_PATTERN_LANGUAGE):
+        return False
+    if any(marker in lowered for marker in _DURABILITY_MARKERS):
+        return False
+    return True
+
+
 def _memory_write_to_semantic_fact(write: MemoryWrite) -> SemanticFact:
     """Convert an LLM-produced :class:`MemoryWrite` to a stored :class:`SemanticFact`.
 
@@ -257,6 +317,14 @@ async def run_extract_semantic_facts_node(
     progress = state.get("progress", {})
     turn_count = int(progress.get("turn_count", 1))
     turn_index = max(0, turn_count - 1)
+
+    if _should_skip_early_emerging_pattern(state["message"], turn_index):
+        logger.debug(
+            "extract_semantic_facts_node: early emerging-pattern guard triggered; "
+            "skipping extraction for message %r",
+            state["message"][:80],
+        )
+        return _diagnostics_delta(reason="skipped: early_emerging_pattern")
 
     # ── LLM structured-output extraction ────────────────────────────────
     try:

@@ -78,13 +78,18 @@ from typing import Protocol, runtime_checkable
 logger = logging.getLogger(__name__)
 
 
-# Gemini's gemini-embedding-001 is the default model. It produces
-# 3072-dimensional embeddings, supports batch input, and is cheap
-# enough that dogfood doesn't need per-session cost tracking.
+# OpenAI's text-embedding-3-large is the default embedding model.
+# It produces 3072-dimensional embeddings and is the current
+# high-capability OpenAI embedding option for retrieval use cases.
 # Switching models later requires (a) updating this constant or
 # injecting the model name at provider construction time, and (b)
 # running a re-embed sweep for records that still have the old
 # model stored in ``embedding_model``.
+DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-large"
+DEFAULT_OPENAI_EMBEDDING_DIMENSION = 3072
+
+# Gemini's gemini-embedding-001 remains supported as a fallback
+# provider when OpenAI credentials are unavailable.
 DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 DEFAULT_GEMINI_EMBEDDING_DIMENSION = 3072
 
@@ -205,6 +210,128 @@ class NullEmbeddingProvider:
         """
 
         return [None] * len(texts)
+
+
+class OpenAIEmbeddingProvider:
+    """OpenAI implementation of :class:`EmbeddingProvider`.
+
+    Uses the existing ``openai`` SDK already present in the backend for
+    text generation. Calls ``client.embeddings.create(...)`` and returns
+    vectors in input order. This is the default embedding provider when
+    ``OPENAI_API_KEY`` is configured.
+
+    Construction requires an OpenAI API key, either passed explicitly or
+    resolved from ``OPENAI_API_KEY``. If no key is available, prefer
+    :class:`NullEmbeddingProvider` at the runtime wiring layer — don't
+    catch the ValueError from construction and silently fall back,
+    because that would hide configuration mistakes. The runtime's
+    :func:`agent.memory.embeddings.create_configured_embedding_provider`
+    helper handles the key-missing case explicitly.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str = DEFAULT_OPENAI_EMBEDDING_MODEL,
+        dimension: int = DEFAULT_OPENAI_EMBEDDING_DIMENSION,
+    ) -> None:
+        """Initialize an OpenAI-backed embedding provider.
+
+        Args:
+            api_key: Optional explicit OpenAI API key. Falls back to
+                ``OPENAI_API_KEY``.
+            model: Embedding model identifier. Defaults to
+                ``text-embedding-3-large``.
+            dimension: Expected output dimensionality for the configured
+                model. Used by the store to validate stored-vs-current
+                matches.
+
+        Raises:
+            ValueError: If no OpenAI API key can be resolved.
+        """
+
+        resolved_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not resolved_key:
+            raise ValueError(
+                "OpenAI embedding provider: no API key. Set OPENAI_API_KEY."
+            )
+
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(api_key=resolved_key)
+        self._model = model
+        self._dimension = dimension
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
+
+    async def aembed(
+        self,
+        texts: list[str],
+        *,
+        task_type: str = "RETRIEVAL_DOCUMENT",  # noqa: ARG002 — OpenAI ignores task hints
+    ) -> list[list[float] | None]:
+        """Embed a batch of texts via OpenAI's embeddings API.
+
+        See :meth:`EmbeddingProvider.aembed` for the contract.
+        Provider errors are caught and returned as all-``None``
+        results so a transient outage degrades to token-recall
+        rather than poisoning the turn.
+        """
+
+        if not texts:
+            return []
+
+        sanitized = [t if t else " " for t in texts]
+
+        try:
+            response = await self._client.embeddings.create(
+                model=self._model,
+                input=sanitized,
+            )
+        except Exception:
+            logger.warning(
+                "OpenAIEmbeddingProvider: embeddings.create failed for batch of %d; "
+                "returning all-None. Caller should fall back to token-recall.",
+                len(sanitized),
+                exc_info=True,
+            )
+            return [None] * len(texts)
+
+        response_data = getattr(response, "data", None) or []
+        if len(response_data) != len(sanitized):
+            logger.warning(
+                "OpenAIEmbeddingProvider: response length %d != input length %d. "
+                "Returning all-None for the batch.",
+                len(response_data),
+                len(sanitized),
+            )
+            return [None] * len(texts)
+
+        embeddings_out: list[list[float] | None] = []
+        for item in response_data:
+            values = getattr(item, "embedding", None)
+            if values is None:
+                embeddings_out.append(None)
+                continue
+            if len(values) != self._dimension:
+                logger.warning(
+                    "OpenAIEmbeddingProvider: got embedding of dim %d, "
+                    "expected %d. Dropping this entry.",
+                    len(values),
+                    self._dimension,
+                )
+                embeddings_out.append(None)
+                continue
+            embeddings_out.append([float(v) for v in values])
+
+        return embeddings_out
 
 
 class GeminiEmbeddingProvider:
@@ -374,9 +501,11 @@ def create_configured_embedding_provider() -> EmbeddingProvider:
     """Build the right embedding provider based on environment config.
 
     Resolution order:
-    1. If ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY`` is set, returns
+    1. If ``OPENAI_API_KEY`` is set, returns :class:`OpenAIEmbeddingProvider`
+       using ``OPENAI_EMBEDDING_MODEL`` or ``text-embedding-3-large``.
+    2. Else if ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY`` is set, returns
        :class:`GeminiEmbeddingProvider`.
-    2. Otherwise, returns :class:`NullEmbeddingProvider`.
+    3. Otherwise, returns :class:`NullEmbeddingProvider`.
 
     This helper is the canonical wiring path used by
     :class:`agent.persistence.PersistentAgentRuntime`. Tests and
@@ -387,6 +516,28 @@ def create_configured_embedding_provider() -> EmbeddingProvider:
     handle a ``None`` return here. Graceful degradation happens at
     the ``aembed`` call level, not at construction time.
     """
+
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            return OpenAIEmbeddingProvider(
+                model=os.getenv(
+                    "OPENAI_EMBEDDING_MODEL",
+                    DEFAULT_OPENAI_EMBEDDING_MODEL,
+                ),
+                dimension=int(
+                    os.getenv(
+                        "OPENAI_EMBEDDING_DIMENSION",
+                        str(DEFAULT_OPENAI_EMBEDDING_DIMENSION),
+                    )
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "create_configured_embedding_provider: OpenAIEmbeddingProvider "
+                "construction failed; falling back to Gemini/Null provider. "
+                "Retrieval may degrade to token-recall only.",
+                exc_info=True,
+            )
 
     if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
         try:

@@ -148,22 +148,26 @@ class TestPickTherapeuticMode:
             ("I feel sad", "supportive"),  # short but self-report
             ("I do not know what I am feeling right now honestly", "supportive"),
             ("My work is really stressful lately.", "supportive"),
-            # Reflective — explicit pattern-recognition language
+            # Reflective — only the narrowest self-referential patterns
+            # survive in the regex-only fallback. Broader patterns like
+            # "every time I", "is there a pattern" are demoted to LLM.
             ("Why do I keep doing this to myself?", "reflective"),
             ("Why does this keep happening", "reflective"),
             ("Why does this always happen to me", "reflective"),
             ("Why does it always happen to me", "reflective"),
             ("This keeps happening every week.", "reflective"),
-            ("Every time I see her I feel this way", "reflective"),
             ("I always end up doing the same thing", "reflective"),
-            ("Is there a pattern here you see?", "reflective"),
-            # Clarifying — truly sparse OR explicit confusion
+            # Demoted to LLM — regex fallback returns supportive:
+            ("Every time I see her I feel this way", "supportive"),
+            ("Is there a pattern here you see?", "supportive"),
+            # Clarifying — only exact-message confusion cues survive
             ("huh?", "clarifying"),
             ("ok", "clarifying"),
             ("sad", "clarifying"),
             ("Thanks.", "clarifying"),
             ("What do you mean?", "clarifying"),
-            ("I don't understand what you said", "clarifying"),
+            # Demoted to LLM — regex fallback returns supportive:
+            ("I don't understand what you said", "supportive"),
         ],
     )
     def test_pure_regex_dispatch(self, message: str, expected: str) -> None:
@@ -191,30 +195,39 @@ class TestDispatchNode:
     """Integration tests for the dispatch node with mocked runtimes."""
 
     @pytest.mark.asyncio
-    async def test_reflective_fast_path_bypasses_llm(self) -> None:
-        """Reflective regex hit should skip the LLM entirely."""
+    async def test_llm_primary_classifies_reflective_message(self) -> None:
+        """LLM-primary: reflective messages go through the LLM classifier."""
 
-        fake = _FakeDispatchLLM(mode="clarifying")  # wrong on purpose
+        fake = _FakeDispatchLLM(mode="reflective")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("Why do I keep doing this to myself?")
 
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == REFLECTIVE_NODE
-        assert fake.structured_calls == 0  # LLM was not called
+        assert fake.structured_calls == 1  # LLM was called
 
     @pytest.mark.asyncio
-    async def test_confusion_marker_fast_path_bypasses_llm(self) -> None:
-        """Explicit confusion markers should skip the LLM entirely."""
+    async def test_regex_fallback_without_llm_routes_reflective(self) -> None:
+        """Without LLM, regex fallback handles reflective patterns."""
 
-        fake = _FakeDispatchLLM(mode="supportive")
-        runtime = _MockRuntime(llm_client=fake)
+        runtime = _MockRuntime(llm_client=None)
+        state = _build_state("Why do I keep doing this to myself?")
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == REFLECTIVE_NODE
+
+    @pytest.mark.asyncio
+    async def test_regex_fallback_without_llm_routes_clarifying(self) -> None:
+        """Without LLM, regex fallback handles confusion markers."""
+
+        runtime = _MockRuntime(llm_client=None)
         state = _build_state("huh?")
 
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == CLARIFYING_NODE
-        assert fake.structured_calls == 0
 
     @pytest.mark.asyncio
     async def test_llm_path_routes_to_llm_pick(self) -> None:
@@ -330,25 +343,15 @@ class TestDispatchNode:
         This is the CRITICAL multi-turn test for v0.6 Stage C. When a
         prior turn started an exercise (setting progress.exercise_type
         and progress.exercise_step), the dispatcher must route the
-        next turn to guided_exercise WITHOUT running the LLM — even
-        though the user's message ("I see my lamp, a book, and my
-        coffee cup") would look like supportive content to any
-        classifier that doesn't know an exercise is active.
-
-        Without this fast path, multi-turn exercises would be
-        impossible: every continuation turn would re-classify and
-        route somewhere else, breaking the flow.
+        next turn to guided_exercise. With LLM-primary dispatch, the
+        LLM sees the active exercise context in the prompt and picks
+        guided_exercise to continue. The dispatcher preserves the
+        existing modality from the entry turn.
         """
 
-        # Use a wrong-mode fake LLM. If the fast path fails, the test
-        # will route to the fake's picked mode (clarifying) instead of
-        # guided_exercise, which makes the failure visible.
-        fake = _FakeDispatchLLM(mode="clarifying")
+        fake = _FakeDispatchLLM(mode="guided_exercise")
         runtime = _MockRuntime(llm_client=fake)
 
-        # Build a state with an active exercise. The message looks
-        # like a normal step response — the kind of thing that would
-        # route to supportive if the dispatcher didn't know better.
         state: Any = {
             "message": "I see a lamp, a book, a plant, my coffee, and the window.",
             "history": [],
@@ -365,8 +368,7 @@ class TestDispatchNode:
         )
 
         assert cmd.goto == GUIDED_EXERCISE_NODE
-        # Critical: the LLM was NOT called
-        assert fake.structured_calls == 0
+        assert fake.structured_calls == 1  # LLM was called
 
     @pytest.mark.asyncio
     async def test_no_active_exercise_fast_path_when_fields_none(self) -> None:

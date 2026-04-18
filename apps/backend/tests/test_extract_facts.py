@@ -515,6 +515,33 @@ class TestExtractFactsNodeUnit:
         assert any("structured-output call failed" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
+    async def test_early_negative_self_belief_skips_before_llm(self) -> None:
+        """Early-turn negative self-belief language should skip extraction."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[_make_memory_write(evidence_quote="should never be written")],
+                reason="would-be extraction",
+            )
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(
+            message="I always assume one mistake means everyone will see I'm incompetent.",
+            turn_count=1,
+        )
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert (
+            delta["diagnostics"]["extract_facts_reason"]
+            == "skipped: early_emerging_pattern"
+        )
+        assert fake.extraction_calls == 0
+        assert await store.arecord_count() == 0
+
+    @pytest.mark.asyncio
     async def test_source_session_id_and_turn_index_honored(self) -> None:
         """The fact the LLM returns should carry its own provenance into the store."""
 

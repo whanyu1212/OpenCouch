@@ -380,7 +380,7 @@ class TestCrisisLogMetadata:
 
     @pytest.mark.asyncio
     async def test_llm_success_path(self) -> None:
-        """Path 3: deterministic < 2, LLM classifier succeeds → classifier_path=llm_fallback.
+        """LLM classifier succeeds as primary path → classifier_path=llm_primary.
 
         Uses a fake LLM client that returns a crisis-flagged assessment
         for a message the deterministic ladder would rate as level 1.
@@ -445,7 +445,7 @@ class TestCrisisLogMetadata:
         records = await _fetch_all_records(backend)
         assert len(records) == 1
         record = records[0]
-        assert record.classifier_path == "llm_fallback"
+        assert record.classifier_path == "llm_primary"
         assert record.override_kind == "none"
         assert record.llm_failure_occurred is False
         assert record.level == 2

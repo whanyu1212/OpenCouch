@@ -11,6 +11,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import BaseModel
 
+from agent.memory.models import CrisisClassifierPath
 from agent.models import CrisisAssessment, ModeType, ResponseKind
 from agent.prompts import (
     build_crisis_classifier_prompt,
@@ -123,10 +124,15 @@ IDIOMATIC_SAFE_PATTERNS = (
 
 # Denials after a safety-check turn.
 SAFETY_DENIAL_PATTERNS = (
-    r"\b(?:not suicidal|not thinking about(?:\s+self[- ]?harm|\s+suicide)?)\b",
-    r"\b(?:i'?m safe|i am safe|i would never do that|i won't do that)\b",
+    r"\bnot suicidal\b",
+    # Require explicit self-harm object after "not thinking about".
+    r"\bnot thinking about\s+(?:self[- ]?harm|suicide|hurting myself|harming myself|killing myself|ending it)\b",
+    r"\b(?:i'?m safe|i am safe|i would never do that|i won't do that|i won't do anything)\b",
     r"\b(?:just venting|figure of speech|didn't mean it literally)\b",
-    r"\b(?:no)\b.{0,25}\b(?:hurting myself|harming myself|killing myself|ending it)\b",
+    # Require explicit negation-of-intent, not bare "no" + self-harm
+    # co-occurrence. "No, I'm still thinking about ending it" must NOT
+    # match — that's confirming risk, not denying it.
+    r"\bno(?:,| -)?\s*(?:i'?m not|not)\s+(?:hurting myself|harming myself|killing myself|ending it|thinking about it)\b",
 )
 
 
@@ -159,21 +165,49 @@ def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
 
 
 def _previous_mode_was_safety_check(state: AgentState) -> bool:
-    """Return whether the most recent assistant turn appears to be a safety check."""
+    """Return whether the most recent assistant turn appears to be a safety check.
+
+    Uses two detection strategies:
+
+    1. **User denial in current message**: if the user's current message
+       contains safety-denial language AND the assistant's prior turn
+       contained safety-related language, we're in a post-safety-check
+       context.
+    2. **Phrase-based**: check the assistant's most recent response for
+       known safety-check phrases. The list is intentionally broad to
+       catch LLM-generated variations.
+
+    The crisis assessment state is reset each turn by ``build_initial_state``
+    (it's not persisted via checkpoint merge), so state-based detection
+    isn't viable.
+    """
 
     history = state.get("history", [])
     for turn in reversed(history[-4:]):
         if turn.get("role") != "assistant":
             continue
         content = turn.get("content", "").lower()
+        # Narrow to safety-specific phrases only. Broad phrases like
+        # "want to check" and "need to ask" can false-positive on
+        # normal conversation and create incorrect post-denial context.
         if any(
             phrase in content
             for phrase in (
                 "thinking about hurting yourself",
                 "thinking about harming yourself",
-                "are you safe right now",
+                "thoughts of hurting",
+                "thoughts of harming",
+                "thoughts of self-harm",
+                "are you safe",
                 "check on your safety",
-                "check something important",
+                "having thoughts of hurting",
+                "having thoughts of harming",
+                "thoughts about ending",
+                "thinking about ending",
+                "hurting yourself",
+                "harming yourself",
+                "suicidal thought",
+                "suicidal ideation",
             )
         ):
             return True
@@ -184,23 +218,21 @@ def _previous_mode_was_safety_check(state: AgentState) -> bool:
 def detect_crisis_override(
     state: AgentState,
 ) -> tuple[OverrideKind, CrisisAssessment] | None:
-    """Return hard overrides for obvious boundary cases."""
+    """Return hard overrides for obvious boundary cases.
+
+    Override precedence (highest to lowest):
+    1. Imminent risk — ALWAYS wins. A prior idiom must never suppress
+       a current imminent disclosure.
+    2. Idiomatic safe — only matches the CURRENT message, not combined
+       history. This prevents a prior "work is killing me" from
+       suppressing crisis detection on a later message.
+    3. Safety-denial context — post-safety-check de-escalation.
+    """
 
     text = _combined_user_text(state)
     current_message = state["message"].lower()
 
-    if _matches_any(text, IDIOMATIC_SAFE_PATTERNS):
-        return (
-            "idiomatic_safe",
-            CrisisAssessment(
-                level=0,
-                confidence="high",
-                reason="Matched common idiomatic language without self-harm intent.",
-                needs_crisis_response=False,
-                needs_clarification=False,
-            ),
-        )
-
+    # Imminent risk checked FIRST — must never be suppressed by idioms.
     if _matches_any(text, IMMINENT_PATTERNS):
         return (
             "imminent_risk",
@@ -213,14 +245,38 @@ def detect_crisis_override(
             ),
         )
 
+    # Idiomatic safe checked on CURRENT message only — a prior idiom
+    # in history must not suppress crisis detection on the current turn.
+    # GUARD: do NOT return idiomatic-safe if the same message also
+    # matches CLEAR_SELF_HARM or AMBIGUOUS patterns. A message like
+    # "work is killing me and I want to kill myself" contains both an
+    # idiom AND a real self-harm signal — the signal must win.
+    if _matches_any(current_message, IDIOMATIC_SAFE_PATTERNS) and not (
+        _matches_any(current_message, CLEAR_SELF_HARM_PATTERNS)
+        or _matches_any(current_message, AMBIGUOUS_PATTERNS)
+    ):
+        return (
+            "idiomatic_safe",
+            CrisisAssessment(
+                level=0,
+                confidence="high",
+                reason="Matched common idiomatic language without self-harm intent.",
+                needs_crisis_response=False,
+                needs_clarification=False,
+            ),
+        )
+
     if _previous_mode_was_safety_check(state):
         has_new_crisis = _matches_any(
             current_message, CLEAR_SELF_HARM_PATTERNS
         ) or _matches_any(current_message, IMMINENT_PATTERNS)
         has_new_ambiguous = _matches_any(current_message, AMBIGUOUS_PATTERNS)
+        has_new_distress = _matches_any(current_message, DISTRESS_PATTERNS)
         has_denial = _matches_any(current_message, SAFETY_DENIAL_PATTERNS)
 
-        if has_denial or (not has_new_crisis and not has_new_ambiguous):
+        if has_denial or (
+            not has_new_crisis and not has_new_ambiguous and not has_new_distress
+        ):
             return (
                 "idiomatic_safe",
                 CrisisAssessment(
@@ -304,17 +360,31 @@ async def assess_crisis_risk_with_llm(
         raw.confidence if raw.confidence in {"low", "medium", "high"} else "medium"
     )
 
+    # Let normalize_crisis_assessment enforce the truth table rather
+    # than trusting the LLM's raw flag values.
     return CrisisAssessment(
         level=level,
         confidence=confidence,
         reason=raw.reason,
-        needs_crisis_response=raw.needs_crisis_response,
-        needs_clarification=raw.needs_clarification,
+        needs_crisis_response=level >= 2,
+        needs_clarification=level == 1,
     )
 
 
 def normalize_crisis_assessment(assessment: CrisisAssessment) -> CrisisAssessment:
-    """Normalize crisis assessment fields into a consistent shape."""
+    """Normalize crisis assessment fields to enforce the level/flag truth table.
+
+    Truth table (enforced regardless of what the classifier returned):
+        Level 0: needs_crisis_response=False, needs_clarification=False
+        Level 1: needs_crisis_response=False, needs_clarification=True
+        Level 2: needs_crisis_response=True,  needs_clarification=False
+        Level 3: needs_crisis_response=True,  needs_clarification=False
+
+    The classifier's own flag values are overridden when they violate
+    this table. This prevents a miscalibrated LLM from setting
+    needs_crisis_response=True on a level-0 message, or forgetting
+    needs_clarification on a level-1 message.
+    """
 
     level = max(0, min(3, int(assessment.level)))
     confidence = (
@@ -322,8 +392,10 @@ def normalize_crisis_assessment(assessment: CrisisAssessment) -> CrisisAssessmen
         if assessment.confidence in {"low", "medium", "high"}
         else "medium"
     )
-    needs_crisis_response = assessment.needs_crisis_response or level >= 2
-    needs_clarification = assessment.needs_clarification and not needs_crisis_response
+
+    # Enforce the truth table strictly.
+    needs_crisis_response = level >= 2
+    needs_clarification = level == 1
 
     return CrisisAssessment(
         level=level,
@@ -339,9 +411,10 @@ def _build_crisis_delta(
     assessment: CrisisAssessment,
     *,
     override_kind: Literal["imminent_risk", "idiomatic_safe", "none"],
-    classifier_path: Literal["deterministic", "llm_fallback", "override"],
+    classifier_path: CrisisClassifierPath,
     llm_failure_occurred: bool,
     duration_ms: float,
+    shadow_deterministic_level: int | None = None,
 ) -> dict[str, Any]:
     """Build the state-delta dict for one crisis-gate decision.
 
@@ -389,6 +462,7 @@ def _build_crisis_delta(
             "crisis_gate_ms": round(duration_ms, 2),
             "crisis_classifier_path": classifier_path,
             "crisis_level": assessment.level,
+            "crisis_shadow_deterministic_level": shadow_deterministic_level,
         },
     }
 
@@ -397,66 +471,107 @@ async def run_crisis_gate_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
 ) -> Command[Literal["crisis_response_node", "load_memory_node"]]:
-    """Run the hybrid crisis gate (deterministic + optional LLM fallback).
+    """Run the crisis gate with LLM-primary, deterministic-fallback design.
+
+    Decision flow:
+
+    1. **Deterministic overrides** — imminent-risk (level 3 with
+       plan/means/timing) and idiomatic-safe patterns fire instantly.
+       These are too critical to wait for a network call.
+    2. **LLM classifier** (primary) — for all other messages, the LLM
+       evaluates crisis risk with full conversation context. This handles
+       negation, sarcasm, quoted speech, and other nuances that regex
+       cannot reliably parse.
+    3. **Deterministic regex ladder** (fallback) — only used when the LLM
+       provider is unavailable or the call fails. Provides degraded but
+       functional safety coverage during outages.
 
     Returns a :class:`Command` that combines the assessment state update
-    with the routing decision in a single step. Routes to the crisis
-    response node when the assessment marks ``needs_crisis_response``;
-    otherwise routes to the therapeutic subgraph which picks the right
-    response mode (supportive, reflective, or clarifying in v0.1).
+    with the routing decision. Routes to ``crisis_response_node`` when
+    ``needs_crisis_response`` is set; otherwise routes to
+    ``load_memory_node`` for the therapeutic path.
     """
 
     llm_client = runtime.context.llm_client
 
     # v0.8 observability: time the whole gate call so the CLI can
     # render it in the post-turn diagnostics panel. The timer covers
-    # both the regex ladder and the LLM fallback path.
+    # both the override checks and the LLM/deterministic paths.
     gate_start = time.monotonic()
 
     # Debug metadata tracked across the decision tree. Every path below
     # MUST set all three before reaching _build_crisis_delta so the
     # safety audit log reflects the actual code path taken.
     override_kind: Literal["imminent_risk", "idiomatic_safe", "none"] = "none"
-    classifier_path: Literal["deterministic", "llm_fallback", "override"]
+    classifier_path: CrisisClassifierPath
     llm_failure_occurred = False
+    shadow_deterministic_level: int | None = None
 
+    # ── Path 1: deterministic overrides (instant, no network) ────────
+    # Imminent-risk and idiomatic-safe patterns are high-precision and
+    # must fire before any LLM call. Imminent risk cannot wait 1-2s
+    # for a network round-trip. Idiomatic-safe prevents false alarms
+    # on "work is killing me" etc.
     override = detect_crisis_override(state)
     if override is not None:
-        # Path 1: deterministic override — "imminent_risk" or "idiomatic_safe"
         override_kind_detected, override_assessment = override
         override_kind = override_kind_detected
         classifier_path = "override"
         assessment = normalize_crisis_assessment(override_assessment)
+
+    # ── Path 2: LLM classifier (primary) ─────────────────────────────
+    # The LLM handles negation, context, sarcasm, quoted speech, and
+    # all the nuances that regex cannot reliably parse. This is the
+    # default path for all non-override messages.
+    elif llm_client is not None:
+        deterministic = assess_crisis_risk_deterministically(state)
+        try:
+            llm_assessment = await assess_crisis_risk_with_llm(
+                state, llm_client=llm_client
+            )
+            classifier_path = "llm_primary"
+            assessment = normalize_crisis_assessment(llm_assessment)
+
+            # Shadow monitoring: compare LLM result against deterministic.
+            # Log disagreements so drift can be detected. If deterministic
+            # sees level >= 2 but LLM says level 0, that's a potential
+            # false-negative worth investigating.
+            shadow = normalize_crisis_assessment(deterministic)
+            shadow_deterministic_level = shadow.level
+            if shadow.level != assessment.level:
+                logger.info(
+                    "Crisis gate disagreement: LLM level=%d vs deterministic level=%d "
+                    "(message=%r). LLM reason: %s",
+                    assessment.level,
+                    shadow.level,
+                    state["message"][:100],
+                    assessment.reason,
+                )
+            if shadow.level >= 2 and assessment.level == 0:
+                logger.warning(
+                    "Crisis gate: deterministic flagged level %d but LLM returned level 0. "
+                    "Potential false negative. Message: %r",
+                    shadow.level,
+                    state["message"][:100],
+                )
+        except Exception:
+            # LLM call failed — fall back to deterministic regex ladder.
+            logger.warning(
+                "Crisis LLM classifier failed; using deterministic fallback.",
+                exc_info=True,
+            )
+            classifier_path = "deterministic"
+            llm_failure_occurred = True
+            assessment = normalize_crisis_assessment(deterministic)
+
+    # ── Path 3: deterministic regex ladder (no LLM available) ────────
+    # Graceful degradation: when no LLM client is configured, the
+    # regex ladder provides functional (if less nuanced) safety
+    # coverage. This preserves CI-time deterministic eval behavior.
     else:
         deterministic = assess_crisis_risk_deterministically(state)
-        if deterministic.level >= 2:
-            # Path 2: deterministic ladder returned high confidence — skip LLM
-            classifier_path = "deterministic"
-            assessment = normalize_crisis_assessment(deterministic)
-        elif llm_client is not None:
-            try:
-                llm_assessment = await assess_crisis_risk_with_llm(
-                    state, llm_client=llm_client
-                )
-                # Path 3: LLM classifier succeeded
-                classifier_path = "llm_fallback"
-                assessment = normalize_crisis_assessment(llm_assessment)
-            except Exception:
-                # Path 4: LLM was called but raised — fall back to deterministic.
-                # Classifier_path stays "deterministic" because that's what
-                # we actually used; llm_failure_occurred distinguishes this
-                # case from path 5 where the LLM was never called.
-                logger.warning(
-                    "Crisis LLM classifier failed; using deterministic fallback.",
-                    exc_info=True,
-                )
-                classifier_path = "deterministic"
-                llm_failure_occurred = True
-                assessment = normalize_crisis_assessment(deterministic)
-        else:
-            # Path 5: no LLM client available — deterministic only
-            classifier_path = "deterministic"
-            assessment = normalize_crisis_assessment(deterministic)
+        classifier_path = "deterministic"
+        assessment = normalize_crisis_assessment(deterministic)
 
     gate_duration_ms = (time.monotonic() - gate_start) * 1000
     delta = _build_crisis_delta(
@@ -466,6 +581,7 @@ async def run_crisis_gate_node(
         classifier_path=classifier_path,
         llm_failure_occurred=llm_failure_occurred,
         duration_ms=gate_duration_ms,
+        shadow_deterministic_level=shadow_deterministic_level,
     )
     next_node = (
         "crisis_response_node"

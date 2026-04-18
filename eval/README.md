@@ -19,11 +19,21 @@ Current CI path:
 - CI runs the runner in deterministic mode
 - local runs can use `--mode hybrid` with a configured provider client
 
-Long-session eval path:
-- `eval/runners/session_trajectory_live_eval.py` reads `datasets/session_trajectory_long_v1.json`
+Session trajectory eval path:
+- `eval/runners/session_trajectory_eval.py` is the unified runner for both
+  short and long trajectory datasets
+- short dataset (`datasets/session_trajectory_v1.json`): inline per-turn
+  `expect` blocks, supports deterministic and hybrid modes
+- long dataset (`datasets/session_trajectory_long_v1.json`): sparse
+  checkpoint assertions, hybrid-only (requires LLM client)
 - the runner drives the real persisted thread runtime turn by turn
-- datasets contain longer user-only conversations plus checkpoint expectations
 - local runs can use:
-  - `--mode deterministic` for stable baseline behavior
+  - `--mode deterministic` for stable baseline behavior (short dataset)
   - `--mode hybrid` for actual model-backed session runs
+  - `--mode auto` (default) to use LLM when available, fall back otherwise
+  - `--dataset <path>` to select a dataset
   - `--case <id>` to debug one conversation at a time
+- examples:
+  - `python eval/runners/session_trajectory_eval.py --mode auto`
+  - `python eval/runners/session_trajectory_eval.py --mode hybrid --dataset eval/datasets/session_trajectory_long_v1.json`
+  - `python eval/runners/session_trajectory_eval.py --mode hybrid --dataset eval/datasets/session_trajectory_long_v1.json --case out_of_scope_boundary_and_recovery_with_closing`
