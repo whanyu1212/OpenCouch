@@ -1,28 +1,34 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { createVoiceSession } from "@/lib/api";
-import { useSessionStore } from "@/lib/session";
+import {
+  useSessionStore,
+  getVoiceRefs,
+  setVoiceNextPlayTime,
+} from "@/lib/session";
 
 const SAMPLE_RATE = 24000;
 
-interface Transcript {
-  role: "user" | "assistant";
-  text: string;
-}
-
 export default function VoicePage() {
-  const { userId, threadId } = useSessionStore();
-  const [isConnected, setIsConnected] = useState(false);
-  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    userId,
+    threadId,
+    voiceConnected,
+    voiceAgentSpeaking,
+    voiceTranscripts,
+    voiceError,
+    setVoiceConnected,
+    setVoiceAgentSpeaking,
+    addVoiceTranscript,
+    setVoiceError,
+    voiceSetRefs,
+    voiceNewGeneration,
+    clearVoiceTranscripts,
+    voiceCleanup,
+    voiceDisconnect,
+  } = useSessionStore();
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const nextPlayTimeRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,51 +36,67 @@ export default function VoicePage() {
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [transcripts]);
+  }, [voiceTranscripts]);
 
-  const playAudioChunk = useCallback((pcm16Bytes: Uint8Array) => {
-    const ctx = audioContextRef.current;
-    if (!ctx) return;
+  // ── Audio playback (reads refs from module-level vars) ────────────
+  const playAudioChunk = useCallback(
+    (pcm16Bytes: Uint8Array) => {
+      const { audioCtx: ctx, generation: gen } = getVoiceRefs();
+      if (!ctx) return;
 
-    const int16 = new Int16Array(
-      pcm16Bytes.buffer,
-      pcm16Bytes.byteOffset,
-      pcm16Bytes.byteLength / 2
-    );
-    const float32 = new Float32Array(int16.length);
-    for (let i = 0; i < int16.length; i++) {
-      float32[i] = int16[i] / 32768.0;
-    }
-
-    const buffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE);
-    buffer.copyToChannel(float32, 0);
-
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-
-    const now = ctx.currentTime;
-    const startTime = Math.max(now, nextPlayTimeRef.current);
-    source.start(startTime);
-    nextPlayTimeRef.current = startTime + buffer.duration;
-
-    source.onended = () => {
-      if (ctx && ctx.currentTime >= nextPlayTimeRef.current - 0.05) {
-        setIsAgentSpeaking(false);
+      const int16 = new Int16Array(
+        pcm16Bytes.buffer,
+        pcm16Bytes.byteOffset,
+        pcm16Bytes.byteLength / 2
+      );
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768.0;
       }
-    };
-  }, []);
 
+      const buffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE);
+      buffer.copyToChannel(float32, 0);
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+      const { nextPlayTime } = getVoiceRefs();
+      const startTime = Math.max(now, nextPlayTime);
+      source.start(startTime);
+      setVoiceNextPlayTime(startTime + buffer.duration);
+
+      source.onended = () => {
+        // Ignore if this callback is from a stale session
+        if (getVoiceRefs().generation !== gen) return;
+        const { nextPlayTime: npt } = getVoiceRefs();
+        if (ctx && ctx.currentTime >= npt - 0.05) {
+          setVoiceAgentSpeaking(false);
+        }
+      };
+    },
+    [setVoiceAgentSpeaking]
+  );
+
+  // ── Connect ───────────────────────────────────────────────────────
   const connect = useCallback(async () => {
-    setError(null);
-    setTranscripts([]);
+    // Guard against double-connect
+    if (useSessionStore.getState().voiceConnected) return;
+
+    setVoiceError(null);
+    clearVoiceTranscripts();
+
+    // Bump generation — any previous onclose becomes a no-op
+    const gen = voiceNewGeneration();
 
     const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    audioContextRef.current = ctx;
-    nextPlayTimeRef.current = 0;
+    voiceSetRefs({ audioCtx: ctx });
+    setVoiceNextPlayTime(0);
 
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: SAMPLE_RATE,
           channelCount: 1,
@@ -83,42 +105,46 @@ export default function VoicePage() {
           autoGainControl: true,
         },
       });
-      mediaStreamRef.current = stream;
+      voiceSetRefs({ mediaStream: stream });
     } catch {
-      setError("Microphone access denied");
+      // Clean up the AudioContext we just created
+      ctx.close();
+      voiceSetRefs({ audioCtx: null });
+      setVoiceError("Microphone access denied");
       return;
     }
 
     const ws = createVoiceSession(userId, threadId, {
       onAudio: (bytes) => {
-        setIsAgentSpeaking(true);
+        setVoiceAgentSpeaking(true);
         playAudioChunk(bytes);
       },
       onTranscript: (role, text) => {
-        setTranscripts((prev) => [...prev, { role, text }]);
-        if (role === "assistant") {
-          setIsAgentSpeaking(false);
-        }
+        addVoiceTranscript({ role, text });
       },
       onError: (msg) => {
-        setError(msg);
+        setVoiceError(msg);
       },
     });
 
     ws.onclose = () => {
-      setIsConnected(false);
-      cleanup();
+      // Only act if this is still the active session
+      if (getVoiceRefs().generation !== gen) return;
+      setVoiceConnected(false);
+      setVoiceAgentSpeaking(false);
+      voiceCleanup(gen);
     };
 
-    wsRef.current = ws;
+    voiceSetRefs({ ws });
 
-    const source = ctx.createMediaStreamSource(mediaStreamRef.current!);
+    const source = ctx.createMediaStreamSource(stream);
     const processor = ctx.createScriptProcessor(4096, 1, 1);
-    processorRef.current = processor;
+    voiceSetRefs({ processor });
 
     processor.onaudioprocess = (e) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-      if (isAgentSpeaking) return;
+      const { ws: activeWs } = getVoiceRefs();
+      if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+      if (useSessionStore.getState().voiceAgentSpeaking) return;
 
       const input = e.inputBuffer.getChannelData(0);
       const pcm16 = new Int16Array(input.length);
@@ -127,29 +153,25 @@ export default function VoicePage() {
       }
       const bytes = new Uint8Array(pcm16.buffer);
       const base64 = btoa(String.fromCharCode(...bytes));
-      wsRef.current.send(JSON.stringify({ type: "audio", data: base64 }));
+      activeWs.send(JSON.stringify({ type: "audio", data: base64 }));
     };
 
     source.connect(processor);
     processor.connect(ctx.destination);
-    setIsConnected(true);
-  }, [playAudioChunk, isAgentSpeaking]);
-
-  const disconnect = useCallback(() => {
-    wsRef.current?.close();
-    cleanup();
-    setIsConnected(false);
-  }, []);
-
-  function cleanup() {
-    processorRef.current?.disconnect();
-    processorRef.current = null;
-    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-    mediaStreamRef.current = null;
-    audioContextRef.current?.close();
-    audioContextRef.current = null;
-    nextPlayTimeRef.current = 0;
-  }
+    setVoiceConnected(true);
+  }, [
+    userId,
+    threadId,
+    playAudioChunk,
+    setVoiceConnected,
+    setVoiceAgentSpeaking,
+    addVoiceTranscript,
+    setVoiceError,
+    voiceSetRefs,
+    voiceNewGeneration,
+    clearVoiceTranscripts,
+    voiceCleanup,
+  ]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -157,12 +179,12 @@ export default function VoicePage() {
       <header className="px-6 py-3.5 border-b border-oc-border flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="font-display text-lg text-oc-teal-900">Voice</h1>
-          {isConnected && (
+          {voiceConnected && (
             <span className="text-[12px] font-mono text-oc-green">connected</span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          {isAgentSpeaking && (
+          {voiceAgentSpeaking && (
             <div className="flex items-center gap-2 text-[13px] font-mono text-oc-cta">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-oc-cta opacity-60" />
@@ -171,7 +193,7 @@ export default function VoicePage() {
               speaking
             </div>
           )}
-          {!isConnected ? (
+          {!voiceConnected ? (
             <button
               onClick={connect}
               className="bg-oc-teal-700 text-white px-5 py-2.5 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-all shadow-sm"
@@ -180,7 +202,7 @@ export default function VoicePage() {
             </button>
           ) : (
             <button
-              onClick={disconnect}
+              onClick={voiceDisconnect}
               className="bg-oc-red-subtle text-oc-red border border-oc-red/20 px-5 py-2.5 rounded-xl text-[15px] font-medium hover:bg-red-100 transition-all"
             >
               Disconnect
@@ -191,7 +213,7 @@ export default function VoicePage() {
 
       {/* Voice area */}
       <div className="flex-1 flex flex-col items-center justify-center px-6">
-        {!isConnected ? (
+        {!voiceConnected ? (
           <div className="text-center animate-fadeIn">
             <div className="w-24 h-24 rounded-2xl bg-oc-accent-glow flex items-center justify-center mx-auto mb-6">
               <svg
@@ -220,13 +242,13 @@ export default function VoicePage() {
                 <div
                   key={i}
                   className={`w-1.5 rounded-full transition-all duration-300 ${
-                    isAgentSpeaking
+                    voiceAgentSpeaking
                       ? "bg-oc-teal-400"
                       : "bg-oc-warm-300"
                   }`}
                   style={{
-                    height: isAgentSpeaking ? `${20 + Math.sin((i + 1) * 0.7) * 50}%` : "12%",
-                    ...(isAgentSpeaking
+                    height: voiceAgentSpeaking ? `${20 + Math.sin((i + 1) * 0.7) * 50}%` : "12%",
+                    ...(voiceAgentSpeaking
                       ? {
                           animation: `waveBar 0.8s ease-in-out infinite`,
                           animationDelay: `${i * 0.08}s`,
@@ -237,20 +259,20 @@ export default function VoicePage() {
               ))}
             </div>
             <p className="text-oc-text-muted text-[15px] font-mono">
-              {isAgentSpeaking ? "agent speaking…" : "listening — speak when ready"}
+              {voiceAgentSpeaking ? "agent speaking..." : "listening \u2014 speak when ready"}
             </p>
           </div>
         )}
 
-        {error && (
+        {voiceError && (
           <div className="mt-5 px-5 py-3 bg-oc-red-subtle border border-oc-red/20 rounded-xl text-oc-red text-[15px]">
-            {error}
+            {voiceError}
           </div>
         )}
       </div>
 
       {/* Transcript panel */}
-      {transcripts.length > 0 && (
+      {voiceTranscripts.length > 0 && (
         <div className="border-t border-oc-border shrink-0 bg-oc-bg-card/50">
           <div className="px-6 py-2.5 border-b border-oc-border-subtle">
             <span className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-dim">
@@ -261,7 +283,7 @@ export default function VoicePage() {
             ref={scrollRef}
             className="max-h-52 overflow-y-auto px-6 py-3 space-y-2.5"
           >
-            {transcripts.map((t, i) => (
+            {voiceTranscripts.map((t, i) => (
               <div key={i} className="flex items-start gap-3 text-[15px] animate-fadeIn">
                 <span
                   className={`text-[12px] font-mono font-medium w-14 shrink-0 pt-0.5 ${

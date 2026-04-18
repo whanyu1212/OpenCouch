@@ -56,7 +56,7 @@ const DEFAULT_WIDTH = 260;
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { userId, threadId, sessionMode, setUserId, setThreadId, newSession, chatLoading } = useSessionStore();
+  const { userId, threadId, sessionMode, setUserId, setThreadId, newSession, chatLoading, voiceConnected } = useSessionStore();
   const isIncognito = sessionMode === "incognito";
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isResizing = useRef(false);
@@ -195,6 +195,7 @@ export function Sidebar() {
         </p>
         {NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href;
+          const showVoiceLive = item.href === "/voice" && voiceConnected && !isActive;
           return (
             <Link
               key={item.href}
@@ -209,6 +210,15 @@ export function Sidebar() {
                 {item.icon}
               </span>
               {item.label}
+              {showVoiceLive && (
+                <span className="ml-auto flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-oc-green opacity-50" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-green" />
+                  </span>
+                  <span className="text-[11px] font-mono text-oc-green">live</span>
+                </span>
+              )}
             </Link>
           );
         })}
