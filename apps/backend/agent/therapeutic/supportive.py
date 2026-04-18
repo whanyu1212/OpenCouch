@@ -19,9 +19,8 @@ from agent.therapeutic.prompts import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SUPPORTIVE_REPLY = (
-    "Thank you for sharing that with me. "
     "It sounds like there's a lot on your mind right now, "
-    "and I want you to know that what you're feeling makes sense. "
+    "and what you're feeling makes sense. "
     "Take your time — I'm here whenever you're ready to say more."
 )
 

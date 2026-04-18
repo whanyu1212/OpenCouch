@@ -228,5 +228,39 @@
       "memory_write_expected": false,
       "exercise_active": false
     }
+  },
+  {
+    "id": "deterministic_fallback_no_banned_phrases",
+    "title": "Deterministic fallback responses must not contain banned soul.md phrases",
+    "description": "In deterministic mode (no LLM), the hardcoded fallback responses should follow soul.md voice rules. Tests that banned phrases like 'Thank you for sharing' and 'I want you to know' are not in the fallback text.",
+    "supported_modes": ["deterministic"],
+    "tags": ["fallback_quality", "voice"],
+    "run_end_session": false,
+    "turns": [
+      {
+        "user": "I've been feeling really overwhelmed lately.",
+        "expect": {
+          "mode_in": ["supportive"],
+          "response_not_contains": ["Thank you for sharing", "I want you to know", "I hear you", "That's completely valid"]
+        }
+      },
+      {
+        "user": "Why do I keep ending up in the same situation?",
+        "expect": {
+          "mode_in": ["reflective"],
+          "response_not_contains": ["Thank you for sharing", "I hear you", "That's completely valid"]
+        }
+      },
+      {
+        "user": "huh?",
+        "expect": {
+          "mode_in": ["clarifying"],
+          "response_not_contains": ["Thank you for sharing", "I hear you"]
+        }
+      }
+    ],
+    "final_expect": {
+      "exercise_active": false
+    }
   }
 ]
