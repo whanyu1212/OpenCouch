@@ -222,7 +222,6 @@ notes/
 # (kept at root level for convenience but not tracked in git)
 ROADMAP.md
 AGENTS.md
-CHANGELOG.md
 llms.txt
 *_plan.md
 *_report.md
