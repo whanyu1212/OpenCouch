@@ -38,7 +38,7 @@ from agent.therapeutic.prompts import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CLOSING_REPLY = (
-    "Thanks for sharing what you did today. "
+    "I'm glad you took the time to talk this through. "
     "Whenever you want to pick this back up, I'm here."
 )
 

@@ -200,7 +200,14 @@ class AgentState(TypedDict):
 
     # Safety, routing, and output groupings for the current turn.
     crisis: CrisisAssessment
-    routing: RoutingState
+    # Uses ``_merge_dicts`` reducer so that ``build_initial_state`` can
+    # reset per-turn fields (``route``, ``mode``, ``mode_source``,
+    # ``mode_type``) while the checkpoint preserves cross-turn fields
+    # like ``modality``. Without the reducer, the fresh routing dict
+    # from the input would overwrite the checkpoint's routing and
+    # destroy the modality set by the dispatcher on the prior turn —
+    # breaking multi-turn exercise modality continuity.
+    routing: Annotated[RoutingState, _merge_dicts]
     response: ResponseState
 
     # ── Per-turn diagnostics (v0.8 observability pass) ───────────────────

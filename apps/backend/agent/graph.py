@@ -163,9 +163,12 @@ def build_initial_state(
             "mode": "pending",
             "mode_source": "graph_bootstrap",
             "mode_type": ModeType.OPERATIONAL,
-            "modality": None,
-            "active_modalities": [],
-            "semantic_signals": {},
+            # modality is intentionally NOT reset here. With the
+            # _merge_dicts reducer on routing, the checkpoint preserves
+            # the dispatcher's modality selection across turns. This is
+            # critical for multi-turn exercise modality continuity —
+            # the exercise continuation fast path reads modality from
+            # routing state and carries it forward.
         },
         response={
             "guidance": "pending",

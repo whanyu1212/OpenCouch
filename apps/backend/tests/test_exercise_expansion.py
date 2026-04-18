@@ -339,6 +339,24 @@ class TestExerciseSelection:
         assert _select_exercise("ground me") == EXERCISE_5_4_3_2_1
         assert _select_exercise("I need an exercise") == EXERCISE_5_4_3_2_1
 
+    def test_work_through_that_uses_recent_cognitive_context(self) -> None:
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_THOUGHT_RECORD,
+            _select_exercise,
+        )
+
+        history = [
+            {
+                "role": "user",
+                "content": "I always assume one mistake means everyone will see I'm incompetent.",
+            }
+        ]
+
+        assert (
+            _select_exercise("Yeah, can we work through that?", history=history)
+            == EXERCISE_THOUGHT_RECORD
+        )
+
 
 # ── End-to-end node tests ────────────────────────────────────────────
 

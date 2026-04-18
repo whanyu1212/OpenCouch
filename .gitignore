@@ -43,6 +43,9 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.render_cache/
+.remotion/
+.remember/
 nosetests.xml
 coverage.xml
 *.cover
@@ -215,8 +218,24 @@ __marimo__/
 # local learning and reference notes
 notes/
 
-# local living roadmap — maintained as a working doc but not tracked
+# local working docs — plans, reports, outlines, research notes
+# (kept at root level for convenience but not tracked in git)
 ROADMAP.md
+AGENTS.md
+CHANGELOG.md
+llms.txt
+*_plan.md
+*_report.md
+*_outline.md
+*_design.md
+*_research*.md
+
+# local references / skills worktrees
+refs/
+skills/
+
+# editor local settings
+.vscode/
 
 # local runtime sqlite databases
 apps/backend/.store/

@@ -1108,8 +1108,17 @@ _EXERCISE_SELECTORS: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
-def _select_exercise(message: str) -> str:
-    """Pick an exercise type based on keywords in the user's message.
+def _select_exercise(
+    message: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+) -> str:
+    """Pick an exercise type based on the current message plus recent context.
+
+    The selector still prioritizes explicit keywords in the current message,
+    but short acceptance turns like "can we work through that?" need a small
+    amount of recent user-turn context to avoid falling back to generic
+    grounding when the prior turn clearly named a cognitive belief pattern.
 
     Returns the exercise_type constant. Falls back to 5-4-3-2-1
     grounding when no keyword matches — the most established
@@ -1121,6 +1130,29 @@ def _select_exercise(message: str) -> str:
         for kw in keywords:
             if re.search(kw, lowered):
                 return exercise_type
+
+    if re.search(r"\bwork through (?:that|this|it)\b", lowered):
+        recent_user_text = " ".join(
+            turn.get("content", "")
+            for turn in (history or [])[-6:]
+            if turn.get("role") == "user" and turn.get("content")
+        ).lower()
+        if any(
+            marker in recent_user_text
+            for marker in (
+                "i always assume",
+                "one mistake means",
+                "i'm incompetent",
+                "im incompetent",
+                "everyone will see",
+                "i'm about to fail",
+                "im about to fail",
+                "this belief",
+                "this thought",
+            )
+        ):
+            return EXERCISE_THOUGHT_RECORD
+
     return EXERCISE_5_4_3_2_1
 
 
@@ -1236,7 +1268,7 @@ def _handle_start(
     """
 
     message = state.get("message", "")
-    selected = _select_exercise(message)
+    selected = _select_exercise(message, history=state.get("history", []))
     steps = _EXERCISE_REGISTRY[selected]
     response_text = steps[0].prompt_fallback
     # The start step uses the deterministic fallback directly —

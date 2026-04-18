@@ -258,6 +258,13 @@
     "notes": "'This week' marks transient context. The stress isn't framed as a recurring pattern — it's a specific week's state. Must skip."
   },
   {
+    "id": "skip_early_emerging_failure_pattern",
+    "message": "I always assume one mistake means everyone will see I'm incompetent.",
+    "history": [],
+    "expected_outcome": "skip",
+    "notes": "Early-session emerging cognitive pattern. Even though the wording sounds recurring, this should be explored first rather than persisted immediately as long-term semantic memory."
+  },
+  {
     "id": "extract_loss_grandmother",
     "message": "My grandmother passed away last month and I'm still not okay with it.",
     "history": [],
@@ -269,5 +276,85 @@
       }
     ],
     "notes": "Bereavement disclosure — textbook 'loss' category. NOTE: object_type deliberately unspecified. The LLM interprets a loss as either object_type=Person (the lost relation) or object_type=Event (the act of passing) depending on framing. Both are defensible for this 'loss' category. We grade on category + identifier substring containing 'grandmother' — the LLM is free to build the identifier as 'grandmother' or 'grandmother passed away last month'."
+  },
+
+  {
+    "id": "extract_hidden_in_thanks",
+    "message": "Thanks, Sarah helped me with that.",
+    "history": [],
+    "expected_outcome": "extract",
+    "expected_facts": [
+      {
+        "category": "relationship",
+        "predicate": "KNOWS",
+        "object_type": "Person",
+        "object_identifier_contains": "sarah"
+      }
+    ],
+    "notes": "Small-talk boundary case: looks like a polite acknowledgment but contains a named relationship ('Sarah helped me'). 34 chars (under 40), but 'sarah' and 'helped' are not in SMALL_TALK_VOCABULARY, so the gate lets it through to the extractor."
+  },
+  {
+    "id": "extract_name_in_short_thanks",
+    "message": "Thanks Sarah",
+    "history": [],
+    "expected_outcome": "extract",
+    "expected_facts": [
+      {
+        "category": "relationship",
+        "predicate": "KNOWS",
+        "object_type": "Person",
+        "object_identifier_contains": "sarah"
+      }
+    ],
+    "notes": "Minimal name-only boundary case: isolates that a proper noun alone is enough to bypass the small-talk vocab gate. 'thanks' is in SMALL_TALK_VOCABULARY but 'sarah' is not."
+  },
+  {
+    "id": "extract_therapist_mention_in_acknowledgment",
+    "message": "ok yeah my therapist said that",
+    "history": [],
+    "expected_outcome": "extract",
+    "expected_facts": [
+      {
+        "category": "relationship",
+        "object_identifier_contains": "therapist"
+      }
+    ],
+    "notes": "Small-talk boundary case: 30 chars (under 40), starts with 'ok yeah' (small-talk tokens) but 'therapist' is not in SMALL_TALK_VOCABULARY, so the vocabulary gate lets it through. Tests the vocab branch, not the length branch."
+  },
+  {
+    "id": "extract_single_content_token_bypasses_gate",
+    "message": "ok Sarah",
+    "history": [],
+    "expected_outcome": "extract",
+    "expected_facts": [
+      {
+        "category": "relationship",
+        "predicate": "KNOWS",
+        "object_type": "Person",
+        "object_identifier_contains": "sarah"
+      }
+    ],
+    "notes": "Minimal boundary case: one small-talk token ('ok') + one non-vocab token ('sarah'). Proves a single content token is enough to bypass the gate."
+  },
+  {
+    "id": "skip_pure_thanks_short",
+    "message": "Thanks so much!",
+    "history": [],
+    "expected_outcome": "skip",
+    "notes": "Genuine small talk — pure gratitude with no extractable content. 15 chars (under 40) and all meaningful tokens ('thanks', 'much') are in SMALL_TALK_VOCABULARY."
+  },
+  {
+    "id": "skip_bare_acknowledgment",
+    "message": "ok got it",
+    "history": [],
+    "expected_outcome": "skip",
+    "notes": "Bare acknowledgment — no facts, no names, no disclosures. 9 chars and all meaningful tokens are in SMALL_TALK_VOCABULARY."
+  },
+  {
+    "id": "skip_thanks_at_40_char_boundary",
+    "message": "Thank you so much, that really helped!",
+    "history": [],
+    "expected_outcome": "skip",
+    "notes": "Gratitude at 38 chars — under the 40-char MAX_SMALL_TALK_LENGTH. The token 'helped' is NOT in SMALL_TALK_VOCABULARY, so the gate lets this through to the LLM extractor (safe false-negative). The extractor should correctly return 0 facts since there is no extractable personal information. Tests the full pipeline: gate pass-through + extractor correctly skipping pure gratitude."
   }
 ]

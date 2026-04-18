@@ -66,8 +66,18 @@ from pathlib import Path
 from typing import Any, Literal
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+# Load .env files so API keys (OPENAI_API_KEY, GEMINI_API_KEY) are
+# available to the embedding provider. The main app does this via
+# core/config.py, but eval runners import providers directly.
+from dotenv import load_dotenv
+
+load_dotenv(REPO_ROOT / ".env", override=False)
+load_dotenv(BACKEND_ROOT / ".env", override=False)
+load_dotenv(BACKEND_ROOT / ".env.local", override=False)
 
 from agent.memory.embeddings import (
     EmbeddingProvider,
@@ -318,7 +328,7 @@ def _resolve_provider(mode: EvalMode) -> tuple[EmbeddingProvider | None, str]:
         if isinstance(provider, NullEmbeddingProvider):
             raise RuntimeError(
                 "Retrieval eval --mode hybrid requires a real embedding "
-                "provider. Set GEMINI_API_KEY or GOOGLE_API_KEY."
+                "provider. Set OPENAI_API_KEY (preferred) or GEMINI_API_KEY."
             )
         return provider, "hybrid"
 
@@ -342,7 +352,7 @@ async def _run(mode: EvalMode, dataset_path: Path, verbose: bool) -> int:
     if not run_embedding_scorers:
         print(
             "  (No embedding provider available — grading token_recall only. "
-            "Set GEMINI_API_KEY or GOOGLE_API_KEY for hybrid grading.)"
+            "Set OPENAI_API_KEY (preferred) or GEMINI_API_KEY for hybrid grading.)"
         )
     print()
 
