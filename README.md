@@ -17,47 +17,63 @@
 
 <br/>
 
-<!-- Add a product screenshot or demo GIF here -->
-<!-- <img src="docs/static/img/demo.gif" width="100%" alt="OpenCouch Demo" /> -->
+<p align="center">
+  <a href="https://github.com/whanyu1212/OpenCouch"><img src="apps/docs/static/img/landing_page.png" width="23.5%" alt="OpenCouch Landing Page" /></a>
+  <img src="apps/docs/static/img/chat_example.png" width="37%" alt="OpenCouch Text Chat" />
+  <img src="apps/docs/static/img/voice_example.png" width="38%" alt="OpenCouch Voice Chat" />
+</p>
 
 > [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
 > OpenCouch is a support assistant for difficult moments, reflective dialogue, and structured exercises, with memory continuity across sessions.
+
+> [!NOTE]
+> **Active Development:** OpenCouch is currently maintained by a solo developer. While stability is a priority, please anticipate occasional breaking changes as the architecture and features evolve.
 
 </div>
 
 ---
 
 ## Table of Contents
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Quick Start](#quick-start)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
-- [Changelog](#changelog)
-- [Roadmap](#roadmap)
+- [OpenCouch](#opencouch)
+  - [Table of Contents](#table-of-contents)
+  - [📖 Overview](#-overview)
+  - [✨ Key Features](#-key-features)
+  - [🚀 Quick Start](#-quick-start)
+    - [1. Command Line Interface (CLI)](#1-command-line-interface-cli)
+    - [Eval-driven development](#eval-driven-development)
+      - [Observability \& evaluation](#observability--evaluation)
+    - [2. Web Interface](#2-web-interface)
+    - [3. Documentation Site](#3-documentation-site)
+  - [🧠 Architecture](#-architecture)
+  - [📁 Project Structure](#-project-structure)
+  - [📝 Changelog](#-changelog)
+  - [🤝 Contributing](#-contributing)
+    - [Development Setup](#development-setup)
+  - [🗺️ Roadmap](#️-roadmap)
 
 ---
 
-## Overview
+## 📖 Overview
 
 OpenCouch is a conversational support agent built on [LangGraph](https://langchain-ai.github.io/langgraph/) for text orchestration and the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) for low-latency voice. It supports eval-driven development with [LangSmith](https://www.langchain.com/langsmith) for observability and evaluation across the text graph.
 
+The current voice tab is an **experimental Realtime speech preview**. It now uses a rewritten GA-style Realtime bridge with configurable voices, optional transcription language hints, and improved interruption handling, but it is still speech-only and does not yet expose full agentic actions from the text runtime.
+
 It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, six therapeutic response modes, and seven LLM-routed modalities keep responses safe, grounded, and adaptive.
 
-## Key Features
+## ✨ Key Features
 
 - **Persistent Memory:** Stores semantic facts, episodic session arcs, and procedural rules across sessions.
 - **Safety by Default:** Evaluates every user input with a crisis gate before response generation, with a persistent audit trail.
 - **Traceable Execution:** Uses LangSmith to inspect graph execution, route selection, and per-turn text traces.
 - **Evaluation-Ready:** Combines local eval runners with LangSmith projects for regression tracking and failure analysis.
-- **Multimodal Interaction:** Supports text, web, and natural voice conversations (~300ms via OpenAI Realtime).
+- **Experimental Realtime Voice:** Supports low-latency speech conversations with configurable voices, optional language hints for transcription, and interruption handling via OpenAI Realtime.
 - **Guided Exercises:** Provides multi-turn, state-tracked exercises (e.g., grounding and reflection) for structured practice.
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Command Line Interface (CLI)
 The CLI provides the fastest way to interact with OpenCouch locally.
@@ -110,7 +126,9 @@ pnpm install && pnpm dev
 Open [localhost:3000](http://localhost:3000) in your browser.
 
 ### 3. Documentation Site
-Run the Docusaurus-powered docs site locally.
+The official documentation is live at: **[https://whanyu1212.github.io/OpenCouch/](https://whanyu1212.github.io/OpenCouch/)**
+
+To run the Docusaurus-powered docs site locally:
 
 ```bash
 cd apps/docs
@@ -119,58 +137,39 @@ pnpm install && npx docusaurus start --port 3001
 
 ---
 
-## Architecture
+## 🧠 Architecture
 
 OpenCouch uses a directed graph that enforces safety checks before therapeutic generation and runs memory extraction after each finalized turn.
 
 ```mermaid
-%%{init: {
-  "theme": "base",
-  "themeVariables": {
-    "primaryColor": "#1a3a38",
-    "primaryTextColor": "#e8f5f3",
-    "primaryBorderColor": "#3d8b84",
-    "lineColor": "#64CCC5",
-    "secondaryColor": "#0f2422",
-    "tertiaryColor": "#0d1f1e",
-    "background": "#0d1f1e",
-    "mainBkg": "#1a3a38",
-    "nodeBorder": "#3d8b84",
-    "clusterBkg": "#0b1716",
-    "clusterBorder": "#3d8b84",
-    "titleColor": "#64CCC5",
-    "edgeLabelBackground": "#0f2422",
-    "fontFamily": "ui-monospace, monospace"
-  }
-}}%%
 flowchart TD
-    %% Define Node Styles
-    classDef inputNode fill:#1E293B,stroke:#94A3B8,stroke-width:2px,color:#F8FAFC
-    classDef gateNode fill:#450A0A,stroke:#F87171,stroke-width:2px,color:#FEF2F2
-    classDef safeNode fill:#064E3B,stroke:#34D399,stroke-width:2px,color:#ECFDF5
-    classDef riskNode fill:#312E81,stroke:#A78BFA,stroke-width:2px,color:#F5F3FF
-    classDef sysNode fill:#0F172A,stroke:#38BDF8,stroke-width:2px,color:#F0F9FF
-    classDef bgTask fill:#172554,stroke:#60A5FA,stroke-width:2px,color:#DBEAFE,stroke-dasharray: 5 5
-    classDef dbNode fill:#14532D,stroke:#4ADE80,stroke-width:2px,color:#F0FDF4
+    %% Define Node Styles (Tinted for Light/Dark Mode)
+    classDef inputNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
+    classDef gateNode fill:#EF44441A,stroke:#EF4444,stroke-width:2px
+    classDef safeNode fill:#10B9811A,stroke:#10B981,stroke-width:2px
+    classDef riskNode fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
+    classDef sysNode fill:#3B82F61A,stroke:#3B82F6,stroke-width:2px
+    classDef bgTask fill:#3B82F61A,stroke:#3B82F6,stroke-width:2px,stroke-dasharray: 5 5
+    classDef dbNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
 
     IN(["User message"]):::inputNode
 
     subgraph GATE ["Safety Gate"]
-        CG{"crisis_gate\nregex + LLM"}:::gateNode
+        CG{"crisis_gate<br/>regex + LLM"}:::gateNode
     end
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
-        LM["load_memory\nsemantic · episodic · procedural"]:::safeNode
-        TS[["therapeutic_subgraph\n6 modes · 7 modalities"]]:::safeNode
+        LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
+        TS[["therapeutic_subgraph<br/>6 modes • 7 modalities"]]:::safeNode
         LM ==> TS
     end
 
     subgraph RISK ["Crisis Branch"]
-        CR[["crisis_response\nPFA overlay · local hotlines"]]:::riskNode
+        CR[["crisis_response<br/>PFA overlay • local hotlines"]]:::riskNode
     end
 
-    FT{{"finalize_turn\noperator.add reducer"}}:::sysNode
+    FT{{"finalize_turn<br/>operator.add reducer"}}:::sysNode
 
     subgraph EXTRACT ["Parallel Extraction"]
         direction LR
@@ -178,7 +177,7 @@ flowchart TD
         EP[/"extract_rules"/]:::bgTask
     end
 
-    DB[("SQLite .store/\nthreads · memory · crisis log · feedback")]:::dbNode
+    DB[("SQLite .store/<br/>threads • memory • crisis log • feedback")]:::dbNode
 
     %% Logic Flows
     IN ==> CG
@@ -188,13 +187,22 @@ flowchart TD
     CR -.-> FT
     FT -.-> EF & EP
     EF & EP -.-> DB
+
+    %% Subgraph Styling (Removes default gray background)
+    style GATE fill:none,stroke:#EF4444,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style SAFE fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style RISK fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style EXTRACT fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
 ```
 
 ---
 
-## Project Structure
+## 📁 Project Structure
 
 This repository is a monorepo managed with `uv` and `pnpm`.
+
+<details>
+<summary><b>View Repository Tree</b></summary>
 
 ```text
 OpenCouch/
@@ -214,13 +222,17 @@ OpenCouch/
 ├── eval/                       # Evaluation harnesses + curated datasets
 └── knowledge/                  # Therapeutic prompts, policy, and source-of-truth content
 ```
+</details>
 
 ---
 
-## Changelog
+## 📝 Changelog
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Realtime voice rewrite** — rebuilt the backend voice bridge and standalone harness around the GA Realtime event model, with bounded prompt assembly, server truncation sync, and local ducking for faster interruption feel
+- **Voice UI stabilization** — aligned the Next.js voice tab with the working harness, added voice and language selectors, and restored transcript history keyed by Realtime item ID
+- **Experimental voice positioning** — updated the web UI and docs to clearly state that voice is still experimental, speech-only, and that transcript history remains approximate
 - **Voice session persistence** — voice chat now survives in-app tab switches and browser tab backgrounding
 - **Session trajectory evals** — unified eval runner with 25 long-trajectory cases covering safety, modality, and mode transitions
 - **Crisis gate hardening** — LLM-primary architecture with regex fallback, shadow monitoring, and adversarial-resistant prompt
@@ -228,7 +240,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions. Please review the contribution guidelines before submitting a Pull Request.
 
@@ -258,20 +270,20 @@ pre-commit run --all-files
 
 ---
 
-## Roadmap
+## 🗺️ Roadmap
 
 | Status | Component | Initiative |
 |:---|:---|:---|
-| ✓ Shipped | **Web Frontend** | Next.js UI with chat, threading, and memory inspection |
-| ✓ Shipped | **Voice Chat** | OpenAI Realtime integration with crisis gate and memory |
-| ✓ Shipped | **Guided Exercises** | 12 interactive exercises with multi-turn state tracking |
-| ✓ Shipped | **Session Feedback** | End-of-session rating system via UI and CLI |
-| ✓ Shipped | **API Layer** | FastAPI REST + WebSocket streaming |
-| ○ Planned | **Messaging Channels** | Adapters for Telegram, WhatsApp, and Discord |
-| ○ Planned | **Graph Memory** | Graphiti + Neo4j for entity-relationship reasoning |
-| ○ Planned | **Consolidation** | Background fact merging, dormant marking, and undo support |
-| ○ Planned | **Acoustic Safety** | Paralinguistic crisis detection (prosodic flatness, etc.) |
-| ⏸ Blocked | **Clinical Review** | Expert clinician audit of knowledge files and safety logic |
+| ✅ **Shipped** | **Web Frontend** | Next.js UI with chat, threading, and memory inspection |
+| ✅ **Shipped** | **Voice Chat** | OpenAI Realtime integration with crisis gate and memory |
+| ✅ **Shipped** | **Guided Exercises** | 12 interactive exercises with multi-turn state tracking |
+| ✅ **Shipped** | **Session Feedback** | End-of-session rating system via UI and CLI |
+| ✅ **Shipped** | **API Layer** | FastAPI REST + WebSocket streaming |
+| ⏳ **Planned** | **Messaging Channels** | Adapters for Telegram, WhatsApp, and Discord |
+| ⏳ **Planned** | **Graph Memory** | Graphiti + Neo4j for entity-relationship reasoning |
+| ⏳ **Planned** | **Consolidation** | Background fact merging, dormant marking, and undo support |
+| ⏳ **Planned** | **Acoustic Safety** | Paralinguistic crisis detection (prosodic flatness, etc.) |
+| 🛑 **Blocked** | **Clinical Review** | Expert clinician audit of knowledge files and safety logic |
 
 ---
 

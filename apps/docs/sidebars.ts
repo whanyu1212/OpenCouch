@@ -44,11 +44,7 @@ const sidebars: SidebarsConfig = {
       label: 'Memory',
       items: ['memory/overview', 'memory/retrieval', 'memory/privacy']
     },
-    {
-      type: 'category',
-      label: 'Voice',
-      items: ['voice/overview']
-    },
+    'voice/overview',
     {
       type: 'category',
       label: 'Observability',

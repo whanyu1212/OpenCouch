@@ -5,16 +5,19 @@ import {
   createChatStream,
   getHistory,
   getMemoryStatus,
+  getMemoryFacts,
   getThreads,
   type ChatResponse,
   type CrisisInfo,
   type StreamEvent,
   type Message,
   type MemoryStatus,
+  type MemoryFact,
   type ThreadSummary,
 } from "@/lib/api";
 import { useSessionStore, type ChatMessage } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
+import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
 
 const CONVERSATION_STARTERS = [
   {
@@ -60,7 +63,7 @@ const CONVERSATION_STARTERS = [
 ];
 
 export default function TextChatPage() {
-  const { userId, threadId, sessionMode, setThreadId, messages, setMessages, addMessage, appendToLastMessage, updateLastMessage, clearMessages, chatLoading: isLoading, setChatLoading: setIsLoading } = useSessionStore();
+  const { userId, threadId, sessionMode, setThreadId, messages, setMessages, addMessage, appendToLastMessage, updateLastMessage, clearMessages, chatLoading: isLoading, setChatLoading: setIsLoading, setMemoryFacts, addUnseenMemories } = useSessionStore();
   const [input, setInput] = useState("");
   const [stages, setStages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -70,6 +73,10 @@ export default function TextChatPage() {
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
   const [recentThreads, setRecentThreads] = useState<ThreadSummary[]>([]);
   const lastLoadedThread = useRef<string | null>(null);
+
+  // Track the session's original thread so the user can navigate back
+  // after clicking into a past thread from the empty state.
+  const [originThread, setOriginThread] = useState<string | null>(null);
 
   // Load history when thread changes — NOT on every re-mount.
   // Messages live in Zustand so they survive tab switches. We only
@@ -94,12 +101,15 @@ export default function TextChatPage() {
       .catch(() => {});
   }, [threadId, sessionMode, clearMessages, setMessages]);
 
-  // Load memory status and recent threads for empty state
+  // Load memory status, recent threads, and existing facts for empty state
   useEffect(() => {
     if (sessionMode === "incognito") return;
     getMemoryStatus(threadId, userId).then(setMemoryStatus).catch(() => {});
     getThreads(5).then(setRecentThreads).catch(() => {});
-  }, [threadId, userId, sessionMode]);
+    getMemoryFacts(threadId, userId || undefined)
+      .then((facts) => setMemoryFacts(facts as unknown as MemoryFact[]))
+      .catch(() => {});
+  }, [threadId, userId, sessionMode, setMemoryFacts]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -115,6 +125,7 @@ export default function TextChatPage() {
     setInput("");
     setIsLoading(true);
     setStages([]);
+    setOriginThread(null);
 
     if (inputRef.current) {
       inputRef.current.style.height = "auto";
@@ -145,10 +156,6 @@ export default function TextChatPage() {
         done = true;
         const resp = event.response as ChatResponse;
         if (streamingStarted) {
-          // Reconcile: patch the streamed message with the authoritative
-          // response text and metadata from DoneEvent. Handles partial-
-          // stream failures (where fallback text differs from chunks)
-          // and attaches diagnostics/crisis/mode info.
           updateLastMessage({
             content: resp.response_text,
             mode: resp.mode,
@@ -159,7 +166,6 @@ export default function TextChatPage() {
             diagnostics: resp.diagnostics,
           });
         } else {
-          // No chunks arrived — render full response from DoneEvent.
           addMessage({
             role: "assistant",
             content: resp.response_text,
@@ -174,6 +180,18 @@ export default function TextChatPage() {
           setIsLoading(false);
           inputRef.current?.focus();
         }
+
+        // Fetch updated memories when new facts were written
+        const writes = Number(resp.diagnostics?.semantic_writes ?? 0);
+        if (writes > 0 && sessionMode === "persistent") {
+          getMemoryFacts(threadId, userId || undefined)
+            .then((facts) => {
+              setMemoryFacts(facts as unknown as MemoryFact[]);
+              addUnseenMemories(writes);
+            })
+            .catch(() => {});
+        }
+
         ws.close();
       }
     });
@@ -195,7 +213,7 @@ export default function TextChatPage() {
         setIsLoading(false);
       }
     };
-  }, [input, isLoading, threadId, userId, addMessage, setIsLoading]);
+  }, [input, isLoading, threadId, userId, sessionMode, addMessage, setIsLoading, setMemoryFacts, addUnseenMemories]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -222,7 +240,8 @@ export default function TextChatPage() {
   );
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex h-screen">
+    <div className="flex flex-col flex-1 min-w-0">
       {/* Header */}
       <header className="px-6 py-3.5 border-b border-oc-border flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
@@ -232,11 +251,26 @@ export default function TextChatPage() {
               {turnCount} turn{turnCount !== 1 ? "s" : ""}
             </span>
           )}
+          {originThread && originThread !== threadId && (
+            <button
+              onClick={() => {
+                setThreadId(originThread);
+                setOriginThread(null);
+              }}
+              className="flex items-center gap-1.5 text-[12px] font-mono text-oc-teal-700 hover:text-oc-teal-600 px-2.5 py-1.5 rounded-lg border border-oc-teal-200 bg-oc-teal-50 hover:bg-oc-teal-100 transition-all animate-fadeIn"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              back to current session
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {isLoading && (
             <span className="text-[12px] font-mono text-oc-cta">thinking…</span>
           )}
+          <MemoryToggleButton />
           {messages.length > 0 && !isLoading && (
             <button
               onClick={() => clearMessages()}
@@ -333,7 +367,10 @@ export default function TextChatPage() {
                     {otherThreads.slice(0, 3).map((t) => (
                       <button
                         key={t.thread_id}
-                        onClick={() => setThreadId(t.thread_id)}
+                        onClick={() => {
+                          if (!originThread) setOriginThread(threadId);
+                          setThreadId(t.thread_id);
+                        }}
                         className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg border border-oc-border hover:bg-oc-warm-50 hover:border-oc-border-strong transition-all text-left"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -463,6 +500,8 @@ export default function TextChatPage() {
           </button>
         </div>
       </div>
+    </div>
+    <MemoryPanel />
     </div>
   );
 }

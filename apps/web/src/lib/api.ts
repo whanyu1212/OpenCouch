@@ -8,6 +8,37 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
+export const REALTIME_VOICE_OPTIONS = [
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "sage",
+  "shimmer",
+  "verse",
+  "marin",
+  "cedar",
+] as const;
+
+export type RealtimeVoiceOption = (typeof REALTIME_VOICE_OPTIONS)[number];
+
+export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
+  { value: "en", label: "english" },
+  { value: "", label: "auto detect" },
+  { value: "es", label: "spanish" },
+  { value: "fr", label: "french" },
+  { value: "de", label: "german" },
+  { value: "it", label: "italian" },
+  { value: "pt", label: "portuguese" },
+  { value: "ja", label: "japanese" },
+  { value: "ko", label: "korean" },
+  { value: "zh", label: "chinese" },
+] as const;
+
+export type TranscriptionLanguageOption =
+  (typeof TRANSCRIPTION_LANGUAGE_OPTIONS)[number]["value"];
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface CrisisInfo {
@@ -47,6 +78,18 @@ export interface MemoryStatus {
   counts: Record<string, number>;
   crisis_log_count: number;
   proactive_recall_enabled: boolean;
+}
+
+export interface MemoryFact {
+  index: number;
+  key: string;
+  category: string;
+  predicate: string;
+  subject: { identifier: string };
+  object: { identifier: string };
+  evidence_quote: string;
+  confidence: string;
+  created_at: string;
 }
 
 // ── Stream event types ───────────────────────────────────────────────
@@ -197,9 +240,19 @@ export function createChatStream(
 export function createVoiceSession(
   userId: string,
   threadId: string,
+  voice: RealtimeVoiceOption,
+  transcriptionLanguage: TranscriptionLanguageOption,
   callbacks: {
-    onAudio?: (audioBytes: Uint8Array) => void;
-    onTranscript?: (role: "user" | "assistant", text: string) => void;
+    onReady?: () => void;
+    onAudio?: (audioBytes: Uint8Array, itemId: string, contentIndex: number) => void;
+    onCaption?: (
+      role: "user" | "assistant",
+      text: string,
+      itemId: string,
+      status: "partial" | "final" | "cleared"
+    ) => void;
+    onTranscript?: (role: "user" | "assistant", text: string, itemId: string) => void;
+    onInterrupted?: () => void;
     onError?: (message: string) => void;
   }
 ): WebSocket {
@@ -211,21 +264,52 @@ export function createVoiceSession(
         type: "start",
         user_id: userId,
         thread_id: threadId,
+        voice,
+        transcription_language: transcriptionLanguage,
       })
     );
   };
 
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    if (data.type === "audio" && callbacks.onAudio) {
+    if (data.type === "ready" && callbacks.onReady) {
+      callbacks.onReady();
+    } else if (data.type === "audio" && callbacks.onAudio) {
       const bytes = Uint8Array.from(atob(data.data), (c) => c.charCodeAt(0));
-      callbacks.onAudio(bytes);
+      callbacks.onAudio(bytes, data.item_id || "", data.content_index ?? 0);
+    } else if (data.type === "caption" && callbacks.onCaption) {
+      callbacks.onCaption(
+        data.role,
+        data.text || "",
+        data.item_id || "",
+        data.status || "partial"
+      );
     } else if (data.type === "transcript" && callbacks.onTranscript) {
-      callbacks.onTranscript(data.role, data.text);
+      callbacks.onTranscript(data.role, data.text, data.item_id || "");
+    } else if (data.type === "interrupted" && callbacks.onInterrupted) {
+      callbacks.onInterrupted();
     } else if (data.type === "error" && callbacks.onError) {
       callbacks.onError(data.message);
     }
   };
 
   return ws;
+}
+
+/** Send a truncation report back to the server */
+export function sendVoiceTruncate(
+  ws: WebSocket,
+  itemId: string,
+  contentIndex: number,
+  audioEndMs: number
+): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(
+    JSON.stringify({
+      type: "truncate",
+      item_id: itemId,
+      content_index: contentIndex,
+      audio_end_ms: audioEndMs,
+    })
+  );
 }

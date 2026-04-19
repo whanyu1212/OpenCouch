@@ -172,6 +172,34 @@ body {
   animation: waveBar 0.8s ease-in-out infinite;
 }
 
+/* ── Memory panel slide-in ── */
+@keyframes panelSlideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-panelSlideIn {
+  animation: panelSlideIn 0.25s ease-out forwards;
+}
+
+/* ── Memory card entrance ── */
+@keyframes memoryIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-memoryIn {
+  animation: memoryIn 0.35s ease-out forwards;
+}
+
+/* ── Memory badge pop ── */
+@keyframes memoryBadge {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-memoryBadge {
+  animation: memoryBadge 0.3s ease-out forwards;
+}
+
 /* ── Dot pulse for loading ── */
 @keyframes dotPulse {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
