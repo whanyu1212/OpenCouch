@@ -23,14 +23,14 @@
   <img src="apps/docs/static/img/voice_example.png" width="38%" alt="OpenCouch Voice Chat" />
 </p>
 
+</div>
+
 > [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
 > OpenCouch is a support assistant for difficult moments, reflective dialogue, and structured exercises, with memory continuity across sessions.
 
 > [!NOTE]
 > **Active Development:** OpenCouch is currently maintained by a solo developer. While stability is a priority, please anticipate occasional breaking changes as the architecture and features evolve.
-
-</div>
 
 ---
 
