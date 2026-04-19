@@ -17,7 +17,7 @@ const NAV_ITEMS = [
     ),
   },
   {
-    label: "Voice",
+    label: "Voice (Experimental)",
     href: "/voice",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-[18px] h-[18px]">

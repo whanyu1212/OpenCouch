@@ -109,7 +109,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
       <strong>Voice chat</strong>
     </div>
-    <p>Natural voice conversations via OpenAI Realtime with crisis gate, memory extraction, and web search for crisis resources.</p>
+    <p>Experimental speech preview via OpenAI Realtime. Current path is low-latency and memory-backed, but speech-only and non-agentic.</p>
   </div>
 </div>
 

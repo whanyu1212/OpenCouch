@@ -4,9 +4,9 @@ import s from './VoiceArchitecture.module.css';
 /* ================================================================
    VoiceArchitecture — Voice pipeline diagram
 
-   Static visual showing the three-party architecture:
-   Browser ↔ FastAPI ↔ Realtime, with async side-effects
-   (crisis gate, extractors, memory).
+   Static visual showing the current experimental voice path:
+   Browser ↔ FastAPI ↔ Realtime, with lightweight client/server
+   interruption controls and bounded prompt preload.
    ================================================================ */
 
 export default function VoiceArchitecture(): React.JSX.Element {
@@ -29,7 +29,7 @@ export default function VoiceArchitecture(): React.JSX.Element {
         <div className={`${s.actor} ${s.actorServer}`}>
           <span className={s.actorIcon}>{'\u2699'}</span>
           <span className={s.actorLabel}>FastAPI</span>
-          <span className={s.actorSub}>proxy + safety</span>
+          <span className={s.actorSub}>voice bridge</span>
         </div>
 
         <div className={s.link}>
@@ -51,26 +51,26 @@ export default function VoiceArchitecture(): React.JSX.Element {
 
         <div className={s.seRow}>
           <div className={`${s.seBox} ${s.seCrisis}`}>
-            <span className={s.seIcon}>{'\u26A0'}</span>
+            <span className={s.seIcon}>{'\u25C6'}</span>
             <div className={s.seContent}>
-              <span className={s.seLabel}>Crisis Gate</span>
-              <span className={s.seSub}>regex pre-check, ~2-4ms</span>
+              <span className={s.seLabel}>Prompt Preload</span>
+              <span className={s.seSub}>bounded memory context on connect</span>
             </div>
           </div>
 
           <div className={`${s.seBox} ${s.seExtract}`}>
             <span className={s.seIcon}>{'\u25B6'}</span>
             <div className={s.seContent}>
-              <span className={s.seLabel}>Extractors</span>
-              <span className={s.seSub}>async background</span>
+              <span className={s.seLabel}>VAD + Truncate</span>
+              <span className={s.seSub}>server interruption with client sync</span>
             </div>
           </div>
 
           <div className={`${s.seBox} ${s.seMemory}`}>
             <span className={s.seIcon}>{'\u25C6'}</span>
             <div className={s.seContent}>
-              <span className={s.seLabel}>Memory Store</span>
-              <span className={s.seSub}>prompt refresh on write</span>
+              <span className={s.seLabel}>Local Ducking</span>
+              <span className={s.seSub}>browser-side preemptive playback mute</span>
             </div>
           </div>
         </div>

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-04-19 — Realtime Voice Rewrite + UX Stabilization
+
+### Backend voice bridge
+- Rewrote `apps/backend/voice/realtime.py` around the documented OpenAI GA Realtime session model instead of the older custom loop
+- Standardized the live voice path on `gpt-realtime` for speech-to-speech and `gpt-4o-transcribe` for input transcription
+- Kept the Realtime prompt bounded and memory-backed so the session stays within instruction limits
+- Added explicit support for configurable Realtime voices, defaulted the assistant voice to `cedar`, and validated supported voices at the API layer
+- Added optional transcription language selection plus a backend transcription prompt to improve recognition of names, numbers, acronyms, and filler words
+- Tightened the websocket contract around `ready`, `audio`, `transcript`, `interrupted`, `truncated`, and `error`
+
+### Voice UX
+- Rebuilt the standalone `test_page.html` into a proper audio harness with server VAD, interruption handling, truncation sync, and configurable voice/language
+- Tuned interruption feel with smaller mic chunks, lower VAD threshold, and client-side local ducking before server truncation lands
+- Brought the Next.js voice tab onto the same audio pipeline as the working test harness
+- Re-enabled transcript history keyed by Realtime item ID so updates replace in place instead of duplicating turns
+- Removed live captions after testing and kept only transcript history, labeled as approximate
+- Added voice and language selectors to the web UI, disabled while connected to match Realtime constraints
+- Labeled the voice tab as `experimental` and explicitly documented that it is speech-only today and does not yet expose agentic or autonomous actions
+
+### Docs
+- Rewrote the voice docs to reflect the current Realtime implementation instead of the older agentic voice design
+- Documented the current voice configuration, latency/VAD behavior, and transcript limitations in the Docusaurus site
+- Flattened the docs route so voice now lives directly at `/docs/voice`
+
 ## 2026-04-18 — Voice Session Tab Persistence
 
 ### Web UI — voice session

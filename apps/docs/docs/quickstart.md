@@ -98,8 +98,8 @@ automatically.
 
 ### Voice mode
 
-Natural voice conversations via the OpenAI Realtime API. Requires
-`OPENAI_API_KEY` in `.env.local`.
+Experimental speech preview via the OpenAI Realtime API. Requires
+`OPENAI_API_KEY`.
 
 <TerminalWindow title="bash — voice mode">
 {`uv run python -m opencouch_cli --voice`}
@@ -107,9 +107,12 @@ Natural voice conversations via the OpenAI Realtime API. Requires
 
 This starts the FastAPI server and opens the voice test page in your
 browser. Speak into your microphone to have a voice conversation.
-The crisis gate, memory extraction, and session summarization all
-run automatically. See the [Voice Chat](/docs/voice/overview) page
-for details.
+This path currently supports low-latency speech, interruption,
+truncation, and a memory-backed prompt preload, but it does **not**
+yet expose the full agentic stack: no tool calling, no autonomous
+actions, and no disconnect-time summarization/memory write-back.
+See the [Voice (Experimental)](/docs/voice) page for
+details.
 
 ## Slash commands
 

@@ -1,89 +1,136 @@
 ---
-title: Voice Chat
+title: Voice (Experimental)
 sidebar_position: 1
+slug: /voice
 ---
 
 import VoiceArchitecture from '@site/src/components/VoiceArchitecture';
 import TerminalWindow from '@site/src/components/TerminalWindow';
 
-# Voice Chat
+# Voice (Experimental)
 
-Natural voice conversations via the OpenAI Realtime API. The
-Realtime model handles STT, response generation, and TTS in a single
-fused call — natural prosody, emotional tone matching, ~300ms
-time-to-first-token.
+:::warning Experimental speech preview
+The current voice path is an experimental OpenAI Realtime integration.
+It is intentionally narrower than the main text agent.
+
+- It is speech-only and non-agentic.
+- It does not expose tool calling, web search, or autonomous actions.
+- It does not currently run the full LangGraph therapeutic stack.
+- It does not currently summarize or write new memory on disconnect.
+:::
+
+OpenCouch currently ships two voice clients that share the same
+FastAPI websocket bridge:
+
+- a standalone test harness at `/api/voice/test`
+- the Next.js `/voice` page in the web app
 
 <VoiceArchitecture />
 
 ---
 
-## How it works
+## Current architecture
 
-| Step | What happens |
+| Layer | Current implementation |
 |---|---|
-| **1. Capture** | Browser streams PCM16 mic audio over WebSocket to FastAPI |
-| **2. Proxy** | Server forwards audio to the OpenAI Realtime session |
-| **3. Respond** | Realtime handles speech recognition, response generation, and voice synthesis |
-| **4. Safety** | On every transcript: deterministic regex crisis gate (~2-4ms). If triggered: `response.cancel` + crisis template |
-| **5. Extract** | After each turn: semantic facts + procedural rules extracted async in background |
-| **6. Refresh** | On memory write: system prompt updated — new facts/rules visible to Realtime immediately |
+| **Browser** | Streams PCM16 microphone audio over WebSocket and plays assistant PCM audio locally |
+| **Backend bridge** | FastAPI websocket at `/api/voice/session` forwards audio and interruption events |
+| **Realtime model** | `gpt-realtime` for speech-to-speech output |
+| **Input transcription** | `gpt-4o-mini-transcribe` as an asynchronous input transcript stream |
+| **Default voice** | `cedar` |
+| **Audio format** | 24 kHz mono PCM16 for both input and output |
+| **Turn detection** | `server_vad` with `threshold: 0.3`, `prefix_padding_ms: 300`, `silence_duration_ms: 300`, `interrupt_response: true`, `create_response: true` |
+| **Noise reduction** | `near_field` |
 
 ---
 
-## System prompt
+## Prompt assembly
 
-The Realtime model receives a comprehensive prompt built from all
-available knowledge — no per-turn dispatch like text mode:
+The voice session builds one bounded system prompt at connection time.
+It does **not** rebuild the prompt every turn.
 
 | Source | What it provides |
 |---|---|
-| `soul.md` + `identity.md` | Identity, voice, tone |
-| `policy/*.md` | Safety policy |
-| Voice-specific instructions | Concise responses, spoken language, energy matching |
-| All mode knowledge files | Support, reflection, psychoeducation, closing, guided exercise |
-| MI modality | Motivational Interviewing conversational stance |
-| Procedural rules | User style preferences |
-| Semantic facts | Known facts about the user |
-| Episodic arcs | Past session summaries |
+| Base spoken policy | Short spoken replies, plain language, no markdown, no clinician framing, explicit crisis redirection |
+| Procedural rules | User preferences and style rules |
+| Semantic facts | Previously noted user facts |
+| Episodic arcs | Short summaries from prior sessions |
 
-:::info Implicit vs explicit dispatch
-Text mode uses a 6-mode dispatcher to select exactly one response
-mode per turn. Voice mode loads ALL mode knowledge into one system
-prompt and lets Realtime pick the register implicitly. This trades
-precise dispatch control for natural conversational flow.
-:::
+The current voice prompt is deliberately small:
 
----
+- whitespace is normalized
+- each memory item is trimmed to 220 characters
+- up to 6 procedural rules are included
+- up to 6 semantic facts are included
+- up to 3 episodic arcs are included
+- the final prompt is capped at 12,000 characters
 
-## Web search tool
-
-A `search_crisis_resources` function is defined in the Realtime
-session. The model calls it when the user is in crisis and needs
-verified contact info, mentions a specific region, or asks for
-therapist referrals. Falls back to static 988 + international
-resources if search fails.
+This prompt shape is implemented in `apps/backend/voice/realtime.py`
+via `build_voice_system_prompt()`.
 
 ---
 
-## Session lifecycle
+## What the browser does
 
-| Event | What happens |
+Both the standalone test page and the Next.js `/voice` page follow the
+same transport pattern:
+
+- microphone audio is sent in 512-sample chunks
+- assistant playback is tracked by Realtime `item_id` and `content_index`
+- on interruption, the client stops playback and reports a
+  `conversation.item.truncate` position back to the backend
+- local ducking lowers assistant playback immediately when the browser
+  detects the user has started speaking, before the server-side
+  interruption arrives
+
+The Next.js voice page intentionally keeps transcript rendering
+disabled for now while the audio path is being stabilized. The
+standalone test harness still shows transcript events.
+
+---
+
+## WebSocket contract
+
+### Client → backend
+
+| Message | Purpose |
 |---|---|
-| **Connect** | Memory loaded → system prompt built → Realtime session opened |
-| **Each turn** | Transcript → crisis gate → Realtime responds → extractors run async |
-| **Memory write** | System prompt refreshed with new facts/rules |
-| **Disconnect** | Session summarized → episodic arc written to memory |
+| `start` | Open a voice session for a `user_id`, `thread_id`, and optional `voice` |
+| `audio` | Send base64-encoded PCM16 microphone bytes |
+| `truncate` | Tell the backend how much of the assistant audio was actually played |
 
-The episodic arc from a voice session appears in future sessions'
-first-turn catch-up and in `/memory list sessions`.
+### Backend → client
+
+| Message | Purpose |
+|---|---|
+| `ready` | Session is configured and ready for audio |
+| `audio` | Assistant PCM audio chunk |
+| `transcript` | Optional user or assistant transcript event |
+| `interrupted` | Server detected user speech while assistant audio was active |
+| `truncated` | Server acknowledged truncation |
+| `error` | Surfaced Realtime or bridge error |
 
 ---
 
-## Running
+## Current limitations
+
+| Limitation | Current state |
+|---|---|
+| **Agentic capability** | No tool calling, no web search, no autonomous actions |
+| **LangGraph integration** | Voice does not currently route through the main text agent graph |
+| **Crisis handling** | The prompt contains spoken crisis guidance, but the experimental voice path does not currently run the full graph-level crisis gate used by text mode |
+| **Memory writes** | Voice currently reads memory at connect time only; it does not summarize or write semantic/procedural/episodic memory on disconnect |
+| **Prompt refresh** | The system prompt is not refreshed mid-session |
+| **Transcript UX** | Transcript display is disabled in the Next.js voice page while the audio transport is being stabilized |
+| **Interruption heuristics** | VAD and local ducking are intentionally aggressive and can false-trigger in noisy environments or with speaker bleed |
+
+---
+
+## Running locally
 
 <TerminalWindow title="bash — voice mode">
 {`# Start voice server and open browser
-uv run python -m opencouch_cli --voice
+uv run python -m opencouch_cli --voice --port 8000
 
 # Custom port
 uv run python -m opencouch_cli --voice --port 9000`}
@@ -96,25 +143,28 @@ Or start the server directly:
 # Open http://localhost:8000/api/voice/test`}
 </TerminalWindow>
 
+The standalone harness is the fastest way to debug transport,
+playback, interruption, and truncation behavior. The Next.js `/voice`
+page uses the same backend API but adds application UI around it.
+
 ---
 
 ## Text vs voice
 
 | Concern | Text mode | Voice mode |
 |---|---|---|
-| **Response** | LangGraph subgraph (explicit 6-mode dispatch) | Realtime (implicit from system prompt) |
-| **Crisis gate** | Sequential graph node (hard gate) | Regex pre-check on transcript (~2-4ms) |
-| **Voice quality** | N/A | Natural prosody + emotional tone matching |
-| **Latency** | ~1-2s per turn | ~300ms TTFT |
-| **Extraction** | Graph nodes post-response | Same extractors, async background |
-| **Summarization** | `/end` command | Automatic on disconnect |
-| **Diagnostics** | Stage Timings panel, `/debug state` | Server logs only |
+| **Response path** | LangGraph therapeutic graph | Direct Realtime websocket adapter |
+| **Prompting** | Full layered prompt assembly per turn | One bounded spoken prompt at connect time |
+| **Tools** | Provider-backed tools supported | None exposed currently |
+| **Safety** | Full graph-level crisis gate | Lightweight spoken crisis guidance only |
+| **Memory** | Read + write during normal chat lifecycle | Read-only prompt preload at connect time |
+| **Interruption** | N/A | Server VAD + client truncation + local ducking |
+| **UI maturity** | Primary, stable interface | Experimental speech preview |
 
 ---
 
 ## Environment variables
 
 <TerminalWindow title=".env.local">
-{`OPENAI_API_KEY=...          # Realtime API + TTS
-GEMINI_API_KEY=...          # Therapeutic LLM + embeddings + extractors`}
+{`OPENAI_API_KEY=...`}
 </TerminalWindow>
