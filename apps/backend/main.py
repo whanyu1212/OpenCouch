@@ -1,8 +1,34 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies import lifespan
 from api.router import api_router
+
+
+def _cors_origins() -> tuple[list[str], bool]:
+    """Resolve allowed CORS origins from environment configuration.
+
+    Returns:
+        A tuple of allowed origins and whether credentials should be allowed.
+    """
+
+    default_origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ]
+    configured = os.getenv("OPENCOUCH_CORS_ORIGINS", "").strip()
+    if configured == "*":
+        return ["*"], False
+
+    extra_origins = [
+        origin.strip() for origin in configured.split(",") if origin.strip()
+    ]
+    origins = list(dict.fromkeys([*default_origins, *extra_origins]))
+    return origins, True
 
 
 def create_app() -> FastAPI:
@@ -24,16 +50,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS: allow the frontend dev server and any localhost port
+    cors_origins, allow_credentials = _cors_origins()
+
+    # CORS defaults to local development origins and can be extended
+    # in deployed environments with OPENCOUCH_CORS_ORIGINS.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:3001",
-        ],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

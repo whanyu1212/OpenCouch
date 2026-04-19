@@ -1,0 +1,127 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - "apps/backend/**"
+      - "knowledge/**"
+      - ".github/workflows/deploy-api.yml"
+      - ".dockerignore"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-api-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image coordinates
+        id: image
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+          REPOSITORY: ${{ vars.AR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          IMAGE_REPO="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/opencouch-api"
+          echo "repo=${IMAGE_REPO}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "branch_tag=${GITHUB_REF_NAME}-latest" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.repo }}:${{ steps.image.outputs.sha_tag }}
+            ${{ steps.image.outputs.repo }}:${{ steps.image.outputs.branch_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy revision to Cloud Run
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+          SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE }}
+          RUNTIME_SERVICE_ACCOUNT: ${{ vars.RUNTIME_SERVICE_ACCOUNT }}
+          OPENCOUCH_CORS_ORIGINS: ${{ vars.OPENCOUCH_CORS_ORIGINS }}
+          OPENCOUCH_MEMORY_MODE: ${{ vars.OPENCOUCH_MEMORY_MODE }}
+          IMAGE_URI: ${{ steps.image.outputs.repo }}:${{ steps.image.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+
+          env_pairs=()
+          if [[ -n "${OPENCOUCH_CORS_ORIGINS:-}" ]]; then
+            env_pairs+=("OPENCOUCH_CORS_ORIGINS=${OPENCOUCH_CORS_ORIGINS}")
+          fi
+          if [[ -n "${OPENCOUCH_MEMORY_MODE:-}" ]]; then
+            env_pairs+=("OPENCOUCH_MEMORY_MODE=${OPENCOUCH_MEMORY_MODE}")
+          fi
+
+          update_env_args=()
+          if ((${#env_pairs[@]} > 0)); then
+            joined=""
+            for pair in "${env_pairs[@]}"; do
+              if [[ -z "${joined}" ]]; then
+                joined="${pair}"
+              else
+                joined="${joined}##${pair}"
+              fi
+            done
+            update_env_args=(--update-env-vars "^##^${joined}")
+          fi
+
+          gcloud run deploy "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --image "${IMAGE_URI}" \
+            --service-account "${RUNTIME_SERVICE_ACCOUNT}" \
+            --port 8080 \
+            --allow-unauthenticated \
+            --cpu 1 \
+            --memory 1Gi \
+            --concurrency 8 \
+            --timeout 300 \
+            --max-instances 3 \
+            --update-secrets "OPENAI_API_KEY=OPENAI_API_KEY:latest" \
+            "${update_env_args[@]}"
+
+      - name: Show deployed URL
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+          SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE }}
+        run: |
+          gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format='value(status.url)'
