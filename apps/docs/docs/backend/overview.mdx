@@ -3,6 +3,9 @@ title: Architecture
 sidebar_position: 1
 ---
 
+import TurnPipeline from '@site/src/components/TurnPipeline';
+import PromptLayersVisual from '@site/src/components/PromptLayers';
+
 # Architecture
 
 Single Python backend. Explicit LangGraph agent graph. Three memory
@@ -18,21 +21,7 @@ loads on the therapeutic branch — if a message triggers a crisis
 response, memory retrieval is skipped entirely.
 :::
 
-```text
-START
-  → crisis_gate_node              safety first — hybrid regex + LLM
-  → [crisis branch]               crisis_response → crisis_log → finalize
-     OR
-     [therapeutic branch]          load_memory → therapeutic_subgraph → finalize
-  → finalize_turn_node             append via operator.add reducer
-  → extract_semantic_facts    ┐    parallel fan-out
-  → extract_procedural_rules  ┘    diagnostics via _merge_dicts reducer
-END
-```
-
-Every node with I/O has `RetryPolicy(max_attempts=2)` as
-defense-in-depth. `finalize_turn_node` is the only node without
-retry — it's pure state, no I/O.
+<TurnPipeline />
 
 ---
 
@@ -73,25 +62,7 @@ for all four — nothing touches disk.
 
 ## Prompt layers
 
-Five layers composed per turn, innermost first:
-
-```text
-┌─────────────────────────────────────────────────────┐
-│  5. Turn posture — response guidance + modality     │
-│  ┌───────────────────────────────────────────────┐  │
-│  │  4. State context — working memory, rules     │  │
-│  │  ┌─────────────────────────────────────────┐  │  │
-│  │  │  3. Instructions — mode-specific block  │  │  │
-│  │  │  ┌───────────────────────────────────┐  │  │  │
-│  │  │  │  2. Mode — response_modes/*.md   │  │  │  │
-│  │  │  │  ┌─────────────────────────────┐  │  │  │  │
-│  │  │  │  │  1. Core — soul.md + policy │  │  │  │  │
-│  │  │  │  └─────────────────────────────┘  │  │  │  │
-│  │  │  └───────────────────────────────────┘  │  │  │
-│  │  └─────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
-```
+<PromptLayersVisual />
 
 See [Prompt Assembly](/docs/agent/prompt-assembly) for the full
 composition logic.

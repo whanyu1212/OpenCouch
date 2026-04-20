@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from agent.models import Channel, ChunkEvent, DoneEvent, StatusEvent
+from agent.models import Channel, ChunkEvent, DoneEvent, StatusEvent, friendly_stage
 from agent.persistence import PersistentAgentRuntime
-from api.dependencies import get_llm_client, get_runtime
+from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
 from api.models import (
     ChatRequest,
     ChatResponse,
@@ -23,6 +23,7 @@ from api.models import (
     StreamDoneMessage,
     StreamStatusMessage,
 )
+from core.config import ResponseModelTier
 from services.llm.base import BaseLLMClient
 
 router = APIRouter(tags=["chat"])
@@ -53,6 +54,9 @@ async def chat(
     body: ChatRequest,
     runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
+    response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = Depends(
+        get_response_llm_clients
+    ),
 ) -> ChatResponse:
     """Run one conversation turn and return the full response.
 
@@ -74,6 +78,7 @@ async def chat(
         channel=Channel.WEB,
         user_id=body.user_id,
         llm_client=llm_client,
+        response_llm_client=response_llm_clients.get(body.response_model_tier),
     )
     return _output_to_chat_response(result.output)
 
@@ -83,6 +88,9 @@ async def chat_stream(
     websocket: WebSocket,
     runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
+    response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = Depends(
+        get_response_llm_clients
+    ),
 ) -> None:
     """Stream a conversation turn over WebSocket.
 
@@ -118,10 +126,11 @@ async def chat_stream(
             channel=Channel.WEB,
             user_id=request.user_id,
             llm_client=llm_client,
+            response_llm_client=response_llm_clients.get(request.response_model_tier),
         ):
             if isinstance(event, StatusEvent):
                 msg = StreamStatusMessage(
-                    stage=event.stage,
+                    stage=friendly_stage(event.stage),
                     detail=event.detail,
                 )
                 await websocket.send_json(msg.model_dump())

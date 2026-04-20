@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent.memory.candidates import SessionMemoryBuffer
 from agent.memory.crisis_log import CrisisLogBackend
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode
@@ -36,6 +37,7 @@ class WorkflowContext:
     # asymmetry rationale.
     crisis_log_backend: CrisisLogBackend
     memory_mode: MemoryMode
+    response_llm: BaseLLMClient | None = None
     # v0.8.1: embedding provider for hybrid retrieval. When set,
     # the extractor nodes compute embeddings at write time and
     # the load_memory node computes query embeddings for the
@@ -46,3 +48,12 @@ class WorkflowContext:
     # construct minimal contexts without specifying an embedding
     # provider explicitly.
     embedding_provider: EmbeddingProvider | None = None
+    # Phase 2: held semantic/procedural candidates live here until
+    # end_session decides whether they are durable enough to commit.
+    session_memory_buffer: SessionMemoryBuffer | None = None
+
+    @property
+    def control_llm(self) -> BaseLLMClient | None:
+        """Pinned infrastructure client used by safety, routing, and memory."""
+
+        return self.llm_client

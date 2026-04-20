@@ -217,6 +217,7 @@ __marimo__/
 
 # local learning and reference notes
 notes/
+*_spec.md
 
 # local working docs — plans, reports, outlines, research notes
 # (kept at root level for convenience but not tracked in git)

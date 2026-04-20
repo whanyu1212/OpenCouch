@@ -1,6 +1,6 @@
 ---
 title: Memory Layers
-sidebar_position: 1
+sidebar_position: 2
 ---
 
 import MemoryArchitecture from '@site/src/components/MemoryArchitecture';
@@ -13,17 +13,45 @@ layer to see how it writes, reads, and stores.
 
 <MemoryArchitecture />
 
-:::tip Parallel extraction
-Both extractors (semantic + procedural) fan out simultaneously from
-`finalize_turn_node`. They write diagnostics via `_merge_dicts`
-reducer — no racing, no manual dict spreading.
+:::tip Post-response extraction is now policy-based
+Both extractors (semantic + procedural) still fan out simultaneously
+from `finalize_turn_node`, but they no longer write everything they
+extract directly into long-term memory. They now:
+
+1. extract candidates with structured LLM output
+2. run deterministic write policy
+3. either commit immediately, hold for session end, require repetition, or drop
+
+Diagnostics still merge via `_merge_dicts`, so the two extractor lanes
+never race.
 :::
 
-:::info Working memory is structured
-`load_memory_node` returns `WorkingMemoryEntry` dicts — not
-pre-formatted strings. Formatting happens on demand at prompt-build
+:::info Working memory carries structured context
+`load_memory_node` returns `WorkingMemoryEntry` dicts with full
+semantic triples (category, subject, predicate, object) alongside the
+evidence quote. The response LLM sees entries like
+`[relationship] User WORRIES_ABOUT work — 'my boss is terrible'`
+instead of raw quotes. Formatting happens on demand at prompt-build
 time via `format_working_memory_entries()`.
 :::
+
+---
+
+## Current write model
+
+| Layer | Turn-time behavior | Session-end behavior |
+|---|---|---|
+| **Semantic** | Extracts candidates after the reply. Low-risk stable facts may commit immediately. Sensitive or interpretive content is held or repetition-gated. | Held candidates can promote after transcript support, episodic-summary support, or repetition. |
+| **Episodic** | No per-turn writes. | One session summary arc is written at session end if the session is substantive enough. |
+| **Procedural** | Explicit durable instructions can commit immediately. Implicit agent-facing preferences are usually held. | Held implicit preferences can promote if they repeat strongly enough during the session. |
+
+Session end is now a shared seam, not just `/end`. The same commit path
+can run on explicit end, inactivity timeout, graceful shutdown, web end
+session, and voice disconnect.
+
+Held semantic and procedural candidates live in a persisted active-session
+buffer until that seam runs, so delayed promotion survives restart rather
+than disappearing with the process.
 
 ---
 
@@ -39,17 +67,38 @@ The `--user-id` flag decouples memory identity from thread identity
 
 ---
 
+## Robustness guardrails
+
+| Guardrail | What it prevents |
+|---|---|
+| **Unicode-aware tokenizer** | Non-English text (CJK, Cyrillic, accented Latin) now produces meaningful token sets for dedup and retrieval instead of empty sets. CJK characters are split into per-character tokens for search. |
+| **Procedural rule cap** | Active rules are capped at 20. When exceeded, the oldest rule is archived — not deleted — preventing unbounded system prompt inflation. |
+| **Atomic batch writes** | The `aput_batch` store method wraps multi-record writes in a single SQLite transaction. A crash mid-batch cannot leave ghost active records. |
+| **Episodic date filter** | Query-based episodic retrieval excludes arcs older than 30 days. The first-turn catch-up (`alatest`) is not date-filtered — the most recent session summary always appears regardless of age. |
+| **Owner identity validation** | All memory nodes require either `user_id` or `session_id` in state. Missing both raises `ValueError` immediately instead of silently writing to a shared `"local-default"` namespace. |
+| **Safety marker consolidation** | Crisis-bypass detection markers (e.g., "skip the safety check") are defined once in `constants.py` and imported by both the candidate promoter and write policy — no drift risk between the two checks. |
+
+---
+
 ## Key files
 
 | File | Purpose |
 |---|---|
-| `agent/memory/store.py` | `MemoryStore` protocol — `asearch_similar`, `aput`, `alatest` |
-| `agent/memory/sqlite_store.py` | SQLite backend with embedding BLOB storage |
+| `agent/memory/store.py` | `MemoryStore` protocol — `asearch_similar`, `aput`, `aput_batch`, `alatest` |
+| `agent/memory/sqlite_store.py` | SQLite backend with embedding BLOB storage and transactional batch writes |
 | `agent/memory/retrieval.py` | RRF fusion helper |
+| `agent/memory/constants.py` | Shared safety markers and helpers (single source of truth) |
+| `agent/memory/candidates.py` | Candidate models + session buffer |
+| `agent/memory/text_tokens.py` | Unicode-aware tokenizer with CJK character splitting |
 | `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
-| `agent/memory/procedural.py` | `ProceduralProfile` load/save helpers |
-| `agent/working_memory.py` | `WorkingMemoryEntry` types + formatters |
-| `agent/nodes/load_memory.py` | Per-turn retrieval across all three namespaces |
-| `agent/nodes/extract_facts.py` | Semantic fact extraction |
-| `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction |
-| `agent/nodes/summarize_session.py` | Session-end summarization |
+| `agent/memory/write_policy.py` | Deterministic immediate-write / hold / drop policy |
+| `agent/memory/reconciliation.py` | Supersession and overlap handling |
+| `agent/memory/procedural.py` | `ProceduralProfile` load/save helpers with rule cap eviction |
+| `agent/working_memory.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
+| `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
+| `agent/nodes/load_memory.py` | Per-turn retrieval with 30-day episodic date filter |
+| `agent/nodes/extract_facts.py` | Semantic candidate extraction + immediate-write path |
+| `agent/nodes/extract_procedural_rules.py` | Procedural candidate extraction + immediate-write path |
+| `agent/nodes/commit_session_memory.py` | Session-end promotion for held semantic / procedural candidates |
+| `agent/nodes/summarize_session.py` | Session-end episodic summarization |
+| `agent/persistence.py` | Shared session-end seam, timeout handling, active-session buffering |

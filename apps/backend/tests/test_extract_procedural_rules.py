@@ -24,13 +24,18 @@ from typing import Any, cast
 
 import pytest
 
+from agent.memory.candidates import SessionMemoryBuffer
 from agent.memory.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.models import (
     ProceduralExtractionResult,
     ProceduralRuleDraft,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.procedural import (
+    aget_procedural_profile,
+    aput_procedural_profile,
+    build_procedural_rule,
+)
 from agent.memory.store import OpenCouchMemoryStore
 from agent.nodes.extract_procedural_rules import (
     run_extract_procedural_rules_node,
@@ -88,7 +93,6 @@ class _FakeProceduralLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         self.text_calls += 1
@@ -99,7 +103,6 @@ class _FakeProceduralLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         yield "fake"
 
@@ -109,7 +112,6 @@ class _FakeProceduralLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         if response_schema.__name__ != "ProceduralExtractionResult":
             raise RuntimeError(
@@ -130,12 +132,14 @@ class _MockRuntime:
         llm_client: BaseLLMClient | None,
         memory_store: OpenCouchMemoryStore | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
+        session_memory_buffer: SessionMemoryBuffer | None = None,
     ) -> None:
         self.context = WorkflowContext(
             llm_client=llm_client,
             memory_store=memory_store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
             memory_mode=memory_mode,
+            session_memory_buffer=session_memory_buffer,
         )
 
 
@@ -299,6 +303,11 @@ class TestSingleRuleWrite:
         ]
         assert rule.confidence == "high"
         assert rule.source == "explicit_user"
+        assert rule.write_timing == "immediate"
+        assert (
+            rule.write_reason
+            == "explicit durable procedural request is safe for immediate commit"
+        )
         assert rule.added_at.endswith("Z")  # ISO-8601 UTC with Z suffix
 
     @pytest.mark.asyncio
@@ -339,6 +348,47 @@ class TestSingleRuleWrite:
         # if the node used session_id as the owner)
         session_profile = await aget_procedural_profile(store, user_id="session-1")
         assert session_profile.rules == []
+
+    @pytest.mark.asyncio
+    async def test_conflicting_rule_replaces_stale_existing_rule(self) -> None:
+        """A new explicit correction should replace the stale procedural rule."""
+
+        store = OpenCouchMemoryStore()
+        profile = await aget_procedural_profile(store, user_id="alice")
+        profile.rules.append(
+            build_procedural_rule(
+                rule_text="Suggest meditation when it seems useful.",
+                evidence=["Meditation is okay."],
+            )
+        )
+        await aput_procedural_profile(store, user_id="alice", profile=profile)
+
+        fake = _FakeProceduralLLM(
+            result=ProceduralExtractionResult(
+                rules=[
+                    ProceduralRuleDraft(
+                        rule="You've said meditation makes you more anxious.",
+                        evidence=["Please don't suggest meditation again."],
+                        confidence="high",
+                    ),
+                ],
+                reason="user corrected the meditation preference",
+            ),
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(message="Please don't suggest meditation again.")
+
+        delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["procedural_writes"] == 1
+        profile = await aget_procedural_profile(store, user_id="alice")
+        assert len(profile.rules) == 1
+        assert profile.rules[0].rule == "You've said meditation makes you more anxious."
+        assert len(profile.archived_rules) == 1
+        assert (
+            profile.archived_rules[0].rule == "Suggest meditation when it seems useful."
+        )
+        assert profile.archived_rules[0].superseded_by == profile.rules[0].id
 
 
 # ─── Multiple rules in one turn ───────────────────────────────────────────
@@ -463,6 +513,66 @@ class TestFailureModes:
         assert isinstance(delta, dict)
         assert "diagnostics" in delta
         assert delta["diagnostics"]["procedural_writes"] == 1
+
+    @pytest.mark.asyncio
+    async def test_implicit_preference_is_held_not_written(self) -> None:
+        """Implicit procedural preferences should not write immediately."""
+
+        store = OpenCouchMemoryStore()
+        session_buffer = SessionMemoryBuffer(session_id="test-session")
+        fake = _FakeProceduralLLM(
+            result=ProceduralExtractionResult(
+                rules=[
+                    ProceduralRuleDraft(
+                        rule="You've said meditation makes you more anxious.",
+                        evidence=["Meditation makes me more anxious."],
+                    ),
+                ],
+                reason="implicit dislike of meditation",
+            ),
+        )
+        runtime = _MockRuntime(
+            llm_client=fake,
+            memory_store=store,
+            session_memory_buffer=session_buffer,
+        )
+        state = _partial_state(message="Meditation makes me more anxious.")
+
+        delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["procedural_candidates"] == 1
+        assert delta["diagnostics"]["procedural_session_end_holds"] == 1
+        profile = await aget_procedural_profile(store, user_id="alice")
+        assert profile.rules == []
+        assert len(session_buffer.procedural_candidates) == 1
+
+    @pytest.mark.asyncio
+    async def test_turn_scoped_request_is_dropped(self) -> None:
+        """Turn-scoped requests should not become procedural memory."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeProceduralLLM(
+            result=ProceduralExtractionResult(
+                rules=[
+                    ProceduralRuleDraft(
+                        rule="You prefer shorter responses.",
+                        evidence=["For this reply, keep it short."],
+                    ),
+                ],
+                reason="turn-scoped shorter reply request",
+            ),
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(message="For this reply, keep it short.")
+
+        delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["procedural_candidates"] == 1
+        assert delta["diagnostics"]["procedural_policy_drops"] == 1
+        profile = await aget_procedural_profile(store, user_id="alice")
+        assert profile.rules == []
 
 
 # ─── Preservation of unrelated state ──────────────────────────────────────

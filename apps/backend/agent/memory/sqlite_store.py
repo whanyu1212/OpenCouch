@@ -67,6 +67,7 @@ import json
 import logging
 import struct
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
@@ -459,6 +460,80 @@ class SqliteMemoryStore:
         )
         await conn.commit()
 
+    async def aput_batch(
+        self,
+        items: list[
+            tuple[
+                Namespace,
+                str,
+                dict[str, Any],
+                list[float] | None,
+                str | None,
+            ]
+        ],
+    ) -> None:
+        """Write multiple records in a single transaction.
+
+        Either all writes succeed or none do — on failure the
+        transaction is rolled back.
+        """
+
+        if not items:
+            return
+
+        conn = await self._ensure_connection()
+        try:
+            await conn.execute("BEGIN")
+            for namespace, key, value, embedding, embedding_model in items:
+                owner_id, namespace_kind = self._unpack_namespace(namespace)
+                category = value.get("category")
+                created_at = str(value.get("created_at") or "")
+                last_referenced_at = str(
+                    value.get("last_referenced_at") or created_at or ""
+                )
+                dormant_at = value.get("dormant_at")
+                user_visible = 1 if value.get("user_visible", True) else 0
+                serialized = json.dumps(value, default=str)
+                embedding_blob = _encode_embedding(embedding)
+                embedding_dim = len(embedding) if embedding is not None else None
+                await conn.execute(
+                    """
+                    INSERT INTO memory_records
+                        (id, owner_id, namespace_kind, category, value,
+                         created_at, last_referenced_at, dormant_at, user_visible,
+                         embedding, embedding_dim, embedding_model)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id, owner_id, namespace_kind) DO UPDATE SET
+                        category = excluded.category,
+                        value = excluded.value,
+                        created_at = excluded.created_at,
+                        last_referenced_at = excluded.last_referenced_at,
+                        dormant_at = excluded.dormant_at,
+                        user_visible = excluded.user_visible,
+                        embedding = excluded.embedding,
+                        embedding_dim = excluded.embedding_dim,
+                        embedding_model = excluded.embedding_model
+                    """,
+                    (
+                        key,
+                        owner_id,
+                        namespace_kind,
+                        category,
+                        serialized,
+                        created_at,
+                        last_referenced_at,
+                        dormant_at,
+                        user_visible,
+                        embedding_blob,
+                        embedding_dim,
+                        embedding_model,
+                    ),
+                )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
+
     @staticmethod
     def _row_to_store_record(
         row: aiosqlite.Row,
@@ -617,26 +692,13 @@ class SqliteMemoryStore:
         query_embedding: list[float] | None,
         embedding_model: str | None = None,
         limit: int = 10,
+        max_age_days: int | None = None,
     ) -> list[StoreRecord]:
         """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
 
         Same contract as :meth:`OpenCouchMemoryStore.asearch_similar`.
-        See :mod:`agent.memory.retrieval` for the RRF rationale.
-
-        SQL-layer considerations:
-
-        - Both scans use the same ``WHERE owner_id = ? AND
-          namespace_kind = ?`` filter so the index on
-          ``(owner_id, namespace_kind)`` is used for both paths.
-        - The embedding-similarity scan pulls every row with a
-          non-NULL ``embedding`` column — Python computes the cosines.
-          At v0.8.1 scale (hundreds of records per user) this is
-          well under 10ms per query. A future v0.8.2 could add a
-          vector index (sqlite-vec or similar) without changing
-          the method signature.
-        - The token-recall scan is the same as :meth:`asearch`'s
-          query-path, just extracted so ``asearch_similar`` can
-          reuse the logic.
+        When ``max_age_days`` is set, records older than the cutoff
+        are excluded via SQL WHERE clause on the ``created_at`` column.
         """
 
         from agent.memory.retrieval import (
@@ -649,17 +711,26 @@ class SqliteMemoryStore:
         conn = await self._ensure_connection()
         owner_id, namespace_kind = self._unpack_namespace(namespace)
 
+        # Build the age filter clause. Use datetime() to normalize both
+        # sides — stored timestamps may use "Z" suffix while datetime('now')
+        # produces "+00:00" format.
+        age_clause = ""
+        age_params: tuple = ()
+        if max_age_days is not None:
+            age_clause = " AND datetime(created_at) >= datetime('now', ?)"
+            age_params = (f"-{max_age_days} days",)
+
         # ── Token-recall side (lexical) ───────────────────────────────
         lexical_scored: list[ScoredRecord] = []
         query_tokens = tokenize_meaningful(query_text)
         if query_tokens:
             async with conn.execute(
-                """
+                f"""
                 SELECT id, value, embedding, embedding_model FROM memory_records
-                WHERE owner_id = ? AND namespace_kind = ?
+                WHERE owner_id = ? AND namespace_kind = ?{age_clause}
                 ORDER BY insertion_order ASC
                 """,
-                (owner_id, namespace_kind),
+                (owner_id, namespace_kind, *age_params),
             ) as cursor:
                 rows = await cursor.fetchall()
 
@@ -694,14 +765,14 @@ class SqliteMemoryStore:
             # insertion_order) so the insertion_index tiebreaker
             # is consistent between the two scans.
             async with conn.execute(
-                """
+                f"""
                 SELECT id, value, embedding, embedding_model, insertion_order
                 FROM memory_records
                 WHERE owner_id = ? AND namespace_kind = ?
-                    AND embedding IS NOT NULL
+                    AND embedding IS NOT NULL{age_clause}
                 ORDER BY insertion_order ASC
                 """,
-                (owner_id, namespace_kind),
+                (owner_id, namespace_kind, *age_params),
             ) as cursor:
                 rows = await cursor.fetchall()
 

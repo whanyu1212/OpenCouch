@@ -2,7 +2,9 @@
 
 import { create } from "zustand";
 import type {
+  EndSessionResponse,
   MemoryFact,
+  ResponseModelTier,
   RealtimeVoiceOption,
   TranscriptionLanguageOption,
 } from "./api";
@@ -43,6 +45,10 @@ export interface VoiceTranscript {
   role: "user" | "assistant";
   text: string;
   itemId?: string;
+}
+
+export interface EndedSessionResult extends EndSessionResponse {
+  threadId: string;
 }
 
 // ── Module-level voice refs (non-reactive, never trigger re-renders) ──
@@ -225,6 +231,12 @@ interface SessionState {
   memoryPanelOpen: boolean;
   /** Count of facts added since panel was last viewed */
   memoryUnseenCount: number;
+  /** Bumped when memory surfaces should re-fetch from the backend */
+  memoryRefreshVersion: number;
+  /** Most recent explicit session-end result for the current thread */
+  lastEndedSession: EndedSessionResult | null;
+  /** User-facing text response preference */
+  responseModelTier: ResponseModelTier;
 
   // ── Voice session (reactive UI state only) ────────────────────────
   voiceConnected: boolean;
@@ -252,6 +264,10 @@ interface SessionState {
   setMemoryPanelOpen: (open: boolean) => void;
   addUnseenMemories: (count: number) => void;
   clearUnseenMemories: () => void;
+  bumpMemoryRefreshVersion: () => void;
+  setLastEndedSession: (session: EndedSessionResult | null) => void;
+  clearLastEndedSession: () => void;
+  setResponseModelTier: (tier: ResponseModelTier) => void;
 
   // ── Voice actions ─────────────────────────────────────────────────
   setVoiceConnected: (connected: boolean) => void;
@@ -296,6 +312,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   memoryFacts: [],
   memoryPanelOpen: false,
   memoryUnseenCount: 0,
+  memoryRefreshVersion: 0,
+  lastEndedSession: null,
+  responseModelTier: "fast",
 
   // Voice defaults (reactive only)
   voiceConnected: false,
@@ -342,6 +361,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       memoryUnseenCount: state.memoryPanelOpen ? 0 : state.memoryUnseenCount + count,
     })),
   clearUnseenMemories: () => set({ memoryUnseenCount: 0 }),
+  bumpMemoryRefreshVersion: () =>
+    set((state) => ({ memoryRefreshVersion: state.memoryRefreshVersion + 1 })),
+  setLastEndedSession: (session) => set({ lastEndedSession: session }),
+  clearLastEndedSession: () => set({ lastEndedSession: null }),
+  setResponseModelTier: (tier) => set({ responseModelTier: tier }),
 
   startSession: (mode: SessionMode, userId: string, threadId: string) =>
     set({
@@ -353,6 +377,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       chatLoading: false,
       memoryFacts: [],
       memoryUnseenCount: 0,
+      lastEndedSession: null,
     }),
   newSession: () => {
     // Tear down any active voice session when resetting
@@ -365,6 +390,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       chatLoading: false,
       memoryFacts: [],
       memoryUnseenCount: 0,
+      lastEndedSession: null,
     });
   },
 

@@ -34,12 +34,69 @@ from __future__ import annotations
 
 import re
 
-# Token extraction regex: lowercase word characters, ignoring punctuation.
+# Token extraction regex: Unicode word characters, ignoring punctuation.
 # "I'm anxious!" and "im anxious" produce the same token set. Apostrophes
 # split contractions ("I'm" → ["i", "m"]) which is imperfect but stable.
 # NOTE: this is intentionally the same regex the dedup helper used
 # internally — moved here so both paths share a canonical definition.
-_WORD_RE = re.compile(r"\b[a-z0-9]+\b")
+#
+# Uses \w+ (Unicode-aware by default in Python 3) so accented Latin,
+# Cyrillic, and CJK characters produce tokens instead of empty sets.
+# CJK characters are post-processed into per-character tokens by
+# _split_cjk because \b doesn't insert boundaries between consecutive
+# CJK codepoints.
+_WORD_RE = re.compile(r"\b\w+\b")
+
+# CJK Unicode ranges: CJK Unified Ideographs (BMP + astral), CJK
+# Compatibility Ideographs, Hangul Syllables, Katakana, Hiragana,
+# and Bopomofo. Astral-plane extensions (B through H) are included
+# so rare characters in names and classical texts tokenize correctly.
+_CJK_RE = re.compile(
+    r"["
+    r"\u2E80-\u9FFF"  # CJK Radicals Supplement through CJK Unified Ideographs
+    r"\uF900-\uFAFF"  # CJK Compatibility Ideographs
+    r"\uAC00-\uD7AF"  # Hangul Syllables
+    r"\u3040-\u309F"  # Hiragana
+    r"\u30A0-\u30FF"  # Katakana
+    r"\u3100-\u312F"  # Bopomofo
+    r"\U00020000-\U0002A6DF"  # CJK Unified Ideographs Extension B
+    r"\U0002A700-\U0002B73F"  # Extension C
+    r"\U0002B740-\U0002B81F"  # Extension D
+    r"\U0002B820-\U0002CEAF"  # Extension E
+    r"\U0002CEB0-\U0002EBEF"  # Extension F
+    r"\U00030000-\U0003134F"  # Extension G
+    r"\U00031350-\U000323AF"  # Extension H
+    r"]"
+)
+
+
+def _split_cjk(token: str) -> list[str]:
+    """Split a token containing CJK characters into per-character tokens.
+
+    Alphabetic/numeric runs within the token are kept as-is; CJK
+    characters are emitted individually. This is the standard approach
+    for CJK information retrieval without a word segmenter.
+
+    Returns [token] unchanged if it contains no CJK characters.
+    """
+
+    if not _CJK_RE.search(token):
+        return [token]
+
+    parts: list[str] = []
+    buf: list[str] = []
+    for ch in token:
+        if _CJK_RE.match(ch):
+            if buf:
+                parts.append("".join(buf))
+                buf.clear()
+            parts.append(ch)
+        else:
+            buf.append(ch)
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
 
 # Tiny stopword set used ONLY by the search path (not by dedup). These
 # are high-frequency function words that add no retrieval signal: keeping
@@ -136,7 +193,10 @@ def tokenize(text: str) -> frozenset[str]:
     callers can safely compute set operations without a ``None`` guard.
     """
 
-    return frozenset(_WORD_RE.findall(text.lower()))
+    tokens: list[str] = []
+    for raw in _WORD_RE.findall(text.lower()):
+        tokens.extend(_split_cjk(raw))
+    return frozenset(tokens)
 
 
 def tokenize_meaningful(text: str) -> frozenset[str]:
@@ -148,7 +208,8 @@ def tokenize_meaningful(text: str) -> frozenset[str]:
       word list).
     - Single-character tokens (``"i"``, ``"a"``, ``"m"`` from contracted
       forms, etc.). Anything shorter than 2 characters is almost always
-      noise for retrieval scoring.
+      noise for retrieval scoring. CJK single-character tokens are kept
+      because each character carries meaningful semantic content.
 
     This is the right tokenizer for the **query side** of a search: we
     want retrieval scores to reflect topical overlap, not connective-
@@ -169,8 +230,11 @@ def tokenize_meaningful(text: str) -> frozenset[str]:
     "return nothing."
     """
 
+    tokens: list[str] = []
+    for raw in _WORD_RE.findall(text.lower()):
+        tokens.extend(_split_cjk(raw))
     return frozenset(
         token
-        for token in _WORD_RE.findall(text.lower())
-        if len(token) >= 2 and token not in _STOPWORDS
+        for token in tokens
+        if (len(token) >= 2 or _CJK_RE.match(token)) and token not in _STOPWORDS
     )

@@ -39,7 +39,7 @@ async def run_supportive_response_node(
     available (common in tests and deterministic-mode CLI runs).
     """
 
-    llm_client = runtime.context.llm_client
+    llm_client = runtime.context.response_llm or runtime.context.llm_client
 
     response_text = _DEFAULT_SUPPORTIVE_REPLY
     if llm_client is not None:
@@ -49,7 +49,6 @@ async def run_supportive_response_node(
             async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(state, mode="supportive"),
                 system_instruction=build_supportive_system_prompt(state),
-                temperature=0.7,
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})

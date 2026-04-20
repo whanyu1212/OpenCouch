@@ -456,7 +456,6 @@ async def _pick_mode_and_modality_with_llm(
         prompt=build_therapeutic_dispatch_prompt(state),
         response_schema=DispatchDecision,
         system_instruction=build_therapeutic_dispatch_system_prompt(),
-        temperature=0,
     )
 
     return raw.mode, raw.modality  # type: ignore[return-value]

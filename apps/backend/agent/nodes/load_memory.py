@@ -67,10 +67,11 @@ from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural import aget_procedural_profile
+from agent.memory.reconciliation import is_active_semantic_record_value
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentState, resolve_owner_id
 from agent.working_memory import (
     WorkingMemoryEntry,
     make_episodic_working_memory_entry,
@@ -116,18 +117,43 @@ async def _retrieve_semantic_working_memory(
         query_text=query,
         query_embedding=query_embedding,
         embedding_model=embedding_model,
-        limit=5,
+        limit=20,
     )
     entries: list[WorkingMemoryEntry] = []
     for record in records:
+        if not is_active_semantic_record_value(record.value):
+            continue
         quote = record.value.get("evidence_quote")
         if quote:
+            subject_ref = record.value.get("subject") or {}
+            object_ref = record.value.get("object") or {}
             entries.append(
                 make_semantic_working_memory_entry(
                     evidence_quote=quote,
+                    category=record.value.get("category", ""),
+                    subject=subject_ref.get("identifier", "")
+                    if isinstance(subject_ref, dict)
+                    else str(subject_ref),
+                    predicate=record.value.get("predicate", ""),
+                    object=object_ref.get("identifier", "")
+                    if isinstance(object_ref, dict)
+                    else str(object_ref),
                 )
             )
+        if len(entries) >= 5:
+            break
     return entries
+
+
+async def _active_semantic_record_count(
+    store: MemoryStore,
+    *,
+    owner_id: str,
+) -> int:
+    """Return how many active semantic facts this user currently has."""
+
+    records = await store.asearch((owner_id, "semantic"), query=None, limit=1000)
+    return sum(1 for record in records if is_active_semantic_record_value(record.value))
 
 
 def _episodic_entry_from_record(
@@ -234,6 +260,7 @@ async def _retrieve_episodic_working_memory(
         query_embedding=query_embedding,
         embedding_model=embedding_model,
         limit=2,
+        max_age_days=30,
     )
     for record in query_records:
         entry = _episodic_entry_from_record(
@@ -380,8 +407,7 @@ async def run_load_memory_node(
             },
         }
 
-    owner_id = state.get("user_id") or state.get("session_id") or "local-default"
-    semantic_ns = (owner_id, "semantic")
+    owner_id = resolve_owner_id(state)
     episodic_ns = (owner_id, "episodic")
     query = state["message"]
     meaningful_query_tokens = tokenize_meaningful(query)
@@ -407,7 +433,7 @@ async def run_load_memory_node(
         (procedural_rules, proactive_recall_enabled),
     ) = await asyncio.gather(
         _compute_query_embedding(embedding_provider, query),
-        memory_store.arecord_count(semantic_ns),
+        _active_semantic_record_count(memory_store, owner_id=owner_id),
         memory_store.arecord_count(episodic_ns),
         _retrieve_procedural_state(memory_store, owner_id=owner_id),
     )

@@ -23,7 +23,6 @@ class BaseLLMClient(ABC):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         """Generate a plain-text completion.
@@ -31,7 +30,6 @@ class BaseLLMClient(ABC):
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
             use_search: Whether to enable provider-native web search/grounding.
 
         Returns:
@@ -44,14 +42,12 @@ class BaseLLMClient(ABC):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         """Generate a plain-text completion as a stream of string chunks.
 
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
 
         Yields:
             String chunks of the generated text as they arrive from the provider.
@@ -67,7 +63,6 @@ class BaseLLMClient(ABC):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         """Generate and parse a structured response.
 
@@ -75,7 +70,6 @@ class BaseLLMClient(ABC):
             prompt: The user or task prompt to send to the model.
             response_schema: The Pydantic schema expected in the response.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
 
         Returns:
             A parsed Pydantic object matching `response_schema`.

@@ -1,5 +1,6 @@
 ---
-title: Agent Graph
+title: Overview
+sidebar_label: Overview
 sidebar_position: 1
 ---
 
@@ -9,7 +10,9 @@ import GraphTopology from '@site/src/components/GraphTopology';
 # Agent Graph
 
 Every message follows the same pipeline: safety check first,
-then memory retrieval, then routing, then response, then memory writes.
+then memory retrieval, then routing, then response, then post-response
+memory evaluation. Some memory commits happen immediately; others wait
+for the shared session-end seam.
 Click any step below to see what it does.
 
 <AgentGraph />
@@ -22,7 +25,8 @@ The parent graph has 8 nodes. The therapeutic subgraph (compiled as
 a single parent-level node) hides 7 internal nodes (dispatcher + 6
 mode nodes). The crisis gate routes between branches via
 `Command(goto=...)`. The two extractors fan out in parallel after
-finalize, saving 3-5s per turn when LLM extraction is active.
+finalize, but they now feed deterministic write policy instead of
+blindly writing every candidate to long-term memory.
 
 <GraphTopology />
 
@@ -60,10 +64,12 @@ that loads context without first passing the safety check.
 **Routing is deterministic-first.** Regex patterns fire before the
 LLM. Most turns never need an LLM classification call.
 
-**Parallel post-response extraction.** The two extractor nodes fan
-out in parallel from `finalize_turn_node`. Both write to the
-`diagnostics` dict via a `_merge_dicts` reducer — no manual dict
-spreading needed, no race conditions.
+**Parallel post-response memory evaluation.** The two extractor nodes
+fan out in parallel from `finalize_turn_node`. Each lane does LLM
+candidate extraction plus deterministic write policy. Some candidates
+commit immediately; others are buffered for session end or dropped.
+Both still write to the `diagnostics` dict via a `_merge_dicts`
+reducer — no manual dict spreading needed, no race conditions.
 
 **Reducer-backed accumulation.** `history` and `transcript` use
 `operator.add` reducers. Each turn emits only the new entries
@@ -114,6 +120,8 @@ Fields: `llm_client`, `memory_store`, `crisis_log_backend`,
 | `agent/nodes/crisis_log.py` | Audit log writer |
 | `agent/nodes/extract_facts.py` | Semantic fact extraction |
 | `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction |
+| `agent/nodes/commit_session_memory.py` | Session-end promotion for held semantic / procedural candidates |
+| `agent/nodes/summarize_session.py` | Session-end episodic summarization |
 | `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
 | `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
 | `agent/persistence.py` | `PersistentAgentRuntime` — SQLite-backed thread state |

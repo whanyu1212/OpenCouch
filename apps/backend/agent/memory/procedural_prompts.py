@@ -2,14 +2,16 @@
 
 The procedural writer runs after each response and calls a structured-
 output LLM to produce zero or more :class:`ProceduralRuleDraft` items
-from user-initiated rule requests. The system prompt enforces three
-orthogonal constraints:
+from user-initiated rule requests or clear agent-facing preferences.
+The system prompt enforces three orthogonal constraints:
 
 1. **Conservative writing.** Most turns should produce zero rules.
-   Rule writes are reserved for moments when the user *explicitly*
-   asks the agent to remember a style preference. Casual statements
-   like "I wish you were more direct" are boundary cases that may or
-   may not warrant a rule; the prompt errs toward silence.
+   Rule writes are reserved for moments when the user either
+   *explicitly* asks the agent to remember a style preference or makes
+   a clear, durable statement about something the agent should stop
+   doing or avoid offering. Casual statements like "I wish you were
+   more direct" are still boundary cases that may or may not warrant a
+   rule; the prompt errs toward silence.
 
 2. **Second-person, evidence-grounded phrasing.** Rules must read like
    observations, not verdicts:
@@ -36,11 +38,16 @@ orthogonal constraints:
 
 Phase scope:
 
-v0.7 only produces rules from **explicit user requests**. The phase-4
-nightly consolidation pass that infers rules from accumulated facts is
-a separate code path with different constraints. This writer never
-proposes a rule based on a pattern it noticed — only ones the user
-directly asked for.
+Phase C produces rules from:
+
+- **explicit user requests** about how the agent should respond, and
+- **clear implicit agent-facing preferences** that may need repetition
+  before persistence, such as "Meditation makes me more anxious."
+
+The phase-4 nightly consolidation pass that infers rules from
+accumulated facts is still a separate code path with different
+constraints. This writer should stay conservative and grounded in the
+current user message only.
 """
 
 from __future__ import annotations
@@ -64,24 +71,28 @@ def build_procedural_writer_system_prompt() -> str:
     return (
         "You are the procedural memory writer for a mental-health support "
         "agent called OpenCouch. Your only job is to look at the most recent "
-        "user turn and decide whether the user is explicitly asking the "
-        "agent to remember a STYLE PREFERENCE — a directive about HOW the "
-        "agent should talk to them going forward.\n"
+        "user turn and decide whether the user is asking the agent to "
+        "remember a STYLE PREFERENCE — either a directive about HOW the "
+        "agent should talk to them going forward, or a clear statement "
+        "about something the agent should avoid offering or doing.\n"
         "\n"
         "You must be CONSERVATIVE. The correct answer for the vast majority "
         "of turns is ZERO rules. Rule writes are reserved for moments when "
-        "the user directly asks the agent to change its behavior. Small "
-        "talk, shared feelings, topical disclosures, and passing comments "
-        "all produce ZERO rules. Persisting the wrong thing is much worse "
-        "than persisting nothing.\n"
+        "the user either directly asks the agent to change its behavior or "
+        "makes a clear durable statement about an intervention/response "
+        "pattern the agent should avoid. Small talk, shared feelings, "
+        "topical disclosures, and passing comments all produce ZERO rules. "
+        "Persisting the wrong thing is much worse than persisting nothing.\n"
         "\n"
         "═══ WRITE a rule only when ALL of these are true ═══\n"
         "\n"
-        "1. The user is DIRECTLY addressing the agent, not describing\n"
-        "   something about themselves.\n"
-        "2. The user is asking for a CHANGE in how the agent responds —\n"
-        "   more of something, less of something, different framing.\n"
-        "3. The request is about a persistent preference, not a one-off\n"
+        "1. The user is either DIRECTLY addressing the agent OR clearly\n"
+        "   stating a durable preference/aversion about something the\n"
+        "   agent might offer or do.\n"
+        "2. The message implies a CHANGE in how the agent should respond —\n"
+        "   more of something, less of something, different framing, or\n"
+        "   avoiding a specific intervention.\n"
+        "3. The preference is about a persistent pattern, not a one-off\n"
         "   adjustment for the current turn only.\n"
         "4. You can quote the user's exact words as evidence (≤ 280 chars).\n"
         "5. The preference is reasonable and does NOT ask the agent to\n"
@@ -94,6 +105,12 @@ def build_procedural_writer_system_prompt() -> str:
         "  → rule: 'You've said meditation makes you more anxious.'\n"
         "  → evidence: ['Please don\\'t suggest meditation again — it makes "
         "me more anxious.']\n"
+        "\n"
+        "- 'When you suggest meditation, it makes me more anxious.'\n"
+        "  → rule: 'You've said meditation makes you more anxious.'\n"
+        "  → evidence: ['When you suggest meditation, it makes me more anxious.']\n"
+        "  → confidence: medium if this is the first time you've seen it,\n"
+        "    higher only if the current message itself is very clear.\n"
         "\n"
         "- 'Stop asking me so many clarifying questions. I just need to vent.'\n"
         "  → rule: 'You've asked for fewer clarifying questions so you can "
@@ -116,11 +133,11 @@ def build_procedural_writer_system_prompt() -> str:
         "\n"
         "═══ DO NOT WRITE a rule in these cases ═══\n"
         "\n"
-        "- Sharing a feeling, even a strong one: 'I hate it when people "
-        "tell me to meditate.' (The user is venting about people in "
-        "general, not directing the agent. Skip. The semantic extractor "
-        "may pick this up as a trigger fact; that's fine and belongs there, "
-        "not here.)\n"
+        "- Sharing a feeling, even a strong one, with no agent-facing "
+        "implication: 'I hate it when people tell me to meditate.' (The "
+        "user is venting about people in general, not clearly telling the "
+        "agent what to do. Skip. The semantic extractor may pick this up "
+        "as a trigger fact; that's fine and belongs there, not here.)\n"
         "\n"
         "- Describing a preference without a directive: 'I usually like "
         "quiet mornings.' (A topical disclosure, not a style request to "
@@ -183,11 +200,16 @@ def build_procedural_writer_system_prompt() -> str:
         "           When rules is non-empty: summarize what was written\n"
         "           (e.g., 'user asked to stop being offered meditation').\n"
         "\n"
-        "If you are unsure whether the user is making an explicit style\n"
-        "request, OMIT the rule. Silence is always the safer choice.\n"
-        "Users can repeat themselves more directly if they really want\n"
-        "the rule; they cannot un-write a wrong rule until v0.9 ships\n"
-        "the /memory forget rule command."
+        "A direct command is NOT required when the user clearly says a\n"
+        "recurring agent behavior or suggestion is unhelpful for them.\n"
+        "Statements like 'when you suggest meditation, it makes me more\n"
+        "anxious' should be written as candidate rules.\n"
+        "\n"
+        "If you are unsure whether the message is really agent-facing,\n"
+        "OMIT the rule. Silence is always the safer choice. Borderline\n"
+        "implicit preferences should only be written when the current\n"
+        "message itself clearly implies future agent behavior should\n"
+        "change; otherwise skip and let repetition provide evidence later."
     )
 
 

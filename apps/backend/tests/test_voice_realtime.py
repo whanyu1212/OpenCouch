@@ -427,3 +427,54 @@ async def test_listen_events_forwards_realtime_errors(
     await session._listen_events()
 
     assert errors == ["Unsupported audio format"]
+
+
+@pytest.mark.asyncio
+async def test_end_session_forwards_voice_transcript_to_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disconnect should route the accumulated transcript through the runtime seam."""
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, api_key: str) -> None:
+            self.realtime = SimpleNamespace()
+
+    class _FakeRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def end_transcript_session(self, **kwargs) -> None:
+            self.calls.append(kwargs)
+
+    monkeypatch.setattr(realtime, "AsyncOpenAI", _FakeAsyncOpenAI)
+
+    runtime = _FakeRuntime()
+    session = realtime.RealtimeVoiceSession(
+        openai_api_key="test",
+        memory_store=_FakeMemoryStore(),
+        memory_mode=MemoryMode.LOCAL,
+        user_id="voice-user",
+        thread_id="voice-thread",
+        runtime=runtime,
+        llm_client="fake-llm",
+    )
+    session._started_at = "2026-04-20T10:00:00Z"
+    session._transcript = [
+        {"role": "user", "content": "I feel overwhelmed"},
+        {"role": "assistant", "content": "Take a breath"},
+    ]
+
+    await session.end_session()
+
+    assert runtime.calls == [
+        {
+            "thread_id": "voice-thread",
+            "user_id": "voice-user",
+            "transcript": [
+                {"role": "user", "content": "I feel overwhelmed"},
+                {"role": "assistant", "content": "Take a breath"},
+            ],
+            "llm_client": "fake-llm",
+            "started_at": "2026-04-20T10:00:00Z",
+        }
+    ]

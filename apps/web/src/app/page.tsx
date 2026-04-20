@@ -8,14 +8,16 @@ import {
   getMemoryFacts,
   getThreads,
   type ChatResponse,
-  type CrisisInfo,
   type StreamEvent,
   type Message,
   type MemoryStatus,
-  type MemoryFact,
   type ThreadSummary,
 } from "@/lib/api";
-import { useSessionStore, type ChatMessage } from "@/lib/session";
+import {
+  useSessionStore,
+  type ChatMessage,
+  type EndedSessionResult,
+} from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
 import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
 
@@ -63,7 +65,28 @@ const CONVERSATION_STARTERS = [
 ];
 
 export default function TextChatPage() {
-  const { userId, threadId, sessionMode, setThreadId, messages, setMessages, addMessage, appendToLastMessage, updateLastMessage, clearMessages, chatLoading: isLoading, setChatLoading: setIsLoading, setMemoryFacts, addUnseenMemories } = useSessionStore();
+  const {
+    userId,
+    threadId,
+    sessionMode,
+    setThreadId,
+    messages,
+    setMessages,
+    addMessage,
+    appendToLastMessage,
+    updateLastMessage,
+    clearMessages,
+    chatLoading: isLoading,
+    setChatLoading: setIsLoading,
+    memoryFacts,
+    setMemoryFacts,
+    addUnseenMemories,
+    memoryRefreshVersion,
+    lastEndedSession,
+    clearLastEndedSession,
+    bumpMemoryRefreshVersion,
+    responseModelTier,
+  } = useSessionStore();
   const [input, setInput] = useState("");
   const [stages, setStages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -101,15 +124,19 @@ export default function TextChatPage() {
       .catch(() => {});
   }, [threadId, sessionMode, clearMessages, setMessages]);
 
-  // Load memory status, recent threads, and existing facts for empty state
+  // Load memory status and existing facts for empty state / memory refreshes.
   useEffect(() => {
     if (sessionMode === "incognito") return;
     getMemoryStatus(threadId, userId).then(setMemoryStatus).catch(() => {});
-    getThreads(5).then(setRecentThreads).catch(() => {});
     getMemoryFacts(threadId, userId || undefined)
-      .then((facts) => setMemoryFacts(facts as unknown as MemoryFact[]))
+      .then((facts) => setMemoryFacts(facts))
       .catch(() => {});
-  }, [threadId, userId, sessionMode, setMemoryFacts]);
+  }, [threadId, userId, sessionMode, setMemoryFacts, memoryRefreshVersion]);
+
+  useEffect(() => {
+    if (sessionMode === "incognito") return;
+    getThreads(5).then(setRecentThreads).catch(() => {});
+  }, [sessionMode, threadId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -122,6 +149,7 @@ export default function TextChatPage() {
     const msg = (text || input).trim();
     if (!msg || isLoading) return;
 
+    clearLastEndedSession();
     setInput("");
     setIsLoading(true);
     setStages([]);
@@ -136,65 +164,77 @@ export default function TextChatPage() {
     let done = false;
     let streamingStarted = false;
 
-    const ws = createChatStream(msg, threadId, userId, (event: StreamEvent) => {
-      if (event.type === "status") {
-        setStages((prev) => [...prev, event.stage]);
-      } else if (event.type === "chunk") {
-        // v0.9 token streaming: chunks arrive in real time as the LLM
-        // generates tokens. First chunk creates the message; subsequent
-        // chunks append to it.
-        if (!streamingStarted) {
-          streamingStarted = true;
-          addMessage({ role: "assistant", content: event.text });
-          setStages([]);
-          setIsLoading(false);
-          inputRef.current?.focus();
-        } else {
-          appendToLastMessage(event.text);
-        }
-      } else if (event.type === "done") {
-        done = true;
-        const resp = event.response as ChatResponse;
-        if (streamingStarted) {
-          updateLastMessage({
-            content: resp.response_text,
-            mode: resp.mode,
-            modeSource: resp.mode_source,
-            modality: resp.modality,
-            responseType: resp.response_type,
-            crisis: resp.crisis,
-            diagnostics: resp.diagnostics,
-          });
-        } else {
-          addMessage({
-            role: "assistant",
-            content: resp.response_text,
-            mode: resp.mode,
-            modeSource: resp.mode_source,
-            modality: resp.modality,
-            responseType: resp.response_type,
-            crisis: resp.crisis,
-            diagnostics: resp.diagnostics,
-          });
-          setStages([]);
-          setIsLoading(false);
-          inputRef.current?.focus();
-        }
+    const ws = createChatStream(
+      msg,
+      threadId,
+      userId,
+      responseModelTier,
+      (event: StreamEvent) => {
+        if (event.type === "status") {
+          setStages((prev) => [...prev, event.stage]);
+        } else if (event.type === "chunk") {
+          // v0.9 token streaming: chunks arrive in real time as the LLM
+          // generates tokens. First chunk creates the message; subsequent
+          // chunks append to it.
+          if (!streamingStarted) {
+            streamingStarted = true;
+            addMessage({ role: "assistant", content: event.text });
+            setStages([]);
+            setIsLoading(false);
+            inputRef.current?.focus();
+          } else {
+            appendToLastMessage(event.text);
+          }
+        } else if (event.type === "done") {
+          done = true;
+          const resp = event.response as ChatResponse;
+          if (streamingStarted) {
+            updateLastMessage({
+              content: resp.response_text,
+              mode: resp.mode,
+              modeSource: resp.mode_source,
+              modality: resp.modality,
+              responseType: resp.response_type,
+              crisis: resp.crisis,
+              diagnostics: resp.diagnostics,
+            });
+          } else {
+            addMessage({
+              role: "assistant",
+              content: resp.response_text,
+              mode: resp.mode,
+              modeSource: resp.mode_source,
+              modality: resp.modality,
+              responseType: resp.response_type,
+              crisis: resp.crisis,
+              diagnostics: resp.diagnostics,
+            });
+            setStages([]);
+            setIsLoading(false);
+            inputRef.current?.focus();
+          }
 
-        // Fetch updated memories when new facts were written
-        const writes = Number(resp.diagnostics?.semantic_writes ?? 0);
-        if (writes > 0 && sessionMode === "persistent") {
-          getMemoryFacts(threadId, userId || undefined)
-            .then((facts) => {
-              setMemoryFacts(facts as unknown as MemoryFact[]);
-              addUnseenMemories(writes);
-            })
-            .catch(() => {});
-        }
+          const semanticWrites = Number(resp.diagnostics?.semantic_writes ?? 0);
+          const proceduralWrites = Number(resp.diagnostics?.procedural_writes ?? 0);
+          if (
+            sessionMode === "persistent" &&
+            (semanticWrites > 0 || proceduralWrites > 0)
+          ) {
+            bumpMemoryRefreshVersion();
+          }
+          if (semanticWrites > 0 && sessionMode === "persistent") {
+            getMemoryFacts(threadId, userId || undefined)
+              .then((facts) => {
+                setMemoryFacts(facts);
+                addUnseenMemories(Math.max(0, facts.length - memoryFacts.length));
+              })
+              .catch(() => {});
+          }
 
-        ws.close();
+          ws.close();
+        }
       }
-    });
+    );
 
     ws.onerror = () => {
       if (done) return;
@@ -213,7 +253,23 @@ export default function TextChatPage() {
         setIsLoading(false);
       }
     };
-  }, [input, isLoading, threadId, userId, sessionMode, addMessage, setIsLoading, setMemoryFacts, addUnseenMemories]);
+  }, [
+    input,
+    isLoading,
+    threadId,
+    userId,
+    responseModelTier,
+    sessionMode,
+    addMessage,
+    appendToLastMessage,
+    updateLastMessage,
+    setIsLoading,
+    setMemoryFacts,
+    addUnseenMemories,
+    memoryFacts.length,
+    clearLastEndedSession,
+    bumpMemoryRefreshVersion,
+  ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -476,32 +532,75 @@ export default function TextChatPage() {
 
       {/* Input */}
       <div className="px-6 py-3.5 border-t border-oc-border shrink-0 bg-oc-bg">
-        <div className="max-w-2xl mx-auto flex gap-2.5 items-end">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            disabled={isLoading}
-            autoFocus
-            rows={1}
-            className="flex-1 bg-oc-bg-input border border-oc-border rounded-xl px-4 py-3 text-[15px] placeholder:text-oc-text-dim focus:outline-none focus:border-oc-teal-400 focus:ring-2 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 resize-none overflow-hidden"
-          />
-          <button
-            onClick={() => sendMessage()}
-            disabled={isLoading || !input.trim()}
-            className="bg-oc-teal-700 text-white px-4 py-3 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
+        <div className="max-w-2xl mx-auto">
+          {sessionMode === "persistent" &&
+          lastEndedSession?.threadId === threadId ? (
+            <SessionEndedCard session={lastEndedSession} />
+          ) : null}
+          <div className="flex gap-2.5 items-end">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message..."
+              disabled={isLoading}
+              autoFocus
+              rows={1}
+              className="flex-1 bg-oc-bg-input border border-oc-border rounded-xl px-4 py-3 text-[15px] placeholder:text-oc-text-dim focus:outline-none focus:border-oc-teal-400 focus:ring-2 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 resize-none overflow-hidden"
+            />
+            <button
+              onClick={() => sendMessage()}
+              disabled={isLoading || !input.trim()}
+              className="bg-oc-teal-700 text-white px-4 py-3 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
     <MemoryPanel />
+    </div>
+  );
+}
+
+function SessionEndedCard({
+  session,
+}: {
+  session: EndedSessionResult;
+}) {
+  const hasSummary = Boolean(session.summary);
+
+  return (
+    <div className="mb-3 rounded-2xl border border-oc-teal-200 bg-oc-teal-50/70 px-4 py-3 animate-fadeIn">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-teal-700">
+          Session ended
+        </span>
+        <span className="h-1 w-1 rounded-full bg-oc-teal-300" />
+        <span className="text-[12px] font-mono text-oc-text-dim">
+          {hasSummary ? "memory committed" : "no summary produced"}
+        </span>
+      </div>
+      <p className="mt-2 text-[14px] leading-relaxed text-oc-text">
+        {session.summary || session.detail || "The session has been closed."}
+      </p>
+      {hasSummary && session.themes && session.themes.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {session.themes.map((theme) => (
+            <span
+              key={theme}
+              className="rounded-md border border-oc-teal-200/70 bg-white/70 px-2 py-0.5 text-[11px] font-mono text-oc-teal-700"
+            >
+              {theme}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

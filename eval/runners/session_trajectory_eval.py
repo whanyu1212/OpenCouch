@@ -21,6 +21,8 @@ Usage:
     python eval/runners/session_trajectory_eval.py --mode hybrid \\
         --dataset eval/datasets/session_trajectory_long_v1.json \\
         --case out_of_scope_boundary_and_recovery_with_closing
+    python eval/runners/session_trajectory_eval.py --mode hybrid \\
+        --dataset eval/datasets/session_trajectory_memory_v1.json
 """
 
 # ruff: noqa: E402
@@ -41,6 +43,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from agent.memory.modes import MemoryMode
+from agent.memory.models import SemanticFact, StoredSessionArc
+from agent.memory.procedural import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import PersistentAgentRuntime
 from core.config import create_configured_llm_client
@@ -163,36 +167,169 @@ def _contains_substring(text: str | None, expected: str) -> bool:
     return expected.lower() in (text or "").lower()
 
 
+def _contains_any_in_field(
+    items: list[dict[str, Any]],
+    field: str,
+    expected: list[str],
+) -> bool:
+    """Return whether any serialized item field contains any expected substring."""
+
+    lowered_expected = [item.lower() for item in expected]
+    for entry in items:
+        value = str(entry.get(field, "") or "").lower()
+        if any(item in value for item in lowered_expected):
+            return True
+    return False
+
+
+# ── Memory snapshotting ───────────────────────────────────────────────────
+
+
+def _empty_memory_snapshot() -> dict[str, list[dict[str, Any]]]:
+    """Return an empty normalized memory snapshot."""
+
+    return {
+        "semantic_facts": [],
+        "procedural_rules": [],
+        "episodic_arcs": [],
+    }
+
+
+def _serialize_semantic_fact(fact: SemanticFact) -> dict[str, Any]:
+    """Normalize a stored semantic fact into an eval-friendly shape."""
+
+    return {
+        "id": fact.id,
+        "category": "semantic",
+        "semantic_category": fact.category,
+        "predicate": fact.predicate,
+        "subject_identifier": fact.subject.identifier,
+        "object_identifier": fact.object.identifier,
+        "evidence_quote": fact.evidence_quote,
+        "source_turn_index": fact.source_turn_index,
+    }
+
+
+def _serialize_procedural_rule(rule: Any) -> dict[str, Any]:
+    """Normalize a stored procedural rule into an eval-friendly shape."""
+
+    return {
+        "category": "procedural",
+        "rule": rule.rule,
+        "evidence": list(rule.evidence),
+        "confidence": rule.confidence,
+        "added_at": rule.added_at,
+        "source": rule.source,
+    }
+
+
+def _serialize_episodic_arc(arc: StoredSessionArc) -> dict[str, Any]:
+    """Normalize a stored episodic arc into an eval-friendly shape."""
+
+    return {
+        "id": arc.id,
+        "category": "episodic",
+        "summary": arc.summary,
+        "primary_themes": list(arc.primary_themes),
+        "open_loops": list(arc.open_loops),
+        "resolved_threads": list(arc.resolved_threads),
+    }
+
+
+async def _snapshot_memory_state(
+    store: Any,
+    *,
+    owner_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Read the concrete memory store state for this owner."""
+
+    semantic_records = await store.asearch(
+        (owner_id, "semantic"), query=None, limit=1000
+    )
+    episodic_records = await store.asearch(
+        (owner_id, "episodic"), query=None, limit=1000
+    )
+    procedural_profile = await aget_procedural_profile(store, user_id=owner_id)
+
+    semantic_facts = [
+        _serialize_semantic_fact(SemanticFact.model_validate(record.value))
+        for record in semantic_records
+    ]
+    semantic_facts.sort(key=lambda fact: fact["id"])
+
+    episodic_arcs = [
+        _serialize_episodic_arc(StoredSessionArc.model_validate(record.value))
+        for record in episodic_records
+    ]
+    episodic_arcs.sort(key=lambda arc: arc["id"])
+
+    procedural_rules = [
+        _serialize_procedural_rule(rule) for rule in procedural_profile.rules
+    ]
+
+    return {
+        "semantic_facts": semantic_facts,
+        "procedural_rules": procedural_rules,
+        "episodic_arcs": episodic_arcs,
+    }
+
+
+def _diff_memory_state(
+    before: dict[str, list[dict[str, Any]]],
+    after: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Return normalized write events and count deltas between two snapshots."""
+
+    before_semantic_ids = {fact["id"] for fact in before["semantic_facts"]}
+    semantic_writes = [
+        fact
+        for fact in after["semantic_facts"]
+        if fact["id"] not in before_semantic_ids
+    ]
+
+    before_procedural_rules = before["procedural_rules"]
+    after_procedural_rules = after["procedural_rules"]
+    if (
+        len(after_procedural_rules) >= len(before_procedural_rules)
+        and after_procedural_rules[: len(before_procedural_rules)]
+        == before_procedural_rules
+    ):
+        procedural_writes = after_procedural_rules[len(before_procedural_rules) :]
+    else:
+        before_rule_keys = {
+            (rule["rule"], rule["added_at"], rule["source"])
+            for rule in before_procedural_rules
+        }
+        procedural_writes = [
+            rule
+            for rule in after_procedural_rules
+            if (rule["rule"], rule["added_at"], rule["source"]) not in before_rule_keys
+        ]
+
+    before_episodic_ids = {arc["id"] for arc in before["episodic_arcs"]}
+    episodic_writes = [
+        arc for arc in after["episodic_arcs"] if arc["id"] not in before_episodic_ids
+    ]
+
+    memory_writes = [*semantic_writes, *procedural_writes, *episodic_writes]
+    return {
+        "memory_writes": memory_writes,
+        "semantic_fact_count_delta": len(semantic_writes),
+        "procedural_rule_count_delta": len(procedural_writes),
+        "episodic_arc_count_delta": len(episodic_writes),
+    }
+
+
 # ── Normalization ────────────────────────────────────────────────────────
-
-
-def _normalize_memory_writes(
-    output_diagnostics: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Return a minimal normalized list of memory-write events.
-
-    v1 only has reliable access to write counts via diagnostics. We normalize
-    each attempted semantic/procedural write into a lightweight event entry so
-    the grader can support ``memory_write_expected`` immediately.
-
-    Category-level grading remains best-effort until the runner is upgraded to
-    inspect concrete store records written during the turn.
-    """
-
-    writes: list[dict[str, Any]] = []
-
-    semantic_writes = int(output_diagnostics.get("semantic_writes", 0) or 0)
-    procedural_writes = int(output_diagnostics.get("procedural_writes", 0) or 0)
-
-    writes.extend({"category": "semantic"} for _ in range(semantic_writes))
-    writes.extend({"category": "procedural"} for _ in range(procedural_writes))
-    return writes
 
 
 def _normalize_turn_record(
     turn_index: int,
     user_text: str,
     result: Any,
+    *,
+    memory_snapshot: dict[str, list[dict[str, Any]]],
+    memory_delta: dict[str, Any],
 ) -> dict[str, Any]:
     """Normalize one runtime turn into the stable eval record shape."""
 
@@ -221,7 +358,16 @@ def _normalize_turn_record(
         "exercise_active": progress.get("exercise_type") is not None,
         "exercise_type": progress.get("exercise_type"),
         "exercise_step": progress.get("exercise_step"),
-        "memory_writes": _normalize_memory_writes(output.diagnostics),
+        "memory_writes": list(memory_delta["memory_writes"]),
+        "semantic_fact_count_delta": memory_delta["semantic_fact_count_delta"],
+        "procedural_rule_count_delta": memory_delta["procedural_rule_count_delta"],
+        "episodic_arc_count_delta": memory_delta["episodic_arc_count_delta"],
+        "semantic_facts_total": len(memory_snapshot["semantic_facts"]),
+        "procedural_rules_total": len(memory_snapshot["procedural_rules"]),
+        "episodic_arcs_total": len(memory_snapshot["episodic_arcs"]),
+        "semantic_facts": list(memory_snapshot["semantic_facts"]),
+        "procedural_rules": list(memory_snapshot["procedural_rules"]),
+        "episodic_arcs": list(memory_snapshot["episodic_arcs"]),
         "raw_observations": {
             "mode_type": str(output.mode_type)
             if output.mode_type is not None
@@ -229,6 +375,7 @@ def _normalize_turn_record(
             "mode_source": output.mode_source,
             "modality": output.modality,
             "diagnostics": output.diagnostics,
+            "memory_snapshot": memory_snapshot,
         },
     }
 
@@ -239,6 +386,8 @@ def _normalize_final_record(
     total_memory_writes: int,
     *,
     end_session_run: bool,
+    memory_snapshot: dict[str, list[dict[str, Any]]],
+    session_end_delta: dict[str, Any],
 ) -> dict[str, Any]:
     """Normalize the final eval artifact into the stable record shape.
 
@@ -260,6 +409,22 @@ def _normalize_final_record(
         "exercise_active": last.get("exercise_active", False),
         "exercise_type": last.get("exercise_type"),
         "memory_writes_total": total_memory_writes,
+        "session_end_memory_writes": list(session_end_delta["memory_writes"]),
+        "session_end_semantic_fact_count_delta": session_end_delta[
+            "semantic_fact_count_delta"
+        ],
+        "session_end_procedural_rule_count_delta": session_end_delta[
+            "procedural_rule_count_delta"
+        ],
+        "session_end_episodic_arc_count_delta": session_end_delta[
+            "episodic_arc_count_delta"
+        ],
+        "semantic_facts_total": len(memory_snapshot["semantic_facts"]),
+        "procedural_rules_total": len(memory_snapshot["procedural_rules"]),
+        "episodic_arcs_total": len(memory_snapshot["episodic_arcs"]),
+        "semantic_facts": list(memory_snapshot["semantic_facts"]),
+        "procedural_rules": list(memory_snapshot["procedural_rules"]),
+        "episodic_arcs": list(memory_snapshot["episodic_arcs"]),
         # Carry forward from last turn for final grading.
         "session_intent": last.get("session_intent"),
         "session_stage": last.get("session_stage"),
@@ -473,10 +638,110 @@ def _check_turn_expectation(
         ):
             failures.append(
                 f"FAIL [{case_id}] turn {turn_number}: expected memory write category in "
-                f"{expect['memory_write_category_in']!r}, got categories={sorted(categories)!r}. "
-                "v1 runner currently grades write buckets from diagnostics, not concrete "
-                "semantic fact categories."
+                f"{expect['memory_write_category_in']!r}, got categories={sorted(categories)!r}."
             )
+
+    if (
+        "semantic_fact_count_delta" in expect
+        and record["semantic_fact_count_delta"] != expect["semantic_fact_count_delta"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected semantic_fact_count_delta="
+            f"{expect['semantic_fact_count_delta']!r}, got "
+            f"{record['semantic_fact_count_delta']!r}."
+        )
+
+    if (
+        "procedural_rule_count_delta" in expect
+        and record["procedural_rule_count_delta"]
+        != expect["procedural_rule_count_delta"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected procedural_rule_count_delta="
+            f"{expect['procedural_rule_count_delta']!r}, got "
+            f"{record['procedural_rule_count_delta']!r}."
+        )
+
+    if (
+        "episodic_arc_count_delta" in expect
+        and record["episodic_arc_count_delta"] != expect["episodic_arc_count_delta"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected episodic_arc_count_delta="
+            f"{expect['episodic_arc_count_delta']!r}, got "
+            f"{record['episodic_arc_count_delta']!r}."
+        )
+
+    if (
+        "semantic_facts_total" in expect
+        and record["semantic_facts_total"] != expect["semantic_facts_total"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected semantic_facts_total="
+            f"{expect['semantic_facts_total']!r}, got {record['semantic_facts_total']!r}."
+        )
+
+    if (
+        "procedural_rules_total" in expect
+        and record["procedural_rules_total"] != expect["procedural_rules_total"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected procedural_rules_total="
+            f"{expect['procedural_rules_total']!r}, got "
+            f"{record['procedural_rules_total']!r}."
+        )
+
+    if (
+        "episodic_arcs_total" in expect
+        and record["episodic_arcs_total"] != expect["episodic_arcs_total"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected episodic_arcs_total="
+            f"{expect['episodic_arcs_total']!r}, got {record['episodic_arcs_total']!r}."
+        )
+
+    semantic_turn_writes = [
+        write
+        for write in record["memory_writes"]
+        if write.get("category") == "semantic"
+    ]
+    procedural_turn_writes = [
+        write
+        for write in record["memory_writes"]
+        if write.get("category") == "procedural"
+    ]
+
+    if "semantic_fact_object_contains_any" in expect and not _contains_any_in_field(
+        semantic_turn_writes,
+        "object_identifier",
+        expect["semantic_fact_object_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected semantic write object to "
+            f"contain one of {expect['semantic_fact_object_contains_any']!r}, got "
+            f"{[write.get('object_identifier') for write in semantic_turn_writes]!r}."
+        )
+
+    if "semantic_evidence_contains_any" in expect and not _contains_any_in_field(
+        semantic_turn_writes,
+        "evidence_quote",
+        expect["semantic_evidence_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected semantic write evidence to "
+            f"contain one of {expect['semantic_evidence_contains_any']!r}."
+        )
+
+    if "procedural_rule_contains_any" in expect and not _contains_any_in_field(
+        procedural_turn_writes,
+        "rule",
+        expect["procedural_rule_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected procedural rule write to "
+            f"contain one of {expect['procedural_rule_contains_any']!r}, got "
+            f"{[write.get('rule') for write in procedural_turn_writes]!r}."
+        )
 
     return failures
 
@@ -559,6 +824,111 @@ def _check_final_expectation(
                 f"FAIL [{case_id}] final: expected memory_write_expected="
                 f"{expect['memory_write_expected']!r}, got {actual_write!r}."
             )
+
+    if "session_end_memory_write_expected" in expect:
+        actual_write = len(record["session_end_memory_writes"]) > 0
+        if actual_write != expect["session_end_memory_write_expected"]:
+            failures.append(
+                f"FAIL [{case_id}] final: expected session_end_memory_write_expected="
+                f"{expect['session_end_memory_write_expected']!r}, got {actual_write!r}."
+            )
+
+    if "session_end_memory_write_category_in" in expect:
+        categories = {
+            write.get("category") for write in record["session_end_memory_writes"]
+        }
+        if not any(
+            category in expect["session_end_memory_write_category_in"]
+            for category in categories
+        ):
+            failures.append(
+                f"FAIL [{case_id}] final: expected session-end memory write category in "
+                f"{expect['session_end_memory_write_category_in']!r}, got "
+                f"categories={sorted(categories)!r}."
+            )
+
+    if (
+        "session_end_semantic_fact_count_delta" in expect
+        and record["session_end_semantic_fact_count_delta"]
+        != expect["session_end_semantic_fact_count_delta"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected session_end_semantic_fact_count_delta="
+            f"{expect['session_end_semantic_fact_count_delta']!r}, got "
+            f"{record['session_end_semantic_fact_count_delta']!r}."
+        )
+
+    if (
+        "session_end_procedural_rule_count_delta" in expect
+        and record["session_end_procedural_rule_count_delta"]
+        != expect["session_end_procedural_rule_count_delta"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected session_end_procedural_rule_count_delta="
+            f"{expect['session_end_procedural_rule_count_delta']!r}, got "
+            f"{record['session_end_procedural_rule_count_delta']!r}."
+        )
+
+    if (
+        "session_end_episodic_arc_count_delta" in expect
+        and record["session_end_episodic_arc_count_delta"]
+        != expect["session_end_episodic_arc_count_delta"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected session_end_episodic_arc_count_delta="
+            f"{expect['session_end_episodic_arc_count_delta']!r}, got "
+            f"{record['session_end_episodic_arc_count_delta']!r}."
+        )
+
+    if (
+        "semantic_facts_total" in expect
+        and record["semantic_facts_total"] != expect["semantic_facts_total"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected semantic_facts_total="
+            f"{expect['semantic_facts_total']!r}, got {record['semantic_facts_total']!r}."
+        )
+
+    if (
+        "procedural_rules_total" in expect
+        and record["procedural_rules_total"] != expect["procedural_rules_total"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected procedural_rules_total="
+            f"{expect['procedural_rules_total']!r}, got "
+            f"{record['procedural_rules_total']!r}."
+        )
+
+    if (
+        "episodic_arcs_total" in expect
+        and record["episodic_arcs_total"] != expect["episodic_arcs_total"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected episodic_arcs_total="
+            f"{expect['episodic_arcs_total']!r}, got {record['episodic_arcs_total']!r}."
+        )
+
+    if "semantic_fact_object_contains_any" in expect and not _contains_any_in_field(
+        record["semantic_facts"],
+        "object_identifier",
+        expect["semantic_fact_object_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected semantic fact object to contain one of "
+            f"{expect['semantic_fact_object_contains_any']!r}, got "
+            f"{[fact.get('object_identifier') for fact in record['semantic_facts']]!r}."
+        )
+
+    if "procedural_rule_contains_any" in expect and not _contains_any_in_field(
+        record["procedural_rules"],
+        "rule",
+        expect["procedural_rule_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected procedural rule to contain one of "
+            f"{expect['procedural_rule_contains_any']!r}, got "
+            f"{[rule.get('rule') for rule in record['procedural_rules']]!r}."
+        )
 
     # ── Exercise state ───────────────────────────────────────────────
     if (
@@ -724,6 +1094,10 @@ async def _run_case(
         ) as runtime:
             thread_id = f"eval-{case['id']}-{uuid4().hex[:8]}"
             user_id = f"eval-user-{case['id']}"
+            prior_memory_snapshot = await _snapshot_memory_state(
+                runtime.memory_store,
+                owner_id=user_id,
+            )
 
             for index, turn in enumerate(turns):
                 user_text = turn["user"] if isinstance(turn, dict) else turn
@@ -744,9 +1118,24 @@ async def _run_case(
                     user_id=user_id,
                     llm_client=llm_client,
                 )
-                record = _normalize_turn_record(index, user_text, result)
+                current_memory_snapshot = await _snapshot_memory_state(
+                    runtime.memory_store,
+                    owner_id=user_id,
+                )
+                memory_delta = _diff_memory_state(
+                    prior_memory_snapshot,
+                    current_memory_snapshot,
+                )
+                record = _normalize_turn_record(
+                    index,
+                    user_text,
+                    result,
+                    memory_snapshot=current_memory_snapshot,
+                    memory_delta=memory_delta,
+                )
                 last_turn_record = record
                 total_memory_writes += len(record["memory_writes"])
+                prior_memory_snapshot = current_memory_snapshot
 
                 _log(
                     verbose,
@@ -785,15 +1174,31 @@ async def _run_case(
                     )
 
             stored_arc = None
+            final_memory_snapshot = prior_memory_snapshot
+            session_end_delta = _diff_memory_state(
+                prior_memory_snapshot,
+                prior_memory_snapshot,
+            )
             if run_end_session:
                 _log(verbose, "  -> ending session and collecting final summary")
                 stored_arc = await runtime.end_session(thread_id, llm_client=llm_client)
+                final_memory_snapshot = await _snapshot_memory_state(
+                    runtime.memory_store,
+                    owner_id=user_id,
+                )
+                session_end_delta = _diff_memory_state(
+                    prior_memory_snapshot,
+                    final_memory_snapshot,
+                )
+                total_memory_writes += len(session_end_delta["memory_writes"])
 
             final_record = _normalize_final_record(
                 stored_arc,
                 last_turn_record,
                 total_memory_writes,
                 end_session_run=run_end_session,
+                memory_snapshot=final_memory_snapshot,
+                session_end_delta=session_end_delta,
             )
 
             final_expect = case.get("final_expectations") or case.get(

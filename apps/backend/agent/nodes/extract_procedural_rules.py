@@ -1,18 +1,24 @@
-"""Procedural rule writer node (v0.7).
+"""Procedural rule writer node with hot-path policy + session buffering.
 
 Runs after the response generation node on every turn and writes zero
 or more procedural rules to the user's ``ProceduralProfile`` in the
-procedural namespace of the memory store. Parallels the design of
+procedural namespace of the memory store. The node splits extraction from
+immediate persistence: the LLM output first becomes a procedural
+candidate, the deterministic policy decides whether it is safe and
+durable enough to ``commit_now``, and only those candidates are written
+to the profile. Held procedural candidates are buffered for later phases
+rather than written immediately. Parallels the design of
 :func:`agent.nodes.extract_facts.run_extract_semantic_facts_node`
 structurally — per-turn side effect, runs on both the crisis and
 therapeutic branches, silently skips when no LLM client is available
 or memory mode is INCOGNITO, always returns an empty state delta.
 
-v0.7 design rules (locked via v0.7 scoping):
+Phase-1 design rules:
 
 1. **Conservative writing.** Most turns produce zero rules. Rule writes
-   are reserved for moments when the user explicitly asks the agent to
-   change how it responds. The system prompt enforces this and uses
+   are reserved for moments when the user either explicitly asks the
+   agent to change how it responds or makes a clear durable agent-facing
+   preference statement. The system prompt enforces this and uses
    second-person evidence-grounded phrasing; see
    ``agent/memory/procedural_prompts.py`` for the prompt design notes.
 
@@ -30,12 +36,17 @@ v0.7 design rules (locked via v0.7 scoping):
    state isn't modified. Returning ``{}`` is the canonical "I touched
    nothing" signal for LangGraph delta-return nodes.
 
-5. **No dedup in v0.7.** Duplicate rules (two store entries with
-   identical rule text) are possible but rare because the node is
-   conservative-by-default. A future v0.7.1 could add similarity-based
-   dedup; for now the conservative prompt + the low expected rule
-   rate make this acceptable. Users can manually remove duplicates
-   via ``/memory forget rule <n>`` when it lands in Stage E.
+5. **Policy before persistence.** Extracted rule drafts become
+   :class:`ProceduralCandidate` instances first. The deterministic
+   policy can downgrade a candidate to ``commit_at_session_end`` or
+   ``drop``. In phase 1 those non-``commit_now`` outcomes are
+   diagnostics-only and do not write.
+
+6. **Conservative reconciliation.** Phase D still keeps the node
+   simple, but new writes now reconcile against the existing profile:
+   exact duplicates are skipped and clearly stronger/conflicting rules
+   can replace older wording. This avoids stale procedural guidance
+   accumulating indefinitely without adding a full background job.
 
 Relationship with the semantic extractor:
 
@@ -50,13 +61,9 @@ both are conservative-by-default. They differ in:
 - **Storage shape.** Semantic uses one-record-per-fact; procedural
   uses a single profile document per user at a fixed key. See
   :mod:`agent.memory.procedural` for the store helpers.
-- **Graph placement.** Both are on the post-response spine. The
-  procedural writer runs AFTER the semantic extractor in a serial
-  chain: ``... → extract_semantic_facts_node →
-  extract_procedural_rules_node → finalize_turn_node → END``. Serial
-  ordering keeps log output deterministic and avoids parallel-node
-  complexity that wouldn't buy anything (neither node affects user
-  latency because both run after the response is already composed).
+- **Graph placement.** Both are on the post-response spine, fanned out
+  in parallel from ``finalize_turn_node``. Neither node affects user
+  latency because both run after the response is already composed.
 """
 
 from __future__ import annotations
@@ -67,15 +74,17 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
+from agent.memory.candidates import build_procedural_candidate
 from agent.memory.models import ProceduralExtractionResult
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+from agent.memory.procedural import aupsert_procedural_rule, build_procedural_rule
 from agent.memory.procedural_prompts import (
     build_procedural_writer_system_prompt,
     build_procedural_writer_user_prompt,
 )
+from agent.memory.write_policy import decide_procedural_candidate
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +95,10 @@ async def run_extract_procedural_rules_node(
 ) -> dict[str, Any]:
     """Write zero or more procedural rules from the current user turn.
 
-    Runs after :func:`run_extract_semantic_facts_node` on both branches.
-    Returns a state delta containing the per-turn diagnostics entry
-    (timing + write count). The actual rule writes are side effects
-    on the procedural namespace of the memory store.
+    Runs on the post-response spine after the reply has already been
+    generated. Returns a state delta containing the per-turn diagnostics
+    entry (timing + write count). The actual rule writes are side
+    effects on the procedural namespace of the memory store.
 
     Silently skips when the runtime lacks an LLM client or is in
     incognito mode. All other failure modes (LLM errors, schema
@@ -105,6 +114,10 @@ async def run_extract_procedural_rules_node(
     def _diagnostics_delta(
         *,
         procedural_writes: int = 0,
+        procedural_candidates: int = 0,
+        procedural_commit_now_candidates: int = 0,
+        procedural_session_end_holds: int = 0,
+        procedural_policy_drops: int = 0,
         reason: str = "",
     ) -> dict[str, Any]:
         """Return a state delta carrying just the writer's diagnostics."""
@@ -113,6 +126,10 @@ async def run_extract_procedural_rules_node(
             "diagnostics": {
                 "extract_procedural_ms": round((time.monotonic() - start) * 1000, 2),
                 "procedural_writes": procedural_writes,
+                "procedural_candidates": procedural_candidates,
+                "procedural_commit_now_candidates": procedural_commit_now_candidates,
+                "procedural_session_end_holds": procedural_session_end_holds,
+                "procedural_policy_drops": procedural_policy_drops,
                 "extract_procedural_reason": reason,
             }
         }
@@ -142,7 +159,8 @@ async def run_extract_procedural_rules_node(
         return _diagnostics_delta(reason="skipped: incognito")
 
     store = runtime.context.memory_store
-    owner_id = state.get("user_id") or state.get("session_id") or "local-default"
+    session_buffer = runtime.context.session_memory_buffer
+    owner_id = resolve_owner_id(state)
 
     from agent.memory.small_talk_gate import is_small_talk
 
@@ -154,13 +172,16 @@ async def run_extract_procedural_rules_node(
         )
         return _diagnostics_delta(reason="skipped: small_talk_gate")
 
+    progress = state.get("progress", {})
+    turn_count = int(progress.get("turn_count", 1))
+    turn_index = max(0, turn_count - 1)
+
     # ── LLM structured-output writing ───────────────────────────────────
     try:
         result: ProceduralExtractionResult = await llm_client.generate_structured(
             prompt=build_procedural_writer_user_prompt(state),
             response_schema=ProceduralExtractionResult,
             system_instruction=build_procedural_writer_system_prompt(),
-            temperature=0,
         )
     except Exception:
         logger.warning(
@@ -185,27 +206,70 @@ async def run_extract_procedural_rules_node(
     if not result.rules:
         return _diagnostics_delta(reason=result.reason)
 
+    # ── Build candidates and apply deterministic write policy ─────────
+    immediate_candidates: list[tuple[Any, Any]] = []
+    session_end_holds = 0
+    policy_drops = 0
+
+    for draft in result.rules:
+        candidate = build_procedural_candidate(
+            draft,
+            message=state["message"],
+            session_id=state.get("session_id") or owner_id,
+            turn_index=turn_index,
+        )
+        decision = decide_procedural_candidate(candidate)
+
+        if decision.action == "commit_now":
+            immediate_candidates.append((candidate, decision))
+        elif decision.action == "commit_at_session_end":
+            session_end_holds += 1
+            if session_buffer is not None:
+                session_buffer.procedural_candidates.append(candidate)
+        else:
+            policy_drops += 1
+
+    if not immediate_candidates:
+        logger.info(
+            "extract_procedural_rules_node: policy held all %d rules "
+            "(session_end=%d, dropped=%d)",
+            len(result.rules),
+            session_end_holds,
+            policy_drops,
+        )
+        return _diagnostics_delta(
+            procedural_candidates=len(result.rules),
+            procedural_session_end_holds=session_end_holds,
+            procedural_policy_drops=policy_drops,
+            reason=result.reason,
+        )
+
     # ── Per-draft write ────────────────────────────────────────────────
-    # Each draft gets promoted to a ProceduralRule via build_procedural_rule
-    # (which adds the added_at timestamp and source="explicit_user"), then
-    # appended to the user's profile via aadd_procedural_rule. The helper
-    # handles the load → mutate → put idiom internally; we don't touch
-    # the store directly.
+    # Each surviving candidate gets promoted to a ProceduralRule via
+    # build_procedural_rule (which adds the added_at timestamp and
+    # source="explicit_user"), then upserted into the user's profile.
+    # The helper handles the load → reconcile → put idiom internally;
+    # we don't touch the store directly.
     #
     # Error handling is per-draft: a failure to write one rule does NOT
     # abandon the remaining drafts. This matches the semantic extractor's
     # per-candidate error isolation.
     written = 0
-    for draft in result.rules:
+    for candidate, decision in immediate_candidates:
+        draft = candidate.payload
         try:
             rule = build_procedural_rule(
                 rule_text=draft.rule,
                 evidence=draft.evidence,
                 confidence=draft.confidence,
                 source="explicit_user",
+                write_timing="immediate",
+                write_reason=decision.reason,
+                policy_version=decision.policy_version,
             )
-            await aadd_procedural_rule(store, user_id=owner_id, rule=rule)
-            written += 1
+            upsert = await aupsert_procedural_rule(store, user_id=owner_id, rule=rule)
+            if upsert.action != "skipped":
+                written += 1
         except Exception:
             logger.warning(
                 "extract_procedural_rules_node: failed to write draft %r; "
@@ -215,11 +279,18 @@ async def run_extract_procedural_rules_node(
             )
 
     logger.info(
-        "extract_procedural_rules_node: turn complete — %d written, %d total drafts",
+        "extract_procedural_rules_node: turn complete — %d written, %d immediate, "
+        "%d held_for_session, %d dropped",
         written,
-        len(result.rules),
+        len(immediate_candidates),
+        session_end_holds,
+        policy_drops,
     )
     return _diagnostics_delta(
         procedural_writes=written,
+        procedural_candidates=len(result.rules),
+        procedural_commit_now_candidates=len(immediate_candidates),
+        procedural_session_end_holds=session_end_holds,
+        procedural_policy_drops=policy_drops,
         reason=result.reason,
     )

@@ -16,7 +16,7 @@ It is intentionally narrower than the main text agent.
 - It is speech-only and non-agentic.
 - It does not expose tool calling, web search, or autonomous actions.
 - It does not currently run the full LangGraph therapeutic stack.
-- It does not currently summarize or write new memory on disconnect.
+- It now writes semantic, procedural, and episodic memory on disconnect via the shared session-end seam, but it still does not run the full text graph live on every spoken turn.
 :::
 
 OpenCouch currently ships two voice clients that share the same
@@ -119,7 +119,7 @@ standalone test harness still shows transcript events.
 | **Agentic capability** | No tool calling, no web search, no autonomous actions |
 | **LangGraph integration** | Voice does not currently route through the main text agent graph |
 | **Crisis handling** | The prompt contains spoken crisis guidance, but the experimental voice path does not currently run the full graph-level crisis gate used by text mode |
-| **Memory writes** | Voice currently reads memory at connect time only; it does not summarize or write semantic/procedural/episodic memory on disconnect |
+| **Memory writes** | Voice reads memory at connect time, then on disconnect replays the transcript through semantic/procedural extraction and the shared session-end summarizer |
 | **Prompt refresh** | The system prompt is not refreshed mid-session |
 | **Transcript UX** | Transcript display is disabled in the Next.js voice page while the audio transport is being stabilized |
 | **Interruption heuristics** | VAD and local ducking are intentionally aggressive and can false-trigger in noisy environments or with speaker bleed |
@@ -157,7 +157,7 @@ page uses the same backend API but adds application UI around it.
 | **Prompting** | Full layered prompt assembly per turn | One bounded spoken prompt at connect time |
 | **Tools** | Provider-backed tools supported | None exposed currently |
 | **Safety** | Full graph-level crisis gate | Lightweight spoken crisis guidance only |
-| **Memory** | Read + write during normal chat lifecycle | Read-only prompt preload at connect time |
+| **Memory** | Read + write during normal chat lifecycle | Prompt preload at connect time, then transcript replay on disconnect for semantic/procedural extraction + episodic summary |
 | **Interruption** | N/A | Server VAD + client truncation + local ducking |
 | **UI maturity** | Primary, stable interface | Experimental speech preview |
 

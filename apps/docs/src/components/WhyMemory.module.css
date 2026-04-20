@@ -1,0 +1,301 @@
+/* ================================================================
+   WhyMemory — Visual "Why Memory Matters" component
+
+   Light-mode first (Docusaurus default), dark overrides via
+   [data-theme='dark'] on the root <html> element.
+   ================================================================ */
+
+.root {
+  margin: 1.5rem 0;
+}
+
+/* ── Contrast panel: with vs without memory ───────────────────── */
+
+.contrast {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #dde1e6;
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+
+.contrastPane {
+  padding: 1.25rem 1.5rem;
+  background: #fafbfc;
+}
+
+.contrastLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #666;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.labelDotRed {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c97b6b;
+}
+
+.labelDotGreen {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8fae8b;
+}
+
+/* Chat bubbles */
+
+.chatBubble {
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 92%;
+}
+
+.userBubble {
+  background: #eef2f0;
+  color: #2a3130;
+  margin-left: auto;
+  border-bottom-right-radius: 3px;
+}
+
+.agentBubble {
+  background: #fff;
+  color: #666;
+  border: 1px solid #dde1e6;
+  border-bottom-left-radius: 3px;
+}
+
+.agentBubbleGood {
+  background: #f4f9f6;
+  color: #3a6b4a;
+  border: 1px solid #c5dfc8;
+  border-bottom-left-radius: 3px;
+}
+
+.bubbleHighlight {
+  color: #b07830;
+  font-weight: 500;
+}
+
+/* ── Notebook cards: three memory layers ──────────────────────── */
+
+.notebooks {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 2rem;
+}
+
+.notebook {
+  background: #fafbfc;
+  border: 1px solid #dde1e6;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.notebook:hover {
+  border-color: #b0b8c2;
+}
+
+.notebookHeader {
+  padding: 0.85rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.notebookIcon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.notebookTitle {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #2a3130;
+}
+
+.notebookSub {
+  font-size: 11px;
+  color: #888;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.notebookBody {
+  padding: 1rem;
+}
+
+.notebookEntry {
+  padding: 0.5rem 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #555;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.notebookEntry:last-child {
+  border-bottom: none;
+}
+
+.entryLabel {
+  display: inline-block;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 6px;
+  font-weight: 500;
+}
+
+.labelSemantic {
+  background: #e8f0f8;
+  color: #3a6a96;
+}
+
+.labelEpisodic {
+  background: #f2e8f8;
+  color: #7a4a96;
+}
+
+.labelProcedural {
+  background: #e8f5ea;
+  color: #3a7040;
+}
+
+/* ── Safety strip ────────────────────────────────────────────── */
+
+.safetyStrip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: #dde1e6;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.safetyCard {
+  background: #fafbfc;
+  padding: 1rem 1.15rem;
+  text-align: center;
+}
+
+.safetyIcon {
+  font-size: 22px;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.safetyTitle {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+  color: #2a3130;
+}
+
+.safetyDesc {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.5;
+}
+
+/* ── Flow diagram ───────────────────────────────────────────── */
+
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #fafbfc;
+  border: 1px solid #dde1e6;
+  border-radius: 12px;
+}
+
+.flowStep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0.5rem 0.75rem;
+  min-width: 80px;
+}
+
+.flowStepIcon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.flowStepLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.flowArrow {
+  font-size: 14px;
+  color: #bbb;
+  padding: 0 2px;
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .contrast {
+    grid-template-columns: 1fr;
+  }
+  .notebooks {
+    grid-template-columns: 1fr;
+  }
+  .safetyStrip {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Dark mode overrides ────────────────────────────────────── */
+
+:global([data-theme='dark']) .contrast { background: #222; }
+:global([data-theme='dark']) .contrastPane { background: #0d0d0d; }
+:global([data-theme='dark']) .contrastLabel { color: #888; border-bottom-color: #1e1e1e; }
+:global([data-theme='dark']) .userBubble { background: #1a2a28; color: #d4cfc6; }
+:global([data-theme='dark']) .agentBubble { background: #111; color: #a89f96; border-color: #1e1e1e; }
+:global([data-theme='dark']) .agentBubbleGood { background: #0f1a18; color: #8fae8b; border-color: #1a2e28; }
+:global([data-theme='dark']) .bubbleHighlight { color: #e0a370; }
+:global([data-theme='dark']) .notebook { background: #0d0d0d; border-color: #222; }
+:global([data-theme='dark']) .notebook:hover { border-color: #333; }
+:global([data-theme='dark']) .notebookHeader { border-bottom-color: #1e1e1e; }
+:global([data-theme='dark']) .notebookTitle { color: #d4cfc6; }
+:global([data-theme='dark']) .notebookSub { color: #666; }
+:global([data-theme='dark']) .notebookEntry { color: #999; border-bottom-color: #141414; }
+:global([data-theme='dark']) .labelSemantic { background: #1a2535; color: #6ca8d6; }
+:global([data-theme='dark']) .labelEpisodic { background: #251a2a; color: #b08ac6; }
+:global([data-theme='dark']) .labelProcedural { background: #1a2a1e; color: #8fae8b; }
+:global([data-theme='dark']) .safetyStrip { background: #222; }
+:global([data-theme='dark']) .safetyCard { background: #0d0d0d; }
+:global([data-theme='dark']) .safetyTitle { color: #d4cfc6; }
+:global([data-theme='dark']) .flow { background: #0d0d0d; border-color: #222; }
+:global([data-theme='dark']) .flowStepLabel { color: #888; }
+:global([data-theme='dark']) .flowArrow { color: #333; }

@@ -1,6 +1,6 @@
 ---
 title: Therapeutic Approach
-sidebar_position: 1
+sidebar_position: 2
 ---
 
 import TherapyApproach from '@site/src/components/TherapyApproach';
@@ -43,7 +43,7 @@ Two axes, selected independently per turn:
 
 | Axis | What it is | How many | Selected by |
 |---|---|---|---|
-| **Mode** | Response style (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing) | 6 | Hybrid dispatcher: regex fast paths + LLM structured output |
+| **Mode** | Response style (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing) | 6 | LLM structured-output classifier (regex fallback only when LLM unavailable) |
 | **Modality** | Therapeutic framework overlay (MI, PFA, CBT, grief, IPT, ACT, DBT) | 7 | LLM dispatcher, alongside the mode |
 
 **Modes** shape *what* the agent does this turn. **Modalities**
@@ -58,14 +58,30 @@ fuzziness at the edges is by design.
 
 ## Safety contract
 
-The crisis gate is the **first node in the graph** — runs before
-memory, before routing, before any response. See
-[Crisis Gate](/docs/philosophy/crisis-gate) for the full flow.
+The crisis gate is the **first node in the graph** — it runs before
+memory loading, before routing, before any therapeutic response.
 
-| When risk is detected | What happens |
-|---|---|
-| Normal conversation | Stops immediately |
-| Acknowledgment | Direct and calm — no evasion |
-| Resources | Emergency services + local hotlines surfaced |
-| Follow-up | At most one safety question |
-| Therapeutic intervention | None — not attempted |
+```mermaid
+flowchart LR
+    classDef gate fill:#EF44441A,stroke:#EF4444,stroke-width:2px
+    classDef safe fill:#10B9811A,stroke:#10B981,stroke-width:2px
+    classDef action fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
+
+    IN["User message"] --> CG{"Crisis gate"}:::gate
+    CG -->|No risk| TH["Therapeutic pipeline"]:::safe
+    CG -->|Risk detected| ACK["Acknowledge calmly"]:::action
+    ACK --> RES["Surface resources"]:::action
+    RES --> FU["One safety question (max)"]:::action
+    FU --> STOP(("End turn")):::gate
+```
+
+**When the gate fires, the agent:**
+
+1. **Stops** normal conversation immediately — no therapeutic response is generated
+2. **Acknowledges** the distress directly and calmly, without evasion or minimizing
+3. **Surfaces resources** — emergency services and web-searched local crisis hotlines
+4. **Asks at most one** follow-up safety question (e.g., "Are you safe right now?")
+5. **Does not** attempt therapeutic intervention, advice, or de-escalation techniques
+
+See [Crisis Gate](/docs/philosophy/crisis-gate) for the full
+detection architecture (LLM classifier + regex fallback + audit log).

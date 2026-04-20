@@ -68,7 +68,7 @@ from agent.memory.summarization_prompts import (
     build_summarization_system_prompt,
     build_summarization_user_prompt,
 )
-from agent.state import AgentState
+from agent.state import AgentState, resolve_owner_id
 from services.llm.base import BaseLLMClient
 
 if TYPE_CHECKING:
@@ -109,6 +109,9 @@ def _session_arc_to_stored(
         created_at=now,
         last_referenced_at=now,
         user_visible=True,
+        write_timing="session_end",
+        write_reason="session-end episodic summary written from completed session transcript",
+        policy_version="phase5_v1",
         crisis_level_max=crisis_level_max,  # type: ignore[arg-type]
     )
 
@@ -219,7 +222,7 @@ async def run_summarize_session(
         )
         return None
 
-    owner_id = state.get("user_id") or state.get("session_id") or "local-default"
+    owner_id = resolve_owner_id(state)
 
     # Compute duration from started_at / ended_at. If parsing fails (e.g.
     # malformed timestamp), degrade to 0 rather than crashing — the
@@ -256,7 +259,6 @@ async def run_summarize_session(
             ),
             response_schema=SummarizationResult,
             system_instruction=build_summarization_system_prompt(),
-            temperature=0,
         )
     except Exception:
         logger.warning(

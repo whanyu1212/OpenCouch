@@ -60,6 +60,8 @@ OpenCouch is a conversational support agent built on [LangGraph](https://langcha
 
 The current voice tab is an **experimental Realtime speech preview**. It now uses a rewritten GA-style Realtime bridge with configurable voices, optional transcription language hints, and improved interruption handling, but it is still speech-only and does not yet expose full agentic actions from the text runtime.
 
+The backend now also has an initial Google Cloud Run deployment path for close-beta preview and internal testing. That path is functional for API deployment, but it is not yet fully production-ready because persistence and final rollout hardening still need to be completed.
+
 It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, six therapeutic response modes, and seven LLM-routed modalities keep responses safe, grounded, and adaptive.
 
 ## ✨ Key Features
@@ -92,6 +94,8 @@ uv run python -m opencouch_cli --voice
 ```
 
 ### Eval-driven development
+
+> **For developers and contributors only.** End users do not need to configure this section — it powers internal observability and regression tracking during development.
 
 #### Observability & evaluation
 
@@ -126,6 +130,9 @@ pnpm install && pnpm dev
 Open [localhost:3000](http://localhost:3000) in your browser.
 
 ### 3. Documentation Site
+
+> **For developers and contributors only.** The hosted docs are available at the link below — running locally is only needed if you're editing documentation.
+
 The official documentation is live at: **[https://whanyu1212.github.io/OpenCouch/](https://whanyu1212.github.io/OpenCouch/)**
 
 To run the Docusaurus-powered docs site locally:
@@ -139,7 +146,7 @@ pnpm install && npx docusaurus start --port 3001
 
 ## 🧠 Architecture
 
-OpenCouch uses a directed graph that enforces safety checks before therapeutic generation and runs memory extraction after each finalized turn.
+OpenCouch uses a directed graph that enforces safety checks before therapeutic generation, then runs post-response memory evaluation on each turn and a separate session-end commit seam for episodic and buffered memory.
 
 ```mermaid
 flowchart TD
@@ -171,10 +178,24 @@ flowchart TD
 
     FT{{"finalize_turn<br/>operator.add reducer"}}:::sysNode
 
-    subgraph EXTRACT ["Parallel Extraction"]
+    subgraph POST ["Post-response Memory Evaluation"]
         direction LR
         EF[/"extract_facts"/]:::bgTask
         EP[/"extract_rules"/]:::bgTask
+        PW["write_policy<br/>commit now • hold • drop"]:::bgTask
+        SB[("session buffer<br/>held semantic • procedural")]:::sysNode
+        EF --> PW
+        EP --> PW
+        PW -.->|hold| SB
+    end
+
+    SE{{"session_end<br/>/end • timeout • shutdown • voice disconnect"}}:::sysNode
+
+    subgraph SESSION ["Session-End Commit"]
+        direction TB
+        SS["summarize_session<br/>episodic arc"]:::sysNode
+        CM["commit_session_memory<br/>promote held semantic • procedural"]:::sysNode
+        SS ==> CM
     end
 
     DB[("SQLite .store/<br/>threads • memory • crisis log • feedback")]:::dbNode
@@ -185,14 +206,21 @@ flowchart TD
     CG -.->|Risk| CR
     TS ==> FT
     CR -.-> FT
-    FT -.-> EF & EP
-    EF & EP -.-> DB
+    FT -.-> EF
+    FT -.-> EP
+    PW -.->|immediate writes| DB
+    SB -.->|held candidates| CM
+    SE ==> SS
+    SE ==> CM
+    CM -.->|promoted / reconciled writes| DB
+    SS -.->|episodic arc| DB
 
     %% Subgraph Styling (Removes default gray background)
     style GATE fill:none,stroke:#EF4444,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style SAFE fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style RISK fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style EXTRACT fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style POST fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style SESSION fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
 ```
 
 ---
@@ -216,7 +244,7 @@ OpenCouch/
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── voice/              # OpenAI Realtime voice handlers
 │   │   ├── api/                # FastAPI REST + WebSocket routes
-│   │   └── tests/              # 630+ pytest unit/integration tests
+│   │   └── tests/              # 720+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
 ├── eval/                       # Evaluation harnesses + curated datasets
@@ -230,11 +258,12 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Memory robustness** — Unicode-aware tokenizer (CJK/Cyrillic/accented Latin), procedural rule cap with eviction, atomic batch write protocol, episodic date filter, enriched semantic triples in working memory, and fail-loud owner_id validation
+- **Web UI memory management** — per-record deletion of facts, session arcs, and procedural rules from the Memory page with two-click confirmation
+- **CLI visual redesign** — "Midnight Journal" aesthetic with warm amber/sage palette, Unicode block-art wordmark, minimal left-bar info messages, and lowercased panel titles
+- **Memory system rewrite** — reworked memory writing around policy-based candidate extraction, session-end commit, repetition-gated promotion, reconciliation/supersession, and unified lifecycle handling across text, web, API shutdown, timeout, CLI, and voice disconnect
+- **Response model tiers** — split pinned control-plane LLM usage from selectable response-writer LLM usage, with `fast` vs `quality` text-response switching now available in both the web UI and the CLI
 - **Realtime voice rewrite** — rebuilt the backend voice bridge and standalone harness around the GA Realtime event model, with bounded prompt assembly, server truncation sync, and local ducking for faster interruption feel
-- **Voice UI stabilization** — aligned the Next.js voice tab with the working harness, added voice and language selectors, and restored transcript history keyed by Realtime item ID
-- **Experimental voice positioning** — updated the web UI and docs to clearly state that voice is still experimental, speech-only, and that transcript history remains approximate
-- **Voice session persistence** — voice chat now survives in-app tab switches and browser tab backgrounding
-- **Session trajectory evals** — unified eval runner with 25 long-trajectory cases covering safety, modality, and mode transitions
 - **Crisis gate hardening** — LLM-primary architecture with regex fallback, shadow monitoring, and adversarial-resistant prompt
 - **Therapeutic dispatcher rewrite** — LLM-primary routing for all 6 modes and 7 modalities, mid-exercise exit detection
 

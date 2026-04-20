@@ -13,8 +13,9 @@ These tests cover the new contract:
 1. **Per-node StatusEvents.** The stream emits one StatusEvent for
    each node that runs (crisis_gate, load_memory, therapeutic,
    finalize, extract_facts, extract_procedural) in execution order.
-   v0.9: finalize runs BEFORE extractors. A ResponseEvent is emitted
-   after finalize so the user sees the response while extractors run.
+   v0.9: finalize runs BEFORE extractors. A ResponseReadyEvent is
+   emitted after finalize so the user sees the response while
+   extractors run.
 
 2. **DoneEvent carries diagnostics.** The ``DoneEvent.output.diagnostics``
    dict contains both the per-node timings (stamped by each node) and
@@ -37,6 +38,7 @@ import pytest
 from agent.models import (
     ChunkEvent,
     DoneEvent,
+    ResponseReadyEvent,
     StatusEvent,
     StreamEvent,
 )
@@ -51,23 +53,31 @@ async def _collect_stream(
     *,
     thread_id: str,
     message: str,
-) -> tuple[list[StatusEvent], list[ChunkEvent], DoneEvent | None]:
+) -> tuple[
+    list[StatusEvent],
+    list[ChunkEvent],
+    ResponseReadyEvent | None,
+    DoneEvent | None,
+]:
     """Collect all events from a stream.
 
-    Returns ``(status_events, chunk_events, done_event)``.
+    Returns ``(status_events, chunk_events, response_ready_event, done_event)``.
     """
 
     statuses: list[StatusEvent] = []
     chunks: list[ChunkEvent] = []
+    ready: ResponseReadyEvent | None = None
     done: DoneEvent | None = None
     async for event in runtime.run_turn_stream(thread_id=thread_id, message=message):
         if isinstance(event, StatusEvent):
             statuses.append(event)
         elif isinstance(event, ChunkEvent):
             chunks.append(event)
+        elif isinstance(event, ResponseReadyEvent):
+            ready = event
         elif isinstance(event, DoneEvent):
             done = event
-    return statuses, chunks, done
+    return statuses, chunks, ready, done
 
 
 # ── Tests ────────────────────────────────────────────────────────────────
@@ -84,7 +94,7 @@ class TestRunTurnStreamStages:
             crisis_gate → load_memory → therapeutic →
             finalize → extract_facts → extract_procedural
 
-        A ResponseEvent is emitted after finalize, before extractors.
+        A ResponseReadyEvent is emitted after finalize, before extractors.
         """
 
         async with PersistentAgentRuntime(
@@ -92,10 +102,11 @@ class TestRunTurnStreamStages:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            statuses, chunks, done = await _collect_stream(
+            statuses, chunks, ready, done = await _collect_stream(
                 runtime, thread_id="t-stream-1", message="hi there"
             )
 
+        assert ready is not None
         assert done is not None
         # The stages should appear in the order the graph executes them.
         # The first four stages are sequential and must appear in order.
@@ -134,9 +145,39 @@ class TestRunTurnStreamStages:
 
         assert len(events) > 0
         assert isinstance(events[-1], DoneEvent)
-        # All earlier events should be StatusEvents or ChunkEvents.
+        # All earlier events should be StatusEvents, ChunkEvents, or
+        # the non-terminal response-ready marker.
         for event in events[:-1]:
-            assert isinstance(event, (StatusEvent, ChunkEvent))
+            assert isinstance(event, (StatusEvent, ChunkEvent, ResponseReadyEvent))
+
+    @pytest.mark.asyncio
+    async def test_response_ready_emits_after_finalize_before_done(self) -> None:
+        """The reply-ready marker should surface before terminal completion."""
+
+        async with PersistentAgentRuntime(
+            sqlite_path=":memory:",
+            memory_sqlite_path=":memory:",
+            crisis_log_sqlite_path=":memory:",
+        ) as runtime:
+            events: list[StreamEvent] = []
+            async for event in runtime.run_turn_stream(
+                thread_id="t-stream-2b", message="hello"
+            ):
+                events.append(event)
+
+        finalize_index = next(
+            i
+            for i, event in enumerate(events)
+            if isinstance(event, StatusEvent) and event.stage == "finalize"
+        )
+        ready_index = next(
+            i for i, event in enumerate(events) if isinstance(event, ResponseReadyEvent)
+        )
+        done_index = next(
+            i for i, event in enumerate(events) if isinstance(event, DoneEvent)
+        )
+
+        assert finalize_index < ready_index < done_index
 
 
 class TestRunTurnStreamDiagnostics:
@@ -151,7 +192,7 @@ class TestRunTurnStreamDiagnostics:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            _, _, done = await _collect_stream(
+            _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-3", message="hi"
             )
 
@@ -182,7 +223,7 @@ class TestRunTurnStreamDiagnostics:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            _, _, done = await _collect_stream(
+            _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-4", message="hi"
             )
 
@@ -214,7 +255,7 @@ class TestRunTurnStreamDiagnostics:
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
-            _, _, done = await _collect_stream(
+            _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-5", message="hi"
             )
 
@@ -246,7 +287,7 @@ class TestRunTurnStreamSessionTracking:
             # Before: no start time tracked
             assert "t-stream-6" not in runtime._session_starts
 
-            _, _, done = await _collect_stream(
+            _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-6", message="hi"
             )
 
@@ -292,7 +333,7 @@ class TestRunTurnStreamParity:
             monolithic = await runtime.run_turn(
                 thread_id="t-parity-mono", message="hello"
             )
-            _, _, streamed = await _collect_stream(
+            _, _, _, streamed = await _collect_stream(
                 runtime, thread_id="t-parity-stream", message="hello"
             )
 

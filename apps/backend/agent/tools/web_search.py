@@ -80,7 +80,6 @@ async def _extract_location(
         raw = await llm_client.generate_text(
             prompt=prompt,
             system_instruction=_LOCATION_EXTRACTION_SYSTEM,
-            temperature=0,
         )
     except Exception:
         logger.warning("Location extraction failed; proceeding without location.")
@@ -105,7 +104,6 @@ async def _lookup_resources(
         raw = await llm_client.generate_text(
             prompt=prompt,
             system_instruction=_RESOURCE_LOOKUP_SYSTEM,
-            temperature=0,
             use_search=True,
         )
     except Exception:

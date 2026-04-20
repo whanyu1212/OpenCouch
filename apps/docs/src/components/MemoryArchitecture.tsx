@@ -29,25 +29,25 @@ const LAYERS: LayerDef[] = [
     label: 'Semantic',
     icon: '\u25C6',
     color: 'semantic',
-    writeHow: 'LLM structured output via extract_semantic_facts_node',
-    writeWhen: 'After every response (parallel with procedural). Small-talk gate skips greetings.',
+    writeHow: 'LLM candidate extraction via extract_semantic_facts_node + deterministic write_policy',
+    writeWhen: 'After every response. Only lower-risk stable facts commit immediately; sensitive or interpretive candidates are buffered for session-end review or require repetition before promotion.',
     readHow: 'Hybrid RRF — embedding cosine + token-recall fused per turn',
     readInto: 'SemanticWorkingMemoryEntry in working_memory',
-    outputType: '{ type: "semantic", evidence_quote: "..." }',
-    storage: 'One row per fact, namespaced (owner_id, "semantic"). Embedding stored as BLOB.',
-    examples: ['KNOWS Sarah — "my sister Sarah visited"', 'USES fluoxetine — "I take fluoxetine daily"'],
+    outputType: '{ type: "semantic", evidence_quote: "...", category: "...", subject: "...", predicate: "...", object: "..." }',
+    storage: 'One row per active fact, namespaced (owner_id, "semantic"). Dedup bumps matches; superseded facts go dormant. Held candidates live in the persisted active-session buffer until session end. Embedding stored as BLOB. Unicode-aware tokenizer handles CJK, Cyrillic, and accented Latin.',
+    examples: ['[relationship] User WORRIES_ABOUT work — "my boss is terrible"', '[coping_strategy] User USES fluoxetine — "I take fluoxetine daily"'],
   },
   {
     id: 'episodic',
     label: 'Episodic',
     icon: '\u25CB',
     color: 'episodic',
-    writeHow: 'Single LLM call via run_summarize_session',
-    writeWhen: 'Once per session on /end or /exit. Produces a StoredSessionArc.',
+    writeHow: 'Session-end LLM summary via run_summarize_session',
+    writeWhen: 'Only at session end: /end, timeout, shutdown, web end-session, or voice disconnect. Produces one StoredSessionArc for the active session window.',
     readHow: 'Hybrid RRF + first-turn catch-up (most recent arc injected automatically)',
     readInto: 'EpisodicWorkingMemoryEntry in working_memory',
     outputType: '{ type: "episodic", summary: "...", primary_themes: [...], is_catch_up: true }',
-    storage: 'One row per arc, namespaced (owner_id, "episodic").',
+    storage: 'One row per arc, namespaced (owner_id, "episodic"), with policy metadata explaining why and when the summary was committed.',
     examples: ['Session 1: panic attacks, did grounding exercise', 'Session 2: work stress and sleep issues'],
   },
   {
@@ -55,12 +55,12 @@ const LAYERS: LayerDef[] = [
     label: 'Procedural',
     icon: '\u25A0',
     color: 'procedural',
-    writeHow: 'LLM structured output via extract_procedural_rules_node',
-    writeWhen: 'After every response (parallel with semantic). "Did the user ask me to change how I respond?"',
-    readHow: 'Full rule set loaded every turn — not query-based',
+    writeHow: 'LLM candidate extraction via extract_procedural_rules_node + deterministic write_policy',
+    writeWhen: 'Explicit durable instructions can commit immediately. Implicit agent-facing preferences are buffered and may promote later at session end after repeated evidence.',
+    readHow: 'Full rule set loaded every turn — not query-based. Capped at 20 active rules.',
     readInto: 'System prompt suffix (always applied, regardless of recall toggle)',
-    outputType: 'ProceduralProfile with rules[] and proactive_recall_enabled',
-    storage: 'Single profile document per user, namespaced (owner_id, "procedural").',
+    outputType: 'ProceduralProfile with rules[] (max 20), archived_rules[], and proactive_recall_enabled',
+    storage: 'Single profile document per user, namespaced (owner_id, "procedural"), with active rules (capped at 20, oldest evicted to archive), archived replacements, and delayed candidates held in the persisted active-session buffer.',
     examples: ['"Don\'t suggest meditation"', '"Prefer shorter responses"'],
   },
 ];
@@ -128,7 +128,7 @@ export default function MemoryArchitecture(): React.JSX.Element {
         <div className={s.flowDirection}>
           <span className={s.dirLabel}>Write</span>
           <span className={s.dirArrow}>{'\u2193'}</span>
-          <span className={s.dirSub}>after response (parallel)</span>
+          <span className={s.dirSub}>after response + shared session-end seam</span>
         </div>
         <div className={s.flowDirection}>
           <span className={s.dirLabel}>Read</span>

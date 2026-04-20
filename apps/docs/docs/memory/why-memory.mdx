@@ -1,0 +1,57 @@
+---
+title: Why Memory Matters
+sidebar_position: 0
+sidebar_label: Why Memory Matters
+---
+
+import WhyMemory from '@site/src/components/WhyMemory';
+
+# Why Memory Matters
+
+A support agent that starts from zero every session cannot build rapport,
+track progress, or respect your preferences. **Continuity is care** —
+and memory is how OpenCouch delivers it.
+
+<WhyMemory />
+
+## The difference memory makes
+
+The contrast above shows the same conversation with and without memory.
+With memory, the agent references your history, recalls what helped before,
+and never asks you to repeat yourself. Without it, every session feels
+like talking to a stranger.
+
+---
+
+## Three notebooks
+
+OpenCouch carries three kinds of memory between sessions:
+
+- **Fact Notebook** — specific things you share: names, jobs, worries,
+  coping strategies. Stored as structured triples so the agent can
+  connect them to future context.
+- **Session Diary** — a brief summary written at the end of each session:
+  themes, mood arc, and open threads. Powers the "last time we talked
+  about..." continuity on your next visit.
+- **Style Guide** — quiet rules the agent follows without mentioning them.
+  "Don't suggest meditation" or "keep it short" — these shape *how* the
+  agent talks, not *what* it knows.
+
+---
+
+## Common questions
+
+**Can I use OpenCouch without memory?**
+Yes — guest mode stores nothing to disk. Same responses, no continuity.
+
+**What if the agent remembers something wrong?**
+Delete individual facts, sessions, or rules anytime via `/memory forget`
+in the CLI or the Memory page in the web UI.
+
+**What happens to old sessions?**
+Summaries older than 30 days stop appearing in active context but remain
+stored for your review.
+
+**Can I export my data?**
+Everything lives in a local SQLite database you control. Copy, back up,
+or inspect with any SQLite tool.

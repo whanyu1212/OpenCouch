@@ -141,6 +141,9 @@ namespaces:
       resolved_threads: list[string]             # threads the session closed
       crisis_level_max: int                      # 0..3, peak crisis level during session
       user_visible: bool                         # default true
+      write_timing: enum[immediate, session_end, promotion]
+      write_reason: string
+      policy_version: string
 
   procedural:
     # Style rules the agent has learned about THIS user. The "talks differently
@@ -160,10 +163,24 @@ namespaces:
       proactive_recall_enabled: bool            # see §9 q4; default false
       rules:
         - rule: string                           # second-person, evidence-grounded
+          id: uuid7_or_string
           evidence: list[string]                 # quotes or fact_ids that support it
           confidence: enum[low, med, high]
           added_at: timestamp
           source: enum[explicit_user, consolidation, manual]
+          dormant_at: timestamp_or_null
+          superseded_by: uuid7_or_string_or_null
+          user_visible: bool
+      archived_rules:
+        - rule: string
+          id: uuid7_or_string
+          evidence: list[string]
+          confidence: enum[low, med, high]
+          added_at: timestamp
+          source: enum[explicit_user, consolidation, manual]
+          dormant_at: timestamp_or_null
+          superseded_by: uuid7_or_string_or_null
+          user_visible: bool
       last_consolidated_at: timestamp_or_null
 
   crisis_log:
@@ -590,7 +607,7 @@ write_policies:
     when: after_response_generation
     by: extract_semantic_facts_node
     cadence: per_turn                  # but most turns produce zero writes
-    structured_output: true            # uses Pydantic schema, temperature 0
+    structured_output: true            # uses Pydantic schema
     deduplication:
       strategy: hot_path
       threshold: 0.95                  # see §9 q5; conservative, permanent

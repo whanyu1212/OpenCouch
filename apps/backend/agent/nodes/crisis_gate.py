@@ -352,7 +352,6 @@ async def assess_crisis_risk_with_llm(
         prompt=build_crisis_classifier_prompt(state),
         response_schema=CrisisAssessmentSchema,
         system_instruction=build_crisis_classifier_system_prompt(),
-        temperature=0,
     )
 
     level = max(0, min(3, int(raw.level)))

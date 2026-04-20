@@ -1,11 +1,32 @@
 """Internal state container for the OpenCouch agent graph."""
 
+from __future__ import annotations
+
 import operator
 from typing import Annotated, Any, NotRequired, TypedDict
 
 from agent.memory.models import CrisisClassifierPath, CrisisOverrideKind
 from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
 from agent.working_memory import WorkingMemoryEntry
+
+
+def resolve_owner_id(state: dict[str, Any]) -> str:
+    """Return the memory-namespace owner for the current session.
+
+    Prefers ``user_id`` (explicit identity), falls back to
+    ``session_id`` (thread-scoped identity). Raises ``ValueError``
+    if neither is set — callers must provide at least one to prevent
+    silent cross-contamination of memory namespaces.
+    """
+
+    owner = state.get("user_id") or state.get("session_id")
+    if not owner:
+        raise ValueError(
+            "Cannot resolve memory owner: both user_id and session_id are "
+            "absent from state. Provide at least one to prevent memory "
+            "namespace cross-contamination."
+        )
+    return owner
 
 
 def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:

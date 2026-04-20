@@ -143,14 +143,14 @@ const NODES: NodeSpec[] = [
     category: 'EXTRACTION',
     order: 7,
     inputs: ['state.message', 'state.response.text'],
-    outputs: ['memory_store (side effect)', 'state.diagnostics'],
+    outputs: ['memory_store / session buffer (side effect)', 'state.diagnostics'],
     retry: true,
     llm: true,
     reducer: '_merge_dicts',
     parallel: true,
     subgraph: false,
     description:
-      'LLM structured-output call to extract persistent facts. Runs in parallel with extract_procedural_rules_node — both fan out from finalize_turn_node. Writes via the diagnostics merge reducer so the two extractors never race.',
+      'LLM structured-output call that extracts semantic candidates, then runs deterministic write policy. Low-risk facts may commit immediately; sensitive or interpretive candidates can be held for session end or repetition. Runs in parallel with extract_procedural_rules_node.',
     skipConditions: [
       'crisis path',
       'no llm_client',
@@ -166,14 +166,14 @@ const NODES: NodeSpec[] = [
     category: 'EXTRACTION',
     order: 8,
     inputs: ['state.message', 'state.response.text'],
-    outputs: ['procedural profile (side effect)', 'state.diagnostics'],
+    outputs: ['procedural profile / session buffer (side effect)', 'state.diagnostics'],
     retry: true,
     llm: true,
     reducer: '_merge_dicts',
     parallel: true,
     subgraph: false,
     description:
-      'LLM structured-output call to extract style rules. Same parallel lane as extract_semantic_facts_node. Writes directives that shape future response style (NOT content to be referenced).',
+      'LLM structured-output call that extracts procedural candidates, then runs deterministic write policy. Explicit durable instructions may commit immediately; implicit preferences can be held for session-end promotion. Same parallel lane as extract_semantic_facts_node.',
     skipConditions: [
       'crisis path',
       'no llm_client',

@@ -1,5 +1,5 @@
 ---
-title: Eval-driven development
+title: Tracing & Evals
 sidebar_position: 1
 ---
 
@@ -8,11 +8,13 @@ sidebar_position: 1
 OpenCouch uses two complementary surfaces for eval-driven development:
 
 1. **LangSmith** for external trace-level observability, run search, and evaluation review.
-2. **CLI diagnostics** for local, turn-by-turn visibility into timings, routing, and memory writes.
+2. **CLI inspection commands + live status** for local visibility into execution, state, and memory.
 
-The CLI shows you **why** the agent did what it did, not just what
-it said. Every turn produces diagnostics panels plus on-demand
-debugging commands.
+The CLI intentionally keeps the normal chat loop lightweight now:
+the reply renders as soon as the response is ready, a live spinner
+shows node progress while post-response work finishes, and deeper
+inspection is available on demand through commands like `/status`,
+`/context`, `/memory status`, and `/debug state`.
 
 ---
 
@@ -64,11 +66,11 @@ For text runs, LangSmith captures the LangGraph execution trace, including the t
 
 OpenCouch also attaches runtime metadata such as `thread_id`, `channel`, `memory_mode`, `streaming`, and `user_scope` to text runs to make traces easier to search.
 
-LangSmith complements the local diagnostics panels below; it does not replace the project's deterministic eval runners or local debugging commands.
+LangSmith complements the local CLI inspection surfaces below; it does not replace the project's deterministic eval runners or local debugging commands.
 
 ---
 
-## CLI panels
+## CLI surfaces
 
 ### 1. Assistant Reply
 
@@ -81,71 +83,42 @@ LangSmith complements the local diagnostics panels below; it does not replace th
 
 Green border for therapeutic, red for crisis.
 
-### 2. Turn Diagnostics
-
-| Column | What it shows |
-|---|---|
-| mode | Which therapeutic mode shaped the reply |
-| source | How it was selected (keyword, llm, default) |
-| type | THERAPEUTIC, OPERATIONAL, or CRISIS |
-| safety | normal, distress, check, or crisis |
-
-### 3. Stage Timings
-
-```text
-  stage              time (ms)   writes   store Δ
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  crisis_gate        1500.62        -         -
-  load_memory            1.75        -         -
-  therapeutic            -           -         -
-  finalize               0.08        -         -
-  extract_facts      2525.98        1        +1
-  extract_procedural 1066.69        0         0
-  turn_total         5440.67        -         -
-```
-
-**writes** = what the extractor attempted.
-**store Δ** = what actually landed after dedup.
-When writes=1 but Δ=0, dedup caught a duplicate.
-
-### 4. Session Context
-
-```text
-  turn_count        3
-  working_memory    · Previously noted: my sister Sarah...
-                    · Last session (anxiety): talked about...
-  procedural_rules  · Don't suggest meditation
-  proactive_recall  off
-  exercise          grounding_5_4_3_2_1 (step 2)
-```
-
-Working memory renders structured `WorkingMemoryEntry` dicts
-on demand via `format_working_memory_entries()`. Exercise row
-only appears when a guided exercise is active.
-
----
-
-## Debug commands
-
-| Command | What it shows |
-|---|---|
-| `/debug state` | Raw graph state as pretty-printed JSON |
-| `/context` | Session Context panel on demand |
-| `/history [n]` | Recent transcript with `mode` column per assistant turn |
-| `/memory status` | Per-namespace counts, recall toggle, feedback count, owner_id |
-| `/status` | Thread id, mode, turn count, LLM client status |
-
----
-
-## Live streaming
+### 2. Live execution status
 
 `run_turn_stream` emits one `StatusEvent` per node via LangGraph's
-multi-mode streaming. The CLI renders a progress spinner:
+multi-mode streaming. The CLI renders a progress spinner while the
+graph is still running:
 
 ```text
   ⠋ crisis_gate → load_memory → therapeutic → finalize
     → extract_facts + extract_procedural  ← parallel, order varies
 ```
+
+The stream now also has a non-terminal `response_ready` event. That
+means the CLI can render the finished reply as soon as
+`finalize_turn_node` seals it, while the post-response memory tail
+continues in the background. The next user turn still waits for that
+tail before it is processed, so turn ordering and memory consistency
+stay intact.
+
+### 3. On-demand inspection commands
+
+| Command | What it shows |
+|---|---|
+| `/status` | Thread id, mode, turn count, response tier, and active response LLM |
+| `/history [n]` | Recent transcript with `mode` column per assistant turn |
+| `/context` | Structured session context snapshot, including working memory and procedural rules |
+| `/memory status` | Owner-scoped semantic / episodic / procedural counts, recall toggle, and store totals |
+| `/debug state` | Raw graph state as pretty-printed JSON |
+
+The old auto-rendered Turn Diagnostics, Stage Timings, and Session
+Context panels are no longer part of the default chat loop. Their
+underlying diagnostics still exist in graph state and traces; the CLI
+just no longer prints those panels automatically after every turn.
+
+---
+
+## Live streaming
 
 Stage labels are mapped from internal node names:
 
@@ -168,7 +141,7 @@ render without a mapping update.
 | Key | Node | Value |
 |---|---|---|
 | `crisis_gate_ms` | crisis_gate | Assessment wall-clock time |
-| `crisis_classifier_path` | crisis_gate | `deterministic` / `llm_fallback` / `override` |
+| `crisis_classifier_path` | crisis_gate | Which branch decided the result (`override`, deterministic path, or LLM review/fallback) |
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
@@ -179,11 +152,16 @@ render without a mapping update.
 | `proactive_recall` | load_memory | Recall toggle state |
 | `retrieval_path` | load_memory | `hybrid_rrf` / `token_recall` / `token_recall_after_embed_error` |
 | `extract_facts_ms` | extract_facts | Extraction wall-clock time |
-| `semantic_writes` | extract_facts | Facts the LLM produced |
+| `semantic_writes` | extract_facts | Immediate semantic writes that actually committed on this turn |
+| `semantic_session_end_holds` | extract_facts | Semantic candidates held for session-end review |
+| `semantic_repeat_required` | extract_facts | Semantic candidates blocked pending stronger repetition evidence |
+| `semantic_policy_drops` | extract_facts | Semantic candidates dropped by deterministic write policy |
 | `semantic_bumps` | extract_facts | Existing facts bumped (dedup match) |
 | `extract_facts_reason` | extract_facts | Skip reason or extraction outcome |
 | `extract_procedural_ms` | extract_procedural | Extraction wall-clock time |
-| `procedural_writes` | extract_procedural | Rules written |
+| `procedural_writes` | extract_procedural | Immediate procedural rules written |
+| `procedural_session_end_holds` | extract_procedural | Procedural candidates buffered for session-end promotion |
+| `procedural_policy_drops` | extract_procedural | Procedural candidates dropped by deterministic write policy |
 | `extract_procedural_reason` | extract_procedural | Skip reason or extraction outcome |
 | `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the graph) |
 
