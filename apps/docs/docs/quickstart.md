@@ -24,6 +24,10 @@ uv sync`}
 
 ## Eval-driven development
 
+:::info For developers and contributors only
+End users do not need to configure this section — it powers internal observability and regression tracking during development.
+:::
+
 To enable LangSmith tracing for local text runs, add the following to your `.env` before starting the CLI or API:
 
 <TerminalWindow title="env — LangSmith tracing">
@@ -45,7 +49,7 @@ With tracing enabled, OpenCouch emits LangGraph text runs to LangSmith for obser
 ### Deterministic mode (no API key needed)
 
 No LLM calls, in-memory only. Good for verifying the pipeline works
-and testing CLI panels.
+and testing the CLI flow and slash commands.
 
 <TerminalWindow title="bash — deterministic mode">
 {`uv run python -m opencouch_cli \\
@@ -110,7 +114,10 @@ browser. Speak into your microphone to have a voice conversation.
 This path currently supports low-latency speech, interruption,
 truncation, and a memory-backed prompt preload, but it does **not**
 yet expose the full agentic stack: no tool calling, no autonomous
-actions, and no disconnect-time summarization/memory write-back.
+actions, and no full live text-graph orchestration during speech.
+On disconnect, however, the transcript is still routed through the
+shared session-end memory path, so voice sessions can write semantic,
+procedural, and episodic memory.
 See the [Voice (Experimental)](/docs/voice) page for
 details.
 
@@ -136,6 +143,10 @@ Once inside the text CLI:
 | `/exit` | End session with save prompt |
 
 ## Run the tests
+
+:::info For developers and contributors only
+The test suite and eval harnesses below are for verifying changes during development. End users can skip this section.
+:::
 
 <TerminalWindow title="bash — backend tests">
 {`uv run pytest tests/`}

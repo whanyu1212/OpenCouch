@@ -1,10 +1,25 @@
 """Tests for interactive CLI thread-management commands."""
 
+import asyncio
+import re
+import time
+
 import pytest
+from rich.console import Group
+from rich.spinner import Spinner
 
 from agent.memory.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
-from agent.models import Message, MessageRole
-from opencouch_cli.app import RunnerSession, handle_command
+from agent.models import (
+    AgentOutput,
+    CrisisAssessment,
+    DoneEvent,
+    Message,
+    MessageRole,
+    ResponseKind,
+    ResponseReadyEvent,
+    StatusEvent,
+)
+from opencouch_cli.app import RunnerSession, chat_loop, handle_command
 
 
 class FakeRuntime:
@@ -84,6 +99,77 @@ class FakeRuntime:
         return self.record_feedback_returns
 
 
+class _FakeChatLoopRuntime:
+    """Minimal async context-manager runtime for chat_loop lifecycle tests."""
+
+    def __init__(self) -> None:
+        self.finalize_calls: list[object | None] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def get_history(self, thread_id: str):
+        return []
+
+    async def get_state(self, thread_id: str):
+        return None
+
+    async def finalize_active_sessions(self, *, llm_client=None) -> None:
+        self.finalize_calls.append(llm_client)
+
+
+class _FakeResponseReadyRuntime(_FakeChatLoopRuntime):
+    """Runtime stub that emits response_ready before delayed done."""
+
+    def __init__(self, order: list[str]) -> None:
+        super().__init__()
+        self.order = order
+        self.turn_calls = 0
+
+    async def run_turn_stream(self, **kwargs):
+        self.turn_calls += 1
+        assert kwargs["thread_id"] == "thread-a"
+        assert kwargs["response_llm_client"] is None
+        yield StatusEvent(stage="finalize")
+        yield ResponseReadyEvent(output=_make_agent_output("ready"))
+        await asyncio.sleep(0.02)
+        self.order.append("done_yielded")
+        yield DoneEvent(output=_make_agent_output("done", turn_total_ms=25.0))
+
+
+class _FakeTieredChatLoopRuntime(_FakeChatLoopRuntime):
+    """Runtime stub that captures the separate response client argument."""
+
+    def __init__(self, *, expected_response_llm) -> None:
+        super().__init__()
+        self.expected_response_llm = expected_response_llm
+
+    async def run_turn_stream(self, **kwargs):
+        assert kwargs["response_llm_client"] is self.expected_response_llm
+        yield DoneEvent(output=_make_agent_output("tiered"))
+
+
+def _make_agent_output(
+    response_text: str,
+    *,
+    turn_total_ms: float | None = None,
+) -> AgentOutput:
+    diagnostics = {}
+    if turn_total_ms is not None:
+        diagnostics["turn_total_ms"] = turn_total_ms
+    return AgentOutput(
+        response_text=response_text,
+        response_type=ResponseKind.THERAPEUTIC,
+        crisis=CrisisAssessment(),
+        mode="support",
+        mode_source="test",
+        diagnostics=diagnostics,
+    )
+
+
 def _session() -> RunnerSession:
     """Return a baseline CLI session for command tests."""
 
@@ -100,6 +186,105 @@ def _session() -> RunnerSession:
         ],
         last_context={"progress": {"turn_count": 2}, "transcript": []},
     )
+
+
+def test_render_header_uses_prominent_title_panel_and_session_metadata(capsys) -> None:
+    """The refreshed header should keep metadata while giving the CLI a stronger title block."""
+
+    from opencouch_cli.app import render_header
+
+    render_header(
+        "deterministic",
+        "thread-a",
+        "persistent",
+        user_id="alice",
+        response_model_tier="quality",
+    )
+    out = capsys.readouterr().out
+
+    # The brand name is rendered as block-art characters, so check for
+    # the block elements that form the logo plus the "CLI" tag below it.
+    assert "█▀▀█" in out  # block-art logo is present
+    assert "CLI" in out
+    assert "PRIVATE BY DEFAULT" in out
+    assert "MEMORY ON YOUR TERMS" in out
+    assert "A calm workspace for supportive conversations" in out
+    assert "session" in out
+    assert "memory" in out
+    assert "thread" in out
+    assert "owner" in out
+    assert "response" in out
+    assert "quick actions" in out
+    assert "[/bold primary]" not in out
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_shows_spinner_loading_state_before_stage_updates(
+    monkeypatch,
+) -> None:
+    """The live loop should start with grouped spinner/status content before stage-specific updates."""
+
+    captured_updates: list[object] = []
+
+    class _FakeSpinnerRuntime(_FakeChatLoopRuntime):
+        async def run_turn_stream(self, **kwargs):
+            await asyncio.sleep(0)
+            yield StatusEvent(stage="finalize")
+            yield DoneEvent(output=_make_agent_output("done"))
+
+    class _FakeLive:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def update(self, renderable) -> None:
+            captured_updates.append(renderable)
+
+    runtime = _FakeSpinnerRuntime()
+    prompts = iter(["hi", EOFError()])
+
+    def _prompt(*args, **kwargs):
+        value = next(prompts)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_cli.app.Live", _FakeLive)
+
+    await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id=None,
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert isinstance(captured_updates[0], Group)
+    first_spinner = captured_updates[0].renderables[0]
+    assert isinstance(first_spinner, Spinner)
+    assert "thinking" in str(first_spinner.text)
+    assert "waiting for pipeline" in str(first_spinner.text)
+
+    assert isinstance(captured_updates[1], Group)
+    second_spinner = captured_updates[1].renderables[0]
+    assert isinstance(second_spinner, Spinner)
+    assert "finalizing turn" in str(second_spinner.text)
 
 
 @pytest.mark.asyncio
@@ -225,8 +410,9 @@ async def test_memory_list_command_dispatches_render(monkeypatch) -> None:
 
     captured: dict[str, object] = {}
 
-    async def _fake_render_memory_list(runtime_arg):
+    async def _fake_render_memory_list(runtime_arg, session_arg):
         captured["runtime"] = runtime_arg
+        captured["session"] = session_arg
 
     monkeypatch.setattr(
         "opencouch_cli.app.render_memory_list",
@@ -239,7 +425,7 @@ async def test_memory_list_command_dispatches_render(monkeypatch) -> None:
     should_continue = await handle_command("/memory list", session, runtime)
 
     assert should_continue is True
-    assert captured == {"runtime": runtime}
+    assert captured == {"runtime": runtime, "session": session}
 
 
 @pytest.mark.asyncio
@@ -252,8 +438,8 @@ async def test_memory_status_still_dispatches_render_status(monkeypatch) -> None
     render_list_calls: list[object] = []
     render_status_calls: list[object] = []
 
-    async def _fake_render_memory_list(runtime_arg):
-        render_list_calls.append(runtime_arg)
+    async def _fake_render_memory_list(runtime_arg, session_arg):
+        render_list_calls.append((runtime_arg, session_arg))
 
     async def _fake_render_memory_status(runtime_arg, session_arg):
         # v0.7 Stage E: render_memory_status gained a session parameter
@@ -415,6 +601,217 @@ def test_prompt_for_session_feedback_handles_eof(monkeypatch) -> None:
     assert _prompt_for_session_feedback() is None
 
 
+def test_prompt_for_session_feedback_accepts_uppercase_shortcuts(monkeypatch) -> None:
+    """The feedback prompt should allow uppercase single-letter inputs."""
+
+    from opencouch_cli.app import _prompt_for_session_feedback
+
+    captured_kwargs: dict[str, object] = {}
+
+    def _ask(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return "S"
+
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_ask))
+
+    assert _prompt_for_session_feedback() == "skip"
+    assert captured_kwargs["choices"] == ["y", "Y", "n", "N", "s", "S", ""]
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_waits_for_runtime_entry_before_first_prompt(
+    monkeypatch,
+) -> None:
+    """The CLI should show warmup status and not prompt until runtime entry/prewarm has completed."""
+
+    order: list[str] = []
+
+    class _SlowEnterRuntime(_FakeChatLoopRuntime):
+        async def __aenter__(self):
+            order.append("enter_start")
+            await asyncio.sleep(0.01)
+            order.append("enter_done")
+            return self
+
+    class _FakeStatus:
+        def __enter__(self):
+            order.append("status_start")
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            order.append("status_end")
+            return None
+
+    runtime = _SlowEnterRuntime()
+
+    def _prompt(*args, **kwargs):
+        order.append("prompt")
+        raise EOFError
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_header",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.console.status",
+        lambda *args, **kwargs: _FakeStatus(),
+    )
+
+    await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id=None,
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert order == [
+        "status_start",
+        "enter_start",
+        "enter_done",
+        "status_end",
+        "prompt",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_finalizes_active_sessions_on_eof(monkeypatch) -> None:
+    """Raw CLI shutdown should still flush active sessions before runtime close."""
+
+    runtime = _FakeChatLoopRuntime()
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.Prompt.ask",
+        staticmethod(lambda *args, **kwargs: (_ for _ in ()).throw(EOFError)),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_header",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda *args, **kwargs: None,
+    )
+
+    await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id=None,
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert runtime.finalize_calls == [None]
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_prompts_again_before_turn_tail_finishes(monkeypatch) -> None:
+    """The next prompt should start before delayed post-response work ends."""
+
+    order: list[str] = []
+    runtime = _FakeResponseReadyRuntime(order)
+    prompt_calls = 0
+
+    def _prompt(*args, **kwargs):
+        nonlocal prompt_calls
+        prompt_calls += 1
+        if prompt_calls == 1:
+            return "hi"
+        order.append("prompt2_started")
+        time.sleep(0.05)
+        raise EOFError
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_context", lambda *args, **kwargs: None
+    )
+
+    await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id=None,
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert order.index("prompt2_started") < order.index("done_yielded")
+    assert runtime.finalize_calls == [None]
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_passes_response_tier_client_to_runtime(monkeypatch) -> None:
+    """The CLI should thread a separate response client into runtime turns."""
+
+    control_client = object()
+    response_client = object()
+    runtime = _FakeTieredChatLoopRuntime(expected_response_llm=response_client)
+    prompts = iter(["hi", EOFError()])
+
+    def _prompt(*args, **kwargs):
+        value = next(prompts)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (control_client, "hybrid"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_response_llm_client",
+        lambda mode, tier: response_client,
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+
+    await chat_loop(
+        "hybrid",
+        thread_id="thread-a",
+        user_id=None,
+        response_model_tier="quality",
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert runtime.finalize_calls == [control_client]
+
+
 @pytest.mark.asyncio
 async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
     """/end should invoke runtime.end_session(thread_id) and then
@@ -436,6 +833,34 @@ async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
     assert runtime.end_session_calls == [session.thread_id]
     # No feedback prompted (stubbed to None) → no record written
     assert runtime.record_feedback_calls == []
+
+
+@pytest.mark.asyncio
+async def test_response_tier_command_updates_session(monkeypatch) -> None:
+    """The CLI should let the operator switch response tiers mid-session."""
+
+    messages: list[tuple[str, str]] = []
+    response_client = object()
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_response_llm_client",
+        lambda mode, tier: response_client,
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    session.llm_client = object()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/response-tier quality", session, runtime)
+
+    assert should_continue is True
+    assert session.response_model_tier == "quality"
+    assert session.response_llm_client is response_client
+    assert messages == [("success", "Response tier updated. tier=quality")]
 
 
 @pytest.mark.asyncio
@@ -653,6 +1078,38 @@ async def test_exit_save_yes_records_feedback_with_cli_exit_source(
 
 
 @pytest.mark.asyncio
+async def test_exit_save_uppercase_yes_is_accepted(monkeypatch) -> None:
+    """Uppercase Y should be accepted by the save-before-exit prompt."""
+
+    captured_kwargs: dict[str, object] = {}
+
+    def _ask(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return "Y"
+
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_ask))
+    monkeypatch.setattr(
+        "opencouch_cli.app._prompt_for_session_feedback", lambda: "positive"
+    )
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info", lambda message, style="panel": None
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/exit", session, runtime)
+
+    assert should_continue is False
+    assert captured_kwargs["choices"] == ["y", "Y", "n", "N", ""]
+    assert runtime.record_feedback_calls == [
+        (session.thread_id, "positive", "cli_exit")
+    ]
+    assert runtime.end_session_calls == [session.thread_id]
+
+
+@pytest.mark.asyncio
 async def test_exit_save_no_skips_both_feedback_and_summary(monkeypatch) -> None:
     """``/exit`` with save=n must skip BOTH the feedback prompt AND
     the summary. The user said "don't save my conversation"; asking
@@ -865,7 +1322,7 @@ async def test_memory_list_rules_empty_state(capsys) -> None:
     captured = capsys.readouterr()
 
     assert "No procedural rules for this thread yet" in captured.out
-    assert "Memory List (procedural)" in captured.out
+    assert "memory" in captured.out and "procedural" in captured.out
 
 
 @pytest.mark.asyncio
@@ -1479,6 +1936,86 @@ class TestUserIdCommandIntegration:
         assert "owner_id" in captured.out
         assert "from thread_id" in captured.out
 
+    @pytest.mark.asyncio
+    async def test_memory_status_counts_active_owner_records_only(self, capsys) -> None:
+        """The status panel should mirror the active owner-facing counts."""
+
+        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+        from opencouch_cli.app import handle_command
+
+        runtime = FakeProceduralRuntime()
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id="alice",
+            key="fact-active",
+            evidence_quote="my sister Sarah visited",
+            object_identifier="Sarah",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id="alice",
+            key="fact-inactive",
+            evidence_quote="old relationship note",
+            object_identifier="Old note",
+            dormant_at="2026-04-13T00:00:00Z",
+            superseded_by="fact-active",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id="bob",
+            key="fact-bob",
+            evidence_quote="bob fact",
+            object_identifier="Bob fact",
+        )
+        await _seed_episodic_arc(
+            runtime,
+            owner_id="alice",
+            key="arc-alice",
+            summary="alice session summary",
+            themes=["family"],
+        )
+        await _seed_episodic_arc(
+            runtime,
+            owner_id="bob",
+            key="arc-bob",
+            summary="bob session summary",
+            themes=["work"],
+        )
+        await aadd_procedural_rule(
+            runtime.memory_store,
+            user_id="alice",
+            rule=build_procedural_rule(
+                rule_text="Keep replies short.",
+                evidence=["Please keep replies short"],
+            ),
+        )
+        await aadd_procedural_rule(
+            runtime.memory_store,
+            user_id="bob",
+            rule=build_procedural_rule(
+                rule_text="Ask fewer questions.",
+                evidence=["Please ask fewer questions"],
+            ),
+        )
+
+        session = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-a",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+        await handle_command("/memory status", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert re.search(r"semantic facts\s+1\b", captured)
+        assert re.search(r"episodic arcs\s+1\b", captured)
+        assert re.search(r"procedural rules\s+1\b", captured)
+        assert re.search(r"total store records\s+7\b", captured)
+
 
 class TestParserUserIdFlag:
     """Unit tests for the --user-id argparse flag."""
@@ -1642,6 +2179,56 @@ class TestRenderContext:
         assert "• Last session (grief): talked about my dog passing" in out
 
 
+def test_render_response_shows_footer_metadata(capsys) -> None:
+    """Reply panels should surface thread and turn metadata in the footer."""
+
+    from opencouch_cli.app import render_response
+
+    render_response(
+        "hello there",
+        is_crisis=False,
+        thread_id="thread-a",
+        turn_count=3,
+    )
+    out = capsys.readouterr().out
+
+    assert "Support Reply" in out
+    assert "thread" in out
+    assert "thread-a" in out
+    assert "turn" in out
+    assert "3" in out
+    assert "mode" in out
+    assert "support" in out
+
+
+def test_render_meta_defaults_to_compact_summary(capsys) -> None:
+    """Default diagnostics rendering should prefer the compact summary panel."""
+
+    from opencouch_cli.app import render_meta
+
+    render_meta(
+        mode="support",
+        mode_source="keyword",
+        mode_type="therapeutic",
+        response_type="support",
+        level=0,
+        needs_clarification=False,
+        needs_crisis_response=False,
+        reason="steady and calm",
+        diagnostics={"turn_total_ms": 142.0},
+        memory_deltas={"semantic": 1, "procedural": 0},
+    )
+    out = capsys.readouterr().out
+
+    assert "diagnostics" in out
+    assert "support" in out
+    assert "keyword" in out
+    assert "142ms" in out
+    assert "s+1" in out
+    assert "p+0" in out
+    assert "stage timings" not in out
+
+
 class TestRenderStageTimings:
     """Tests for the v0.8 ``_render_stage_timings`` helper."""
 
@@ -1698,6 +2285,30 @@ class TestRenderStageTimings:
         assert "crisis_gate" in out
         assert "extract_facts" in out
 
+    def test_policy_hold_counts_render_in_writes_column(self, capsys) -> None:
+        """Phase-1 policy counters should surface in the writes column."""
+
+        from opencouch_cli.app import _render_stage_timings
+
+        _render_stage_timings(
+            diagnostics={
+                "extract_facts_ms": 3.45,
+                "extract_procedural_ms": 4.56,
+                "semantic_writes": 1,
+                "semantic_session_end_holds": 2,
+                "semantic_repeat_required": 1,
+                "semantic_policy_drops": 1,
+                "procedural_writes": 0,
+                "procedural_session_end_holds": 1,
+                "procedural_policy_drops": 1,
+            },
+            memory_deltas={"semantic": 1, "procedural": 0},
+        )
+        out = capsys.readouterr().out
+
+        assert "1 (h2 r1 d1)" in out
+        assert "0 (h1 d1)" in out
+
 
 class TestDebugStateCommand:
     """Tests for the v0.8 ``/debug state`` command."""
@@ -1714,7 +2325,7 @@ class TestDebugStateCommand:
         assert result is True
         captured = capsys.readouterr().out
         # The panel title should appear
-        assert "Debug State" in captured
+        assert "debug state" in captured
         # Expect the turn_count from our fake state to show up in JSON
         assert '"turn_count": 2' in captured
 
@@ -1730,7 +2341,7 @@ class TestDebugStateCommand:
 
         assert result is True
         captured = capsys.readouterr().out
-        assert "Debug State" in captured
+        assert "debug state" in captured
         assert "No state for this thread yet" in captured
 
     @pytest.mark.asyncio
@@ -1788,6 +2399,9 @@ async def _seed_semantic_fact(
     evidence_quote: str,
     predicate: str = "KNOWS",
     object_identifier: str = "Sarah",
+    dormant_at: str | None = None,
+    superseded_by: str | None = None,
+    user_visible: bool = True,
 ) -> None:
     """Helper: write one semantic fact directly into the fake store.
 
@@ -1813,9 +2427,9 @@ async def _seed_semantic_fact(
             "source_turn_index": 0,
             "created_at": "2026-04-12T00:00:00Z",
             "last_referenced_at": "2026-04-12T00:00:00Z",
-            "dormant_at": None,
-            "superseded_by": None,
-            "user_visible": True,
+            "dormant_at": dormant_at,
+            "superseded_by": superseded_by,
+            "user_visible": user_visible,
         },
     )
 
@@ -1946,6 +2560,46 @@ class TestMemoryForgetFact:
 
         assert "does not exist" in captured
         assert "only 1 fact(s)" in captured
+
+    @pytest.mark.asyncio
+    async def test_forget_fact_indexes_only_active_facts(
+        self, capsys, monkeypatch
+    ) -> None:
+        """Hidden inactive facts must not shift the visible delete index."""
+
+        from agent.memory.reconciliation import filter_active_semantic_records
+
+        runtime = FakeProceduralRuntime()
+        session = _session()
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-hidden",
+            evidence_quote="old hidden fact",
+            object_identifier="Hidden",
+            dormant_at="2026-04-13T00:00:00Z",
+            superseded_by="fact-visible",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id=session.owner_id(),
+            key="fact-visible",
+            evidence_quote="visible fact",
+            object_identifier="Visible",
+        )
+
+        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+
+        await handle_command("/memory forget fact 1", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Deleted fact #1" in captured
+        remaining = await runtime.memory_store.asearch(
+            (session.owner_id(), "semantic"), query=None, limit=1000
+        )
+        active_remaining = filter_active_semantic_records(remaining)
+        assert len(remaining) == 1
+        assert len(active_remaining) == 0
 
     @pytest.mark.asyncio
     async def test_forget_fact_bad_index_warns(self, capsys) -> None:
@@ -2330,11 +2984,11 @@ class TestMemoryListSubcommands:
         captured = capsys.readouterr().out
 
         # Semantic table title should appear
-        assert "Memory List (semantic)" in captured
+        assert "memory" in captured and "semantic" in captured
         # The semantic fact's evidence should appear
         assert "Sarah" in captured
         # The episodic arc should NOT appear in this filtered view
-        assert "Memory List (episodic)" not in captured
+        assert "episodic" not in captured
 
     @pytest.mark.asyncio
     async def test_list_sessions_renders_episodic_only(self, capsys) -> None:
@@ -2360,13 +3014,13 @@ class TestMemoryListSubcommands:
         await handle_command("/memory list sessions", session, runtime)
         captured = capsys.readouterr().out
 
-        assert "Memory List (episodic)" in captured
+        assert "memory" in captured and "episodic" in captured
         # Substring rather than full phrase because Rich's table wraps
         # long cells across multiple lines, breaking contiguous-match
         # assertions. "work anxiety" appears on one line, "session"
         # on the next.
         assert "work anxiety" in captured
-        assert "Memory List (semantic)" not in captured
+        assert "semantic" not in captured
 
     @pytest.mark.asyncio
     async def test_list_facts_empty_renders_empty_state(self, capsys) -> None:
@@ -2379,6 +3033,54 @@ class TestMemoryListSubcommands:
         captured = capsys.readouterr().out
 
         assert "No memory records" in captured
+
+    @pytest.mark.asyncio
+    async def test_list_facts_hides_inactive_and_other_owner_records(
+        self, capsys
+    ) -> None:
+        """The fact list should show only active semantic facts for the owner."""
+
+        runtime = FakeProceduralRuntime()
+        session = RunnerSession(
+            requested_mode="deterministic",
+            resolved_mode="deterministic",
+            llm_client=None,
+            thread_id="thread-a",
+            sqlite_path="/tmp/test.db",
+            memory_mode="persistent",
+            user_id="alice",
+        )
+
+        await _seed_semantic_fact(
+            runtime,
+            owner_id="alice",
+            key="fact-active",
+            evidence_quote="my sister Sarah visited",
+            object_identifier="Sarah",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id="alice",
+            key="fact-inactive",
+            evidence_quote="retired hidden fact",
+            object_identifier="Hidden fact",
+            dormant_at="2026-04-13T00:00:00Z",
+            superseded_by="fact-active",
+        )
+        await _seed_semantic_fact(
+            runtime,
+            owner_id="bob",
+            key="fact-bob",
+            evidence_quote="bob-only fact",
+            object_identifier="BobOnly",
+        )
+
+        await handle_command("/memory list facts", session, runtime)
+        captured = capsys.readouterr().out
+
+        assert "Sarah" in captured
+        assert "retired hidden fact" not in captured
+        assert "BobOnly" not in captured
 
 
 # ─────────────────────────────────────────────────────────────────────────

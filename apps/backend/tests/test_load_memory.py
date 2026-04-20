@@ -218,6 +218,42 @@ class TestLoadMemoryNode:
         assert "path=token_recall" in summary
 
     @pytest.mark.asyncio
+    async def test_superseded_semantic_fact_is_not_loaded(self) -> None:
+        """Superseded semantic facts should not resurface in working memory."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-test", "semantic"),
+            "fact-old",
+            {
+                "evidence_quote": "My sister moved out last month.",
+                "dormant_at": "2026-04-19T12:00:00Z",
+                "superseded_by": "fact-new",
+                "user_visible": True,
+            },
+        )
+        await store.aput(
+            ("thread-test", "semantic"),
+            "fact-new",
+            {
+                "evidence_quote": "Actually, my sister moved back in this week.",
+                "user_visible": True,
+            },
+        )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(message="sister moved")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert len(delta["working_memory"]) == 1
+        _assert_semantic_entry(
+            delta["working_memory"][0],
+            evidence_quote="Actually, my sister moved back in this week.",
+        )
+        assert "Retrieved 1 of 1 semantic" in delta["memory"]["summary"]
+
+    @pytest.mark.asyncio
     async def test_retrieval_miss_returns_empty_with_zero_snippet_summary(
         self,
     ) -> None:

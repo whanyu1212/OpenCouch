@@ -26,13 +26,17 @@ import base64
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from openai import AsyncOpenAI
 
+from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural import aget_procedural_profile
 from agent.memory.store import MemoryStore
+
+if TYPE_CHECKING:
+    from agent.persistence import PersistentAgentRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +178,8 @@ class RealtimeVoiceSession:
         thread_id: Stable thread identifier.
         voice: Assistant voice ID.
         transcription_language: Optional ISO-639-1 input transcription language.
-        llm_client: Reserved for future use.
+        runtime: Shared persistent runtime for session-end writes.
+        llm_client: Optional LLM client used for session-end summarization.
         embedding_provider: Reserved for future use.
         on_audio_delta: Callback for decoded assistant audio chunks.
         on_transcript: Callback for final user transcripts.
@@ -195,6 +200,7 @@ class RealtimeVoiceSession:
         thread_id: str,
         voice: str = DEFAULT_ASSISTANT_VOICE,
         transcription_language: str | None = DEFAULT_REALTIME_TRANSCRIPTION_LANGUAGE,
+        runtime: "PersistentAgentRuntime | None" = None,
         llm_client: Any = None,
         embedding_provider: Any = None,
         on_audio_delta: AudioDeltaCallback | None = None,
@@ -210,11 +216,13 @@ class RealtimeVoiceSession:
         self._memory_mode = memory_mode
         self._user_id = user_id
         self._thread_id = thread_id
+        self._runtime = runtime
         self._voice = voice
         self._transcription_language = transcription_language
         self._connection = None
         self._running = False
         self._listener_task: asyncio.Task[None] | None = None
+        self._started_at = iso_now()
 
         # Stored for future session-end processing if needed.
         self._transcript: list[dict[str, str]] = []
@@ -335,10 +343,19 @@ class RealtimeVoiceSession:
     async def end_session(self) -> None:
         """Finalize the session.
 
-        The rewritten Realtime path intentionally keeps the socket loop
-        narrow and does not run summarization or extraction on teardown.
+        Voice sessions do not run per-turn extractors, so the only
+        Phase E write on disconnect is the shared session-end summary.
         """
+        if self._runtime is None or not self._transcript:
+            return None
 
+        await self._runtime.end_transcript_session(
+            thread_id=self._thread_id,
+            user_id=self._user_id,
+            transcript=self._transcript,
+            llm_client=self._llm_client,
+            started_at=self._started_at,
+        )
         return None
 
     async def close(self) -> None:

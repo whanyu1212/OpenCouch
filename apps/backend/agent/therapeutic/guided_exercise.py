@@ -83,7 +83,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
 from agent.models import ModeType, ResponseKind
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentState, resolve_owner_id
 from agent.therapeutic.prompts import (
     build_guided_exercise_system_prompt,
     build_therapeutic_response_prompt,
@@ -1217,7 +1217,7 @@ async def run_guided_exercise_response_node(
     full 5-4-3-2-1 exercise end-to-end with no LLM — not just start.
     """
 
-    llm_client = runtime.context.llm_client
+    llm_client = runtime.context.response_llm or runtime.context.llm_client
     memory_store = runtime.context.memory_store
     memory_mode = runtime.context.memory_mode
     progress = state.get("progress", {})
@@ -1414,7 +1414,6 @@ async def _build_stuck_delta(
                     step_directive=directive,
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
-                temperature=0.7,
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})
@@ -1473,7 +1472,6 @@ async def _build_hold_delta(
                     step_directive=directive,
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
-                temperature=0.7,
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})
@@ -1538,7 +1536,6 @@ async def _build_advance_delta(
                     step_directive=directive,
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
-                temperature=0.7,
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})
@@ -1607,7 +1604,6 @@ async def _build_complete_delta(
                     step_directive=directive,
                 ),
                 system_instruction=build_guided_exercise_system_prompt(state),
-                temperature=0.7,
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})
@@ -1673,9 +1669,8 @@ async def _write_exercise_completion_fact(
     if memory_store is None or memory_mode == MemoryMode.INCOGNITO:
         return
 
-    # Determine the owner_id — same logic as the extraction node.
-    owner_id = state.get("user_id") or state.get("session_id") or "unknown"
-    session_id = state.get("session_id") or "unknown"
+    owner_id = resolve_owner_id(state)
+    session_id = state.get("session_id") or owner_id
     turn_count = state.get("progress", {}).get("turn_count", 0)
 
     now = datetime.now(timezone.utc).isoformat()

@@ -215,7 +215,7 @@ async def summarize_session_node(
     Notes:
         - In ``incognito`` mode, this node is a no-op.
         - The summarizer prompt is structured-output (Pydantic
-          ``SessionArc`` schema), temperature 0.
+          ``SessionArc`` schema) using the model's default sampling behavior.
         - The summarizer reads the FULL transcript, not the working
           memory window — episodic records benefit from seeing the
           complete arc.

@@ -7,7 +7,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Philosophy',
-      items: ['philosophy/approach', 'philosophy/crisis-gate']
+      items: ['philosophy/graph-vs-react', 'philosophy/approach', 'philosophy/crisis-gate']
     },
     {
       type: 'category',
@@ -21,9 +21,9 @@ const sidebars: SidebarsConfig = {
         {
           type: 'category',
           label: 'Agent Graph',
-          link: { type: 'doc', id: 'agent/graph' },
           collapsed: false,
           items: [
+            'agent/graph',
             'agent/state',
             'agent/nodes',
             'agent/tools',
@@ -42,12 +42,12 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Memory',
-      items: ['memory/overview', 'memory/retrieval', 'memory/privacy']
+      items: ['memory/why-memory', 'memory/overview', 'memory/retrieval', 'memory/privacy']
     },
     'voice/overview',
     {
       type: 'category',
-      label: 'Observability',
+      label: 'Observability & Evaluation',
       items: ['observability/overview', 'observability/session-feedback']
     },
     'roadmap',

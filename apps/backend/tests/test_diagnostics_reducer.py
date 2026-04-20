@@ -271,7 +271,7 @@ async def test_full_turn_diagnostics_merge_all_node_keys() -> None:
     store = OpenCouchMemoryStore()
     crisis_log = InMemoryCrisisLogBackend()
     result = await run_agent(
-        AgentInput(message="I feel a bit anxious today"),
+        AgentInput(message="I feel a bit anxious today", session_id="test-diag"),
         memory_store=store,
         crisis_log_backend=crisis_log,
         memory_mode=MemoryMode.LOCAL,

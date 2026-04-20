@@ -1,5 +1,83 @@
 # Changelog
 
+## 2026-04-20 — Memory Robustness + CLI Visual Redesign
+
+### Memory robustness fixes
+- Replaced ASCII-only tokenizer (`\b[a-z0-9]+\b`) with Unicode-aware pattern (`\b\w+\b`) plus CJK character-splitting post-processor — non-English text now produces meaningful token sets for dedup and retrieval instead of empty sets
+- Extended CJK regex to cover astral-plane Extension B through H ranges (U+20000–U+323AF) for rare characters in names and classical texts
+- Added procedural rule cap (`MAX_ACTIVE_RULES = 20`) with oldest-first eviction — excess rules are archived with `superseded_by = "eviction"` to prevent unbounded system prompt inflation
+- Consolidated duplicated safety-conflict markers (`_PROCEDURAL_SAFETY_CONFLICT_MARKERS`, `_PROCEDURAL_TURN_SCOPED_MARKERS`, `_PROCEDURAL_EXPLICIT_REQUEST_MARKERS`) and the shared `_contains_any` helper into a single `agent/memory/constants.py` module, eliminating copy-paste drift risk between `write_policy.py` and `candidates.py`
+- Added `aput_batch` method to the `MemoryStore` protocol and both implementations (in-memory loop, SQLite single-transaction with `BEGIN`/`COMMIT`/`ROLLBACK`) for future atomic multi-record writes
+- Implemented episodic retrieval date filter (`max_age_days=30`) on `asearch_similar` — old session arcs are excluded from query-based retrieval while `alatest()` catch-up remains unfiltered; fixed Z vs +00:00 timestamp format mismatch in both stores
+- Enriched semantic working memory entries with full SPO triple (category, subject, predicate, object) so the response LLM sees structured context like `[relationship] User WORRIES_ABOUT work — 'my boss is terrible'` instead of just the raw evidence quote
+- Replaced silent `"local-default"` / `"unknown"` owner_id fallback across 6 node files with a shared `resolve_owner_id` helper that raises `ValueError` if neither `user_id` nor `session_id` is set, preventing silent cross-user memory namespace contamination
+
+### CLI visual redesign
+- Redesigned the CLI from the ground up with a "Midnight Journal" aesthetic — warm amber/sage/cream color palette replacing the old cold teal/green theme
+- Replaced the double-box header with a Unicode block-art wordmark for "OpenCouch" using half-block characters, with "CLI" as a muted accent tag below
+- Replaced full Rich panel boxes on informational messages with a minimal left-bar (`│`) indicator for quieter visual weight
+- Lowercased all panel titles (diagnostics, session context, memory status, threads, history, etc.) for a calmer typographic hierarchy
+- Switched all data tables from `SIMPLE_HEAVY` to `SIMPLE` box style with `hint`-colored headers
+- Replaced the noisy `❯ you :` prompt with a softer `· you` prompt with breathing whitespace
+- Added `Rule` separators between visual sections instead of nested panels
+
+### Next.js web UI
+- Updated the memory sidebar `CATEGORY_COLORS` map to match the current backend `SemanticCategory` values (`loss`, `trigger`, `goal`, `context` replacing stale `identity`, `emotional_pattern`, `life_event`, `health`, `belief`)
+- Added per-record memory deletion on the Memory page — "forget" button on each fact, session arc, and procedural rule card with two-click confirmation (mirrors the CLI's `/memory forget` command)
+
+## 2026-04-20 — Memory Rewrite + Response Model Tiers
+
+### CLI improvements
+- Redesigned the Rich terminal theme from cool teal to a warm amber/cream palette for better readability and softer aesthetics
+- Replaced the blocking status display with a live Rich spinner that shows human-readable stage labels during graph execution
+- Added `--response-model-tier` flag and `/response-tier <fast|quality>` slash command for switching response quality in-session
+- Exposed active session-end holds (semantic and procedural) in the `/memory` debug inspector
+- Added response tier display to session state and `/debug` output
+
+### Next.js web UI
+- Added an explicit `End Session` button in the sidebar that triggers the session-end commit seam and shows a summary card with themes and mood arc
+- Added response model tier selector (fast/quality) to the sidebar, disabled during voice sessions
+- Memory page now uses typed interfaces (`MemoryFact`, `MemorySession`, `MemoryRule`) instead of untyped `Record<string, unknown>` for safer rendering
+- Memory page auto-refreshes after writes via a reactive `memoryRefreshVersion` counter in the Zustand store
+- Added session feedback count to the memory overview tab
+- Memory panel fact categories updated to match the rewritten schema (`loss`, `trigger`, `goal`, `context` instead of older categories)
+- Sidebar locks identity fields (user/thread) while a persistent session is active to prevent accidental mid-session switches
+- Session status polling checks the backend every 30s to reflect session liveness
+- WebSocket stream now passes `response_model_tier` to the backend for per-turn tier selection
+
+### Shared status label standardization
+- Moved the human-readable pipeline stage labels (`loading memory`, `safety check`, etc.) into a shared `STAGE_LABELS` map in `agent/models.py`
+- Both the CLI and WebSocket API now emit identical user-friendly labels instead of raw node names
+- Web UI no longer displays internal identifiers like `crisis_gate` or `load_memory`
+
+### Memory system rewrite
+- Reworked memory writing around a policy-first flow: turn extraction now produces candidates first, then deterministic policy decides whether to commit immediately, hold for session end, require repetition, or drop
+- Narrowed immediate semantic writes to lower-risk factual memory and moved more sensitive or interpretive content toward session-end commit or repetition-gated promotion
+- Kept explicit procedural instructions effective on the same turn, while buffering more implicit stylistic preferences until they have stronger evidence
+- Made session end the shared durable seam for episodic memory plus held semantic and procedural promotion, instead of relying mostly on per-turn writes
+- Added reconciliation and supersession so stale semantic facts can go dormant, weaker overlapping writes do not pile up, and procedural replacements keep an audit trail
+- Unified session-end handling across text, web, API shutdown, timeout, CLI shutdown, and voice disconnect so the same commit path runs regardless of how a session ends
+- Persisted active session buffers in runtime-owned state so held candidates survive restarts before the session is finalized
+
+### Memory evals and observability
+- Added write-policy coverage and trajectory eval coverage for immediate writes, delayed writes, repetition-gated promotion, and real store-state assertions instead of diagnostics-only counting
+- Tightened active-memory readouts so web, API, and CLI surfaces show active semantic facts and active procedural rules rather than stale superseded rows
+- Brought the web text UI onto the new explicit session-end flow with a real `End Session` action instead of relying only on timeout or backend shutdown
+
+### Response model tiers
+- Added a split between pinned control-plane LLM usage and selectable response-writer LLM usage
+- Kept safety, routing, memory extraction, summarization, helper calls, and voice behavior pinned to the control model for eval stability
+- Routed only final therapeutic prose generation through a user-facing `fast` versus `quality` response tier
+- Added text-chat tier selection to the web UI with product labels instead of raw model ids
+- Added the same tier support to the CLI via `--response-model-tier` and `/response-tier <fast|quality>`
+
+### Documentation
+- Updated the Docusaurus memory and architecture docs to reflect the rewritten memory model: candidate extraction, deterministic write policy, persisted session holds, session-end promotion, and the shared session-end seam
+- Updated the voice docs and quickstart guide to match the current disconnect-time memory write-back behavior and experimental Realtime limitations
+- Cleaned up observability docs to match the lighter current CLI flow: reply-first rendering, live status spinner, on-demand inspection commands, and the new memory-policy diagnostics counters
+- Flattened the `Agent Graph` docs navigation so it behaves like a category with an `Overview` child page instead of a content-bearing expander
+- Increased the Docusaurus docs typography slightly at the theme level for better baseline readability
+
 ## 2026-04-19 — Realtime Voice Rewrite + UX Stabilization
 
 ### Backend voice bridge
@@ -23,6 +101,18 @@
 - Rewrote the voice docs to reflect the current Realtime implementation instead of the older agentic voice design
 - Documented the current voice configuration, latency/VAD behavior, and transcript limitations in the Docusaurus site
 - Flattened the docs route so voice now lives directly at `/docs/voice`
+
+### Deployment
+- Added an initial GitHub Actions deployment workflow for the backend API targeting Google Cloud Run on `develop` and `main`
+- Added a backend `Dockerfile`, a Cloud Run-friendly server entrypoint, and env-driven CORS configuration for deployment-time origin control
+- Standardized the deployment path around Workload Identity Federation, Artifact Registry, Cloud Run, and Secret Manager instead of a long-lived service account key
+- Documented the required GCP/GitHub setup and the current deployment tradeoffs for learning and internal operations
+- Marked the current Cloud Run backend path as suitable for close-beta preview and internal testing, but not yet fully production-ready because persistence, final frontend CORS allowlists, and broader rollout hardening still need to be completed
+
+### LLM configuration
+- Removed explicit temperature configuration from the backend LLM interface, provider adapters, and call sites across routing, extraction, summarization, crisis handling, and therapeutic response writing
+- Updated test doubles and eval notes to match the simplified interface and remove stale assumptions about temperature-driven behavior
+- The rationale is to rely on the model providers' default generation behavior rather than hard-coding older sampling heuristics; newer hosted models are increasingly tuned around their default harness settings, and carrying per-call temperature overrides was adding interface noise without a clear product benefit
 
 ## 2026-04-18 — Voice Session Tab Persistence
 

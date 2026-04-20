@@ -48,7 +48,6 @@ class GeminiLLMClient(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         """Generate a plain-text response with Gemini.
@@ -56,7 +55,6 @@ class GeminiLLMClient(BaseLLMClient):
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
             use_search: When True, enables Google Search grounding so the model
                 can cite live web results (e.g. regional crisis hotlines).
 
@@ -72,7 +70,6 @@ class GeminiLLMClient(BaseLLMClient):
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=temperature,
                 tools=tools,
             ),
         )
@@ -86,14 +83,12 @@ class GeminiLLMClient(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         """Stream a plain-text response from Gemini.
 
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
 
         Yields:
             String chunks of the generated text as they arrive.
@@ -104,7 +99,6 @@ class GeminiLLMClient(BaseLLMClient):
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=temperature,
             ),
         )
         async for chunk in response_stream:
@@ -117,7 +111,6 @@ class GeminiLLMClient(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         """Generate a structured response with Gemini.
 
@@ -125,7 +118,6 @@ class GeminiLLMClient(BaseLLMClient):
             prompt: The user or task prompt to send to the model.
             response_schema: The Pydantic schema expected in the response.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
 
         Returns:
             A parsed object matching `response_schema`.
@@ -139,7 +131,6 @@ class GeminiLLMClient(BaseLLMClient):
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=temperature,
                 response_mime_type="application/json",
                 response_schema=response_schema,
             ),

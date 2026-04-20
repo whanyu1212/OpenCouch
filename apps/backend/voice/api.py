@@ -121,7 +121,7 @@ async def voice_session(websocket: WebSocket) -> None:
             await websocket.close()
             return
 
-        from api.dependencies import _runtime
+        from api.dependencies import _llm_client, _runtime
 
         if _runtime is None:
             await websocket.send_json(
@@ -212,6 +212,8 @@ async def voice_session(websocket: WebSocket) -> None:
             thread_id=thread_id,
             voice=voice,
             transcription_language=transcription_language,
+            runtime=_runtime,
+            llm_client=_llm_client,
             on_audio_delta=on_audio_delta,
             on_transcript=on_user_transcript,
             on_agent_transcript=on_agent_transcript,

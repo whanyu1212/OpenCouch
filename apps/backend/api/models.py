@@ -24,6 +24,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from agent.memory.models import FeedbackLabel
+from core.config import ResponseModelTier
 
 
 # ── Request models ──────────────────────────────────────────────────
@@ -43,6 +44,14 @@ class ChatRequest(BaseModel):
         description="Optional stable owner identifier for cross-thread "
         "memory. When set, memory is namespaced by user_id rather "
         "than thread_id.",
+    )
+    response_model_tier: ResponseModelTier | None = Field(
+        default=None,
+        description=(
+            "Optional text-response tier. 'fast' favors lower latency; "
+            "'quality' favors richer prose. Safety, routing, memory, "
+            "and summarization stay pinned to the control model."
+        ),
     )
 
 
@@ -116,6 +125,12 @@ class ThreadSummaryResponse(BaseModel):
     has_context: bool
 
 
+class ThreadSessionStatusResponse(BaseModel):
+    """GET /api/threads/{id}/session-status response."""
+
+    has_active_session: bool
+
+
 class MessageResponse(BaseModel):
     """One transcript entry in GET /api/threads/{id}/history."""
 
@@ -145,8 +160,9 @@ class MemoryStatusResponse(BaseModel):
     memory_mode: str
     owner_id: str
     counts: dict[str, int] = Field(
-        description="Record counts keyed by namespace kind: "
-        "semantic, episodic, procedural.",
+        description="User-visible memory counts keyed by kind: "
+        "active semantic facts, episodic session arcs, and "
+        "active procedural rules.",
     )
     crisis_log_count: int
     session_feedback_count: int = Field(

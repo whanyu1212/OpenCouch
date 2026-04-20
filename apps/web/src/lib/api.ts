@@ -66,6 +66,12 @@ export interface ThreadSummary {
   has_context: boolean;
 }
 
+export interface ThreadSessionStatus {
+  has_active_session: boolean;
+}
+
+export type ResponseModelTier = "fast" | "quality";
+
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -77,6 +83,7 @@ export interface MemoryStatus {
   owner_id: string;
   counts: Record<string, number>;
   crisis_log_count: number;
+  session_feedback_count: number;
   proactive_recall_enabled: boolean;
 }
 
@@ -85,11 +92,41 @@ export interface MemoryFact {
   key: string;
   category: string;
   predicate: string;
-  subject: { identifier: string };
-  object: { identifier: string };
+  subject: string;
+  object: string;
   evidence_quote: string;
   confidence: string;
   created_at: string;
+}
+
+export interface MemorySession {
+  index: number;
+  key: string;
+  summary: string;
+  themes: string[];
+  mood_opened: string;
+  mood_closed: string;
+  turn_count: number;
+  ended_at: string;
+}
+
+export interface MemoryRule {
+  index: number;
+  rule: string;
+  evidence: string[];
+  confidence: string;
+  added_at?: string;
+}
+
+export interface EndSessionResponse {
+  summary: string | null;
+  detail?: string;
+  themes?: string[];
+  mood_opened?: string;
+  mood_closed?: string;
+  turn_count?: number;
+  open_loops?: string[];
+  resolved_threads?: string[];
 }
 
 // ── Stream event types ───────────────────────────────────────────────
@@ -117,7 +154,8 @@ export type StreamEvent = StreamStatusEvent | StreamChunkEvent | StreamDoneEvent
 export async function postChat(
   message: string,
   threadId: string,
-  userId?: string
+  userId?: string,
+  responseModelTier?: ResponseModelTier
 ): Promise<ChatResponse> {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
@@ -126,6 +164,7 @@ export async function postChat(
       message,
       thread_id: threadId,
       user_id: userId || undefined,
+      response_model_tier: responseModelTier || undefined,
     }),
   });
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
@@ -144,7 +183,15 @@ export async function getHistory(threadId: string): Promise<Message[]> {
   return res.json();
 }
 
-export async function endSession(threadId: string): Promise<unknown> {
+export async function getThreadSessionStatus(
+  threadId: string
+): Promise<ThreadSessionStatus> {
+  const res = await fetch(`${API_BASE}/threads/${threadId}/session-status`);
+  if (!res.ok) throw new Error(`Session status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function endSession(threadId: string): Promise<EndSessionResponse> {
   const res = await fetch(`${API_BASE}/threads/${threadId}/end`, {
     method: "POST",
   });
@@ -166,7 +213,7 @@ export async function getMemoryStatus(
 export async function getMemoryFacts(
   threadId: string,
   userId?: string
-): Promise<Record<string, unknown>[]> {
+): Promise<MemoryFact[]> {
   const params = new URLSearchParams({ thread_id: threadId });
   if (userId) params.set("user_id", userId);
   const res = await fetch(`${API_BASE}/memory/facts?${params}`);
@@ -177,7 +224,7 @@ export async function getMemoryFacts(
 export async function getMemorySessions(
   threadId: string,
   userId?: string
-): Promise<Record<string, unknown>[]> {
+): Promise<MemorySession[]> {
   const params = new URLSearchParams({ thread_id: threadId });
   if (userId) params.set("user_id", userId);
   const res = await fetch(`${API_BASE}/memory/sessions?${params}`);
@@ -188,11 +235,60 @@ export async function getMemorySessions(
 export async function getMemoryRules(
   threadId: string,
   userId?: string
-): Promise<Record<string, unknown>[]> {
+): Promise<MemoryRule[]> {
   const params = new URLSearchParams({ thread_id: threadId });
   if (userId) params.set("user_id", userId);
   const res = await fetch(`${API_BASE}/memory/rules?${params}`);
   if (!res.ok) throw new Error(`Memory rules failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Memory deletion ───────────────────────────────────────────────────
+
+export interface DeleteMemoryResponse {
+  deleted: boolean;
+  detail: string;
+}
+
+export async function deleteMemoryFact(
+  index: number,
+  threadId: string,
+  userId?: string
+): Promise<DeleteMemoryResponse> {
+  const params = new URLSearchParams({ thread_id: threadId });
+  if (userId) params.set("user_id", userId);
+  const res = await fetch(`${API_BASE}/memory/facts/${index}?${params}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete fact failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteMemorySession(
+  index: number,
+  threadId: string,
+  userId?: string
+): Promise<DeleteMemoryResponse> {
+  const params = new URLSearchParams({ thread_id: threadId });
+  if (userId) params.set("user_id", userId);
+  const res = await fetch(`${API_BASE}/memory/sessions/${index}?${params}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete session failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteMemoryRule(
+  index: number,
+  threadId: string,
+  userId?: string
+): Promise<DeleteMemoryResponse> {
+  const params = new URLSearchParams({ thread_id: threadId });
+  if (userId) params.set("user_id", userId);
+  const res = await fetch(`${API_BASE}/memory/rules/${index}?${params}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete rule failed: ${res.status}`);
   return res.json();
 }
 
@@ -213,6 +309,7 @@ export function createChatStream(
   message: string,
   threadId: string,
   userId?: string,
+  responseModelTier?: ResponseModelTier,
   onEvent?: (event: StreamEvent) => void
 ): WebSocket {
   const ws = new WebSocket(`${WS_BASE}/chat/stream`);
@@ -223,6 +320,7 @@ export function createChatStream(
         message,
         thread_id: threadId,
         user_id: userId || undefined,
+        response_model_tier: responseModelTier || undefined,
       })
     );
   };

@@ -11,11 +11,15 @@ from __future__ import annotations
 from typing import Literal, TypeAlias, TypedDict
 
 
-class SemanticWorkingMemoryEntry(TypedDict):
+class SemanticWorkingMemoryEntry(TypedDict, total=False):
     """Semantic fact retrieved for the current turn."""
 
-    type: Literal["semantic"]
-    evidence_quote: str
+    type: Literal["semantic"]  # required
+    evidence_quote: str  # required
+    category: str
+    subject: str
+    predicate: str
+    object: str
 
 
 class EpisodicWorkingMemoryEntry(TypedDict):
@@ -33,13 +37,26 @@ WorkingMemoryEntry: TypeAlias = SemanticWorkingMemoryEntry | EpisodicWorkingMemo
 def make_semantic_working_memory_entry(
     *,
     evidence_quote: str,
+    category: str = "",
+    subject: str = "",
+    predicate: str = "",
+    object: str = "",
 ) -> SemanticWorkingMemoryEntry:
     """Build a semantic working-memory entry."""
 
-    return {
+    entry: SemanticWorkingMemoryEntry = {
         "type": "semantic",
         "evidence_quote": evidence_quote,
     }
+    if category:
+        entry["category"] = category
+    if subject:
+        entry["subject"] = subject
+    if predicate:
+        entry["predicate"] = predicate
+    if object:
+        entry["object"] = object
+    return entry
 
 
 def make_episodic_working_memory_entry(
@@ -71,7 +88,16 @@ def format_working_memory_entry(entry: WorkingMemoryEntry | str) -> str:
     entry_type = entry.get("type")
     if entry_type == "semantic":
         quote = entry.get("evidence_quote", "").strip()
-        return f"Previously noted: {quote}" if quote else ""
+        if not quote:
+            return ""
+        category = entry.get("category", "")
+        subject = entry.get("subject", "")
+        predicate = entry.get("predicate", "")
+        obj = entry.get("object", "")
+        if subject and predicate and obj:
+            pred_label = predicate.replace("_", " ")
+            return f"[{category}] {subject} {pred_label} {obj} — '{quote}'"
+        return f"Previously noted: {quote}"
 
     if entry_type == "episodic":
         summary = entry.get("summary", "").strip()

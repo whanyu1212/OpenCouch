@@ -45,6 +45,7 @@ Structure of this file:
 from __future__ import annotations
 
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -55,6 +56,7 @@ from pydantic import BaseModel, Field
 # Confidence level used by every extraction and consolidation type.
 # Matches CrisisAssessment's convention in agent/models.py.
 ConfidenceLevel = Literal["low", "medium", "high"]
+MemoryWriteTiming = Literal["immediate", "session_end", "promotion"]
 
 
 # The eight entity types that can appear as a subject or object in a
@@ -176,6 +178,9 @@ class SemanticFact(BaseModel):
     superseded_by: str | None = None  # uuid7 of the fact that replaced this one
 
     user_visible: bool = True
+    write_timing: MemoryWriteTiming = "immediate"
+    write_reason: str = Field(default="", max_length=240)
+    policy_version: str = Field(default="phase1_v1", min_length=1, max_length=40)
 
 
 class ExtractionResult(BaseModel):
@@ -293,6 +298,9 @@ class StoredSessionArc(SessionArc):
     created_at: str  # ISO-8601; when the summary was written
     last_referenced_at: str  # ISO-8601; bumped on retrieval
     user_visible: bool = True
+    write_timing: MemoryWriteTiming = "session_end"
+    write_reason: str = Field(default="", max_length=240)
+    policy_version: str = Field(default="phase5_v1", min_length=1, max_length=40)
 
     # Runtime-computed, not LLM-judged. See class docstring.
     crisis_level_max: Literal[0, 1, 2, 3] = 0
@@ -351,13 +359,23 @@ class ProceduralRule(BaseModel):
     The internal rule string IS the displayed string — there is no
     curation pass. See schema.yaml §9 q3 for the full visibility
     rationale.
+
+    Phase D adds lightweight audit metadata so replaced rules can be
+    archived instead of disappearing entirely.
     """
 
+    id: str = Field(default_factory=lambda: str(uuid4()))
     rule: str = Field(min_length=1, max_length=280)
     evidence: list[str] = Field(default_factory=list)  # quotes or fact_ids
     confidence: ConfidenceLevel
     added_at: str  # ISO-8601
     source: ProceduralRuleSource
+    dormant_at: str | None = None
+    superseded_by: str | None = None
+    user_visible: bool = True
+    write_timing: MemoryWriteTiming = "immediate"
+    write_reason: str = Field(default="", max_length=240)
+    policy_version: str = Field(default="phase1_v1", min_length=1, max_length=40)
 
 
 class ProceduralProfile(BaseModel):
@@ -369,11 +387,14 @@ class ProceduralProfile(BaseModel):
     for the rationale.
 
     This is the shape stored under namespace=(user_id, "procedural") with
-    key="user_response_style".
+    key="user_response_style". ``rules`` is the active set. Replaced
+    rules move to ``archived_rules`` with dormancy/supersession
+    metadata for auditability.
     """
 
     proactive_recall_enabled: bool = False  # see schema.yaml §9 q4
     rules: list[ProceduralRule] = Field(default_factory=list)
+    archived_rules: list[ProceduralRule] = Field(default_factory=list)
     last_consolidated_at: str | None = None  # ISO-8601
 
 
@@ -698,12 +719,10 @@ ConsolidationRunRecord.model_rebuild()
 # ─── §8. Therapeutic models ─────────────────────────────────────────────────
 
 
-# The six therapeutic modes from agent/therapeutic/nodes_sketch.py.
-# Duplicated here as a Literal so models.py stays self-contained and
-# doesn't import from the therapeutic package. The source of truth is
-# this file; nodes_sketch.py re-declares the same Literal for its own
-# routing annotations (which is fine — Literal equality is structural,
-# not nominal).
+# The six therapeutic modes used by the therapeutic dispatcher/subgraph.
+# Kept here as a Literal so models.py stays self-contained and doesn't
+# import from the therapeutic package. This file is the source of truth
+# for the structured-output schema used by the dispatcher.
 #
 # ─── Mode expansion plan (captured during v0.6 planning) ────────────────────
 #

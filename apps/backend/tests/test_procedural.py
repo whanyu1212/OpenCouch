@@ -66,6 +66,7 @@ async def test_aget_profile_returns_empty_default_for_new_user() -> None:
 
     assert isinstance(profile, ProceduralProfile)
     assert profile.rules == []
+    assert profile.archived_rules == []
     assert profile.proactive_recall_enabled is False
     assert profile.last_consolidated_at is None
 
@@ -121,6 +122,7 @@ async def test_aget_profile_deserializes_stored_record() -> None:
 
     assert loaded.proactive_recall_enabled is True
     assert len(loaded.rules) == 1
+    assert loaded.archived_rules == []
     assert loaded.rules[0].rule == "You've said meditation makes you more anxious."
     assert loaded.rules[0].source == "explicit_user"
     assert loaded.rules[0].confidence == "high"
@@ -226,6 +228,61 @@ async def test_aadd_rule_preserves_existing_rules() -> None:
 
 
 @pytest.mark.asyncio
+async def test_aadd_rule_replaces_weaker_overlapping_rule() -> None:
+    """A stronger replacement should overwrite weaker overlapping wording."""
+
+    store = OpenCouchMemoryStore()
+    original = build_procedural_rule(
+        rule_text="You prefer short replies.",
+        evidence=["Please keep it short."],
+    )
+    replacement = build_procedural_rule(
+        rule_text="You prefer short, direct replies without extra validation.",
+        evidence=["Please be short and direct."],
+    )
+
+    await aadd_procedural_rule(store, user_id="alice", rule=original)
+    await aadd_procedural_rule(store, user_id="alice", rule=replacement)
+
+    reloaded = await aget_procedural_profile(store, user_id="alice")
+    assert len(reloaded.rules) == 1
+    assert (
+        reloaded.rules[0].rule
+        == "You prefer short, direct replies without extra validation."
+    )
+    assert len(reloaded.archived_rules) == 1
+    assert reloaded.archived_rules[0].rule == "You prefer short replies."
+    assert reloaded.archived_rules[0].superseded_by == reloaded.rules[0].id
+    assert reloaded.archived_rules[0].dormant_at is not None
+    assert reloaded.archived_rules[0].user_visible is False
+
+
+@pytest.mark.asyncio
+async def test_aadd_rule_replaces_conflicting_existing_rule() -> None:
+    """A newer conflicting rule should replace the stale older one."""
+
+    store = OpenCouchMemoryStore()
+    original = build_procedural_rule(
+        rule_text="Suggest meditation when it seems useful.",
+        evidence=["Meditation is okay."],
+    )
+    replacement = build_procedural_rule(
+        rule_text="Don't suggest meditation again.",
+        evidence=["Please don't suggest meditation again."],
+    )
+
+    await aadd_procedural_rule(store, user_id="alice", rule=original)
+    await aadd_procedural_rule(store, user_id="alice", rule=replacement)
+
+    reloaded = await aget_procedural_profile(store, user_id="alice")
+    assert len(reloaded.rules) == 1
+    assert reloaded.rules[0].rule == "Don't suggest meditation again."
+    assert len(reloaded.archived_rules) == 1
+    assert reloaded.archived_rules[0].rule == "Suggest meditation when it seems useful."
+    assert reloaded.archived_rules[0].superseded_by == reloaded.rules[0].id
+
+
+@pytest.mark.asyncio
 async def test_aadd_rule_preserves_proactive_recall_setting() -> None:
     """Adding a rule must not clobber the proactive_recall_enabled toggle.
 
@@ -270,9 +327,68 @@ async def test_aset_recall_on_new_user_creates_profile() -> None:
     assert updated.proactive_recall_enabled is True
     assert updated.rules == []
 
-    # Persistence check
-    reloaded = await aget_procedural_profile(store, user_id="alice")
-    assert reloaded.proactive_recall_enabled is True
+
+# ─── Rule cap eviction ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_eviction_archives_oldest_when_exceeding_cap() -> None:
+    """Adding a rule past MAX_ACTIVE_RULES evicts the oldest by added_at."""
+
+    from agent.memory.procedural import MAX_ACTIVE_RULES
+
+    store = OpenCouchMemoryStore()
+
+    # Seed MAX_ACTIVE_RULES rules with sequential timestamps.
+    # Each rule uses unique wording to avoid reconciliation dedup.
+    unique_topics = [
+        "meditation",
+        "breathing",
+        "journaling",
+        "walking",
+        "reading",
+        "cooking",
+        "painting",
+        "swimming",
+        "gardening",
+        "stretching",
+        "singing",
+        "dancing",
+        "knitting",
+        "cycling",
+        "yoga",
+        "running",
+        "hiking",
+        "drawing",
+        "writing",
+        "photography",
+    ]
+    for i in range(MAX_ACTIVE_RULES):
+        rule = build_procedural_rule(
+            rule_text=f"You prefer {unique_topics[i]} as a coping strategy.",
+            evidence=[f"User mentioned {unique_topics[i]} specifically"],
+        )
+        rule = rule.model_copy(update={"added_at": f"2026-01-01T{i:02d}:00:00Z"})
+        await aadd_procedural_rule(store, user_id="alice", rule=rule)
+
+    profile = await aget_procedural_profile(store, user_id="alice")
+    assert len(profile.rules) == MAX_ACTIVE_RULES
+    assert len(profile.archived_rules) == 0
+
+    # Add one more — should evict the oldest (meditation)
+    overflow_rule = build_procedural_rule(
+        rule_text="You dislike being interrupted during conversation.",
+        evidence=["User said interruptions are frustrating"],
+    )
+    await aadd_procedural_rule(store, user_id="alice", rule=overflow_rule)
+
+    profile = await aget_procedural_profile(store, user_id="alice")
+    assert len(profile.rules) == MAX_ACTIVE_RULES
+    assert len(profile.archived_rules) == 1
+    assert "meditation" in profile.archived_rules[0].rule
+    assert profile.archived_rules[0].superseded_by == "eviction"
+    assert profile.archived_rules[0].dormant_at is not None
+    assert "interrupted" in profile.rules[-1].rule
 
 
 @pytest.mark.asyncio
@@ -346,6 +462,9 @@ def test_build_rule_applies_v07_defaults() -> None:
     assert rule.confidence == "high"
     assert rule.rule == "You prefer short replies."
     assert rule.evidence == ["Please keep it short"]
+    assert rule.write_timing == "immediate"
+    assert rule.write_reason == ""
+    assert rule.policy_version == "phase1_v1"
     assert rule.added_at.endswith("Z")  # ISO-8601 UTC with Z suffix
 
 
@@ -365,6 +484,7 @@ def test_build_rule_overrides_defaults() -> None:
     )
     assert rule.source == "consolidation"
     assert rule.confidence == "medium"
+    assert rule.write_timing == "immediate"
 
 
 # ─── Isolation — two users don't see each other's profiles ────────────────

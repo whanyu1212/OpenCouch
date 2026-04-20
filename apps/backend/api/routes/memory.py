@@ -1,6 +1,6 @@
 """Memory inspection and deletion endpoints.
 
-GET    /api/memory/status — namespace counts + recall toggle
+GET    /api/memory/status — user-facing memory counts + recall toggle
 DELETE /api/memory/facts/{n} — delete one semantic fact by index
 DELETE /api/memory/sessions/{n} — delete one episodic arc by index
 DELETE /api/memory/rules/{n} — delete one procedural rule by index
@@ -20,10 +20,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from agent.memory.reconciliation import filter_active_semantic_records
 from agent.memory.procedural import (
     aget_procedural_profile,
     aput_procedural_profile,
 )
+from agent.memory.store import StoreRecord
 from agent.persistence import PersistentAgentRuntime
 from api.dependencies import get_runtime
 from api.models import DeleteResponse, MemoryStatusResponse
@@ -45,27 +47,42 @@ def _resolve_owner_id(
     return user_id or thread_id
 
 
+async def _list_active_semantic_records(
+    runtime: PersistentAgentRuntime,
+    *,
+    owner_id: str,
+) -> list[StoreRecord]:
+    """Return the active semantic records for this owner."""
+
+    store = runtime.memory_store
+    records = await store.asearch((owner_id, "semantic"), query=None, limit=1000)
+    return filter_active_semantic_records(records)
+
+
 @router.get("/status", response_model=MemoryStatusResponse)
 async def memory_status(
     thread_id: str = Query(description="Thread to scope the status to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> MemoryStatusResponse:
-    """Return per-namespace record counts and the recall toggle state."""
+    """Return user-facing memory counts and the recall toggle state."""
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
     crisis_log = runtime.crisis_log_backend
     session_feedback = runtime.session_feedback_backend
 
-    counts: dict[str, int] = {}
-    for kind in ("semantic", "episodic", "procedural"):
-        counts[kind] = await store.arecord_count((owner_id, kind))
-
     crisis_count = await crisis_log.arecord_count()
     feedback_count = await session_feedback.arecord_count()
-
     profile = await aget_procedural_profile(store, user_id=owner_id)
+    semantic_records = await _list_active_semantic_records(runtime, owner_id=owner_id)
+    episodic_count = await store.arecord_count((owner_id, "episodic"))
+
+    counts = {
+        "semantic": len(semantic_records),
+        "episodic": episodic_count,
+        "procedural": len(profile.rules),
+    }
 
     return MemoryStatusResponse(
         memory_mode=str(runtime.memory_mode.value),
@@ -86,9 +103,7 @@ async def list_facts(
     """List all semantic facts for this owner."""
 
     owner_id = _resolve_owner_id(user_id, thread_id)
-    store = runtime.memory_store
-    namespace = (owner_id, "semantic")
-    records = await store.asearch(namespace, query=None, limit=1000)
+    records = await _list_active_semantic_records(runtime, owner_id=owner_id)
     return [
         {
             "index": i + 1,
@@ -165,17 +180,20 @@ async def delete_fact(
     """Delete one semantic fact by its 1-based index.
 
     The index matches the ``#`` column in ``/memory list`` (insertion
-    order). Returns 404 if the index is out of range or no facts
-    exist.
+    order) for active, user-visible facts only. Returns 404 if the
+    index is out of range or no active facts exist.
     """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
     namespace = (owner_id, "semantic")
 
-    records = await store.asearch(namespace, query=None, limit=1000)
+    records = await _list_active_semantic_records(runtime, owner_id=owner_id)
     if not records:
-        raise HTTPException(status_code=404, detail="No semantic facts for this owner.")
+        raise HTTPException(
+            status_code=404,
+            detail="No active semantic facts for this owner.",
+        )
     if index < 1 or index > len(records):
         raise HTTPException(
             status_code=404,

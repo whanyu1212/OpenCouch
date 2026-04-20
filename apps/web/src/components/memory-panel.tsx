@@ -4,14 +4,13 @@ import { useSessionStore } from "@/lib/session";
 import type { MemoryFact } from "@/lib/api";
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  identity: { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200/60" },
-  relationship: { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200/60" },
-  emotional_pattern: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200/60" },
-  life_event: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200/60" },
+  loss: { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200/60" },
   preference: { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200/60" },
-  health: { bg: "bg-red-50", text: "text-red-700", border: "border-red-200/60" },
   coping_strategy: { bg: "bg-teal-50", text: "text-teal-700", border: "border-teal-200/60" },
-  belief: { bg: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200/60" },
+  relationship: { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200/60" },
+  trigger: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200/60" },
+  goal: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200/60" },
+  context: { bg: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200/60" },
 };
 
 const DEFAULT_COLORS = { bg: "bg-oc-warm-100", text: "text-oc-warm-600", border: "border-oc-warm-200" };
@@ -34,8 +33,8 @@ function FactCard({ fact, isNew }: { fact: MemoryFact; isNew: boolean }) {
 
   // Build a readable summary from the SPO triple
   const summary =
-    fact.subject.identifier && fact.object.identifier
-      ? `${fact.subject.identifier} ${fact.predicate.replace(/_/g, " ")} ${fact.object.identifier}`
+    fact.subject && fact.object
+      ? `${fact.subject} ${fact.predicate.replace(/_/g, " ")} ${fact.object}`
       : fact.evidence_quote;
 
   return (
@@ -99,10 +98,10 @@ export function MemoryPanel() {
               </svg>
             </div>
             <p className="text-[13px] text-oc-text-muted">
-              No memories yet
+              No semantic facts yet
             </p>
             <p className="text-[12px] text-oc-text-dim mt-1">
-              Memories will appear here as the conversation unfolds
+              Session summaries and style rules appear on the Memory page
             </p>
           </div>
         ) : (

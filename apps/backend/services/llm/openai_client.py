@@ -43,7 +43,6 @@ class OpenAILLMClient(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         """Generate a plain-text response with OpenAI.
@@ -68,7 +67,6 @@ class OpenAILLMClient(BaseLLMClient):
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
             use_search: When True, attach OpenAI's hosted ``web_search``
                 tool so the model can ground its reply against live
                 web results. When False (the default), the call runs
@@ -99,7 +97,6 @@ class OpenAILLMClient(BaseLLMClient):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "input": input_items,
-            "temperature": temperature,
         }
         if use_search:
             kwargs["tools"] = [{"type": "web_search"}]
@@ -115,14 +112,12 @@ class OpenAILLMClient(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         """Stream a plain-text response from OpenAI.
 
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
 
         Yields:
             String chunks of the generated text as they arrive.
@@ -136,7 +131,6 @@ class OpenAILLMClient(BaseLLMClient):
         async with self.client.responses.stream(
             model=self.model,
             input=input_items,
-            temperature=temperature,
         ) as stream:
             async for event in stream:
                 if event.type == "response.output_text.delta":
@@ -148,7 +142,6 @@ class OpenAILLMClient(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         """Generate a structured response with OpenAI.
 
@@ -156,7 +149,6 @@ class OpenAILLMClient(BaseLLMClient):
             prompt: The user or task prompt to send to the model.
             response_schema: The Pydantic schema expected in the response.
             system_instruction: Optional top-level instruction for model behavior.
-            temperature: Sampling temperature for the request.
 
         Returns:
             A parsed object matching `response_schema`.
@@ -173,7 +165,6 @@ class OpenAILLMClient(BaseLLMClient):
             model=self.model,
             input=input_items,
             text_format=response_schema,
-            temperature=temperature,
         )
 
         parsed = response.output_parsed

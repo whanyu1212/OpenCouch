@@ -1,0 +1,239 @@
+[
+  {
+    "id": "semantic_relationship_fact_writes_same_turn",
+    "description": "Explicit low-risk relationship fact should write to semantic memory on the same turn.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "My sister Sarah lives nearby.",
+        "expect": {
+          "memory_write_expected": true,
+          "memory_write_category_in": ["semantic"],
+          "semantic_fact_count_delta": 1,
+          "procedural_rule_count_delta": 0,
+          "semantic_fact_object_contains_any": ["Sarah"],
+          "semantic_facts_total": 1
+        }
+      }
+    ],
+    "final_expect": {
+      "semantic_facts_total": 1,
+      "procedural_rules_total": 0,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "semantic_trigger_is_held_not_written_same_turn",
+    "description": "High-sensitivity trigger content should not create an immediate semantic fact.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "Family conflict is a big trigger for panic.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      }
+    ],
+    "final_expect": {
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 0,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "explicit_procedural_request_writes_same_turn",
+    "description": "Explicit durable response-style request should write to procedural memory immediately.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "Please keep responses shorter.",
+        "expect": {
+          "memory_write_expected": true,
+          "memory_write_category_in": ["procedural"],
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 1,
+          "procedural_rule_contains_any": ["shorter responses"],
+          "procedural_rules_total": 1
+        }
+      }
+    ],
+    "final_expect": {
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 1,
+      "procedural_rule_contains_any": ["shorter responses"],
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "implicit_procedural_preference_does_not_write_same_turn",
+    "description": "Implicit preference content should not become procedural memory on the hot path.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "Meditation makes me more anxious.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      }
+    ],
+    "final_expect": {
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 0,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "negative_self_belief_does_not_write_same_turn",
+    "description": "Later-turn negative self-belief content should still avoid immediate semantic writes.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "I want to talk about work stress.",
+        "expect": {
+          "semantic_facts_total": 0,
+          "procedural_rules_total": 0
+        }
+      },
+      {
+        "user": "I've been feeling on edge lately.",
+        "expect": {
+          "semantic_facts_total": 0,
+          "procedural_rules_total": 0
+        }
+      },
+      {
+        "user": "I always assume one mistake means I'm incompetent.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0
+        }
+      }
+    ],
+    "final_expect": {
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 0,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "session_end_emits_episodic_arc",
+    "description": "A substantive session should produce an episodic summary write at session end.",
+    "supported_modes": ["hybrid"],
+    "run_end_session": true,
+    "turns": [
+      {
+        "user": "I've been overwhelmed by work and I need help sorting out what keeps happening."
+      },
+      {
+        "user": "Every week I tell myself that one mistake will prove I can't handle any of this."
+      },
+      {
+        "user": "I end up staying late and then I feel ashamed for not coping better."
+      },
+      {
+        "user": "Before we stop, can you help me hold onto the main thing from today?"
+      }
+    ],
+    "final_expectations": {
+      "summary_expected": true,
+      "session_end_memory_write_expected": true,
+      "session_end_memory_write_category_in": ["episodic"],
+      "session_end_episodic_arc_count_delta": 1,
+      "episodic_arcs_total": 1
+    }
+  },
+  {
+    "id": "repeated_trigger_commits_at_session_end",
+    "description": "A held trigger candidate repeated across turns should commit at session end.",
+    "supported_modes": ["hybrid"],
+    "run_end_session": true,
+    "turns": [
+      {
+        "user": "Family conflict is a big trigger for panic.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      },
+      {
+        "user": "Family conflict is still a big trigger for panic, and it happened again tonight.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_end_memory_write_expected": true,
+      "session_end_memory_write_category_in": ["semantic"],
+      "session_end_semantic_fact_count_delta": 1,
+      "semantic_facts_total": 1
+    }
+  },
+  {
+    "id": "repeated_implicit_procedural_preference_promotes_at_session_end",
+    "description": "An implicit procedural preference repeated across turns should promote at session end.",
+    "supported_modes": ["hybrid"],
+    "run_end_session": true,
+    "turns": [
+      {
+        "user": "When you suggest meditation, it makes me more anxious.",
+        "expect": {
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      },
+      {
+        "user": "I think meditation suggestions make me more anxious every time.",
+        "expect": {
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_end_memory_write_expected": true,
+      "session_end_memory_write_category_in": ["procedural"],
+      "session_end_procedural_rule_count_delta": 1,
+      "procedural_rules_total": 1,
+      "procedural_rule_contains_any": ["more anxious"]
+    }
+  },
+  {
+    "id": "non_agent_facing_meditation_complaint_does_not_promote_procedural",
+    "description": "Repeated complaints about other people pushing meditation should not become procedural memory.",
+    "supported_modes": ["hybrid"],
+    "run_end_session": true,
+    "turns": [
+      {
+        "user": "My coworker keeps telling me to meditate and I hate it.",
+        "expect": {
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      },
+      {
+        "user": "People at work keep pushing meditation and it just annoys me.",
+        "expect": {
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      }
+    ],
+    "final_expectations": {
+      "session_end_procedural_rule_count_delta": 0,
+      "procedural_rules_total": 0
+    }
+  }
+]

@@ -209,6 +209,27 @@ class MemoryStore(Protocol):
         """
         ...
 
+    async def aput_batch(
+        self,
+        items: list[
+            tuple[
+                Namespace,
+                str,
+                dict[str, Any],
+                list[float] | None,
+                str | None,
+            ]
+        ],
+    ) -> None:
+        """Atomically write multiple records.
+
+        Each item is ``(namespace, key, value, embedding, embedding_model)``.
+        Either all writes succeed or none do. In the SQLite implementation
+        this uses a single transaction; in the in-memory implementation
+        it is a simple loop (atomic under the GIL).
+        """
+        ...
+
     async def aget(
         self,
         namespace: Namespace,
@@ -242,6 +263,7 @@ class MemoryStore(Protocol):
         query_embedding: list[float] | None,
         embedding_model: str | None = None,
         limit: int = 10,
+        max_age_days: int | None = None,
     ) -> list[StoreRecord]:
         """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
 
@@ -399,6 +421,31 @@ class OpenCouchMemoryStore:
             embedding_model=embedding_model,
         )
 
+    async def aput_batch(
+        self,
+        items: list[
+            tuple[
+                Namespace,
+                str,
+                dict[str, Any],
+                list[float] | None,
+                str | None,
+            ]
+        ],
+    ) -> None:
+        """Write multiple records atomically (trivial under the GIL)."""
+
+        self._ensure_open()
+        for namespace, key, value, embedding, embedding_model in items:
+            bucket = self._bucket(namespace)
+            bucket.records[key] = StoreRecord(
+                namespace=namespace,
+                key=key,
+                value=dict(value),
+                embedding=list(embedding) if embedding is not None else None,
+                embedding_model=embedding_model,
+            )
+
     async def aget(
         self,
         namespace: Namespace,
@@ -496,6 +543,7 @@ class OpenCouchMemoryStore:
         query_embedding: list[float] | None,
         embedding_model: str | None = None,
         limit: int = 10,
+        max_age_days: int | None = None,
     ) -> list[StoreRecord]:
         """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
 
@@ -505,27 +553,8 @@ class OpenCouchMemoryStore:
         :data:`agent.memory.retrieval.EMBEDDING_MATCH_THRESHOLD`
         for the per-scorer cutoffs.
 
-        Degenerate cases:
-
-        - ``query_text`` has no meaningful tokens AND
-          ``query_embedding`` is None → empty list. Neither scorer
-          can contribute.
-        - ``query_text`` has no meaningful tokens but
-          ``query_embedding`` is provided → embedding-only result,
-          RRF with one list degenerates to the dense ranking.
-        - ``query_embedding`` is None but ``query_text`` has
-          meaningful tokens → token-recall-only result, RRF with
-          one list degenerates to the lexical ranking and this
-          method behaves identically to :meth:`asearch` for this
-          query.
-        - Record has no stored embedding → it participates in
-          the token-recall side only. Its rank position on the
-          dense side is effectively infinite (i.e., zero contribution).
-        - Stored ``embedding_model`` doesn't match the query's
-          ``embedding_model`` → the record is skipped in the dense
-          scan (still participates in the lexical scan). This
-          prevents cross-model cosine similarity which isn't
-          meaningful.
+        When ``max_age_days`` is set, records whose ``created_at``
+        timestamp is older than the cutoff are excluded before scoring.
         """
 
         from agent.memory.retrieval import (
@@ -540,12 +569,36 @@ class OpenCouchMemoryStore:
         if bucket is None:
             return []
 
+        # Pre-filter by age when requested
+        if max_age_days is not None:
+            from datetime import UTC, datetime, timedelta
+
+            cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
+
+            def _is_recent(record: StoreRecord) -> bool:
+                created_raw = record.value.get("created_at", "")
+                if not created_raw:
+                    return False  # no timestamp → exclude from time-filtered results
+                try:
+                    created_str = str(created_raw).replace("Z", "+00:00")
+                    created = datetime.fromisoformat(created_str)
+                    # Treat naive timestamps as UTC
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=UTC)
+                    return created >= cutoff
+                except (ValueError, TypeError):
+                    return False  # unparseable → exclude
+
+            candidates = {k: v for k, v in bucket.records.items() if _is_recent(v)}
+        else:
+            candidates = bucket.records
+
         # ── Token-recall side (lexical) ───────────────────────────────
         lexical_scored: list[ScoredRecord] = []
         query_tokens = tokenize_meaningful(query_text)
         if query_tokens:
             query_token_count = len(query_tokens)
-            for insertion_index, record in enumerate(bucket.records.values()):
+            for insertion_index, record in enumerate(candidates.values()):
                 haystack = " ".join(
                     str(v) for v in record.value.values() if v is not None
                 )
@@ -567,7 +620,7 @@ class OpenCouchMemoryStore:
         # ── Embedding-similarity side (dense) ─────────────────────────
         dense_scored: list[ScoredRecord] = []
         if query_embedding is not None:
-            for insertion_index, record in enumerate(bucket.records.values()):
+            for insertion_index, record in enumerate(candidates.values()):
                 if record.embedding is None:
                     continue
                 # Skip cross-model similarity — comparing embeddings

@@ -48,6 +48,8 @@ from agent.memory.models import (
     ExtractionResult,
     MemoryWrite,
     MoodArc,
+    ProceduralExtractionResult,
+    ProceduralRuleDraft,
     SessionArc,
     StoredSessionArc,
     SummarizationResult,
@@ -55,7 +57,7 @@ from agent.memory.models import (
 from agent.memory.modes import MemoryMode
 from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.models import Channel
-from agent.persistence import PersistentAgentRuntime
+from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -84,15 +86,21 @@ class _FakeCrossRestartLLM(BaseLLMClient):
         self,
         *,
         extraction_result: ExtractionResult | None = None,
+        procedural_result: ProceduralExtractionResult | None = None,
         summarization_result: SummarizationResult | None = None,
     ) -> None:
         self.extraction_result = extraction_result or _default_extraction_result()
+        self.procedural_result = procedural_result or ProceduralExtractionResult(
+            rules=[],
+            reason="no procedural rules",
+        )
         self.summarization_result = (
             summarization_result or _default_summarization_result()
         )
         self.crisis_calls = 0
         self.dispatch_calls = 0
         self.extraction_calls = 0
+        self.procedural_calls = 0
         self.summarization_calls = 0
         self.text_calls = 0
 
@@ -101,7 +109,6 @@ class _FakeCrossRestartLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         self.text_calls += 1
@@ -112,7 +119,6 @@ class _FakeCrossRestartLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         yield "fake stream chunk"
 
@@ -122,7 +128,6 @@ class _FakeCrossRestartLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         schema_name = response_schema.__name__
 
@@ -157,6 +162,10 @@ class _FakeCrossRestartLLM(BaseLLMClient):
         if schema_name == "ExtractionResult":
             self.extraction_calls += 1
             return cast(StructuredResponseT, self.extraction_result)
+
+        if schema_name == "ProceduralExtractionResult":
+            self.procedural_calls += 1
+            return cast(StructuredResponseT, self.procedural_result)
 
         if schema_name == "SummarizationResult":
             self.summarization_calls += 1
@@ -219,6 +228,53 @@ def _empty_extraction_result() -> ExtractionResult:
     )
 
 
+def _held_trigger_extraction_result(
+    *,
+    thread_id: str = "thread-a",
+    user_id: str = "user-1",
+) -> ExtractionResult:
+    """Build a held semantic candidate that only commits at session end."""
+
+    return ExtractionResult(
+        facts=[
+            MemoryWrite(
+                category="trigger",
+                subject=EntityRef(type="User", identifier=user_id),
+                predicate="WORRIES_ABOUT",
+                object=EntityRef(type="Concern", identifier="Family conflict"),
+                evidence_quote="Family conflict is a big trigger for panic.",
+                confidence="high",
+                source_session_id=thread_id,
+                source_turn_index=0,
+            )
+        ],
+        reason="captured family conflict trigger candidate",
+    )
+
+
+def _trigger_supporting_summarization_result(
+    *,
+    thread_id: str = "thread-a",
+) -> SummarizationResult:
+    """Build a session arc that supports the held trigger candidate."""
+
+    return SummarizationResult(
+        arc=SessionArc(
+            session_id=thread_id,
+            started_at="2026-04-11T09:00:00Z",
+            ended_at="2026-04-11T09:20:00Z",
+            duration_seconds=1200,
+            turn_count=2,
+            primary_themes=["family conflict", "panic"],
+            summary="User described panic that gets triggered by family conflict.",
+            mood_arc=MoodArc(opened="anxious", closed="steadier"),
+            open_loops=["wants help handling family conflict"],
+            resolved_threads=[],
+        ),
+        reason="captured the held family-conflict trigger arc",
+    )
+
+
 # ─── Helpers ───────────────────────────────────────────────────────────
 
 
@@ -257,6 +313,7 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
     ) as runtime_a:
         result = await runtime_a.run_turn(
             thread_id="thread-a",
@@ -279,11 +336,10 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
         **paths,
         memory_mode=MemoryMode.LOCAL,
     ) as runtime_b:
-        # The record count should be 1 BEFORE we do anything — the
-        # Stage B SqliteMemoryStore reads the existing file on first
-        # async call, and the schema DDL is idempotent (CREATE TABLE
-        # IF NOT EXISTS) so the existing data is untouched.
-        count = await runtime_b.memory_store.arecord_count()
+        # Graceful shutdown now also writes an episodic summary, so
+        # assert directly on the semantic namespace rather than the
+        # total store count.
+        count = await runtime_b.memory_store.arecord_count(("thread-a", "semantic"))
         assert count == 1, f"expected 1 record after restart, got {count}"
 
         # And we can retrieve it via asearch with a paraphrased query
@@ -310,6 +366,7 @@ async def test_episodic_arc_survives_runtime_close_and_reopen(
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
     ) as runtime_a:
         await runtime_a.run_turn(
             thread_id="thread-a",
@@ -358,6 +415,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
     ) as runtime_a:
         record = CrisisLogRecord(
             id="rec-cross-restart-1",
@@ -419,6 +477,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
     ) as runtime_a:
         # Turn 1: substantive message that triggers extraction
         await runtime_a.run_turn(
@@ -581,6 +640,282 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
 
 
 @pytest.mark.asyncio
+async def test_held_session_buffer_survives_restart_until_end_session(
+    tmp_path: Path,
+) -> None:
+    """Held candidates should survive runtime restart until session end resolves them."""
+
+    paths = _runtime_paths(tmp_path)
+    llm_a = _FakeCrossRestartLLM(
+        extraction_result=_held_trigger_extraction_result(thread_id="thread-held"),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-held"
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
+    ) as runtime_a:
+        await runtime_a.run_turn(
+            thread_id="thread-held",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm_a,
+        )
+        assert await runtime_a.memory_store.arecord_count(("user-1", "semantic")) == 0
+        persisted = await runtime_a._load_persisted_active_session("thread-held")
+        assert persisted is not None
+        assert len(persisted.session_buffer.semantic_candidates) == 1
+
+    llm_b = _FakeCrossRestartLLM(
+        extraction_result=_empty_extraction_result(),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-held"
+        ),
+    )
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+    ) as runtime_b:
+        persisted = await runtime_b._load_persisted_active_session("thread-held")
+        assert persisted is not None
+        assert len(persisted.session_buffer.semantic_candidates) == 1
+
+        stored_arc = await runtime_b.end_session("thread-held", llm_client=llm_b)
+
+        assert stored_arc is not None
+        assert await runtime_b.memory_store.arecord_count(("user-1", "episodic")) == 1
+        assert await runtime_b.memory_store.arecord_count(("user-1", "semantic")) == 1
+        assert await runtime_b._load_persisted_active_session("thread-held") is None
+
+
+@pytest.mark.asyncio
+async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
+    tmp_path: Path,
+) -> None:
+    """A stale active session should end before the next turn starts."""
+
+    paths = _runtime_paths(tmp_path)
+    llm = _FakeCrossRestartLLM(
+        extraction_result=_held_trigger_extraction_result(thread_id="thread-timeout"),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-timeout"
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        default_llm_client=llm,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-timeout",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+        prior_state = await runtime.get_state("thread-timeout")
+        prior_transcript_len = len((prior_state or {}).get("transcript", []))
+
+        persisted = await runtime._load_persisted_active_session("thread-timeout")
+        assert persisted is not None
+        await runtime._save_persisted_active_session(
+            PersistedActiveSessionState(
+                thread_id=persisted.thread_id,
+                started_at=persisted.started_at,
+                last_active_at="2026-01-01T00:00:00Z",
+                transcript_start_index=persisted.transcript_start_index,
+                max_crisis_level=persisted.max_crisis_level,
+                session_buffer=persisted.session_buffer,
+            )
+        )
+        runtime._clear_runtime_session_tracking("thread-timeout")
+
+        llm.extraction_result = _empty_extraction_result()
+        await runtime.run_turn(
+            thread_id="thread-timeout",
+            message="Something else is on my mind today.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
+        assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
+
+        active = await runtime._load_persisted_active_session("thread-timeout")
+        assert active is not None
+        assert active.transcript_start_index == prior_transcript_len
+        assert not active.session_buffer.semantic_candidates
+
+
+@pytest.mark.asyncio
+async def test_finalize_active_sessions_commits_pending_memory_on_shutdown(
+    tmp_path: Path,
+) -> None:
+    """The graceful-shutdown hook should route unresolved sessions through end_session."""
+
+    paths = _runtime_paths(tmp_path)
+    llm = _FakeCrossRestartLLM(
+        extraction_result=_held_trigger_extraction_result(thread_id="thread-shutdown"),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-shutdown"
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        default_llm_client=llm,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-shutdown",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        await runtime.finalize_active_sessions(llm_client=llm)
+
+        assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
+        assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
+        assert await runtime._load_persisted_active_session("thread-shutdown") is None
+
+
+@pytest.mark.asyncio
+async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
+    tmp_path: Path,
+) -> None:
+    """Expired sessions should close without waiting for the next user turn."""
+
+    paths = _runtime_paths(tmp_path)
+    llm = _FakeCrossRestartLLM(
+        extraction_result=_held_trigger_extraction_result(thread_id="thread-sweeper"),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-sweeper"
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        default_llm_client=llm,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-sweeper",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+        persisted = await runtime._load_persisted_active_session("thread-sweeper")
+        assert persisted is not None
+        await runtime._save_persisted_active_session(
+            PersistedActiveSessionState(
+                thread_id=persisted.thread_id,
+                started_at=persisted.started_at,
+                last_active_at="2026-01-01T00:00:00Z",
+                transcript_start_index=persisted.transcript_start_index,
+                max_crisis_level=persisted.max_crisis_level,
+                session_buffer=persisted.session_buffer,
+            )
+        )
+        runtime._clear_runtime_session_tracking("thread-sweeper")
+
+        await runtime._finalize_expired_sessions_once()
+
+        assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
+        assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
+        assert await runtime._load_persisted_active_session("thread-sweeper") is None
+
+
+@pytest.mark.asyncio
+async def test_end_transcript_session_writes_semantic_procedural_and_episodic_memory(
+    tmp_path: Path,
+) -> None:
+    """Voice-style transcript finalization should reuse the text memory pipeline."""
+
+    paths = _runtime_paths(tmp_path)
+    llm = _FakeCrossRestartLLM(
+        extraction_result=ExtractionResult(
+            facts=[
+                MemoryWrite(
+                    category="relationship",
+                    subject=EntityRef(type="User", identifier="user-1"),
+                    predicate="KNOWS",
+                    object=EntityRef(type="Person", identifier="Sarah"),
+                    evidence_quote="I have a sister named Sarah.",
+                    confidence="high",
+                    source_session_id="voice-thread",
+                    source_turn_index=0,
+                )
+            ],
+            reason="captured relationship fact from transcript",
+        ),
+        procedural_result=ProceduralExtractionResult(
+            rules=[
+                ProceduralRuleDraft(
+                    rule="Please stop suggesting meditation.",
+                    evidence=["Please stop suggesting meditation."],
+                    confidence="high",
+                )
+            ],
+            reason="captured explicit procedural request from transcript",
+        ),
+        summarization_result=SummarizationResult(
+            arc=SessionArc(
+                session_id="voice-thread",
+                started_at="2026-04-20T09:00:00Z",
+                ended_at="2026-04-20T09:10:00Z",
+                duration_seconds=600,
+                turn_count=2,
+                primary_themes=["family", "coping"],
+                summary="User mentioned Sarah and asked the assistant to stop suggesting meditation.",
+                mood_arc=MoodArc(opened="tense", closed="steady"),
+                open_loops=[],
+                resolved_threads=[],
+            ),
+            reason="captured voice transcript session arc",
+        ),
+    )
+
+    transcript = [
+        {"role": "user", "content": "I have a sister named Sarah."},
+        {"role": "assistant", "content": "Thanks for telling me that."},
+        {"role": "user", "content": "Please stop suggesting meditation."},
+        {"role": "assistant", "content": "I won't suggest it."},
+    ]
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+    ) as runtime:
+        stored_arc = await runtime.end_transcript_session(
+            thread_id="voice-thread",
+            user_id="user-1",
+            transcript=transcript,
+            llm_client=llm,
+            started_at="2026-04-20T09:00:00Z",
+            ended_at="2026-04-20T09:10:00Z",
+        )
+
+        assert stored_arc is not None
+        assert stored_arc.write_timing == "session_end"
+        assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
+        assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
+        profile = await runtime.memory_store.aget(
+            ("user-1", "procedural"), "user_response_style"
+        )
+        assert profile is not None
+        assert len(profile.value["rules"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_incognito_runtime_does_not_persist_to_disk(
     tmp_path: Path,
 ) -> None:
@@ -647,8 +982,14 @@ async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
         **paths,
         memory_mode=MemoryMode.LOCAL,
     ) as final_runtime:
-        # Each iteration's extraction produces the canned Sarah fact
-        # under its own thread_id namespace, so we should have 3
-        # records total across 3 different namespaces.
-        total = await final_runtime.memory_store.arecord_count()
-        assert total == 3, f"expected 3 records after 3 iterations, got {total}"
+        total_semantic = sum(
+            [
+                await final_runtime.memory_store.arecord_count(
+                    (f"thread-{i}", "semantic")
+                )
+                for i in range(3)
+            ]
+        )
+        assert total_semantic == 3, (
+            f"expected 3 semantic records after 3 iterations, got {total_semantic}"
+        )

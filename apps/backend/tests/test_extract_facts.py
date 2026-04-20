@@ -39,6 +39,7 @@ from agent.memory.models import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.candidates import SessionMemoryBuffer
 from agent.models import AgentInput
 from agent.nodes.extract_facts import (
     _memory_write_to_semantic_fact,
@@ -56,6 +57,7 @@ def _make_memory_write(
     *,
     evidence_quote: str = "my sister Sarah visited last night",
     subject_identifier: str = "user-1",
+    object_type: str = "Person",
     object_identifier: str = "Sarah",
     predicate: str = "KNOWS",
     category: str = "relationship",
@@ -68,7 +70,7 @@ def _make_memory_write(
         category=category,  # type: ignore[arg-type]
         subject=EntityRef(type="User", identifier=subject_identifier),
         predicate=predicate,  # type: ignore[arg-type]
-        object=EntityRef(type="Person", identifier=object_identifier),
+        object=EntityRef(type=object_type, identifier=object_identifier),  # type: ignore[arg-type]
         evidence_quote=evidence_quote,
         confidence="high",
         source_session_id=source_session_id,
@@ -130,7 +132,6 @@ class _FakeExtractionLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         self.text_calls += 1
@@ -141,7 +142,6 @@ class _FakeExtractionLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         yield "fake"
 
@@ -151,7 +151,6 @@ class _FakeExtractionLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         # Dispatch on schema type.
         if response_schema.__name__ == "ExtractionResult":
@@ -204,12 +203,14 @@ class _MockRuntime:
         llm_client: BaseLLMClient | None,
         memory_store: OpenCouchMemoryStore | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
+        session_memory_buffer: SessionMemoryBuffer | None = None,
     ) -> None:
         self.context = WorkflowContext(
             llm_client=llm_client,
             memory_store=memory_store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
             memory_mode=memory_mode,
+            session_memory_buffer=session_memory_buffer,
         )
 
 
@@ -250,6 +251,9 @@ class TestMemoryWriteToSemanticFact:
         assert fact.dormant_at is None
         assert fact.superseded_by is None
         assert fact.user_visible is True
+        assert fact.write_timing == "immediate"
+        assert fact.write_reason == ""
+        assert fact.policy_version == "phase1_v1"
         assert fact.created_at == fact.last_referenced_at
         assert fact.created_at.endswith("Z")
 
@@ -285,6 +289,11 @@ class TestExtractFactsNodeUnit:
                 "extract_facts_ms": pytest.approx(0.0, abs=50.0),
                 "semantic_writes": 0,
                 "semantic_bumps": 0,
+                "semantic_candidates": 0,
+                "semantic_commit_now_candidates": 0,
+                "semantic_session_end_holds": 0,
+                "semantic_repeat_required": 0,
+                "semantic_policy_drops": 0,
                 "extract_facts_reason": "skipped: no llm_client",
             }
         }
@@ -373,6 +382,11 @@ class TestExtractFactsNodeUnit:
         assert len(records) == 1
         assert records[0].value["evidence_quote"] == "my sister Sarah visited"
         assert records[0].value["user_visible"] is True
+        assert records[0].value["write_timing"] == "immediate"
+        assert (
+            records[0].value["write_reason"]
+            == "explicit stable semantic fact is safe for immediate commit"
+        )
 
     @pytest.mark.asyncio
     async def test_duplicate_fact_bumps_last_referenced_at(self) -> None:
@@ -566,6 +580,165 @@ class TestExtractFactsNodeUnit:
         assert len(records) == 1
         assert records[0].value["source_session_id"] == "session-xyz"
         assert records[0].value["source_turn_index"] == 7
+
+    @pytest.mark.asyncio
+    async def test_negative_self_belief_candidate_requires_repetition(self) -> None:
+        """Later-turn negative self-belief content should not write immediately."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        category="context",
+                        predicate="WORRIES_ABOUT",
+                        object_identifier="making mistakes at work",
+                        evidence_quote=(
+                            "I always assume one mistake means I'm incompetent."
+                        ),
+                    )
+                ],
+                reason="extracted self-belief candidate",
+            )
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(
+            message="I always assume one mistake means I'm incompetent.",
+            turn_count=4,
+        )
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert fake.extraction_calls == 1
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["semantic_candidates"] == 1
+        assert delta["diagnostics"]["semantic_repeat_required"] == 1
+        assert await store.arecord_count(("user-1", "semantic")) == 0
+
+    @pytest.mark.asyncio
+    async def test_high_sensitivity_fact_is_held_for_session_end(self) -> None:
+        """High-sensitivity semantic content should not write on the hot path."""
+
+        store = OpenCouchMemoryStore()
+        session_buffer = SessionMemoryBuffer(session_id="thread-test")
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        category="trigger",
+                        predicate="WORRIES_ABOUT",
+                        object_identifier="panic during family conflict",
+                        evidence_quote="Family conflict is a big trigger for panic.",
+                    )
+                ],
+                reason="extracted trigger fact",
+            )
+        )
+        runtime = _MockRuntime(
+            llm_client=fake,
+            memory_store=store,
+            session_memory_buffer=session_buffer,
+        )
+        state = _partial_state(
+            message="Family conflict is a big trigger for panic.",
+            turn_count=3,
+        )
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert fake.extraction_calls == 1
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["semantic_candidates"] == 1
+        assert delta["diagnostics"]["semantic_session_end_holds"] == 1
+        assert await store.arecord_count(("user-1", "semantic")) == 0
+        assert len(session_buffer.semantic_candidates) == 1
+
+    @pytest.mark.asyncio
+    async def test_provenance_predicate_is_dropped_not_written(self) -> None:
+        """MENTIONED_IN facts are provenance, not durable semantic memory."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        category="context",
+                        predicate="MENTIONED_IN",
+                        evidence_quote="My sister Sarah lives nearby.",
+                    )
+                ],
+                reason="extracted provenance edge",
+            )
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(message="My sister Sarah lives nearby.", turn_count=4)
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert fake.extraction_calls == 1
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["semantic_candidates"] == 1
+        assert delta["diagnostics"]["semantic_policy_drops"] == 1
+        assert await store.arecord_count(("user-1", "semantic")) == 0
+
+    @pytest.mark.asyncio
+    async def test_specific_relationship_fact_supersedes_generic_representation(
+        self,
+    ) -> None:
+        """A more specific hot-path fact should supersede the generic older one."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("user-1", "semantic"),
+            "fact-old",
+            {
+                "id": "fact-old",
+                "category": "relationship",
+                "subject": {"type": "User", "identifier": "user-1"},
+                "predicate": "KNOWS",
+                "object": {"type": "Person", "identifier": "Sarah"},
+                "evidence_quote": "I talked to Sarah yesterday.",
+                "confidence": "high",
+                "source_session_id": "thread-old",
+                "source_turn_index": 0,
+                "created_at": "2026-04-18T10:00:00Z",
+                "last_referenced_at": "2026-04-18T10:00:00Z",
+                "dormant_at": None,
+                "superseded_by": None,
+                "user_visible": True,
+            },
+        )
+
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        category="relationship",
+                        predicate="KNOWS",
+                        object_type="Person",
+                        object_identifier="my sister Sarah",
+                        evidence_quote="My sister Sarah called last night.",
+                    )
+                ],
+                reason="extracted more specific relationship fact",
+            )
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(
+            message="My sister Sarah called last night.",
+            turn_count=4,
+        )
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 1
+        assert await store.arecord_count(("user-1", "semantic")) == 2
+        records = await store.asearch(("user-1", "semantic"), query=None, limit=10)
+        stale = next(record for record in records if record.key == "fact-old")
+        fresh = next(record for record in records if record.key != "fact-old")
+        assert stale.value["superseded_by"] == fresh.key
+        assert stale.value["dormant_at"] is not None
+        assert fresh.value["evidence_quote"] == "My sister Sarah called last night."
 
 
 # ─── 3. End-to-end extraction via run_agent ──────────────────────────────

@@ -71,6 +71,7 @@ def _make_state(
 
     return {
         "message": message,
+        "session_id": "test-exercise",
         "history": [],
         "progress": progress,
         "response": {},

@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from agent.memory.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
+from agent.memory.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode
 from agent.memory.session_feedback import (
     InMemorySessionFeedbackBackend,
@@ -398,3 +399,35 @@ async def test_aexit_closes_feedback_backend() -> None:
 
     # Exactly one close call on the feedback backend.
     assert backend.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_aenter_prewarms_embedding_provider_and_graph(monkeypatch) -> None:
+    """``__aenter__`` should finish warmup before the runtime is usable."""
+
+    class _WarmableEmbeddingProvider(NullEmbeddingProvider):
+        def __init__(self) -> None:
+            self.warmup_calls = 0
+
+        async def awarmup(self) -> None:  # type: ignore[override]
+            self.warmup_calls += 1
+
+    embedding_provider = _WarmableEmbeddingProvider()
+    compiled_graph = object()
+
+    monkeypatch.setattr(
+        "agent.persistence.build_agent_workflow",
+        lambda checkpointer: compiled_graph,
+    )
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        embedding_provider=embedding_provider,
+        finalize_active_sessions_on_close=False,
+    )
+
+    async with runtime:
+        assert embedding_provider.warmup_calls == 1
+        assert runtime._graph is compiled_graph  # noqa: SLF001

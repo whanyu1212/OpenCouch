@@ -13,13 +13,18 @@ Usage in ``main.py``::
 
 Then in route handlers::
 
-    from api.dependencies import get_runtime, get_llm_client
+    from api.dependencies import (
+        get_llm_client,
+        get_response_llm_clients,
+        get_runtime,
+    )
 
     @router.post("/chat")
     async def chat(
         body: ChatRequest,
         runtime: PersistentAgentRuntime = Depends(get_runtime),
         llm_client: BaseLLMClient | None = Depends(get_llm_client),
+        response_llm_clients = Depends(get_response_llm_clients),
     ):
         ...
 
@@ -32,6 +37,7 @@ independent).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -44,8 +50,14 @@ from agent.persistence import (
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
 )
-from core.config import create_configured_llm_client
+from core.config import (
+    ResponseModelTier,
+    create_configured_control_llm_client,
+    create_configured_response_llm_clients,
+)
 from services.llm.base import BaseLLMClient
+
+logger = logging.getLogger(__name__)
 
 
 # Module-level singletons populated by the lifespan handler and
@@ -54,6 +66,10 @@ from services.llm.base import BaseLLMClient
 # and avoids importing FastAPI in every route module.
 _runtime: PersistentAgentRuntime | None = None
 _llm_client: BaseLLMClient | None = None
+_response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = {
+    "fast": None,
+    "quality": None,
+}
 
 
 @asynccontextmanager
@@ -70,14 +86,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     per-request.
     """
 
-    global _runtime, _llm_client  # noqa: PLW0603
+    global _runtime, _llm_client, _response_llm_clients  # noqa: PLW0603
 
     # Resolve LLM client — same logic as the CLI's resolve_llm_client.
     # Returns None if no API key is configured (deterministic mode).
     try:
-        _llm_client = create_configured_llm_client()
+        _llm_client = create_configured_control_llm_client()
     except Exception:
         _llm_client = None
+    try:
+        _response_llm_clients = create_configured_response_llm_clients()
+    except Exception:
+        _response_llm_clients = {"fast": None, "quality": None}
 
     # Resolve memory mode from environment. Default to LOCAL for the
     # API server (persistent storage). The CLI has an interactive
@@ -94,12 +114,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
         memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
         crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         memory_mode=memory_mode,
+        default_llm_client=_llm_client,
     )
     async with _runtime:
-        yield
+        try:
+            yield
+        finally:
+            try:
+                await _runtime.finalize_active_sessions(llm_client=_llm_client)
+            except Exception:
+                logger.warning(
+                    "api lifespan shutdown: failed to finalize active sessions",
+                    exc_info=True,
+                )
 
     _runtime = None
     _llm_client = None
+    _response_llm_clients = {"fast": None, "quality": None}
 
 
 def get_runtime() -> PersistentAgentRuntime:
@@ -126,3 +157,9 @@ def get_llm_client() -> BaseLLMClient | None:
     """
 
     return _llm_client
+
+
+def get_response_llm_clients() -> dict[ResponseModelTier, BaseLLMClient | None]:
+    """FastAPI dependency that returns the shared response-tier clients."""
+
+    return _response_llm_clients

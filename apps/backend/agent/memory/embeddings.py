@@ -132,6 +132,10 @@ class EmbeddingProvider(Protocol):
         """
         ...
 
+    async def awarmup(self) -> None:
+        """Initialize provider resources ahead of the first real embed call."""
+        ...
+
     async def aembed(
         self,
         texts: list[str],
@@ -196,6 +200,10 @@ class NullEmbeddingProvider:
 
     model_name: str = "null"
     dimension: int = 0
+
+    async def awarmup(self) -> None:
+        """No-op warmup for the null provider."""
+        return
 
     async def aembed(
         self,
@@ -270,6 +278,10 @@ class OpenAIEmbeddingProvider:
     @property
     def dimension(self) -> int:
         return self._dimension
+
+    async def awarmup(self) -> None:
+        """Pre-open provider connections before the first user turn."""
+        await self.aembed([" "], task_type="RETRIEVAL_QUERY")
 
     async def aembed(
         self,
@@ -406,6 +418,10 @@ class GeminiEmbeddingProvider:
     @property
     def dimension(self) -> int:
         return self._dimension
+
+    async def awarmup(self) -> None:
+        """Pre-open provider connections before the first user turn."""
+        await self.aembed([" "], task_type="RETRIEVAL_QUERY")
 
     async def aembed(
         self,

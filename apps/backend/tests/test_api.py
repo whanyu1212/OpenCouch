@@ -12,10 +12,48 @@ these tests verify the wrapping is correct.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from agent.memory.models import ProceduralProfile, ProceduralRule
+from agent.memory.procedural import aput_procedural_profile
 from agent.persistence import PersistentAgentRuntime
+from services.llm.base import BaseLLMClient, StructuredResponseT
+
+
+class _FakeResponseTierLLM(BaseLLMClient):
+    """Minimal text-only fake used to prove response-tier routing."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return self.text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield self.text
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        raise AssertionError("structured generation should not be used in this test")
 
 
 @pytest.fixture
@@ -44,7 +82,7 @@ async def client(runtime):
 
     from fastapi import FastAPI
 
-    from api.dependencies import get_llm_client, get_runtime
+    from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
     from api.router import api_router
 
     app = FastAPI()
@@ -53,6 +91,7 @@ async def client(runtime):
     # Override dependencies with test instances
     app.dependency_overrides[get_runtime] = lambda: runtime
     app.dependency_overrides[get_llm_client] = lambda: None  # deterministic mode
+    app.dependency_overrides[get_response_llm_clients] = lambda: {}
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -143,6 +182,43 @@ class TestChat:
         assert resp2.status_code == 200
         # The second turn should succeed — the thread state persisted
 
+    @pytest.mark.asyncio
+    async def test_chat_can_use_response_tier_client(self, runtime) -> None:
+        """Text response tier should affect only the final prose writer."""
+
+        from fastapi import FastAPI
+
+        from api.dependencies import (
+            get_llm_client,
+            get_response_llm_clients,
+            get_runtime,
+        )
+        from api.router import api_router
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_runtime] = lambda: runtime
+        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_response_llm_clients] = lambda: {
+            "quality": _FakeResponseTierLLM("quality-tier reply"),
+        }
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "message": "hello",
+                    "thread_id": "tier-test",
+                    "response_model_tier": "quality",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["response_text"] == "quality-tier reply"
+
 
 # ── Threads ─────────────────────────────────────────────────────────
 
@@ -190,6 +266,27 @@ class TestThreads:
 
         resp = await client.get("/api/threads/nonexistent/state")
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_session_status_tracks_active_session_lifecycle(self, client) -> None:
+        """Session-status should flip on after a turn and off after /end."""
+
+        resp = await client.get("/api/threads/status-thread/session-status")
+        assert resp.status_code == 200
+        assert resp.json() == {"has_active_session": False}
+
+        await client.post(
+            "/api/chat",
+            json={"message": "hello", "thread_id": "status-thread"},
+        )
+        resp = await client.get("/api/threads/status-thread/session-status")
+        assert resp.status_code == 200
+        assert resp.json() == {"has_active_session": True}
+
+        await client.post("/api/threads/status-thread/end")
+        resp = await client.get("/api/threads/status-thread/session-status")
+        assert resp.status_code == 200
+        assert resp.json() == {"has_active_session": False}
 
     @pytest.mark.asyncio
     async def test_get_history_returns_messages(self, client) -> None:
@@ -392,7 +489,151 @@ class TestMemory:
             params={"thread_id": "empty-thread"},
         )
         assert resp.status_code == 404
-        assert "No semantic facts" in resp.json()["detail"]
+        assert "No active semantic facts" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_memory_status_counts_active_facts_and_rules(
+        self, client, runtime
+    ) -> None:
+        """Status should reflect active semantic facts and active rule count."""
+
+        await runtime.memory_store.aput(
+            ("status-owner", "semantic"),
+            "fact-active",
+            {
+                "evidence_quote": "I have a sister named Sarah.",
+                "created_at": "2026-01-01T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+        await runtime.memory_store.aput(
+            ("status-owner", "semantic"),
+            "fact-dormant",
+            {
+                "evidence_quote": "old fact",
+                "created_at": "2026-01-01T00:00:00Z",
+                "dormant_at": "2026-01-02T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+        await aput_procedural_profile(
+            runtime.memory_store,
+            user_id="status-owner",
+            profile=ProceduralProfile(
+                rules=[
+                    ProceduralRule(
+                        rule="Keep your replies shorter.",
+                        evidence=["shorter replies"],
+                        confidence="high",
+                        added_at="2026-01-01T00:00:00Z",
+                        source="explicit_user",
+                    ),
+                    ProceduralRule(
+                        rule="Don't suggest meditation.",
+                        evidence=["stop suggesting meditation"],
+                        confidence="high",
+                        added_at="2026-01-01T00:00:00Z",
+                        source="explicit_user",
+                    ),
+                ]
+            ),
+        )
+
+        resp = await client.get(
+            "/api/memory/status",
+            params={"thread_id": "status-owner"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["counts"]["semantic"] == 1
+        assert data["counts"]["procedural"] == 2
+        assert data["counts"]["episodic"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_facts_hides_inactive_semantic_records(
+        self, client, runtime
+    ) -> None:
+        """The facts endpoint should show only active semantic facts."""
+
+        await runtime.memory_store.aput(
+            ("fact-list-owner", "semantic"),
+            "fact-active",
+            {
+                "evidence_quote": "My sister Sarah moved nearby.",
+                "category": "relationship",
+                "predicate": "KNOWS",
+                "subject": {"identifier": "user"},
+                "object": {"identifier": "Sarah"},
+                "confidence": "high",
+                "created_at": "2026-01-01T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+        await runtime.memory_store.aput(
+            ("fact-list-owner", "semantic"),
+            "fact-superseded",
+            {
+                "evidence_quote": "stale",
+                "category": "identity",
+                "predicate": "IS",
+                "subject": {"identifier": "user"},
+                "object": {"identifier": "engineer"},
+                "confidence": "medium",
+                "created_at": "2026-01-01T00:00:00Z",
+                "superseded_by": "fact-active",
+                "user_visible": True,
+            },
+        )
+
+        resp = await client.get(
+            "/api/memory/facts",
+            params={"thread_id": "fact-list-owner"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["key"] == "fact-active"
+
+    @pytest.mark.asyncio
+    async def test_delete_fact_indexes_only_active_semantic_records(
+        self, client, runtime
+    ) -> None:
+        """Deleting fact #1 should target the first active fact, not dormant rows."""
+
+        await runtime.memory_store.aput(
+            ("delete-active-owner", "semantic"),
+            "fact-dormant",
+            {
+                "evidence_quote": "old",
+                "created_at": "2026-01-01T00:00:00Z",
+                "dormant_at": "2026-01-02T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+        await runtime.memory_store.aput(
+            ("delete-active-owner", "semantic"),
+            "fact-active",
+            {
+                "evidence_quote": "delete me",
+                "created_at": "2026-01-01T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+
+        resp = await client.delete(
+            "/api/memory/facts/1",
+            params={"thread_id": "delete-active-owner"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
+
+        remaining = await runtime.memory_store.asearch(
+            ("delete-active-owner", "semantic"),
+            query=None,
+            limit=100,
+        )
+        assert len(remaining) == 1
+        assert remaining[0].key == "fact-dormant"
 
     @pytest.mark.asyncio
     async def test_delete_session_404_when_empty(self, client) -> None:

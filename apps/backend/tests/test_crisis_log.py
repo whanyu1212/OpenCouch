@@ -398,7 +398,6 @@ class TestCrisisLogMetadata:
                 *,
                 prompt: str,
                 system_instruction: str | None = None,
-                temperature: float = 0,
                 use_search: bool = False,
             ) -> str:
                 return "fake crisis response"
@@ -408,7 +407,6 @@ class TestCrisisLogMetadata:
                 *,
                 prompt: str,
                 system_instruction: str | None = None,
-                temperature: float = 0,
             ) -> AsyncIterator[str]:
                 yield "fake"
 
@@ -418,7 +416,6 @@ class TestCrisisLogMetadata:
                 prompt: str,
                 response_schema: type[StructuredResponseT],
                 system_instruction: str | None = None,
-                temperature: float = 0,
             ) -> StructuredResponseT:
                 # The crisis gate calls this for its classifier; return
                 # a level-2 escalation.

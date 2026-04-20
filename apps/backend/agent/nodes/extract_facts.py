@@ -1,11 +1,15 @@
-"""Semantic fact extraction node — real implementation (v0.3).
+"""Semantic fact extraction node with hot-path policy + session buffering.
 
 Runs after the response generation node on every turn and extracts
-zero or more memory-worthy facts from the current user message. Each
-extracted fact becomes a :class:`SemanticFact` record in the unified
-memory store, keyed by a UUID.
+zero or more memory-worthy facts from the current user message. Phase 1
+splits "the extractor produced a fact" from "the store should persist it
+immediately": each LLM output first becomes a semantic candidate, the
+deterministic write policy decides whether it is safe to commit now, and
+only ``commit_now`` candidates continue to dedup + store write.
+Candidates marked for later review are buffered in the runtime-managed
+session buffer and revisited at session end.
 
-v0.3 design rules (locked via the v0.3 scoping discussion):
+Phase-1 design rules:
 
 1. **Conservative extraction.** The LLM is told via system prompt that
    most turns should produce zero facts. Small talk, transient moods,
@@ -16,18 +20,25 @@ v0.3 design rules (locked via the v0.3 scoping discussion):
    is INCOGNITO, or (b) no LLM client is available. Both are legitimate
    v0.3 states that shouldn't trigger any extraction-path machinery.
 
-3. **Hot-path dedup.** Every candidate fact is checked against existing
-   store records via :func:`find_near_duplicate`. Duplicates bump the
-   matched record's ``last_referenced_at`` timestamp instead of writing
-   a new row. Dedup uses token-set Jaccard similarity on evidence
-   quotes; the vector-similarity variant lands in v0.8.
+3. **Policy before persistence.** Extractor outputs become
+   :class:`SemanticCandidate` instances first. The deterministic policy
+   layer can downgrade a candidate to ``commit_at_session_end``,
+   ``require_repetition``, or ``drop``. Session-end / repetition
+   candidates are buffered for later review rather than written on the
+   hot path.
 
-4. **Failures degrade silently.** LLM errors, schema validation errors,
+4. **Hot-path dedup.** Every immediate-commit fact is checked against
+   existing store records via :func:`find_near_duplicate`. Duplicates
+   bump the matched record's ``last_referenced_at`` timestamp instead
+   of writing a new row. Dedup uses token-set Jaccard similarity on
+   evidence quotes; the vector-similarity variant lands in v0.8.
+
+5. **Failures degrade silently.** LLM errors, schema validation errors,
    and store write errors are all logged at WARNING level but never
    propagate. The extraction node is a side-effect node — a failure
    here must not fail the parent turn.
 
-5. **Always return an empty state delta.** The write is a side effect;
+6. **Always return an empty state delta.** The write is a side effect;
    state isn't modified. Returning ``{}`` is the canonical "I touched
    nothing" signal for LangGraph delta-return nodes.
 """
@@ -41,17 +52,23 @@ from uuid import uuid4
 
 from langgraph.runtime import Runtime
 
+from agent.memory.candidates import build_semantic_candidate
 from agent.memory.dedup import find_near_duplicate
 from agent.memory.extraction_prompts import (
     build_extraction_system_prompt,
     build_extraction_user_prompt,
 )
 from agent.memory.hashing import iso_now as _iso_now
+from agent.memory.reconciliation import (
+    filter_active_semantic_records,
+    plan_semantic_write,
+)
 from agent.memory.models import ExtractionResult, MemoryWrite, SemanticFact
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
+from agent.memory.write_policy import decide_semantic_candidate
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +133,13 @@ def _should_skip_early_emerging_pattern(message: str, turn_index: int) -> bool:
     return True
 
 
-def _memory_write_to_semantic_fact(write: MemoryWrite) -> SemanticFact:
+def _memory_write_to_semantic_fact(
+    write: MemoryWrite,
+    *,
+    write_timing: str = "immediate",
+    write_reason: str = "",
+    policy_version: str = "phase1_v1",
+) -> SemanticFact:
     """Convert an LLM-produced :class:`MemoryWrite` to a stored :class:`SemanticFact`.
 
     The MemoryWrite has the 7 fields the extractor produces; SemanticFact
@@ -147,6 +170,9 @@ def _memory_write_to_semantic_fact(write: MemoryWrite) -> SemanticFact:
         dormant_at=None,
         superseded_by=None,
         user_visible=True,
+        write_timing=write_timing,  # type: ignore[arg-type]
+        write_reason=write_reason,
+        policy_version=policy_version,
     )
 
 
@@ -170,7 +196,8 @@ async def _fetch_existing_user_records(
     """
 
     namespace = (owner_id, "semantic")
-    return await store.asearch(namespace, query=None, limit=1000)
+    records = await store.asearch(namespace, query=None, limit=1000)
+    return filter_active_semantic_records(records)
 
 
 async def _write_new_fact(
@@ -228,6 +255,28 @@ async def _bump_last_referenced_at(
     )
 
 
+async def _mark_fact_superseded(
+    store: MemoryStore,
+    *,
+    matched_record: Any,
+    replacement_fact_id: str,
+) -> None:
+    """Mark one stored semantic fact as superseded by a newer fact."""
+
+    updated_value = dict(matched_record.value)
+    now = _iso_now()
+    updated_value["last_referenced_at"] = now
+    updated_value["dormant_at"] = now
+    updated_value["superseded_by"] = replacement_fact_id
+    await store.aput(
+        matched_record.namespace,
+        key=matched_record.key,
+        value=updated_value,
+        embedding=getattr(matched_record, "embedding", None),
+        embedding_model=getattr(matched_record, "embedding_model", None),
+    )
+
+
 async def run_extract_semantic_facts_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
@@ -255,6 +304,11 @@ async def run_extract_semantic_facts_node(
         *,
         semantic_writes: int = 0,
         semantic_bumps: int = 0,
+        semantic_candidates: int = 0,
+        semantic_commit_now_candidates: int = 0,
+        semantic_session_end_holds: int = 0,
+        semantic_repeat_required: int = 0,
+        semantic_policy_drops: int = 0,
         reason: str = "",
     ) -> dict[str, Any]:
         """Return a state delta carrying just the extractor's diagnostics."""
@@ -264,6 +318,11 @@ async def run_extract_semantic_facts_node(
                 "extract_facts_ms": round((time.monotonic() - start) * 1000, 2),
                 "semantic_writes": semantic_writes,
                 "semantic_bumps": semantic_bumps,
+                "semantic_candidates": semantic_candidates,
+                "semantic_commit_now_candidates": semantic_commit_now_candidates,
+                "semantic_session_end_holds": semantic_session_end_holds,
+                "semantic_repeat_required": semantic_repeat_required,
+                "semantic_policy_drops": semantic_policy_drops,
                 "extract_facts_reason": reason,
             }
         }
@@ -299,7 +358,8 @@ async def run_extract_semantic_facts_node(
 
     store = runtime.context.memory_store
     embedding_provider = runtime.context.embedding_provider
-    owner_id = state.get("user_id") or state.get("session_id") or "local-default"
+    session_buffer = runtime.context.session_memory_buffer
+    owner_id = resolve_owner_id(state)
 
     # v0.8.2: pre-extractor small-talk gate.
     from agent.memory.small_talk_gate import is_small_talk
@@ -332,7 +392,6 @@ async def run_extract_semantic_facts_node(
             prompt=build_extraction_user_prompt(state, turn_index=turn_index),
             response_schema=ExtractionResult,
             system_instruction=build_extraction_system_prompt(),
-            temperature=0,
         )
     except Exception:
         logger.warning(
@@ -357,6 +416,46 @@ async def run_extract_semantic_facts_node(
     if not extraction.facts:
         return _diagnostics_delta(reason=extraction.reason)
 
+    # ── Build candidates and apply deterministic write policy ─────────
+    immediate_candidates: list[tuple[Any, Any]] = []
+    session_end_holds = 0
+    repeat_required = 0
+    policy_drops = 0
+
+    for write in extraction.facts:
+        candidate = build_semantic_candidate(write, message=state["message"])
+        decision = decide_semantic_candidate(candidate)
+
+        if decision.action == "commit_now":
+            immediate_candidates.append((candidate, decision))
+        elif decision.action == "commit_at_session_end":
+            session_end_holds += 1
+            if session_buffer is not None:
+                session_buffer.semantic_candidates.append(candidate)
+        elif decision.action == "require_repetition":
+            repeat_required += 1
+            if session_buffer is not None:
+                session_buffer.semantic_candidates.append(candidate)
+        else:
+            policy_drops += 1
+
+    if not immediate_candidates:
+        logger.info(
+            "extract_semantic_facts_node: policy held all %d facts "
+            "(session_end=%d, repetition=%d, dropped=%d)",
+            len(extraction.facts),
+            session_end_holds,
+            repeat_required,
+            policy_drops,
+        )
+        return _diagnostics_delta(
+            semantic_candidates=len(extraction.facts),
+            semantic_session_end_holds=session_end_holds,
+            semantic_repeat_required=repeat_required,
+            semantic_policy_drops=policy_drops,
+            reason=extraction.reason,
+        )
+
     # ── Fetch existing records once for dedup ──────────────────────────
     try:
         existing_records = await _fetch_existing_user_records(store, owner_id=owner_id)
@@ -366,7 +465,14 @@ async def run_extract_semantic_facts_node(
             "dedup; skipping all candidates for this turn.",
             exc_info=True,
         )
-        return _diagnostics_delta(reason="skipped: dedup fetch failed")
+        return _diagnostics_delta(
+            semantic_candidates=len(extraction.facts),
+            semantic_commit_now_candidates=len(immediate_candidates),
+            semantic_session_end_holds=session_end_holds,
+            semantic_repeat_required=repeat_required,
+            semantic_policy_drops=policy_drops,
+            reason="skipped: dedup fetch failed",
+        )
 
     # ── Batch-compute embeddings for all candidates (v0.8.1) ───────────
     #
@@ -391,11 +497,14 @@ async def run_extract_semantic_facts_node(
     # side embeddings later in load_memory_node). Matters for
     # asymmetric retrieval models; ignored by providers that don't
     # support task types.
-    candidate_embeddings: list[list[float] | None] = [None] * len(extraction.facts)
+    candidate_embeddings: list[list[float] | None] = [None] * len(immediate_candidates)
     embedding_model_name: str | None = None
     if embedding_provider is not None:
         try:
-            quotes = [c.evidence_quote for c in extraction.facts]
+            quotes = [
+                candidate.payload.evidence_quote
+                for candidate, _ in immediate_candidates
+            ]
             candidate_embeddings = await embedding_provider.aembed(
                 quotes,
                 task_type="RETRIEVAL_DOCUMENT",
@@ -417,20 +526,21 @@ async def run_extract_semantic_facts_node(
                 "writing facts without embeddings for this turn.",
                 exc_info=True,
             )
-            candidate_embeddings = [None] * len(extraction.facts)
+            candidate_embeddings = [None] * len(immediate_candidates)
             embedding_model_name = None
 
     # ── Per-candidate dedup + write ─────────────────────────────────────
     written = 0
     bumped = 0
-    for candidate_index, candidate in enumerate(extraction.facts):
+    for candidate_index, (candidate, decision) in enumerate(immediate_candidates):
+        write = candidate.payload
         try:
-            matched = find_near_duplicate(candidate, existing_records)
+            matched = find_near_duplicate(write, existing_records)
         except Exception:
             logger.warning(
                 "extract_semantic_facts_node: dedup check raised for candidate "
                 "%r; skipping this candidate.",
-                candidate.evidence_quote[:40],
+                write.evidence_quote[:40],
                 exc_info=True,
             )
             continue
@@ -449,9 +559,22 @@ async def run_extract_semantic_facts_node(
                 )
             continue
 
-        # No duplicate: materialize as SemanticFact and write.
+        # No duplicate: materialize as SemanticFact and reconcile.
         try:
-            fact = _memory_write_to_semantic_fact(candidate)
+            fact = _memory_write_to_semantic_fact(
+                write,
+                write_timing="immediate",
+                write_reason=decision.reason,
+                policy_version=decision.policy_version,
+            )
+            reconciliation = plan_semantic_write(fact, existing_records)
+            if reconciliation.bump_record is not None:
+                await _bump_last_referenced_at(
+                    store,
+                    matched_record=reconciliation.bump_record,
+                )
+                bumped += 1
+                continue
             # v0.8.1: pair the fact with the embedding computed in
             # the batch above. ``candidate_embeddings[i]`` is None
             # when no embedding provider is configured, when the
@@ -484,23 +607,48 @@ async def run_extract_semantic_facts_node(
                     embedding_model=this_model,
                 )
             )
+            for superseded_record in reconciliation.supersede_records:
+                try:
+                    await _mark_fact_superseded(
+                        store,
+                        matched_record=superseded_record,
+                        replacement_fact_id=fact.id,
+                    )
+                    superseded_record.value["last_referenced_at"] = fact.created_at
+                    superseded_record.value["dormant_at"] = fact.created_at
+                    superseded_record.value["superseded_by"] = fact.id
+                except Exception:
+                    logger.warning(
+                        "extract_semantic_facts_node: failed to mark stale fact %r "
+                        "as superseded after writing replacement.",
+                        superseded_record.key,
+                        exc_info=True,
+                    )
         except Exception:
             logger.warning(
                 "extract_semantic_facts_node: failed to write candidate %r; "
                 "continuing with other candidates.",
-                candidate.evidence_quote[:40],
+                write.evidence_quote[:40],
                 exc_info=True,
             )
 
     logger.info(
         "extract_semantic_facts_node: turn complete — %d written, %d bumped, "
-        "%d total candidates",
+        "%d immediate, %d held_for_session, %d repeat_required, %d dropped",
         written,
         bumped,
-        len(extraction.facts),
+        len(immediate_candidates),
+        session_end_holds,
+        repeat_required,
+        policy_drops,
     )
     return _diagnostics_delta(
         semantic_writes=written,
         semantic_bumps=bumped,
+        semantic_candidates=len(extraction.facts),
+        semantic_commit_now_candidates=len(immediate_candidates),
+        semantic_session_end_holds=session_end_holds,
+        semantic_repeat_required=repeat_required,
+        semantic_policy_drops=policy_drops,
         reason=extraction.reason,
     )

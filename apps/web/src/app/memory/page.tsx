@@ -6,6 +6,12 @@ import {
   getMemoryFacts,
   getMemorySessions,
   getMemoryRules,
+  deleteMemoryFact,
+  deleteMemorySession,
+  deleteMemoryRule,
+  type MemoryFact,
+  type MemoryRule,
+  type MemorySession,
   type MemoryStatus,
 } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
@@ -13,12 +19,12 @@ import { useSessionStore } from "@/lib/session";
 type Tab = "overview" | "facts" | "sessions" | "rules";
 
 export default function MemoryPage() {
-  const { userId, threadId } = useSessionStore();
+  const { userId, threadId, memoryRefreshVersion, bumpMemoryRefreshVersion } = useSessionStore();
   const [tab, setTab] = useState<Tab>("overview");
   const [status, setStatus] = useState<MemoryStatus | null>(null);
-  const [facts, setFacts] = useState<Record<string, unknown>[]>([]);
-  const [sessions, setSessions] = useState<Record<string, unknown>[]>([]);
-  const [rules, setRules] = useState<Record<string, unknown>[]>([]);
+  const [facts, setFacts] = useState<MemoryFact[]>([]);
+  const [sessions, setSessions] = useState<MemorySession[]>([]);
+  const [rules, setRules] = useState<MemoryRule[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -45,7 +51,22 @@ export default function MemoryPage() {
 
   useEffect(() => {
     loadAll();
-  }, [loadAll]);
+  }, [loadAll, memoryRefreshVersion]);
+
+  const handleDeleteFact = async (index: number) => {
+    await deleteMemoryFact(index, threadId, userId || undefined);
+    bumpMemoryRefreshVersion();
+  };
+
+  const handleDeleteSession = async (index: number) => {
+    await deleteMemorySession(index, threadId, userId || undefined);
+    bumpMemoryRefreshVersion();
+  };
+
+  const handleDeleteRule = async (index: number) => {
+    await deleteMemoryRule(index, threadId, userId || undefined);
+    bumpMemoryRefreshVersion();
+  };
 
   const TABS: { key: Tab; label: string; count: number }[] = [
     { key: "overview", label: "Overview", count: 0 },
@@ -105,9 +126,9 @@ export default function MemoryPage() {
         {!loading && !error && (
           <div className="animate-fadeIn">
             {tab === "overview" && status && <OverviewTab status={status} />}
-            {tab === "facts" && <FactsTab facts={facts} />}
-            {tab === "sessions" && <SessionsTab sessions={sessions} />}
-            {tab === "rules" && <RulesTab rules={rules} />}
+            {tab === "facts" && <FactsTab facts={facts} onDelete={handleDeleteFact} />}
+            {tab === "sessions" && <SessionsTab sessions={sessions} onDelete={handleDeleteSession} />}
+            {tab === "rules" && <RulesTab rules={rules} onDelete={handleDeleteRule} />}
           </div>
         )}
       </div>
@@ -134,6 +155,10 @@ function OverviewTab({ status }: { status: MemoryStatus }) {
         <MetaRow label="Owner" value={status.owner_id} mono />
         <MetaRow label="Crisis log" value={String(status.crisis_log_count)} />
         <MetaRow
+          label="Session feedback"
+          value={String(status.session_feedback_count)}
+        />
+        <MetaRow
           label="Proactive recall"
           value={status.proactive_recall_enabled ? "On" : "Off"}
           accent={status.proactive_recall_enabled}
@@ -154,24 +179,27 @@ function MetaRow({ label, value, mono, accent }: { label: string; value: string;
   );
 }
 
-function FactsTab({ facts }: { facts: Record<string, unknown>[] }) {
+function FactsTab({ facts, onDelete }: { facts: MemoryFact[]; onDelete: (index: number) => Promise<void> }) {
   if (facts.length === 0) return <Empty label="No semantic facts stored yet." />;
   return (
     <div className="space-y-3 max-w-2xl">
       {facts.map((f, i) => (
-        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-[15px] text-oc-text leading-relaxed italic">
                 &ldquo;{String(f.evidence_quote)}&rdquo;
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
-                <Tag>{String(f.category)}</Tag>
-                <Tag>{String(f.subject)} → {String(f.predicate)} → {String(f.object)}</Tag>
-                <Tag muted>{String(f.confidence)}</Tag>
+                <Tag>{f.category}</Tag>
+                <Tag>{f.subject} → {f.predicate} → {f.object}</Tag>
+                <Tag muted>{f.confidence}</Tag>
               </div>
             </div>
-            <span className="text-[11px] font-mono text-oc-text-dim shrink-0">#{String(f.index)}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[11px] font-mono text-oc-text-dim">#{f.index}</span>
+              <DeleteButton onDelete={() => onDelete(f.index)} label="fact" />
+            </div>
           </div>
         </div>
       ))}
@@ -179,20 +207,25 @@ function FactsTab({ facts }: { facts: Record<string, unknown>[] }) {
   );
 }
 
-function SessionsTab({ sessions }: { sessions: Record<string, unknown>[] }) {
+function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDelete: (index: number) => Promise<void> }) {
   if (sessions.length === 0) return <Empty label="No episodic session arcs yet." />;
   return (
     <div className="space-y-3 max-w-2xl">
       {sessions.map((s, i) => (
-        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
-          <p className="text-[15px] text-oc-text leading-relaxed">{String(s.summary)}</p>
-          <div className="flex flex-wrap gap-2 mt-3">
-            {(s.themes as string[] || []).map((t: string) => (
-              <Tag key={t}>{t}</Tag>
-            ))}
-            <Tag muted>{String(s.mood_opened)} → {String(s.mood_closed)}</Tag>
-            <Tag muted>{String(s.turn_count)} turns</Tag>
-            <Tag muted>{String(s.ended_at).slice(0, 10)}</Tag>
+        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <p className="text-[15px] text-oc-text leading-relaxed">{s.summary}</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {s.themes.map((t) => (
+                  <Tag key={t}>{t}</Tag>
+                ))}
+                <Tag muted>{s.mood_opened} → {s.mood_closed}</Tag>
+                <Tag muted>{s.turn_count} turns</Tag>
+                <Tag muted>{s.ended_at.slice(0, 10)}</Tag>
+              </div>
+            </div>
+            <DeleteButton onDelete={() => onDelete(s.index)} label="session" />
           </div>
         </div>
       ))}
@@ -200,25 +233,65 @@ function SessionsTab({ sessions }: { sessions: Record<string, unknown>[] }) {
   );
 }
 
-function RulesTab({ rules }: { rules: Record<string, unknown>[] }) {
+function RulesTab({ rules, onDelete }: { rules: MemoryRule[]; onDelete: (index: number) => Promise<void> }) {
   if (rules.length === 0) return <Empty label="No procedural style rules yet." />;
   return (
     <div className="space-y-3 max-w-2xl">
       {rules.map((r, i) => (
-        <div key={i} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
-          <p className="text-[15px] text-oc-text">{String(r.rule)}</p>
-          <div className="flex flex-wrap gap-2 mt-3">
-            <Tag muted>{String(r.confidence)}</Tag>
-            {r.added_at ? <Tag muted>{String(r.added_at).slice(0, 10)}</Tag> : null}
+        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <p className="text-[15px] text-oc-text">{r.rule}</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <Tag muted>{r.confidence}</Tag>
+                {r.added_at ? <Tag muted>{r.added_at.slice(0, 10)}</Tag> : null}
+              </div>
+              {r.evidence.length > 0 ? (
+                <p className="text-[13px] text-oc-text-muted mt-2.5 italic font-mono leading-relaxed">
+                  evidence: {r.evidence.join("; ")}
+                </p>
+              ) : null}
+            </div>
+            <DeleteButton onDelete={() => onDelete(r.index)} label="rule" />
           </div>
-          {Array.isArray(r.evidence) && r.evidence.length > 0 ? (
-            <p className="text-[13px] text-oc-text-muted mt-2.5 italic font-mono leading-relaxed">
-              evidence: {(r.evidence as string[]).join("; ")}
-            </p>
-          ) : null}
         </div>
       ))}
     </div>
+  );
+}
+
+function DeleteButton({ onDelete, label }: { onDelete: () => Promise<void>; label: string }) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleClick = async () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      onBlur={() => setConfirming(false)}
+      disabled={deleting}
+      className={`shrink-0 text-[11px] font-mono px-2 py-1 rounded-md border transition-all ${
+        confirming
+          ? "bg-red-50 text-red-600 border-red-200 opacity-100"
+          : "text-oc-text-dim border-transparent opacity-0 group-hover:opacity-100 hover:text-red-500 hover:border-red-200"
+      } disabled:opacity-50`}
+      title={`Delete this ${label}`}
+    >
+      {deleting ? "…" : confirming ? "confirm?" : "forget"}
+    </button>
   );
 }
 

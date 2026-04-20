@@ -16,6 +16,7 @@ from api.models import (
     EndSessionRequest,
     MessageResponse,
     SessionArcResponse,
+    ThreadSessionStatusResponse,
     ThreadSummaryResponse,
 )
 from services.llm.base import BaseLLMClient
@@ -92,6 +93,18 @@ async def get_thread_history(
         )
         for m in messages
     ]
+
+
+@router.get("/{thread_id}/session-status", response_model=ThreadSessionStatusResponse)
+async def get_thread_session_status(
+    thread_id: str,
+    runtime: PersistentAgentRuntime = Depends(get_runtime),
+) -> ThreadSessionStatusResponse:
+    """Return whether this thread currently has an active session."""
+
+    return ThreadSessionStatusResponse(
+        has_active_session=await runtime.has_active_session(thread_id)
+    )
 
 
 @router.post("/{thread_id}/end")

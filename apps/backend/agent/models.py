@@ -106,6 +106,31 @@ class StatusEvent(BaseModel):
     detail: str = ""
 
 
+# Human-readable labels for pipeline stages. Used by both the CLI and
+# WebSocket API so that all clients display consistent, friendly text.
+STAGE_LABELS: dict[str, str] = {
+    "load_memory": "loading memory",
+    "memory_profile_load": "loading profile memory",
+    "memory_graph_load": "querying graph memory",
+    "memory_profile_save": "saving profile memory",
+    "memory_graph_save": "writing graph memory",
+    "crisis_gate": "safety check",
+    "crisis_response": "generating crisis reply",
+    "crisis_log": "writing crisis log",
+    "therapeutic": "generating therapeutic reply",
+    "extract_facts": "extracting facts",
+    "extract_procedural": "extracting style rules",
+    "finalize": "finalizing turn",
+    "session_stage": "reading context",
+    "response_generation": "generating",
+}
+
+
+def friendly_stage(stage: str) -> str:
+    """Return the human-friendly label for a pipeline stage."""
+    return STAGE_LABELS.get(stage, stage)
+
+
 class ChunkEvent(BaseModel):
     """Incremental text chunk from response generation.
 
@@ -119,6 +144,20 @@ class ChunkEvent(BaseModel):
     text: str
 
 
+class ResponseReadyEvent(BaseModel):
+    """Non-terminal event emitted when the reply is finalized.
+
+    This fires after ``finalize_turn_node`` has appended the assistant
+    reply to transcript/history, but before post-response memory writers
+    finish. The output payload is intentionally partial: response text,
+    routing, and crisis metadata are ready; tail diagnostics like
+    ``turn_total_ms`` still land on the terminal ``DoneEvent``.
+    """
+
+    type: Literal["response_ready"] = "response_ready"
+    output: AgentOutput
+
+
 class DoneEvent(BaseModel):
     """Terminal event carrying the complete agent output."""
 
@@ -126,4 +165,4 @@ class DoneEvent(BaseModel):
     output: AgentOutput
 
 
-StreamEvent = StatusEvent | ChunkEvent | DoneEvent
+StreamEvent = StatusEvent | ChunkEvent | ResponseReadyEvent | DoneEvent

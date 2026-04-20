@@ -111,8 +111,8 @@ const STEPS: StepDef[] = [
       { label: 'diagnostics reducer', reducer: true },
     ],
     detail: {
-      what: 'Two independent LLM extraction nodes that fan out in parallel from finalize_turn_node. Semantic extractor writes persistent facts; procedural extractor writes style rules. Both are gated by a small-talk check. Both write to the diagnostics dict via _merge_dicts reducer — no manual spreading needed.',
-      how: 'Gating: crisis path → skip, no LLM → skip, incognito → skip, small talk → skip. Otherwise: LLM structured-output call, batch-embed candidates, write to store. Diagnostics record timing + write counts + skip reason. Parallel execution saves 3–5s per turn when LLM extraction is active.',
+      what: 'Two independent post-response memory lanes fan out in parallel from finalize_turn_node. Each lane first extracts candidates with structured LLM output, then runs deterministic write policy. Low-risk items may commit immediately; sensitive or implicit items can be buffered for session end or dropped. Both are gated by a small-talk check and both write to diagnostics via the _merge_dicts reducer.',
+      how: 'Gating: crisis path → skip, no LLM → skip, incognito → skip, small talk → skip. Otherwise: structured-output extraction, policy decision, then immediate commit vs persisted active-session buffer vs drop. Session-end promotion later runs outside the per-turn graph via summarize_session + commit_session_memory. Diagnostics record timing + write counts + skip reason. Parallel execution still saves tail latency when extraction is active.',
       emits: 'state.diagnostics (extract_facts_ms, extract_procedural_ms, etc.)',
     },
   },
@@ -218,7 +218,7 @@ export default function AgentGraph() {
 
   return (
     <div className={styles.root}>
-      <p className={styles.hint}>Click any step to expand. The pipeline shows the v0.9+ safety-first topology with parallel extractors.</p>
+      <p className={styles.hint}>Click any step to expand. The pipeline shows the v0.9+ safety-first topology with parallel post-response memory evaluation.</p>
 
       <div className={styles.pipeline}>
         {STEPS.map((step) => {

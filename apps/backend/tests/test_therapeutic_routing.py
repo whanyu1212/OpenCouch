@@ -68,7 +68,6 @@ class _FakeDispatchLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         self.text_calls += 1
@@ -79,7 +78,6 @@ class _FakeDispatchLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         yield "fake"
 
@@ -89,7 +87,6 @@ class _FakeDispatchLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         self.structured_calls += 1
         if self.should_raise:
@@ -801,6 +798,7 @@ class TestEndToEndRouting:
         # State on the LAST step (index 4 = "one thing you can taste")
         state: Any = {
             "message": "Coffee. That's what I can taste right now.",
+            "session_id": "test-routing",
             "history": [],
             "progress": {
                 "exercise_type": "grounding_5_4_3_2_1",

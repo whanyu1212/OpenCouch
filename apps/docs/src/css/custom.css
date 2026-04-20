@@ -87,7 +87,7 @@
   --ifm-font-family-base:    'IBM Plex Sans', 'Segoe UI', sans-serif;
   --ifm-heading-font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
   --ifm-font-family-monospace: 'IBM Plex Mono', 'Fira Code', monospace;
-  --ifm-font-size-base:      16px;
+  --ifm-font-size-base:      16.5px;
   --ifm-line-height-base:    1.7;
   --ifm-leading-base:        1.7;
   --ifm-code-font-size:      0.875rem;
@@ -156,6 +156,7 @@ html[data-theme='dark'] {
 *, *::before, *::after { box-sizing: border-box; }
 
 html {
+  font-size: 16.5px;
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -246,7 +247,12 @@ html[data-theme='dark'] .navbar {
 
 /* ─── Docs article ───────────────────────────────────────────────────────────── */
 .theme-doc-markdown {
-  max-width: 740px;
+  max-width: 900px;
+}
+
+/* Let the content column stretch closer to the right-side TOC */
+[class*="docItemCol"] {
+  max-width: 80% !important;
 }
 
 article h1 {
@@ -460,6 +466,76 @@ html[data-theme='dark'] .admonition.admonition-danger {
   border-color: var(--oc-cta-border) !important;
   background: rgba(215, 139, 95, 0.22) !important;
   color: #fff !important;
+}
+
+/* ─── Markdown tables (match the TherapyApproach mode-table look) ────────────── */
+.theme-doc-markdown [class*="tableWrapper"] {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.theme-doc-markdown table {
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  width: 100%;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.theme-doc-markdown table th:first-child,
+.theme-doc-markdown table td:first-child {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.theme-doc-markdown table thead tr {
+  background: none;
+}
+
+.theme-doc-markdown table th {
+  font-weight: 700;
+  color: var(--oc-text-primary);
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--oc-border);
+  border-right: none;
+  text-align: left;
+  background: none;
+}
+
+.theme-doc-markdown table td {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--oc-border);
+  border-right: none;
+  color: var(--oc-text-secondary);
+}
+
+.theme-doc-markdown table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.theme-doc-markdown table tbody tr:nth-child(odd) {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+[data-theme='dark'] .theme-doc-markdown table tbody tr:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.theme-doc-markdown table tbody tr {
+  transition: background var(--oc-duration-fast) var(--oc-ease-out);
+}
+
+.theme-doc-markdown table tbody tr:hover {
+  background: var(--oc-accent-subtle);
+}
+
+.theme-doc-markdown table td:first-child,
+.theme-doc-markdown table th:first-child {
+  font-weight: 700;
+  color: var(--oc-text-primary);
 }
 
 /* ─── TOC ────────────────────────────────────────────────────────────────────── */
@@ -1214,6 +1290,10 @@ html[data-theme='dark'] .flow-badge {
 }
 
 @media (max-width: 640px) {
+  html {
+    font-size: 17px;
+  }
+
   .hero--opencouch {
     padding: 5.1rem 0 4.2rem;
   }

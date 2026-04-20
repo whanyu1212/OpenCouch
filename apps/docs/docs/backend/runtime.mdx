@@ -4,6 +4,7 @@ sidebar_position: 2
 ---
 
 import TerminalWindow from '@site/src/components/TerminalWindow';
+import RuntimeLayers from '@site/src/components/RuntimeLayers';
 
 # Runtime & Persistence
 
@@ -15,20 +16,7 @@ checkpointing.
 
 ## Two layers
 
-```text
-                        ┌──────────────────────────────┐
-   run_agent()  ───────►│                              │
-                        │     Same graph nodes,        │
-                        │     same ordering,           │──────►  AgentOutput
-                        │     same safety contract     │
-   run_turn()   ───────►│                              │
-   (+ checkpoint)       └──────────────────────────────┘
-```
-
-| Layer | Entry point | Persistence | Used by |
-|---|---|---|---|
-| **Stateless** | `run_agent(input)` | None — caller manages history | Tests, evals, one-shot scripts |
-| **Persistent** | `PersistentAgentRuntime.run_turn(thread_id, msg)` | SQLite via LangGraph checkpointer | CLI, API, multi-turn sessions |
+<RuntimeLayers />
 
 :::tip The difference is between turns, not within a turn
 Both layers run identical graph nodes in identical order. The
@@ -54,8 +42,9 @@ persistent turn.
 | `progress` | `_merge_dicts` | Per-turn fields merge with cross-turn fields (exercise state) |
 | `diagnostics` | `_merge_dicts` | Parallel extractors write independently |
 
-**Non-reducer fields** (`routing`, `response`, `crisis`) are
-overwritten fresh each turn — they're turn-scoped by design.
+**Non-reducer fields** (`response`, `crisis`) are overwritten fresh
+each turn. `routing` uses `_merge_dicts` to preserve cross-turn
+modality while resetting per-turn mode/route decisions.
 
 ---
 
@@ -107,11 +96,13 @@ access via `runtime.context.llm_client` — not dict access.
 ```python
 @dataclass(slots=True, frozen=True)
 class WorkflowContext:
-    llm_client: BaseLLMClient | None
-    memory_store: MemoryStore
-    crisis_log_backend: CrisisLogBackend
-    memory_mode: MemoryMode
+    llm_client: BaseLLMClient | None          # control-plane LLM (safety, routing, memory)
+    memory_store: MemoryStore                  # unified read/write across 3 namespaces
+    crisis_log_backend: CrisisLogBackend       # always-on audit trail
+    memory_mode: MemoryMode                    # persistent | guest | incognito
+    response_llm: BaseLLMClient | None = None  # selectable response-writer (fast/quality)
     embedding_provider: EmbeddingProvider | None = None
+    session_memory_buffer: SessionMemoryBuffer | None = None  # held candidates until session end
 ```
 
 :::note Why frozen?

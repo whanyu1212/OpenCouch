@@ -88,7 +88,6 @@ async def run_crisis_response_node(
             async for chunk in llm_client.generate_text_stream(
                 prompt=build_crisis_response_prompt(enriched_state),
                 system_instruction=build_crisis_response_system_prompt(),
-                temperature=0,
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})

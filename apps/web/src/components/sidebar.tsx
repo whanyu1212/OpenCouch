@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import {
+  endSession,
+  getMemoryFacts,
+  getThreadSessionStatus,
+} from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
 
@@ -56,10 +61,42 @@ const DEFAULT_WIDTH = 260;
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { userId, threadId, sessionMode, setUserId, setThreadId, newSession, chatLoading, voiceConnected } = useSessionStore();
+  const {
+    userId,
+    threadId,
+    sessionMode,
+    responseModelTier,
+    setUserId,
+    setThreadId,
+    setResponseModelTier,
+    newSession,
+    chatLoading,
+    voiceConnected,
+    messages,
+    memoryFacts,
+    setMemoryFacts,
+    addUnseenMemories,
+    bumpMemoryRefreshVersion,
+    lastEndedSession,
+    setLastEndedSession,
+    clearLastEndedSession,
+  } = useSessionStore();
   const isIncognito = sessionMode === "incognito";
+  const hasSessionTurns = messages.some((message) => message.role === "user");
+  const [endingSession, setEndingSession] = useState(false);
+  const [endError, setEndError] = useState<string | null>(null);
+  const [hasActiveSession, setHasActiveSession] = useState(false);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isResizing = useRef(false);
+  const isBusy = chatLoading || endingSession;
+  const identityLocked =
+    isBusy || (sessionMode === "persistent" && hasActiveSession);
+  const canEndSession =
+    sessionMode === "persistent" &&
+    !voiceConnected &&
+    hasActiveSession &&
+    !isBusy;
+  const showTextResponseTier = pathname !== "/voice";
 
   const handleMouseDown = useCallback(() => {
     isResizing.current = true;
@@ -83,6 +120,135 @@ export function Sidebar() {
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
   }, []);
+
+  useEffect(() => {
+    if (sessionMode !== "persistent" || voiceConnected) {
+      setHasActiveSession(false);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshStatus = () => {
+      getThreadSessionStatus(threadId)
+        .then((status) => {
+          if (!cancelled) {
+            setHasActiveSession(status.has_active_session);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHasActiveSession(false);
+          }
+        });
+    };
+
+    refreshStatus();
+    const intervalId = window.setInterval(refreshStatus, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [threadId, sessionMode, voiceConnected, lastEndedSession]);
+
+  useEffect(() => {
+    if (
+      sessionMode === "persistent" &&
+      !voiceConnected &&
+      chatLoading &&
+      hasSessionTurns
+    ) {
+      setHasActiveSession(true);
+    }
+  }, [chatLoading, hasSessionTurns, sessionMode, voiceConnected]);
+
+  const refreshSemanticFacts = useCallback(async () => {
+    if (isIncognito) {
+      setMemoryFacts([]);
+      return;
+    }
+
+    const facts = await getMemoryFacts(threadId, userId || undefined);
+    setMemoryFacts(facts);
+    addUnseenMemories(Math.max(0, facts.length - memoryFacts.length));
+  }, [
+    addUnseenMemories,
+    isIncognito,
+    memoryFacts.length,
+    setMemoryFacts,
+    threadId,
+    userId,
+  ]);
+
+  const finalizeCurrentPersistentSession = useCallback(
+    async ({
+      captureResult,
+    }: {
+      captureResult: boolean;
+    }) => {
+      if (
+        sessionMode !== "persistent" ||
+        voiceConnected ||
+        !hasActiveSession
+      ) {
+        if (!captureResult) clearLastEndedSession();
+        setEndError(null);
+        return null;
+      }
+
+      setEndingSession(true);
+      setEndError(null);
+
+      try {
+        const result = await endSession(threadId);
+        try {
+          await refreshSemanticFacts();
+        } catch {
+          // The session already ended. A stale semantic-facts panel
+          // should not turn a successful end-session action into a failure.
+        }
+        bumpMemoryRefreshVersion();
+
+        if (captureResult) {
+          setLastEndedSession({ threadId, ...result });
+        } else {
+          clearLastEndedSession();
+        }
+        setHasActiveSession(false);
+        return result;
+      } catch {
+        setEndError(
+          captureResult
+            ? "Could not end the current session."
+            : "Could not finalize the previous session before switching. It will still close on timeout or shutdown."
+        );
+        return null;
+      } finally {
+        setEndingSession(false);
+      }
+    },
+    [
+      bumpMemoryRefreshVersion,
+      clearLastEndedSession,
+      hasActiveSession,
+      refreshSemanticFacts,
+      sessionMode,
+      setLastEndedSession,
+      threadId,
+      voiceConnected,
+    ]
+  );
+
+  const handleExplicitEndSession = useCallback(async () => {
+    if (!canEndSession) return;
+    await finalizeCurrentPersistentSession({ captureResult: true });
+  }, [canEndSession, finalizeCurrentPersistentSession]);
+
+  const handleNewSession = useCallback(async () => {
+    if (isBusy) return;
+    await finalizeCurrentPersistentSession({ captureResult: false });
+    newSession();
+  }, [finalizeCurrentPersistentSession, isBusy, newSession]);
 
   return (
     <aside
@@ -110,12 +276,13 @@ export function Sidebar() {
       <div className="relative z-10 mx-3 px-3 py-3 border border-oc-border rounded-lg bg-oc-bg/60 backdrop-blur-sm space-y-2.5">
         {/* Mode indicator — clickable to go back to mode picker */}
         <button
-          onClick={newSession}
-          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md border transition-all cursor-pointer ${
+          onClick={() => void handleNewSession()}
+          disabled={isBusy}
+          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md border transition-all ${
             isIncognito
               ? "bg-oc-warm-100 border-oc-warm-200 hover:bg-oc-warm-200/70"
               : "bg-oc-teal-50 border-oc-teal-200/60 hover:bg-oc-teal-100/60"
-          }`}
+          } ${isBusy ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
         >
           <div className="flex items-center gap-2">
             {isIncognito ? (
@@ -151,7 +318,7 @@ export function Sidebar() {
             type="text"
             value={isIncognito ? "(anonymous)" : userId}
             onChange={(e) => setUserId(e.target.value)}
-            disabled={isIncognito}
+            disabled={isIncognito || identityLocked}
             placeholder="e.g. alice"
             className="w-full px-2.5 py-2 text-[13px] font-mono bg-oc-bg-input border border-oc-border rounded-md focus:outline-none focus:border-oc-teal-400 focus:ring-1 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 disabled:bg-oc-warm-50 placeholder:text-oc-text-dim/60"
           />
@@ -164,17 +331,76 @@ export function Sidebar() {
             type="text"
             value={threadId}
             onChange={(e) => setThreadId(e.target.value)}
-            disabled={isIncognito}
+            disabled={isIncognito || identityLocked}
             placeholder="e.g. session-1"
             className="w-full px-2.5 py-2 text-[13px] font-mono bg-oc-bg-input border border-oc-border rounded-md focus:outline-none focus:border-oc-teal-400 focus:ring-1 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 disabled:bg-oc-warm-50 placeholder:text-oc-text-dim/60"
           />
         </div>
+        {showTextResponseTier && (
+          <div>
+            <label className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-muted block mb-1">
+              response speed
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setResponseModelTier("fast")}
+                disabled={chatLoading}
+                className={`px-2.5 py-2 text-[12px] rounded-md border transition-all ${
+                  responseModelTier === "fast"
+                    ? "border-oc-teal-300 bg-oc-teal-50 text-oc-teal-800"
+                    : "border-oc-border text-oc-text-secondary hover:bg-oc-warm-100/60"
+                } ${chatLoading ? "cursor-not-allowed opacity-60" : ""}`}
+              >
+                Fast replies
+              </button>
+              <button
+                type="button"
+                onClick={() => setResponseModelTier("quality")}
+                disabled={chatLoading}
+                className={`px-2.5 py-2 text-[12px] rounded-md border transition-all ${
+                  responseModelTier === "quality"
+                    ? "border-oc-teal-300 bg-oc-teal-50 text-oc-teal-800"
+                    : "border-oc-border text-oc-text-secondary hover:bg-oc-warm-100/60"
+                } ${chatLoading ? "cursor-not-allowed opacity-60" : ""}`}
+              >
+                Higher quality
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-oc-text-dim">
+              Higher quality replies may take longer.
+            </p>
+          </div>
+        )}
+        {!isIncognito && (
+          <button
+            onClick={() => void handleExplicitEndSession()}
+            disabled={!canEndSession}
+            className="w-full text-[12px] font-medium text-oc-teal-700 hover:text-oc-teal-600 py-2 border border-oc-teal-200/80 rounded-md hover:bg-oc-teal-50 hover:border-oc-teal-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {endingSession ? "ending…" : "End Session"}
+          </button>
+        )}
         <button
-          onClick={newSession}
-          className="w-full text-[12px] font-medium text-oc-teal-700 hover:text-oc-teal-600 py-2 border border-oc-border-subtle rounded-md hover:bg-oc-teal-50 hover:border-oc-teal-200 transition-all"
+          onClick={() => void handleNewSession()}
+          disabled={isBusy}
+          className="w-full text-[12px] font-medium text-oc-teal-700 hover:text-oc-teal-600 py-2 border border-oc-border-subtle rounded-md hover:bg-oc-teal-50 hover:border-oc-teal-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           + New Session
         </button>
+        {endError && (
+          <p className="text-[11px] leading-relaxed text-oc-red">{endError}</p>
+        )}
+        {!endError && lastEndedSession?.threadId === threadId && (
+          <div className="rounded-md border border-oc-teal-200/70 bg-oc-teal-50/80 px-2.5 py-2">
+            <p className="text-[11px] font-mono uppercase tracking-widest text-oc-teal-700">
+              session ended
+            </p>
+            <p className="mt-1 text-[12px] leading-relaxed text-oc-text-secondary">
+              {lastEndedSession.summary || lastEndedSession.detail || "The current session has been closed."}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Navigation */}

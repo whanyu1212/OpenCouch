@@ -124,7 +124,6 @@ class _FakeSummarizerLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
         use_search: bool = False,
     ) -> str:
         return "fake response"
@@ -134,7 +133,6 @@ class _FakeSummarizerLLM(BaseLLMClient):
         *,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> AsyncIterator[str]:
         yield "fake"
 
@@ -144,7 +142,6 @@ class _FakeSummarizerLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
-        temperature: float = 0,
     ) -> StructuredResponseT:
         if response_schema.__name__ == "SummarizationResult":
             self.summarization_calls += 1
@@ -176,6 +173,9 @@ class TestSessionArcToStored:
         assert stored.created_at  # non-empty iso timestamp
         assert stored.last_referenced_at  # non-empty iso timestamp
         assert stored.user_visible is True
+        assert stored.write_timing == "session_end"
+        assert stored.write_reason
+        assert stored.policy_version == "phase5_v1"
 
     def test_preserves_original_arc_fields(self) -> None:
         """All SessionArc fields pass through unchanged."""
