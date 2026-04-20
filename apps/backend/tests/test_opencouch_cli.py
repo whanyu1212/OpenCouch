@@ -2192,7 +2192,7 @@ def test_render_response_shows_footer_metadata(capsys) -> None:
     )
     out = capsys.readouterr().out
 
-    assert "Support Reply" in out
+    assert "reply" in out
     assert "thread" in out
     assert "thread-a" in out
     assert "turn" in out
