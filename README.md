@@ -247,8 +247,7 @@ OpenCouch/
 │   │   └── tests/              # 720+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
-├── eval/                       # Evaluation harnesses + curated datasets
-└── knowledge/                  # Therapeutic prompts, policy, and source-of-truth content
+└── eval/                       # Evaluation harnesses + curated datasets
 ```
 </details>
 

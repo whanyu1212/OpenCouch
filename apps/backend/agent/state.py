@@ -123,23 +123,23 @@ class SessionProgressState(TypedDict):
 
 
 class RoutingState(TypedDict):
-    """Routing and mode selection outputs for the current turn."""
+    """Routing and response style selection outputs for the current turn."""
 
     # Records which high-level path the graph decided to take.
     route: NotRequired[str]
-    # Tracks the active non-crisis response mode inside the therapeutic path.
-    mode: NotRequired[str]
-    # Tracks whether the mode came from keyword, session_intent, llm, or default.
-    mode_source: NotRequired[str | None]
-    # Distinguishes operational routing states from therapeutic and crisis modes.
-    mode_type: NotRequired[ModeType]
-    # The therapeutic modality picked for this turn (CBT, ACT, grief, etc.).
-    # Set by the dispatcher alongside the mode. "none" when no modality
-    # applies (clarifying, closing). The mode node reads this to load the
-    # matching knowledge file into its system prompt.
-    modality: NotRequired[str | None]
-    # Active modality overlays selected for the current response node.
-    active_modalities: NotRequired[list[str]]
+    # Tracks the active non-crisis response style inside the therapeutic path.
+    response_style: NotRequired[str]
+    # Tracks whether the response style came from keyword, session_intent, llm, or default.
+    response_style_source: NotRequired[str | None]
+    # Distinguishes operational routing states from therapeutic and crisis styles.
+    response_style_type: NotRequired[ModeType]
+    # The therapeutic approach picked for this turn (CBT, ACT, grief, etc.).
+    # Set by the dispatcher alongside the response style. "none" when no
+    # approach applies (clarifying, closing). The response node reads this
+    # to load the matching knowledge file into its system prompt.
+    therapeutic_approach: NotRequired[str | None]
+    # Active approach overlays selected for the current response node.
+    active_approaches: NotRequired[list[str]]
     # Cached semantic interpretation shared by routing and prompt shaping.
     semantic_signals: NotRequired[dict[str, bool]]
 

@@ -255,8 +255,11 @@ def _response_panel(
         subtitle_parts.append(f"[muted]thread[/muted] [info]{thread_id}[/info]")
     if turn_count is not None:
         subtitle_parts.append(f"[muted]turn[/muted] [accent]{turn_count}[/accent]")
-    if output.mode:
-        subtitle_parts.append(f"[muted]mode[/muted] [primary]{output.mode}[/primary]")
+    if output.response_style:
+        style_label = output.response_style
+        if output.therapeutic_approach and output.therapeutic_approach != "none":
+            style_label += f" [muted]/[/muted] {output.therapeutic_approach}"
+        subtitle_parts.append(f"[muted]style[/muted] [primary]{style_label}[/primary]")
 
     return Panel(
         output.response_text,
@@ -628,8 +631,8 @@ def render_response(
         response_text=response_text,
         response_type=ResponseKind.CRISIS if is_crisis else ResponseKind.THERAPEUTIC,
         crisis=CrisisAssessment(),
-        mode="crisis" if is_crisis else "support",
-        mode_source="cli",
+        response_style="crisis" if is_crisis else "support",
+        response_style_source="cli",
         diagnostics={},
     )
     console.print(_response_panel(output, thread_id=thread_id, turn_count=turn_count))
@@ -637,9 +640,9 @@ def render_response(
 
 def render_meta(
     *,
-    mode: str | None,
-    mode_source: str | None,
-    mode_type: str | None,
+    response_style: str | None,
+    response_style_source: str | None,
+    response_style_type: str | None,
     response_type: str,
     level: int,
     needs_clarification: bool,
@@ -683,7 +686,7 @@ def render_meta(
     summary = Text.from_markup(
         "  [panel]·[/panel]  ".join(
             [
-                f"[primary]{mode or '-'}[/primary][muted]/{mode_source or '-'}[/muted]",
+                f"[primary]{response_style or '-'}[/primary][muted]/{response_style_source or '-'}[/muted]",
                 f"[info]{response_type}[/info]",
                 f"[warning]{safety_status}[/warning]",
                 f"[accent]{turn_total_label}[/accent]",
@@ -2672,7 +2675,7 @@ def render_history(session: RunnerSession, limit: int = 6) -> None:
     """Render the most recent transcript entries.
 
     v0.8 observability pass: the table now includes a ``mode`` column
-    populated from ``Message.mode``, which ``run_finalize_turn_node``
+    populated from ``Message.response_style``, which ``run_finalize_turn_node``
     stamps on assistant turns. User turns show ``-`` in the mode
     column. When rendering a transcript from an older checkpoint
     (where assistant turns predate the mode field), every assistant
@@ -2702,12 +2705,12 @@ def render_history(session: RunnerSession, limit: int = 6) -> None:
     recent = session.history[-max(1, limit) :]
     table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
     table.add_column("role", style="accent", no_wrap=True)
-    table.add_column("mode", style="muted", no_wrap=True)
+    table.add_column("style", style="muted", no_wrap=True)
     table.add_column("content", style="info")
     for message in recent:
         role = message.role.value
-        mode_display = message.mode if message.mode else "-"
-        table.add_row(role, mode_display, message.content)
+        style_display = message.response_style if message.response_style else "-"
+        table.add_row(role, style_display, message.content)
     console.print(
         Panel(
             table,

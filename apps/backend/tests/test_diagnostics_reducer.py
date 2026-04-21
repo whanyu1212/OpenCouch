@@ -113,7 +113,7 @@ class _FakeRuntime:
             llm_client=None,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
             **overrides,
         )
 
@@ -133,7 +133,7 @@ def _state_with_pre_existing_diagnostics(**extra: Any) -> Any:
             "open_loops": [],
             "current_goal": None,
         },
-        "routing": {"route": "therapeutic", "mode": "pending"},
+        "routing": {"route": "therapeutic", "response_style": "pending"},
         "response": {"text": "", "kind": "therapeutic"},
         "progress": {"turn_count": 1},
         "diagnostics": {"pre_existing_key": 42, "another_key": "val"},
@@ -274,7 +274,7 @@ async def test_full_turn_diagnostics_merge_all_node_keys() -> None:
         AgentInput(message="I feel a bit anxious today", session_id="test-diag"),
         memory_store=store,
         crisis_log_backend=crisis_log,
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
     )
     diag = result.diagnostics
 

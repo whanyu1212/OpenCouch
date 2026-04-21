@@ -108,7 +108,7 @@ interface Principle {
 const PRINCIPLES: Principle[] = [
   { label: 'Supportive, not clinical', desc: 'Validates, reflects, offers structure — but does not diagnose, interpret deeply, or claim clinical authority.' },
   { label: 'Honest about limits', desc: 'Not a therapist, not a diagnostic tool, not an emergency service. Says so clearly in onboarding and prompts.' },
-  { label: 'Safety overrides everything', desc: 'Crisis detection runs before every response. Modality overlays, tone, and skills can never weaken crisis policy.' },
+  { label: 'Safety overrides everything', desc: 'Crisis detection runs before every response. Approach overlays, tone, and skills can never weaken crisis policy.' },
   { label: 'Respect user agency', desc: 'Supports decision-making rather than directing it. Evokes the user\'s own reasons, not the agent\'s prescription.' },
   { label: 'Bridge, not replacement', desc: 'Fills gaps in access to therapy with immediate support and structured practice. Defers clinical work to professionals.' },
   { label: 'Useful without pretending', desc: 'Warm but not sugary. Direct but not blunt. Emotionally accurate without being performative or poetic.' },
@@ -137,9 +137,9 @@ export default function TherapyApproach() {
 
       {/* ── Modalities ─────────────────────────────────────────── */}
       <section className={styles.modalitySection}>
-        <h3 className={styles.sectionTitle}>Therapeutic modalities</h3>
+        <h3 className={styles.sectionTitle}>Therapeutic approaches</h3>
         <p className={styles.sectionSub}>
-          Designed as overlays and stances — not full treatments. All seven modalities are wired and selected per turn by the LLM dispatcher based on the user&apos;s message context. Click to see what each is good for and what to avoid.
+          Designed as overlays and stances — not full treatments. All seven approaches are wired and selected per turn by the LLM dispatcher based on the user&apos;s message context. Click to see what each is good for and what to avoid.
         </p>
         <div className={styles.modalityRow}>
           {MODALITIES.map(m => (

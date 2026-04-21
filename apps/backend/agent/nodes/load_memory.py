@@ -170,6 +170,8 @@ def _episodic_entry_from_record(
         summary=summary,
         primary_themes=record_value.get("primary_themes") or [],
         is_catch_up=is_catch_up,
+        approach_used=record_value.get("approach_used"),
+        approach_context=record_value.get("approach_context"),
     )
 
 
@@ -421,41 +423,58 @@ async def run_load_memory_node(
 
     retrieval_start = time.monotonic()
 
-    # ── Phase 1: all independent work runs concurrently ──────────────
-    # The embedding API call (50-200ms network I/O to Gemini) overlaps
-    # with the store calls (local SQLite, <5ms each). aiosqlite
-    # serializes store calls via a single worker thread, but the real
-    # win is the embedding/store overlap.
+    # ── Phase 1a: counts + procedural (cheap, <5ms each) ────────────
+    # Fetch store sizes and procedural rules first. If both semantic
+    # and episodic stores are empty, we can skip the expensive
+    # embedding API call entirely — there's nothing to search.
     (
-        (query_embedding, query_embedding_model, retrieval_path),
         semantic_store_size,
         episodic_store_size,
         (procedural_rules, proactive_recall_enabled),
     ) = await asyncio.gather(
-        _compute_query_embedding(embedding_provider, query),
         _active_semantic_record_count(memory_store, owner_id=owner_id),
         memory_store.arecord_count(episodic_ns),
         _retrieve_procedural_state(memory_store, owner_id=owner_id),
     )
 
-    # ── Phase 2: retrieval that depends on the embedding ─────────────
-    episodic_entries, semantic_entries = await asyncio.gather(
-        _retrieve_episodic_working_memory(
-            memory_store,
-            owner_id=owner_id,
-            query=query,
-            query_embedding=query_embedding,
-            embedding_model=query_embedding_model,
-            is_first_turn=is_first_turn,
-        ),
-        _retrieve_semantic_working_memory(
-            memory_store,
-            owner_id=owner_id,
-            query=query,
-            query_embedding=query_embedding,
-            embedding_model=query_embedding_model,
-        ),
-    )
+    has_searchable_memory = semantic_store_size > 0 or episodic_store_size > 0
+
+    if has_searchable_memory:
+        # ── Phase 1b: compute embedding (50-200ms network I/O) ──────
+        (
+            query_embedding,
+            query_embedding_model,
+            retrieval_path,
+        ) = await _compute_query_embedding(embedding_provider, query)
+
+        # ── Phase 2: retrieval that depends on the embedding ────────
+        episodic_entries, semantic_entries = await asyncio.gather(
+            _retrieve_episodic_working_memory(
+                memory_store,
+                owner_id=owner_id,
+                query=query,
+                query_embedding=query_embedding,
+                embedding_model=query_embedding_model,
+                is_first_turn=is_first_turn,
+            ),
+            _retrieve_semantic_working_memory(
+                memory_store,
+                owner_id=owner_id,
+                query=query,
+                query_embedding=query_embedding,
+                embedding_model=query_embedding_model,
+            ),
+        )
+    else:
+        # ── Empty store short-circuit ───────────────────────────────
+        # No semantic facts and no episodic arcs — skip the embedding
+        # call entirely. Saves 100-200ms per turn for new users or
+        # incognito-to-persistent transitions where the store is fresh.
+        query_embedding = None
+        query_embedding_model = None
+        retrieval_path = "skipped_empty_store"
+        episodic_entries: list[WorkingMemoryEntry] = []
+        semantic_entries: list[WorkingMemoryEntry] = []
 
     retrieval_duration_ms = (time.monotonic() - retrieval_start) * 1000
 

@@ -183,7 +183,7 @@ class _FakeExtractionLLM(BaseLLMClient):
             return cast(
                 StructuredResponseT,
                 DispatchDecision(
-                    mode="supportive",
+                    response_style="supportive",
                     reasoning="fake dispatcher — supportive for extraction tests",
                     confidence="high",
                 ),
@@ -209,7 +209,7 @@ class _MockRuntime:
             llm_client=llm_client,
             memory_store=memory_store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=memory_mode,
+            memory_response_style=memory_mode,
             session_memory_buffer=session_memory_buffer,
         )
 
@@ -313,7 +313,7 @@ class TestExtractFactsNodeUnit:
         runtime = _MockRuntime(
             llm_client=fake,
             memory_store=store,
-            memory_mode=MemoryMode.INCOGNITO,
+            memory_response_style=MemoryMode.INCOGNITO,
         )
         state = _partial_state()
 
@@ -400,7 +400,7 @@ class TestExtractFactsNodeUnit:
         seed_fact = _memory_write_to_semantic_fact(seed_write)
         # Manually set an older timestamp so we can detect the bump.
         old_ts = "2026-01-01T00:00:00Z"
-        seed_value = seed_fact.model_dump(mode="json")
+        seed_value = seed_fact.model_dump(response_style="json")
         seed_value["last_referenced_at"] = old_ts
         await store.aput(("user-1", "semantic"), key=seed_fact.id, value=seed_value)
 
@@ -445,7 +445,7 @@ class TestExtractFactsNodeUnit:
         await store.aput(
             ("user-1", "semantic"),
             key=seed_fact.id,
-            value=seed_fact.model_dump(mode="json"),
+            value=seed_fact.model_dump(response_style="json"),
         )
 
         # LLM returns two facts: one duplicate of the seed, one novel.
@@ -772,7 +772,7 @@ class TestExtractFactsEndToEnd:
             llm_client=fake,
             memory_store=store,
             crisis_log_backend=crisis_log,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
         )
 
         # The turn itself completed normally
@@ -800,7 +800,7 @@ class TestExtractFactsEndToEnd:
             llm_client=fake,
             memory_store=store,
             crisis_log_backend=crisis_log,
-            memory_mode=MemoryMode.INCOGNITO,
+            memory_response_style=MemoryMode.INCOGNITO,
         )
 
         # Crisis gate and dispatcher still called the LLM, but extraction didn't
@@ -819,7 +819,7 @@ class TestExtractFactsEndToEnd:
             llm_client=None,
             memory_store=store,
             crisis_log_backend=crisis_log,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
         )
 
         assert await store.arecord_count() == 0
@@ -855,7 +855,7 @@ class TestExtractFactsEndToEnd:
             llm_client=fake,
             memory_store=store,
             crisis_log_backend=crisis_log,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
         )
 
         # Extraction node ran but returned empty → no writes

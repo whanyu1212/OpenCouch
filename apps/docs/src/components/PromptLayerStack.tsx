@@ -56,7 +56,7 @@ const fileIndex: Record<string, FileInfo> = {
     kind: 'code',
     summary: 'Mode system prompt builder',
     excerpt:
-      'Python code that reads the active mode\'s markdown, applies any modality overlay, and assembles the combined system prompt section. Enforces that only catalog-approved combinations are built.',
+      'Python code that reads the active mode\'s markdown, applies any approach overlay, and assembles the combined system prompt section. Enforces that only catalog-approved combinations are built.',
   },
   'pfa.md': {
     name: 'modalities/pfa.md + dbt_skills.md',
@@ -155,7 +155,7 @@ const layers = [
   },
   {
     n: '3',
-    label: 'Modality',
+    label: 'Approach',
     tag: 'optional overlay',
     desc: 'A therapeutic technique lens selected by the modality_selector based on semantic signals. MI is applied as a baseline to certain modes automatically, not as a selectable overlay.',
     files: ['pfa.md', 'cbt.md', 'grief_support.md', 'act.md'],

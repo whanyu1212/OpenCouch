@@ -21,6 +21,7 @@ from typing import Any, cast
 import pytest
 
 from agent.memory.models import (
+    CBTContext,
     MoodArc,
     SessionArc,
     StoredSessionArc,
@@ -241,7 +242,7 @@ class TestSummarizerEarlyExits:
             state,
             llm_client=None,
             memory_store=store,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -268,7 +269,7 @@ class TestSummarizerEarlyExits:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_mode=MemoryMode.INCOGNITO,
+            memory_response_style=MemoryMode.INCOGNITO,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -309,7 +310,7 @@ class TestSummarizerHappyPath:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -346,7 +347,7 @@ class TestSummarizerHappyPath:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -375,7 +376,7 @@ class TestSummarizerHappyPath:
                 state,
                 llm_client=fake,
                 memory_store=store,
-                memory_mode=MemoryMode.LOCAL,
+                memory_response_style=MemoryMode.LOCAL,
                 session_id="session-test",
                 started_at="2026-04-10T12:00:00Z",
             )
@@ -402,7 +403,7 @@ class TestSummarizerHappyPath:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
             session_id="session-abc",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -438,7 +439,7 @@ class TestSummarizerFailureModes:
                 state,
                 llm_client=fake,
                 memory_store=store,
-                memory_mode=MemoryMode.LOCAL,
+                memory_response_style=MemoryMode.LOCAL,
                 session_id="session-test",
                 started_at="2026-04-10T12:00:00Z",
             )
@@ -470,7 +471,7 @@ class TestSummarizerFailureModes:
                 state,
                 llm_client=fake,
                 memory_store=store,
-                memory_mode=MemoryMode.LOCAL,
+                memory_response_style=MemoryMode.LOCAL,
                 session_id="session-test",
                 started_at="not-a-real-timestamp",
                 ended_at="also-bad",
@@ -498,7 +499,7 @@ class TestSummarizerFailureModes:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
             ended_at=None,  # explicitly None — summarizer should fill in
@@ -507,3 +508,117 @@ class TestSummarizerFailureModes:
         assert result is not None
         # The stored arc has a created_at that's close to now
         assert result.created_at  # non-empty
+
+
+# ─── 5. Modality context tests ──────────────────────────────────────────
+
+
+class TestSummarizerModalityContext:
+    """Tests for the approach_used / approach_context fields on SessionArc."""
+
+    def test_promotion_preserves_modality_fields(self) -> None:
+        """approach_used and approach_context on SessionArc should
+        survive promotion to StoredSessionArc via _session_arc_to_stored."""
+
+        arc = _make_session_arc()
+        arc.approach_used = "cbt"
+        arc.approach_context = CBTContext(
+            thought_examined="I'm going to get fired",
+            action_step="speak up in one meeting",
+            tool_used="thought_record",
+        )
+        stored = _session_arc_to_stored(arc, owner_id="user-1")
+
+        assert stored.approach_used == "cbt"
+        assert isinstance(stored.approach_context, CBTContext)
+        assert stored.approach_context.thought_examined == "I'm going to get fired"
+
+    def test_promotion_without_modality_defaults_to_none(self) -> None:
+        """SessionArcs without modality fields (backward compat) should
+        promote cleanly with None defaults."""
+
+        arc = _make_session_arc()
+        stored = _session_arc_to_stored(arc, owner_id="user-1")
+
+        assert stored.approach_used is None
+        assert stored.approach_context is None
+
+    def test_approach_context_survives_json_round_trip(self) -> None:
+        """The approach_context discriminated union must survive
+        model_dump → model_validate for store persistence."""
+
+        arc = _make_session_arc()
+        arc.approach_used = "cbt"
+        arc.approach_context = CBTContext(
+            thought_examined="Nobody values my work",
+            action_step="ask for feedback from one colleague",
+        )
+        stored = _session_arc_to_stored(arc, owner_id="user-1")
+
+        # Round-trip through JSON (same path as store.aput / store.aget)
+        dumped = stored.model_dump(response_style="json")
+        reloaded = StoredSessionArc.model_validate(dumped)
+
+        assert reloaded.approach_used == "cbt"
+        assert isinstance(reloaded.approach_context, CBTContext)
+        assert reloaded.approach_context.thought_examined == "Nobody values my work"
+        assert (
+            reloaded.approach_context.action_step
+            == "ask for feedback from one colleague"
+        )
+
+    @pytest.mark.asyncio
+    async def test_approach_hint_passed_through_to_llm(self) -> None:
+        """When approach_hint is provided, the summarizer should pass it
+        to the prompt builder and the LLM should receive it."""
+
+        store = OpenCouchMemoryStore()
+        arc = _make_session_arc()
+        arc.approach_used = "cbt"
+        arc.approach_context = CBTContext(
+            thought_examined="I always fail",
+            action_step="try one small task",
+        )
+        fake = _FakeSummarizerLLM(
+            summarization_result=SummarizationResult(arc=arc, reason="captured CBT arc")
+        )
+        state = _partial_state(user_id="user-42")
+
+        result = await run_summarize_session(
+            state,
+            llm_client=fake,
+            memory_store=store,
+            memory_response_style=MemoryMode.LOCAL,
+            session_id="session-test",
+            started_at="2026-04-10T12:00:00Z",
+            approach_hint="cbt",
+        )
+
+        assert result is not None
+        assert result.approach_used == "cbt"
+        assert isinstance(result.approach_context, CBTContext)
+
+    @pytest.mark.asyncio
+    async def test_no_approach_hint_produces_none_fields(self) -> None:
+        """Without approach_hint, the modality fields should be None
+        (backward-compatible behavior)."""
+
+        store = OpenCouchMemoryStore()
+        arc = _make_session_arc()  # no modality fields set
+        fake = _FakeSummarizerLLM(
+            summarization_result=SummarizationResult(arc=arc, reason="no modality")
+        )
+        state = _partial_state()
+
+        result = await run_summarize_session(
+            state,
+            llm_client=fake,
+            memory_store=store,
+            memory_response_style=MemoryMode.LOCAL,
+            session_id="session-test",
+            started_at="2026-04-10T12:00:00Z",
+        )
+
+        assert result is not None
+        assert result.approach_used is None
+        assert result.approach_context is None

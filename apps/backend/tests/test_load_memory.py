@@ -681,7 +681,7 @@ def _make_episodic_record_value(
     We construct the dict directly rather than going through the pydantic
     model to keep these tests focused on load_memory_node behavior.
     The shape here mirrors what the summarizer actually writes via
-    ``stored_arc.model_dump(mode='json')``.
+    ``stored_arc.model_dump(response_style='json')``.
     """
 
     return {
@@ -1089,7 +1089,7 @@ class TestFinalizeTurnNode:
         and history.
 
         v0.8 observability: the assistant turn dict also carries a
-        ``mode`` field sourced from ``state["routing"]["mode"]``. This
+        ``mode`` field sourced from ``state["routing"]["response_style"]``. This
         state has no routing, so the mode resolves to ``None``.
 
         Phase C changed transcript/history to reducer-backed fields, so
@@ -1111,7 +1111,7 @@ class TestFinalizeTurnNode:
         assert delta["transcript"][0] == {
             "role": MessageRole.ASSISTANT.value,
             "content": "Hello, how can I help?",
-            "mode": None,
+            "response_style": None,
         }
         assert delta["history"] == delta["transcript"]
 
@@ -1173,7 +1173,7 @@ class TestFinalizeTurnNode:
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [],
             "response": {"text": "Hello"},
-            "routing": {"mode": "supportive"},
+            "routing": {"response_style": "supportive"},
             "memory": {"summary": "x"},
         }
         runtime = _FakeRuntime({})

@@ -109,8 +109,8 @@ async def run_crisis_response_node(
         "routing": {
             **state.get("routing", {}),
             "route": "crisis",
-            "mode": "crisis_response",
-            "mode_source": "crisis_gate",
-            "mode_type": ModeType.CRISIS,
+            "response_style": "crisis_response",
+            "response_style_source": "crisis_gate",
+            "response_style_type": ModeType.CRISIS,
         },
     }

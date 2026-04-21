@@ -239,7 +239,7 @@ export default function GraphTopology(): React.JSX.Element {
                 <Connector active={step >= 3} variant="branch" />
                 <NodeBox
                   label="therapeutic_subgraph"
-                  sub="dispatcher + 6 modes"
+                  sub="dispatcher + 7 response styles"
                   state={ns.therapeutic}
                   variant="therapy"
                 />

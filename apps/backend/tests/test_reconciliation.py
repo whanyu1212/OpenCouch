@@ -41,7 +41,7 @@ def _store_record(fact: SemanticFact) -> StoreRecord:
     return StoreRecord(
         namespace=("user-1", "semantic"),
         key=fact.id,
-        value=fact.model_dump(mode="json"),
+        value=fact.model_dump(response_style="json"),
     )
 
 

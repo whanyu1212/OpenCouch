@@ -28,7 +28,7 @@ runtime by the graph.
 |---|---|---|---|
 | **Core** | Who is this system? What are the hard rules? | `soul.md`, `identity.md`, `policy/*.md` | Never changes |
 | **Mode** | What mode is it in? | `response_modes/*.md` — one file per mode | Selected by dispatcher |
-| **Modality** | What technique overlay? | `modalities/*.md` — 7 modalities, LLM-routed | Per turn |
+| **Modality** | What technique overlay? | `modalities/*.md` — 7 approaches, LLM-routed | Per turn |
 | **Instructions** | How should it respond? | Mode-specific blocks in `prompts.py` | Per mode |
 | **Working memory** | What does it know about the user? | Semantic + episodic entries from `load_memory_node` | Re-retrieved each turn |
 | **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
@@ -46,10 +46,10 @@ always applied regardless of the proactive recall toggle.
 
 | Property | How layers enforce it |
 |---|---|
-| Safety policy can't be overwritten | Core layer is always first; no mode/modality can weaken it |
-| Mode knowledge is reviewable | Each mode's knowledge is a standalone `.md` in `knowledge/response_modes/` |
+| Safety policy can't be overwritten | Core layer is always first; no style/approach can weaken it |
+| Mode knowledge is reviewable | Each mode's knowledge is a standalone `.md` in `agent/prompts/sources/response_modes/` |
 | Procedural rules can't be overridden | Injected last as system prompt suffix |
-| Each layer has a clear owner | `knowledge/` for content, `prompts.py` for assembly |
+| Each layer has a clear owner | `agent/prompts/sources/` for content, `prompts.py` for assembly |
 
 ---
 
@@ -58,18 +58,18 @@ always applied regardless of the proactive recall toggle.
 | File | What it does |
 |---|---|
 | `agent/therapeutic/prompts.py` | `_knowledge_for_mode()`, per-mode instruction blocks, `build_*_system_prompt()` |
-| `knowledge/soul.md` | Identity, voice, tone, pacing, directness |
-| `knowledge/identity.md` | Product boundaries and positioning |
-| `knowledge/policy/` | Safety + privacy policy |
-| `knowledge/response_modes/` | One file per therapeutic mode |
-| `knowledge/modalities/` | 7 modality knowledge files, dynamically loaded per turn |
+| `agent/prompts/sources/soul.md` | Identity, voice, tone, pacing, directness |
+| `agent/prompts/sources/identity.md` | Product boundaries and positioning |
+| `agent/prompts/sources/policy/` | Safety + privacy policy |
+| `agent/prompts/sources/response_modes/` | One file per therapeutic mode |
+| `agent/prompts/sources/modalities/` | 7 approach knowledge files, dynamically loaded per turn |
 | `agent/nodes/load_memory.py` | Populates `working_memory` and `memory.procedural_rules` |
 
 ---
 
 ## Compatibility and live assembly
 
-See how modes and modalities combine, and what a fully assembled
+See how response styles and approaches combine, and what a fully assembled
 prompt looks like.
 
 <CompatMatrix />

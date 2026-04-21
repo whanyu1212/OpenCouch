@@ -75,15 +75,15 @@ const STEPS: StepDef[] = [
   {
     id: 'therapeutic',
     label: 'therapeutic_subgraph',
-    sub: 'Dispatcher picks one of 6 modes, mode node generates response',
+    sub: 'Dispatcher picks one of 7 response styles, mode node generates response',
     badges: [
       { label: 'subgraph' },
       { label: 'all nodes retry', retry: true },
     ],
     detail: {
-      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 6 mode nodes (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and progress flow back to the parent — preventing reducer double-counting on history/transcript.',
+      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and progress flow back to the parent — preventing reducer double-counting on history/transcript.',
       how: 'Dispatcher uses hybrid classification: regex fast paths for obvious cases, LLM classifier for the ambiguous middle, regex fallback when no LLM available. Active-exercise fast path bypasses classification when an exercise is in progress.',
-      emits: 'state.routing.mode + state.response.text + state.progress (via merge reducer)',
+      emits: 'state.routing.response_style + state.response.text + state.progress (via merge reducer)',
     },
   },
   {

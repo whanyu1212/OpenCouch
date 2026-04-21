@@ -62,12 +62,12 @@ nodes as the graph executes:
 - `crisis` — safety assessment (level, confidence, reason, flags)
   from `crisis_gate_node`
 - `routing.route` — `"therapeutic"` or `"crisis"` from the gate
-- `routing.mode` — which therapeutic mode was selected (supportive,
-  reflective, clarifying, psychoeducation, guided_exercise, closing)
-- `routing.mode_source` — how the mode was selected (keyword, llm,
+- `routing.response_style` — which response style was selected (supportive,
+  reflective, technique, clarifying, psychoeducation, guided_exercise, closing)
+- `routing.response_style_source` — how the style was selected (keyword, llm,
   default)
-- `routing.mode_type` — category (therapeutic, operational, crisis)
-- `routing.modality` — therapeutic modality for this turn (MI, CBT,
+- `routing.response_style_type` — category (therapeutic, operational, crisis)
+- `routing.therapeutic_approach` — therapeutic approach for this turn (MI, CBT,
   ACT, DBT, grief, IPT, PFA, or none)
 - `response` — the generated reply (text, kind, guidance)
 
@@ -94,9 +94,9 @@ The external API sees `AgentInput` and `AgentOutput` — not
 | Model | Key fields |
 |---|---|
 | `AgentInput` | message, channel, user_id, session_id, history, working_memory, installed_skills |
-| `AgentOutput` | response_text, response_type, crisis, mode, mode_type, mode_source, should_persist_memory, diagnostics |
+| `AgentOutput` | response_text, response_type, crisis, response_style, response_style_type, response_style_source, therapeutic_approach, should_persist_memory, diagnostics |
 | `CrisisAssessment` | level (0-3), confidence, reason, needs_crisis_response, needs_clarification |
-| `Message` | role, content, **mode** (`str | None`) — optional per-turn annotation stamped onto assistant transcript entries by `finalize_turn_node` |
+| `Message` | role, content, **response_style** (`str | None`) — optional per-turn annotation stamped onto assistant transcript entries by `finalize_turn_node` |
 
 ## Runtime context
 

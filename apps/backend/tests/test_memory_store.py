@@ -530,7 +530,7 @@ class TestEpisodicModels:
         """The SessionArc shape must be JSON-serializable for the store."""
 
         arc = _make_session_arc()
-        dumped = arc.model_dump(mode="json")
+        dumped = arc.model_dump(response_style="json")
         restored = SessionArc.model_validate(dumped)
         assert restored.session_id == arc.session_id
         assert restored.summary == arc.summary
@@ -618,7 +618,7 @@ async def test_episodic_round_trips_through_store() -> None:
     )
     namespace = ("user-42", "episodic")
 
-    await store.aput(namespace, arc.id, arc.model_dump(mode="json"))
+    await store.aput(namespace, arc.id, arc.model_dump(response_style="json"))
     record = await store.aget(namespace, arc.id)
 
     assert record is not None
@@ -646,7 +646,9 @@ async def test_episodic_namespace_isolated_from_semantic() -> None:
         {"evidence_quote": "I have a sister named Sarah"},
     )
     arc = _make_stored_session_arc(owner_id="user-1", record_id="arc-1")
-    await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
+    await store.aput(
+        ("user-1", "episodic"), arc.id, arc.model_dump(response_style="json")
+    )
 
     # Semantic namespace has 1 record, episodic has 1
     assert await store.arecord_count(("user-1", "semantic")) == 1
@@ -666,7 +668,9 @@ async def test_episodic_asearch_uses_same_token_recall_scorer() -> None:
         record_id="arc-1",
         summary="User talked about work anxiety around an upcoming meeting.",
     )
-    await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
+    await store.aput(
+        ("user-1", "episodic"), arc.id, arc.model_dump(response_style="json")
+    )
 
     # Query with tokens that overlap the summary.
     # Meaningful query tokens: {work, anxiety, meeting}
@@ -691,7 +695,9 @@ async def test_episodic_asearch_respects_threshold() -> None:
         record_id="arc-1",
         summary="User discussed grief about a recent loss.",
     )
-    await store.aput(("user-1", "episodic"), arc.id, arc.model_dump(mode="json"))
+    await store.aput(
+        ("user-1", "episodic"), arc.id, arc.model_dump(response_style="json")
+    )
 
     # Totally off-topic query, no meaningful overlap with "grief" or "loss".
     results = await store.asearch(

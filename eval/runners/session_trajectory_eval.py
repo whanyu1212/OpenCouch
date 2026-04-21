@@ -343,7 +343,7 @@ def _normalize_turn_record(
         "turn_index": turn_index,
         "user_text": user_text,
         "assistant_text": output.response_text,
-        "mode": output.mode,
+        "response_style": output.response_style,
         "response_type": output.response_type.value
         if output.response_type is not None
         else None,
@@ -354,7 +354,8 @@ def _normalize_turn_record(
         "session_intent": progress.get("intent"),
         "session_intent_source": progress.get("intent_source"),
         "session_stage": progress.get("stage"),
-        "modality": routing.get("modality") or output.modality,
+        "therapeutic_approach": routing.get("therapeutic_approach")
+        or output.therapeutic_approach,
         "exercise_active": progress.get("exercise_type") is not None,
         "exercise_type": progress.get("exercise_type"),
         "exercise_step": progress.get("exercise_step"),
@@ -369,11 +370,11 @@ def _normalize_turn_record(
         "procedural_rules": list(memory_snapshot["procedural_rules"]),
         "episodic_arcs": list(memory_snapshot["episodic_arcs"]),
         "raw_observations": {
-            "mode_type": str(output.mode_type)
-            if output.mode_type is not None
+            "response_style_type": str(output.response_style_type)
+            if output.response_style_type is not None
             else None,
-            "mode_source": output.mode_source,
-            "modality": output.modality,
+            "response_style_source": output.response_style_source,
+            "therapeutic_approach": output.therapeutic_approach,
             "diagnostics": output.diagnostics,
             "memory_snapshot": memory_snapshot,
         },
@@ -428,8 +429,8 @@ def _normalize_final_record(
         # Carry forward from last turn for final grading.
         "session_intent": last.get("session_intent"),
         "session_stage": last.get("session_stage"),
-        "mode": last.get("mode"),
-        "modality": last.get("modality"),
+        "response_style": last.get("mode"),
+        "therapeutic_approach": last.get("therapeutic_approach"),
         "response_guidance": last.get("response_guidance"),
         "assistant_text": last.get("assistant_text"),
         "needs_clarification": last.get("needs_clarification"),

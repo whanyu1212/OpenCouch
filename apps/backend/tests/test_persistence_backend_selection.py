@@ -96,7 +96,7 @@ def test_incognito_mode_uses_in_memory_store_by_default() -> None:
     """In incognito mode without an explicit override, the runtime
     should construct an in-memory store — nothing hits disk."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.INCOGNITO)
     assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
     assert not isinstance(runtime.memory_store, SqliteMemoryStore)
 
@@ -105,7 +105,7 @@ def test_incognito_mode_uses_in_memory_crisis_log_by_default() -> None:
     """Same as the memory store — incognito crisis log must not
     touch disk."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.INCOGNITO)
     assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
     assert not isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
 
@@ -117,7 +117,7 @@ def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
 
     runtime = PersistentAgentRuntime(
         sqlite_path="/tmp/should-be-ignored.sqlite3",
-        memory_mode=MemoryMode.INCOGNITO,
+        memory_response_style=MemoryMode.INCOGNITO,
     )
     assert runtime.sqlite_path == Path(":memory:")
 
@@ -130,7 +130,7 @@ def test_local_mode_uses_sqlite_memory_store_by_default() -> None:
     construct a :class:`SqliteMemoryStore` pointing at the default
     memory SQLite path. This is the core v0.8 Stage D wiring."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.LOCAL)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     # The SqliteMemoryStore's path should be the default memory path.
     assert runtime.memory_store.sqlite_path == Path(DEFAULT_MEMORY_DB_PATH)
@@ -140,7 +140,7 @@ def test_local_mode_uses_sqlite_crisis_log_by_default() -> None:
     """Same as the memory store — local mode crisis log should be
     SQLite-backed and pointed at the default crisis log path."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.LOCAL)
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
     assert runtime.crisis_log_backend.sqlite_path == Path(DEFAULT_CRISIS_LOG_DB_PATH)
 
@@ -154,7 +154,7 @@ def test_local_mode_accepts_custom_sqlite_paths(tmp_path: Path) -> None:
     custom_crisis = tmp_path / "custom_crisis.sqlite3"
 
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
         memory_sqlite_path=custom_memory,
         crisis_log_sqlite_path=custom_crisis,
     )
@@ -172,7 +172,7 @@ def test_synced_mode_behaves_like_local_for_v0_8() -> None:
     we don't accidentally break SYNCED mode callers when the remote
     backend actually ships."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.SYNCED)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.SYNCED)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
 
@@ -188,7 +188,7 @@ def test_explicit_memory_store_overrides_mode_based_selection() -> None:
 
     custom_store = OpenCouchMemoryStore()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,  # would normally pick SqliteMemoryStore
+        memory_response_style=MemoryMode.LOCAL,  # would normally pick SqliteMemoryStore
         memory_store=custom_store,
     )
     # The runtime should hold the exact instance we passed in.
@@ -201,7 +201,7 @@ def test_explicit_crisis_log_overrides_mode_based_selection() -> None:
 
     custom_backend = NullCrisisLogBackend()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
         crisis_log_backend=custom_backend,
     )
     assert runtime.crisis_log_backend is custom_backend
@@ -215,7 +215,7 @@ def test_explicit_overrides_work_with_incognito_too() -> None:
     custom_store = OpenCouchMemoryStore()
     custom_backend = NullCrisisLogBackend()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.INCOGNITO,
+        memory_response_style=MemoryMode.INCOGNITO,
         memory_store=custom_store,
         crisis_log_backend=custom_backend,
     )
@@ -233,7 +233,7 @@ def test_can_override_only_memory_store() -> None:
 
     custom_store = OpenCouchMemoryStore()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
         memory_store=custom_store,
     )
     assert runtime.memory_store is custom_store
@@ -246,7 +246,7 @@ def test_can_override_only_crisis_log() -> None:
 
     custom_backend = NullCrisisLogBackend()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
         crisis_log_backend=custom_backend,
     )
     # Memory store still picks the SQLite default for LOCAL mode
@@ -264,7 +264,7 @@ def test_init_does_not_open_sqlite_connections() -> None:
     verifies that by checking the internal ``_connection`` attribute
     on both SQLite backends — it should be None after init."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.LOCAL)
     # Both backends should have their _connection set to None.
     # These are internal attributes, not public API — this test
     # reaches into them specifically to verify the lazy-open
@@ -288,7 +288,7 @@ async def test_init_without_enter_still_closes_cleanly() -> None:
     backends should still be safe. The SQLite backends' lazy-open
     means "never opened" is just "no-op close"."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.LOCAL)
     # Neither backend has had a chance to open its connection.
     # Closing them should not raise.
     await runtime.memory_store.aclose()
@@ -304,7 +304,7 @@ def test_incognito_mode_uses_in_memory_feedback_by_default() -> None:
     nothing hits disk. The feedback collector is always-on regardless
     of mode, but incognito keeps it ephemeral."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.INCOGNITO)
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
     assert not isinstance(
         runtime.session_feedback_backend, SqliteSessionFeedbackBackend
@@ -315,7 +315,7 @@ def test_local_mode_uses_sqlite_feedback_by_default() -> None:
     """Local mode should pick the SQLite feedback backend at the
     default feedback path."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.LOCAL)
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
     assert runtime.session_feedback_backend.sqlite_path == Path(
         DEFAULT_FEEDBACK_DB_PATH
@@ -328,7 +328,7 @@ def test_synced_mode_uses_sqlite_feedback_by_default() -> None:
     callers don't silently lose feedback when the remote backend
     eventually ships."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.SYNCED)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.SYNCED)
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
 
 
@@ -338,7 +338,7 @@ def test_local_mode_accepts_custom_feedback_sqlite_path(tmp_path: Path) -> None:
 
     custom = tmp_path / "custom_feedback.sqlite3"
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
         feedback_sqlite_path=custom,
     )
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
@@ -353,7 +353,7 @@ def test_explicit_feedback_backend_overrides_mode_based_selection() -> None:
 
     custom_backend = NullSessionFeedbackBackend()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,  # would normally pick SQLite
+        memory_response_style=MemoryMode.LOCAL,  # would normally pick SQLite
         session_feedback_backend=custom_backend,
     )
     assert runtime.session_feedback_backend is custom_backend
@@ -364,7 +364,7 @@ def test_feedback_backend_lazy_connection_in_init() -> None:
     during ``__init__``. Matches the crisis_log and memory_store
     lazy-open contract."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = PersistentAgentRuntime(memory_response_style=MemoryMode.LOCAL)
     backend = runtime.session_feedback_backend
     assert isinstance(backend, SqliteSessionFeedbackBackend)
     assert backend._connection is None  # noqa: SLF001

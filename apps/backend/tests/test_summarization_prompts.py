@@ -240,3 +240,101 @@ class TestSummarizationUserPrompt:
         # We check by counting non-empty role markers in the transcript section.
         user_lines = prompt.count("user:")
         assert user_lines >= 2  # both real messages rendered
+
+
+# ─── Modality context prompt tests ───────────────────────────────────
+
+
+class TestSummarizationModalityPrompts:
+    """Tests for approach_used / approach_context prompt additions."""
+
+    def test_system_prompt_has_approach_context_section(self) -> None:
+        """The system prompt must contain the modality context instructions
+        so the LLM knows the new fields exist."""
+
+        prompt = build_summarization_system_prompt()
+        assert "Modality context" in prompt
+        assert "approach_used" in prompt
+        assert "approach_context" in prompt
+
+    def test_system_prompt_warns_pfa_crisis_interaction(self) -> None:
+        """PFA sessions are crisis-adjacent. The prompt should warn the
+        LLM not to reinterpret crisis severity in approach_context."""
+
+        prompt = build_summarization_system_prompt()
+        assert "PFA" in prompt or "pfa" in prompt.lower()
+        assert "crisis severity" in prompt.lower() or "crisis" in prompt.lower()
+
+    def test_user_prompt_with_cbt_hint_injects_cbt_fields(self) -> None:
+        """When approach_hint='cbt', the user prompt should list CBT-specific
+        field names and NOT include other modality fields."""
+
+        state = _make_state(transcript=[{"role": "user", "content": "test"}])
+        prompt = build_summarization_user_prompt(
+            state,
+            session_id="s1",
+            started_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T01:00:00Z",
+            duration_seconds=3600,
+            turn_count=10,
+            approach_hint="cbt",
+        )
+
+        assert "Dominant modality this session: cbt" in prompt
+        assert "thought_examined" in prompt
+        assert "action_step" in prompt
+        assert "tool_used" in prompt
+        # Should NOT contain MI or other modality fields
+        assert "readiness_stage" not in prompt
+        assert "values_identified" not in prompt
+
+    def test_user_prompt_with_mi_hint_injects_mi_fields(self) -> None:
+        """When approach_hint='motivational_interviewing', only MI fields."""
+
+        state = _make_state(transcript=[{"role": "user", "content": "test"}])
+        prompt = build_summarization_user_prompt(
+            state,
+            session_id="s2",
+            started_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T01:00:00Z",
+            duration_seconds=1800,
+            turn_count=8,
+            approach_hint="motivational_interviewing",
+        )
+
+        assert "motivational_interviewing" in prompt
+        assert "readiness_stage" in prompt
+        assert "change_talk_themes" in prompt
+        # Should NOT contain CBT fields
+        assert "thought_examined" not in prompt
+
+    def test_user_prompt_without_hint_has_no_modality_block(self) -> None:
+        """Without approach_hint, no modality extraction block."""
+
+        state = _make_state(transcript=[{"role": "user", "content": "test"}])
+        prompt = build_summarization_user_prompt(
+            state,
+            session_id="s3",
+            started_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T01:00:00Z",
+            duration_seconds=600,
+            turn_count=3,
+        )
+
+        assert "Dominant modality" not in prompt
+
+    def test_user_prompt_with_none_hint_has_no_modality_block(self) -> None:
+        """approach_hint='none' should be treated the same as absent."""
+
+        state = _make_state(transcript=[{"role": "user", "content": "test"}])
+        prompt = build_summarization_user_prompt(
+            state,
+            session_id="s4",
+            started_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T01:00:00Z",
+            duration_seconds=600,
+            turn_count=3,
+            approach_hint="none",
+        )
+
+        assert "Dominant modality" not in prompt

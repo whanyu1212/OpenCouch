@@ -156,7 +156,7 @@ class _FakeRuntime:
             llm_client=None,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
         )
 
 
@@ -178,7 +178,7 @@ async def test_finalize_returns_single_element_delta() -> None:
             {"role": "user", "content": "Help me"},
         ],
         "response": {"text": "Of course, what's on your mind?"},
-        "routing": {"mode": "supportive"},
+        "routing": {"response_style": "supportive"},
     }
 
     delta = await run_finalize_turn_node(state, _FakeRuntime())  # type: ignore[arg-type]
@@ -191,7 +191,7 @@ async def test_finalize_returns_single_element_delta() -> None:
     )
     assert delta["transcript"][0]["role"] == MessageRole.ASSISTANT.value
     assert delta["transcript"][0]["content"] == "Of course, what's on your mind?"
-    assert delta["transcript"][0]["mode"] == "supportive"
+    assert delta["transcript"][0]["response_style"] == "supportive"
 
     assert len(delta["history"]) == 1
     assert delta["history"] == delta["transcript"]

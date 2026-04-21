@@ -164,7 +164,7 @@ def _make_agent_output(
         response_text=response_text,
         response_type=ResponseKind.THERAPEUTIC,
         crisis=CrisisAssessment(),
-        mode="support",
+        response_style="support",
         mode_source="test",
         diagnostics=diagnostics,
     )
@@ -174,12 +174,12 @@ def _session() -> RunnerSession:
     """Return a baseline CLI session for command tests."""
 
     return RunnerSession(
-        requested_mode="deterministic",
-        resolved_mode="deterministic",
+        requested_response_style="deterministic",
+        resolved_response_style="deterministic",
         llm_client=None,
         thread_id="thread-a",
         sqlite_path="/tmp/test.sqlite3",
-        memory_mode="persistent",
+        memory_response_style="persistent",
         history=[
             Message(role=MessageRole.USER, content="first"),
             Message(role=MessageRole.ASSISTANT, content="reply"),
@@ -272,7 +272,7 @@ async def test_chat_loop_shows_spinner_loading_state_before_stage_updates(
         thread_id="thread-a",
         user_id=None,
         sqlite_path=":memory:",
-        memory_mode="persistent",
+        memory_response_style="persistent",
     )
 
     assert isinstance(captured_updates[0], Group)
@@ -675,7 +675,7 @@ async def test_chat_loop_waits_for_runtime_entry_before_first_prompt(
         thread_id="thread-a",
         user_id=None,
         sqlite_path=":memory:",
-        memory_mode="persistent",
+        memory_response_style="persistent",
     )
 
     assert order == [
@@ -719,7 +719,7 @@ async def test_chat_loop_finalizes_active_sessions_on_eof(monkeypatch) -> None:
         thread_id="thread-a",
         user_id=None,
         sqlite_path=":memory:",
-        memory_mode="persistent",
+        memory_response_style="persistent",
     )
 
     assert runtime.finalize_calls == [None]
@@ -762,7 +762,7 @@ async def test_chat_loop_prompts_again_before_turn_tail_finishes(monkeypatch) ->
         thread_id="thread-a",
         user_id=None,
         sqlite_path=":memory:",
-        memory_mode="persistent",
+        memory_response_style="persistent",
     )
 
     assert order.index("prompt2_started") < order.index("done_yielded")
@@ -806,7 +806,7 @@ async def test_chat_loop_passes_response_tier_client_to_runtime(monkeypatch) -> 
         user_id=None,
         response_model_tier="quality",
         sqlite_path=":memory:",
-        memory_mode="persistent",
+        memory_response_style="persistent",
     )
 
     assert runtime.finalize_calls == [control_client]
@@ -1402,12 +1402,12 @@ async def test_memory_list_rules_isolates_threads(capsys) -> None:
 
     # List rules from thread-b's session — should be empty
     session_b = RunnerSession(
-        requested_mode="deterministic",
-        resolved_mode="deterministic",
+        requested_response_style="deterministic",
+        resolved_response_style="deterministic",
         llm_client=None,
         thread_id="thread-b",
         sqlite_path="/tmp/test.sqlite3",
-        memory_mode="persistent",
+        memory_response_style="persistent",
         history=[],
     )
     await handle_command("/memory list rules", session_b, runtime)
@@ -1716,12 +1716,12 @@ class TestSessionOwnerId:
         """Backward-compatible default: no --user-id → use thread_id."""
 
         session = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-alpha",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
         )
         assert session.user_id is None
         assert session.owner_id() == "thread-alpha"
@@ -1730,12 +1730,12 @@ class TestSessionOwnerId:
         """Explicit --user-id overrides the thread_id fallback."""
 
         session = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-alpha",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
         assert session.user_id == "alice"
@@ -1752,12 +1752,12 @@ class TestSessionOwnerId:
         mid-session."""
 
         session = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-alpha",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
         assert session.owner_id() == "alice"
@@ -1812,12 +1812,12 @@ class TestUserIdCommandIntegration:
 
         # Session 1: thread-a, user_id=alice
         session_a = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-a",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
         await handle_command("/memory list rules", session_a, runtime)
@@ -1827,12 +1827,12 @@ class TestUserIdCommandIntegration:
 
         # Session 2: thread-b, user_id=alice (same user, different thread)
         session_b = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-b",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
         await handle_command("/memory list rules", session_b, runtime)
@@ -1870,12 +1870,12 @@ class TestUserIdCommandIntegration:
 
         # Bob reuses thread-a but has a different user_id
         session_bob = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-a",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="bob",
         )
         await handle_command("/memory list rules", session_bob, runtime)
@@ -1903,12 +1903,12 @@ class TestUserIdCommandIntegration:
         runtime = FakeProceduralRuntime()
 
         session = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-a",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
         await handle_command("/memory status", session, runtime)
@@ -2000,12 +2000,12 @@ class TestUserIdCommandIntegration:
         )
 
         session = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-a",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
         await handle_command("/memory status", session, runtime)
@@ -2197,7 +2197,7 @@ def test_render_response_shows_footer_metadata(capsys) -> None:
     assert "thread-a" in out
     assert "turn" in out
     assert "3" in out
-    assert "mode" in out
+    assert "response_style" in out
     assert "support" in out
 
 
@@ -2207,9 +2207,9 @@ def test_render_meta_defaults_to_compact_summary(capsys) -> None:
     from opencouch_cli.app import render_meta
 
     render_meta(
-        mode="support",
-        mode_source="keyword",
-        mode_type="therapeutic",
+        response_style="support",
+        response_style_source="keyword",
+        response_style_type="therapeutic",
         response_type="support",
         level=0,
         needs_clarification=False,
@@ -3042,12 +3042,12 @@ class TestMemoryListSubcommands:
 
         runtime = FakeProceduralRuntime()
         session = RunnerSession(
-            requested_mode="deterministic",
-            resolved_mode="deterministic",
+            requested_response_style="deterministic",
+            resolved_response_style="deterministic",
             llm_client=None,
             thread_id="thread-a",
             sqlite_path="/tmp/test.db",
-            memory_mode="persistent",
+            memory_response_style="persistent",
             user_id="alice",
         )
 

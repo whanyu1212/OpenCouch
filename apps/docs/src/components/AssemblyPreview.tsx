@@ -37,7 +37,7 @@ const scenarios: Record<string, Scenario> = {
       ['v', 'explore what they are experiencing. Avoid unsolicited'],
       ['v', 'advice. Validate before reframing.'],
       ['v', ''],
-      ['c', '# ── MODALITY LAYER ──────────────────────────────'],
+      ['c', '# ── APPROACH LAYER ──────────────────────────────'],
       ['c', '# modalities/motivational_interviewing.md'],
       ['v', ''],
       ['v', 'Technique: motivational interviewing. Use open questions,'],
@@ -82,7 +82,7 @@ const scenarios: Record<string, Scenario> = {
       ['v', 'sterile refusal. Provide crisis resources. Encourage'],
       ['v', 'immediate human contact.'],
       ['v', ''],
-      ['c', '# ── MODALITY LAYER ──────────────────────────────'],
+      ['c', '# ── APPROACH LAYER ──────────────────────────────'],
       ['c', '# modalities/pfa.md  (Psychological First Aid)'],
       ['v', ''],
       ['v', 'Technique: psychological first aid. Prioritise safety'],
@@ -122,7 +122,7 @@ const scenarios: Record<string, Scenario> = {
       ['v', 'technique. Be clear about each step. Check in after'],
       ['v', 'each one before continuing.'],
       ['v', ''],
-      ['c', '# ── MODALITY LAYER ──────────────────────────────'],
+      ['c', '# ── APPROACH LAYER ──────────────────────────────'],
       ['c', '# modalities/cbt.md  (Cognitive Behavioural Therapy)'],
       ['v', ''],
       ['v', 'Technique: CBT. Help identify and examine an automatic'],
@@ -152,7 +152,7 @@ const scenarios: Record<string, Scenario> = {
 const layerDefs = [
   { id: 'core',     dot: '#215f5a', label: 'Core' },
   { id: 'mode',     dot: '#2d7a74', label: 'Mode' },
-  { id: 'modality', dot: '#3d9990', label: 'Modality' },
+  { id: 'modality', dot: '#3d9990', label: 'Approach' },
   { id: 'task',     dot: '#78b8af', label: 'Task' },
   { id: 'context',  dot: '#a8cdc9', label: 'Context' },
 ];
@@ -192,7 +192,7 @@ export default function AssemblyPreview() {
 
     const sectionTriggers: Array<{ marker: string; id: string }> = [
       { marker: '# ── MODE LAYER',     id: 'mode'     },
-      { marker: '# ── MODALITY LAYER', id: 'modality' },
+      { marker: '# ── APPROACH LAYER', id: 'modality' },
       { marker: '# ── TASK LAYER',     id: 'task'     },
       { marker: '# ── CONTEXT LAYER',  id: 'context'  },
     ];

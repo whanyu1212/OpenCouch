@@ -63,10 +63,10 @@ const GROUPS: GroupDef[] = [
     fields: [
       { name: 'crisis', type: 'CrisisAssessment', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: 'Level 0\u20133, confidence, reason, needs_crisis_response, needs_clarification' },
       { name: 'routing.route', type: 'str', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: '"crisis" or "therapeutic" \u2014 decides which branch runs' },
-      { name: 'routing.mode', type: 'str', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'supportive, reflective, clarifying, psychoeducation, guided_exercise, closing' },
-      { name: 'routing.mode_source', type: 'str', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'How the mode was selected: keyword, llm, default, or crisis_gate' },
-      { name: 'routing.mode_type', type: 'ModeType', setBy: 'crisis_gate / dispatch', lifecycle: 'turn', desc: 'THERAPEUTIC, OPERATIONAL, or CRISIS' },
-      { name: 'routing.modality', type: 'str | None', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'Therapeutic modality: MI, CBT, ACT, DBT, grief, IPT, PFA, or None' },
+      { name: 'routing.response_style', type: 'str', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'supportive, reflective, technique, clarifying, psychoeducation, guided_exercise, closing' },
+      { name: 'routing.response_style_source', type: 'str', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'How the style was selected: keyword, llm, default, or crisis_gate' },
+      { name: 'routing.response_style_type', type: 'ModeType', setBy: 'crisis_gate / dispatch', lifecycle: 'turn', desc: 'THERAPEUTIC, OPERATIONAL, or CRISIS' },
+      { name: 'routing.therapeutic_approach', type: 'str | None', setBy: 'therapeutic_dispatch', lifecycle: 'turn', desc: 'Therapeutic approach: MI, CBT, ACT, DBT, grief, IPT, PFA, or None' },
     ],
   },
   {

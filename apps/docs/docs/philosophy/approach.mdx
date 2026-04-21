@@ -37,21 +37,20 @@ clinical authority.
 
 ---
 
-## Modes vs. modalities
+## Response styles vs. therapeutic approaches
 
 Two axes, selected independently per turn:
 
 | Axis | What it is | How many | Selected by |
 |---|---|---|---|
-| **Mode** | Response style (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing) | 6 | LLM structured-output classifier (regex fallback only when LLM unavailable) |
-| **Modality** | Therapeutic framework overlay (MI, PFA, CBT, grief, IPT, ACT, DBT) | 7 | LLM dispatcher, alongside the mode |
+| **Response style** | Turn shape (supportive, reflective, technique, clarifying, psychoeducation, guided_exercise, closing) | 7 | LLM structured-output classifier (regex fallback only when LLM unavailable) |
+| **Therapeutic approach** | Framework overlay (MI, PFA, CBT, grief, IPT, ACT, DBT) | 7 | LLM dispatcher, alongside the response style |
 
-**Modes** shape *what* the agent does this turn. **Modalities**
-shape *how* — which knowledge file loads into the system prompt.
+**Response styles** shape *what* the agent does this turn. **Therapeutic approaches** shape *how* — which knowledge file loads into the system prompt. In `technique` style, the approach drives the response shape directly (e.g., CBT Socratic questioning rhythm).
 
-Three modes have hard structural contracts: `guided_exercise` (must
+Three styles have hard structural contracts: `guided_exercise` (must
 produce a step), `closing` (must wrap up), `crisis` (must follow
-safety protocol). The other three form a soft continuum where label
+safety protocol). The others form a soft continuum where label
 fuzziness at the edges is by design.
 
 ---

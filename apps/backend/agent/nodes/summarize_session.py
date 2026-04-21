@@ -162,6 +162,7 @@ async def run_summarize_session(
     ended_at: str | None = None,
     crisis_level_max: int = 0,
     embedding_provider: "EmbeddingProvider | None" = None,
+    approach_hint: str | None = None,
 ) -> StoredSessionArc | None:
     """Summarize a completed session and write the arc to episodic memory.
 
@@ -202,6 +203,11 @@ async def run_summarize_session(
             entry for the rationale and the design refactor that
             removed ``crisis_level_max`` from the summarizer LLM's
             output schema.
+        approach_hint: The dominant therapeutic modality used during
+            the session (e.g., "cbt", "act"). Passed to the
+            summarization prompt so the LLM extracts modality-specific
+            structured context. When None, the summarizer produces a
+            modality-agnostic arc (backward-compatible behavior).
 
     Returns:
         The written :class:`StoredSessionArc` on success, or ``None`` on
@@ -256,6 +262,7 @@ async def run_summarize_session(
                 ended_at=ended_at,
                 duration_seconds=duration_seconds,
                 turn_count=user_turn_count,
+                approach_hint=approach_hint,
             ),
             response_schema=SummarizationResult,
             system_instruction=build_summarization_system_prompt(),
@@ -344,11 +351,12 @@ async def run_summarize_session(
 
     logger.info(
         "run_summarize_session: wrote arc id=%s owner=%r session=%r "
-        "themes=%s crisis_level_max=%d",
+        "themes=%s crisis_level_max=%d modality=%s",
         stored_arc.id,
         owner_id,
         session_id,
         stored_arc.primary_themes,
         stored_arc.crisis_level_max,
+        stored_arc.approach_used or "none",
     )
     return stored_arc

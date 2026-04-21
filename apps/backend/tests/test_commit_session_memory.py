@@ -161,7 +161,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
             return cast(
                 StructuredResponseT,
                 DispatchDecision(
-                    mode="supportive",
+                    response_style="supportive",
                     reasoning="supportive mode for session commit test",
                     confidence="high",
                 ),
@@ -414,7 +414,7 @@ async def test_cross_session_repetition_promotes_negative_self_belief() -> None:
     await store.aput(
         ("user-1", "episodic"),
         key=prior_arc.id,
-        value=prior_arc.model_dump(mode="json"),
+        value=prior_arc.model_dump(response_style="json"),
     )
 
     candidate = build_semantic_candidate(
@@ -539,7 +539,7 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
     async with PersistentAgentRuntime(
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_store=store,
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",
@@ -589,7 +589,7 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
     async with PersistentAgentRuntime(
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_store=store,
-        memory_mode=MemoryMode.LOCAL,
+        memory_response_style=MemoryMode.LOCAL,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",

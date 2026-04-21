@@ -60,7 +60,7 @@ async def test_snapshot_memory_state_reads_actual_store_contents() -> None:
     await store.aput(
         (owner_id, "semantic"),
         fact.id,
-        fact.model_dump(mode="json"),
+        fact.model_dump(response_style="json"),
     )
 
     await aadd_procedural_rule(
@@ -96,7 +96,7 @@ async def test_snapshot_memory_state_reads_actual_store_contents() -> None:
     await store.aput(
         (owner_id, "episodic"),
         arc.id,
-        arc.model_dump(mode="json"),
+        arc.model_dump(response_style="json"),
     )
 
     snapshot = await _snapshot_memory_state(store, owner_id=owner_id)
@@ -156,14 +156,14 @@ def test_diff_memory_state_reports_actual_namespace_deltas() -> None:
 
 def test_turn_expectation_grades_actual_memory_fields() -> None:
     record = {
-        "mode": "supportive",
+        "response_style": "supportive",
         "crisis_level": 0,
         "needs_crisis_response": False,
         "needs_clarification": False,
         "session_intent": None,
         "session_intent_source": None,
         "session_stage": None,
-        "modality": None,
+        "therapeutic_approach": None,
         "response_type": "therapeutic",
         "response_guidance": None,
         "assistant_text": "Okay.",
@@ -229,8 +229,8 @@ def test_final_expectation_grades_session_end_and_totals() -> None:
         "procedural_rules": [{"rule": "You prefer shorter responses."}],
         "session_intent": None,
         "session_stage": None,
-        "mode": "supportive",
-        "modality": None,
+        "response_style": "supportive",
+        "therapeutic_approach": None,
         "response_guidance": None,
         "assistant_text": "Here is the main takeaway.",
         "needs_clarification": False,

@@ -16,43 +16,40 @@ for constructing their user/task prompts.
 
 from __future__ import annotations
 
-from functools import lru_cache
-from pathlib import Path
-
+from agent.prompts import (
+    CORE_SOURCES,
+    compose_sources as _compose,
+    format_recent_history as _format_recent_history,
+    load_prompt_source as _load_knowledge_file,
+)
 from agent.state import AgentState
 from agent.working_memory import format_working_memory_entries
 
 
-# ─── Knowledge file composition (same pattern as prompts/crisis.py) ─────────
-
-_CORE_KNOWLEDGE = (
-    "soul.md",
-    "identity.md",
-    "policy/boundaries.md",
-    "policy/privacy.md",
-)
-
 # ─── Mode base knowledge (without modality overlay) ──────────────────────────
 
 _MODE_BASE_KNOWLEDGE: dict[str, tuple[str, ...]] = {
-    "supportive": (*_CORE_KNOWLEDGE, "response_modes/support.md"),
-    "reflective": (*_CORE_KNOWLEDGE, "response_modes/reflection.md"),
-    "clarifying": _CORE_KNOWLEDGE,
-    "psychoeducation": (*_CORE_KNOWLEDGE, "response_modes/psychoeducation.md"),
-    "closing": (*_CORE_KNOWLEDGE, "response_modes/closing.md"),
-    "guided_exercise": (*_CORE_KNOWLEDGE, "response_modes/guided_exercise.md"),
+    "supportive": (*CORE_SOURCES, "response_modes/support.md"),
+    "reflective": (*CORE_SOURCES, "response_modes/reflection.md"),
+    "clarifying": CORE_SOURCES,
+    "psychoeducation": (*CORE_SOURCES, "response_modes/psychoeducation.md"),
+    "closing": (*CORE_SOURCES, "response_modes/closing.md"),
+    "guided_exercise": (*CORE_SOURCES, "response_modes/guided_exercise.md"),
+    # Technique mode uses ONLY core + the approach overlay. The approach
+    # knowledge IS the mode-specific guidance — no separate response_mode file.
+    "technique": CORE_SOURCES,
 }
 
 # ─── Modality file mapping ───────────────────────────────────────────────────
 
-_MODALITY_FILES: dict[str, str] = {
-    "motivational_interviewing": "modalities/motivational_interviewing.md",
-    "cbt": "modalities/cbt.md",
-    "act": "modalities/act.md",
-    "dbt_skills": "modalities/dbt_skills.md",
-    "grief_support": "modalities/grief_support.md",
-    "interpersonal_therapy": "modalities/interpersonal_therapy.md",
-    "pfa": "modalities/pfa.md",
+_MODALITY_FILES: dict[str, tuple[str, ...]] = {
+    "motivational_interviewing": ("modalities/motivational_interviewing.md",),
+    "cbt": ("modalities/cbt.md", "modalities/cbt_arc.md"),
+    "act": ("modalities/act.md",),
+    "dbt_skills": ("modalities/dbt_skills.md",),
+    "grief_support": ("modalities/grief_support.md",),
+    "interpersonal_therapy": ("modalities/interpersonal_therapy.md",),
+    "pfa": ("modalities/pfa.md",),
 }
 
 
@@ -60,13 +57,13 @@ def _knowledge_for_mode(mode: str, modality: str | None = None) -> tuple[str, ..
     """Compose the knowledge file list for a mode + modality combination.
 
     Returns the base knowledge for the mode, plus the modality overlay
-    file if a valid modality is specified. When modality is None or
+    file(s) if a valid modality is specified. When modality is None or
     "none", only the base mode knowledge is returned.
     """
 
-    base = _MODE_BASE_KNOWLEDGE.get(mode, _CORE_KNOWLEDGE)
+    base = _MODE_BASE_KNOWLEDGE.get(mode, CORE_SOURCES)
     if modality and modality != "none" and modality in _MODALITY_FILES:
-        return (*base, _MODALITY_FILES[modality])
+        return (*base, *_MODALITY_FILES[modality])
     return base
 
 
@@ -82,46 +79,6 @@ _CLARIFYING_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["clarifying"]
 _PSYCHOEDUCATION_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["psychoeducation"]
 _CLOSING_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["closing"]
 _GUIDED_EXERCISE_KNOWLEDGE = _MODE_BASE_KNOWLEDGE["guided_exercise"]
-
-
-def _knowledge_root() -> Path:
-    """Return the absolute path to the repo-level ``knowledge/`` directory."""
-
-    return Path(__file__).resolve().parents[4] / "knowledge"
-
-
-@lru_cache(maxsize=32)
-def _load_knowledge_file(relative_path: str) -> str:
-    """Load one markdown knowledge file by its relative path."""
-
-    root = _knowledge_root().resolve()
-    path = (root / relative_path).resolve()
-    path.relative_to(root)
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _compose(*relative_paths: str) -> str:
-    """Concatenate knowledge files into a single prompt block."""
-
-    parts = [_load_knowledge_file(path) for path in relative_paths]
-    return "\n\n".join(part for part in parts if part)
-
-
-# ─── Shared helpers ──────────────────────────────────────────────────────────
-
-
-def _format_recent_history(state: AgentState, *, limit: int = 6) -> str:
-    """Format recent history entries for prompt injection."""
-
-    history = state["history"][-limit:]
-    if not history:
-        return "(no prior history)"
-
-    return "\n".join(
-        f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-        for turn in history
-        if turn.get("content")
-    )
 
 
 def _format_working_memory(state: AgentState) -> str:
@@ -409,8 +366,46 @@ Guidelines:
   worksheet with fill-in-the-blank fields.
 """.strip()
 
+_TECHNIQUE_INSTRUCTIONS = """
+You are in TECHNIQUE mode. The therapeutic approach is driving this
+turn — follow its process guidance for the current phase. Your job
+is to execute the specific therapeutic technique the approach
+describes, not to reflect, validate, or explain.
+
+Guidelines:
+- The approach knowledge loaded into this prompt describes what to
+  do: which questions to ask, what rhythm to follow, what to listen
+  for, when to advance. Follow that guidance as your primary
+  behavioral instruction.
+- Keep turns focused and concrete. One question, one reflection,
+  one step — not a paragraph of exploration.
+- The approach's transition signals tell you when to advance to
+  the next phase. Watch for them explicitly.
+- If the user becomes flooded, numb, or distressed beyond what
+  the technique can hold: STOP the technique. Acknowledge what
+  happened. Drop into supportive or grounding. You can return to
+  the technique later when the user is regulated.
+- If the user resists the structure ("I don't want to do this",
+  "can we just talk"): acknowledge immediately, stop the
+  technique, and follow their lead. The technique is a tool, not
+  the therapy.
+- Never: lecture about the technique before doing it, name the
+  technique or its clinical terminology to the user, force a step
+  the user isn't ready for, stack multiple techniques.
+""".strip()
+
 
 # ─── Public prompt builders ──────────────────────────────────────────────────
+
+
+_CONTINUITY_FILE = "cross_session_continuity.md"
+
+
+def _has_episodic_context(state: AgentState) -> bool:
+    """Return True if the user has prior session history available."""
+
+    working_memory = state.get("working_memory", [])
+    return any(entry.get("type") == "episodic" for entry in working_memory)
 
 
 def _compose_system_prompt_with_state(
@@ -422,20 +417,27 @@ def _compose_system_prompt_with_state(
 
     The static parts are the knowledge-file composition and the
     mode-specific instructions block. The dynamic parts are the
-    procedural rules block and the recall toggle constraint, both
-    read from state. See the module-level comment above
+    procedural rules block, the recall toggle constraint (both
+    read from state), and the cross-session continuity guidance
+    (loaded only for returning users with episodic memory).
+
+    See the module-level comment above
     :func:`_format_procedural_rules_block` for the design notes.
     """
 
+    continuity_block = ""
+    if _has_episodic_context(state):
+        continuity_block = "\n\n" + _load_knowledge_file(_CONTINUITY_FILE)
+
     rules_block = _format_procedural_rules_block(state)
     recall_block = _format_recall_toggle_constraint(state)
-    return f"{knowledge}\n\n{instructions}{rules_block}{recall_block}"
+    return f"{knowledge}\n\n{instructions}{continuity_block}{rules_block}{recall_block}"
 
 
-def _read_modality(state: AgentState) -> str | None:
+def _read_approach(state: AgentState) -> str | None:
     """Read the dispatcher-selected modality from routing state."""
 
-    return state.get("routing", {}).get("modality")
+    return state.get("routing", {}).get("therapeutic_approach")
 
 
 def build_supportive_system_prompt(state: AgentState) -> str:
@@ -445,7 +447,7 @@ def build_supportive_system_prompt(state: AgentState) -> str:
     MI if no modality was set, for backward compatibility).
     """
 
-    modality = _read_modality(state) or "motivational_interviewing"
+    modality = _read_approach(state) or "motivational_interviewing"
     files = _knowledge_for_mode("supportive", modality)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _SUPPORTIVE_INSTRUCTIONS, state)
@@ -454,7 +456,7 @@ def build_supportive_system_prompt(state: AgentState) -> str:
 def build_reflective_system_prompt(state: AgentState) -> str:
     """Build the system prompt for reflective-mode responses."""
 
-    modality = _read_modality(state)
+    modality = _read_approach(state)
     files = _knowledge_for_mode("reflective", modality)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _REFLECTIVE_INSTRUCTIONS, state)
@@ -470,7 +472,7 @@ def build_clarifying_system_prompt(state: AgentState) -> str:
 def build_psychoeducation_system_prompt(state: AgentState) -> str:
     """Build the system prompt for psychoeducation-mode responses."""
 
-    modality = _read_modality(state)
+    modality = _read_approach(state)
     files = _knowledge_for_mode("psychoeducation", modality)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
@@ -489,15 +491,40 @@ def build_guided_exercise_system_prompt(state: AgentState) -> str:
     """Build the system prompt for guided_exercise-mode responses.
 
     Loads the base exercise knowledge plus the dispatcher-selected
-    modality overlay (CBT for thought records, ACT for defusion, etc.).
+    approach overlay (CBT for thought records, ACT for defusion, etc.).
     """
 
-    modality = _read_modality(state)
-    files = _knowledge_for_mode("guided_exercise", modality)
+    approach = _read_approach(state)
+    files = _knowledge_for_mode("guided_exercise", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
         knowledge, _GUIDED_EXERCISE_INSTRUCTIONS, state
     )
+
+
+def build_technique_system_prompt(state: AgentState) -> str:
+    """Build the system prompt for technique-mode responses.
+
+    In technique mode, the therapeutic approach drives the response
+    shape. The approach knowledge files are loaded as the primary
+    behavioral guidance — the technique instructions just say "follow
+    the approach's process guidance." This is the one response style
+    where the approach is loud, not background.
+
+    A valid therapeutic approach MUST be set in routing state. If no
+    approach is active, this falls back to the supportive prompt to
+    avoid generating an ungrounded response.
+    """
+
+    approach = _read_approach(state)
+    if not approach or approach == "none":
+        # No approach active — technique mode without an approach
+        # doesn't make sense. Fall back to supportive.
+        return build_supportive_system_prompt(state)
+
+    files = _knowledge_for_mode("technique", approach)
+    knowledge = _compose(*files)
+    return _compose_system_prompt_with_state(knowledge, _TECHNIQUE_INSTRUCTIONS, state)
 
 
 def build_therapeutic_response_prompt(

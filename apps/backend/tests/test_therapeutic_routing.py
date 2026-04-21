@@ -94,7 +94,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         return cast(
             StructuredResponseT,
             DispatchDecision(
-                mode=self.mode,  # type: ignore[arg-type]
+                response_style=self.mode,  # type: ignore[arg-type]
                 reasoning="fake dispatch decision",
                 confidence="high",
             ),
@@ -114,7 +114,7 @@ class _MockRuntime:
             llm_client=llm_client,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
         )
 
 
@@ -133,7 +133,7 @@ def _build_state(
 # ─── 1. pick_therapeutic_mode pure-function tests ────────────────────────
 
 
-class TestPickTherapeuticMode:
+class TestPickTherapeuticResponseStyle:
     """Unit tests for the regex-only dispatch helper."""
 
     @pytest.mark.parametrize(
@@ -195,7 +195,7 @@ class TestDispatchNode:
     async def test_llm_primary_classifies_reflective_message(self) -> None:
         """LLM-primary: reflective messages go through the LLM classifier."""
 
-        fake = _FakeDispatchLLM(mode="reflective")
+        fake = _FakeDispatchLLM(response_style="reflective")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("Why do I keep doing this to myself?")
 
@@ -230,7 +230,7 @@ class TestDispatchNode:
     async def test_llm_path_routes_to_llm_pick(self) -> None:
         """Ambiguous messages go to the LLM and use its decision."""
 
-        fake = _FakeDispatchLLM(mode="reflective")
+        fake = _FakeDispatchLLM(response_style="reflective")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state(
             "I keep finding myself getting frustrated with my sister for no reason."
@@ -285,7 +285,7 @@ class TestDispatchNode:
         node.
         """
 
-        fake = _FakeDispatchLLM(mode="psychoeducation")
+        fake = _FakeDispatchLLM(response_style="psychoeducation")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("Why do I get so tired in the afternoon every day?")
 
@@ -303,7 +303,7 @@ class TestDispatchNode:
         exist. After Stage B, the pick must route to the real node.
         """
 
-        fake = _FakeDispatchLLM(mode="closing")
+        fake = _FakeDispatchLLM(response_style="closing")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("Thanks, I think I need to step away now.")
 
@@ -324,7 +324,7 @@ class TestDispatchNode:
         route to the real node.
         """
 
-        fake = _FakeDispatchLLM(mode="guided_exercise")
+        fake = _FakeDispatchLLM(response_style="guided_exercise")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("Can you walk me through a grounding exercise?")
 
@@ -346,7 +346,7 @@ class TestDispatchNode:
         existing modality from the entry turn.
         """
 
-        fake = _FakeDispatchLLM(mode="guided_exercise")
+        fake = _FakeDispatchLLM(response_style="guided_exercise")
         runtime = _MockRuntime(llm_client=fake)
 
         state: Any = {
@@ -377,7 +377,7 @@ class TestDispatchNode:
         appear "active" if the None was spelled wrong.
         """
 
-        fake = _FakeDispatchLLM(mode="supportive")
+        fake = _FakeDispatchLLM(response_style="supportive")
         runtime = _MockRuntime(llm_client=fake)
 
         state: Any = {
@@ -402,10 +402,10 @@ class TestDispatchNode:
 
     @pytest.mark.asyncio
     async def test_command_update_contains_modality(self) -> None:
-        """The dispatcher's Command carries routing.modality.
+        """The dispatcher's Command carries routing.therapeutic_approach.
 
         Mode nodes own routing.mode/mode_source/mode_type in their own
-        deltas; the dispatcher only writes routing.modality so the mode
+        deltas; the dispatcher only writes routing.therapeutic_approach so the mode
         node can load the correct knowledge overlay.
         """
 
@@ -416,7 +416,9 @@ class TestDispatchNode:
 
         # Regex fallback for supportive defaults to MI
         assert "routing" in cmd.update
-        assert cmd.update["routing"]["modality"] == "motivational_interviewing"
+        assert (
+            cmd.update["routing"]["therapeutic_approach"] == "motivational_interviewing"
+        )
 
 
 # ─── 3. build_therapeutic_subgraph compile tests ─────────────────────────
@@ -465,7 +467,7 @@ class TestEndToEndRouting:
         )
 
         assert result.response_type == ResponseKind.THERAPEUTIC
-        assert result.mode == "supportive"
+        assert result.response_style == "supportive"
         assert result.response_text  # non-empty
         # Deterministic fallback response should include a warm opener
         assert (
@@ -484,7 +486,7 @@ class TestEndToEndRouting:
         )
 
         assert result.response_type == ResponseKind.THERAPEUTIC
-        assert result.mode == "reflective"
+        assert result.response_style == "reflective"
         assert result.response_text
         assert "pattern" in result.response_text.lower()
 
@@ -495,7 +497,7 @@ class TestEndToEndRouting:
         result = await run_agent(AgentInput(message="huh?"))
 
         assert result.response_type == ResponseKind.THERAPEUTIC
-        assert result.mode == "clarifying"
+        assert result.response_style == "clarifying"
         assert result.response_text
         # Clarifying fallback should end with a question (it asks for context)
         assert "?" in result.response_text
@@ -536,8 +538,8 @@ class TestEndToEndRouting:
 
         assert delta["response"]["kind"] == ResponseKind.THERAPEUTIC
         assert delta["response"]["text"]  # non-empty
-        assert delta["routing"]["mode"] == "psychoeducation"
-        assert delta["routing"]["mode_source"] == "therapeutic_dispatch"
+        assert delta["routing"]["response_style"] == "psychoeducation"
+        assert delta["routing"]["response_style_source"] == "therapeutic_dispatch"
         # Deterministic fallback is permission-first by design
         assert "?" in delta["response"]["text"]
 
@@ -568,8 +570,8 @@ class TestEndToEndRouting:
 
         assert delta["response"]["kind"] == ResponseKind.THERAPEUTIC
         assert delta["response"]["text"]  # non-empty
-        assert delta["routing"]["mode"] == "closing"
-        assert delta["routing"]["mode_source"] == "therapeutic_dispatch"
+        assert delta["routing"]["response_style"] == "closing"
+        assert delta["routing"]["response_style_source"] == "therapeutic_dispatch"
 
         text_lower = delta["response"]["text"].lower()
         # The single most common closing-mode failure mode
@@ -615,7 +617,7 @@ class TestEndToEndRouting:
         assert delta["response"]["kind"] == ResponseKind.THERAPEUTIC
         assert delta["response"]["text"]
         assert "five things" in delta["response"]["text"].lower()
-        assert delta["routing"]["mode"] == "guided_exercise"
+        assert delta["routing"]["response_style"] == "guided_exercise"
         # Progress delta starts the exercise at step 0
         assert delta["progress"]["exercise_type"] == "grounding_5_4_3_2_1"
         assert delta["progress"]["exercise_step"] == 0
@@ -656,7 +658,7 @@ class TestEndToEndRouting:
         assert delta["progress"]["exercise_step"] == 1
         assert delta["progress"]["exercise_type"] == "grounding_5_4_3_2_1"
         assert "four things" in delta["response"]["text"].lower()
-        assert delta["routing"]["mode"] == "guided_exercise"
+        assert delta["routing"]["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_holds_on_tentative_response(self) -> None:
@@ -699,7 +701,7 @@ class TestEndToEndRouting:
         # Fallback response gives space without advancing
         assert delta["response"]["text"]
         assert "time" in delta["response"]["text"].lower()
-        assert delta["routing"]["mode"] == "guided_exercise"
+        assert delta["routing"]["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_stuck_offers_rephrase(self) -> None:
@@ -740,7 +742,7 @@ class TestEndToEndRouting:
         # Response offers a smaller version of the step
         text_lower = delta["response"]["text"].lower()
         assert "smaller" in text_lower or "one thing" in text_lower
-        assert delta["routing"]["mode"] == "guided_exercise"
+        assert delta["routing"]["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_exit_clears_state(self) -> None:
@@ -779,7 +781,7 @@ class TestEndToEndRouting:
         # Response acknowledges the exit without defending the exercise
         text_lower = delta["response"]["text"].lower()
         assert "stop" in text_lower or "of course" in text_lower
-        assert delta["routing"]["mode"] == "guided_exercise"
+        assert delta["routing"]["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_last_step_completion_clears_state(self) -> None:
@@ -820,7 +822,7 @@ class TestEndToEndRouting:
         # Response names what the user just did
         text_lower = delta["response"]["text"].lower()
         assert "grounding" in text_lower or "walked" in text_lower
-        assert delta["routing"]["mode"] == "guided_exercise"
+        assert delta["routing"]["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_crisis_still_routes_to_crisis_not_therapeutic(self) -> None:
@@ -834,12 +836,12 @@ class TestEndToEndRouting:
         assert result.crisis.level == 3
         assert result.crisis.needs_crisis_response is True
         # The therapeutic subgraph should NOT have set the mode
-        assert result.mode != "supportive"
-        assert result.mode != "reflective"
-        assert result.mode != "clarifying"
-        assert result.mode != "psychoeducation"
-        assert result.mode != "closing"
-        assert result.mode != "guided_exercise"
+        assert result.response_style != "supportive"
+        assert result.response_style != "reflective"
+        assert result.response_style != "clarifying"
+        assert result.response_style != "psychoeducation"
+        assert result.response_style != "closing"
+        assert result.response_style != "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_ambiguous_concerning_language_routes_to_therapeutic(
@@ -858,7 +860,7 @@ class TestEndToEndRouting:
         )
 
         assert result.response_type == ResponseKind.THERAPEUTIC
-        assert result.mode in {"supportive", "reflective", "clarifying"}
+        assert result.response_style in {"supportive", "reflective", "clarifying"}
         assert result.response_text
         # Critically: response text is NOT the bootstrap stub
         assert "Persistent mode is active" not in result.response_text

@@ -444,7 +444,7 @@ class TestTherapeuticResponsePrompt:
             ]
         )
 
-        prompt = build_therapeutic_response_prompt(state, mode="supportive")
+        prompt = build_therapeutic_response_prompt(state, response_style="supportive")
         assert "Relevant context from past sessions:" in prompt
         assert "- Previously noted: I have a sister named Sarah." in prompt
         assert "- Last session (grief): talked about grief after my dog died." in prompt
@@ -458,5 +458,5 @@ class TestTherapeuticResponsePrompt:
                 "Previously noted: legacy fact about the user.",  # type: ignore[list-item]
             ]
         )
-        prompt = build_therapeutic_response_prompt(state, mode="supportive")
+        prompt = build_therapeutic_response_prompt(state, response_style="supportive")
         assert "legacy fact about the user" in prompt

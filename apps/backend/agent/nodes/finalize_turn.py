@@ -81,12 +81,12 @@ async def run_finalize_turn_node(
     # short-circuit paths that never wrote the key, historical state
     # predating this field). Persistence._messages_from_transcript
     # reads the same key on load.
-    routing_mode = state.get("routing", {}).get("mode") or None
+    routing_mode = state.get("routing", {}).get("response_style") or None
 
     assistant_turn = {
         "role": MessageRole.ASSISTANT.value,
         "content": response_text,
-        "mode": routing_mode,
+        "response_style": routing_mode,
     }
 
     # Return only the new assistant turn. The ``operator.add`` reducer

@@ -42,7 +42,7 @@ class _MockRuntime:
             llm_client=None,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=crisis_log_backend,
-            memory_mode=MemoryMode.LOCAL,
+            memory_response_style=MemoryMode.LOCAL,
         )
 
 

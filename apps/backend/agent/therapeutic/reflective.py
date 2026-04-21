@@ -66,8 +66,8 @@ async def run_reflective_response_node(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "reflective",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "reflective",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }

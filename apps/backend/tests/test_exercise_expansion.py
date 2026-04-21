@@ -52,7 +52,7 @@ class _MockRuntime:
             llm_client=llm_client,
             memory_store=memory_store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=memory_mode,
+            memory_response_style=memory_mode,
         )
 
 
@@ -83,7 +83,7 @@ def _make_state(
 
 
 class TestConfirmationMode:
-    """Tests for _classify_step_state with completion_mode='user_confirmation'."""
+    """Tests for _classify_step_state with completion_response_style='user_confirmation'."""
 
     def test_bare_ok_completes(self) -> None:
         from agent.therapeutic.guided_exercise import ExerciseStep, _classify_step_state
@@ -92,7 +92,7 @@ class TestConfirmationMode:
             prompt_fallback="Breathe in. Let me know when done.",
             expected_count=1,
             min_count_for_completion=1,
-            completion_mode="user_confirmation",
+            completion_response_style="user_confirmation",
         )
         assert _classify_step_state("ok", step) == "complete"
         assert _classify_step_state("done", step) == "complete"
@@ -108,7 +108,7 @@ class TestConfirmationMode:
             prompt_fallback="Take a breath.",
             expected_count=1,
             min_count_for_completion=1,
-            completion_mode="user_confirmation",
+            completion_response_style="user_confirmation",
         )
         assert _classify_step_state("I took a breath", step) == "complete"
         assert _classify_step_state("I've done that", step) == "complete"
@@ -122,7 +122,7 @@ class TestConfirmationMode:
             prompt_fallback="Breathe in.",
             expected_count=1,
             min_count_for_completion=1,
-            completion_mode="user_confirmation",
+            completion_response_style="user_confirmation",
         )
         assert _classify_step_state("hmm", step) == "hold"
         assert _classify_step_state("I'm trying", step) == "hold"
@@ -136,7 +136,7 @@ class TestConfirmationMode:
             prompt_fallback="Breathe in.",
             expected_count=1,
             min_count_for_completion=1,
-            completion_mode="user_confirmation",
+            completion_response_style="user_confirmation",
         )
         assert _classify_step_state("I can't do this", step) == "stuck"
         assert _classify_step_state("this is stupid", step) == "stuck"
@@ -149,7 +149,7 @@ class TestConfirmationMode:
             prompt_fallback="Breathe in.",
             expected_count=1,
             min_count_for_completion=1,
-            completion_mode="user_confirmation",
+            completion_response_style="user_confirmation",
         )
         assert _classify_step_state("stop", step) == "exit"
         assert _classify_step_state("can we just talk", step) == "exit"
@@ -679,7 +679,7 @@ class TestExerciseCompletionMemory:
         runtime = _MockRuntime(
             llm_client=None,
             memory_store=store,
-            memory_mode="local",
+            memory_response_style="local",
         )
         # Last step of box breathing
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
@@ -710,7 +710,7 @@ class TestExerciseCompletionMemory:
         runtime = _MockRuntime(
             llm_client=None,
             memory_store=store,
-            memory_mode="local",
+            memory_response_style="local",
         )
         state = _make_state("stop, I don't want to do this", EXERCISE_BOX_BREATHING, 1)
 
@@ -733,7 +733,7 @@ class TestExerciseCompletionMemory:
         runtime = _MockRuntime(
             llm_client=None,
             memory_store=store,
-            memory_mode="incognito",
+            memory_response_style="incognito",
         )
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
 
@@ -752,7 +752,9 @@ class TestExerciseCompletionMemory:
             run_guided_exercise_response_node,
         )
 
-        runtime = _MockRuntime(llm_client=None, memory_store=None, memory_mode="local")
+        runtime = _MockRuntime(
+            llm_client=None, memory_store=None, memory_response_style="local"
+        )
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
 
         delta = await run_guided_exercise_response_node(

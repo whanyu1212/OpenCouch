@@ -65,8 +65,8 @@ async def run_clarifying_response_node(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "clarifying",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "clarifying",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
