@@ -326,7 +326,7 @@ class TestThreads:
         assistant_msgs = [m for m in messages if m["role"] == "assistant"]
         assert len(assistant_msgs) >= 1
         # Mode should be a string (the therapeutic mode that shaped the reply)
-        assert assistant_msgs[0]["mode"] is not None
+        assert assistant_msgs[0]["response_style"] is not None
 
     # ── v0.10 end-session feedback ──────────────────────────────────
 

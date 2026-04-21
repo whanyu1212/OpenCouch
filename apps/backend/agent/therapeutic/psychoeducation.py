@@ -76,8 +76,8 @@ async def run_psychoeducation_response_node(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "psychoeducation",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "psychoeducation",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }

@@ -1,80 +1,30 @@
 """Crisis-mode prompt builders.
 
-Minimal interim module retained during the legacy cleanup. The previous
-catalog/loader/modes/system machinery has been deleted; this file loads the
-same markdown knowledge files directly so the runtime prompt content is
-preserved until the prompt subsystem is redesigned.
+Uses shared helpers from ``agent.prompts`` for source loading,
+composition, and history formatting.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
-from pathlib import Path
-
+from agent.prompts import (
+    CORE_SOURCES,
+    compose_sources as _compose,
+    format_recent_history as _format_recent_history,
+)
 from agent.state import AgentState
 
-# Composition layers used to build the crisis system prompts. Each tuple is a
-# sequence of relative paths under ``knowledge/`` that will be concatenated in
-# order with blank-line separators.
-_CORE_KNOWLEDGE = (
-    "soul.md",
-    "identity.md",
-    "policy/boundaries.md",
-    "policy/privacy.md",
-)
+# Crisis-specific source compositions built on top of CORE_SOURCES.
 _CRISIS_RESPONSE_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
+    *CORE_SOURCES,
     "policy/crisis.md",
     "response_modes/crisis_response.md",
     "modalities/pfa.md",
     "modalities/dbt_skills.md",
 )
 _CRISIS_CLASSIFIER_KNOWLEDGE = (
-    *_CORE_KNOWLEDGE,
+    *CORE_SOURCES,
     "policy/crisis.md",
 )
-
-
-def _knowledge_root() -> Path:
-    """Return the absolute path to the repo-level ``knowledge/`` directory."""
-
-    return Path(__file__).resolve().parents[4] / "knowledge"
-
-
-@lru_cache(maxsize=32)
-def _load_knowledge_file(relative_path: str) -> str:
-    """Load one markdown knowledge file by its relative path.
-
-    Raises:
-        ValueError: If the resolved path escapes the knowledge root.
-    """
-
-    root = _knowledge_root().resolve()
-    path = (root / relative_path).resolve()
-    # Prevent directory traversal — relative_to raises if path escapes root.
-    path.relative_to(root)
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _compose(*relative_paths: str) -> str:
-    """Concatenate knowledge files into a single prompt block."""
-
-    parts = [_load_knowledge_file(path) for path in relative_paths]
-    return "\n\n".join(part for part in parts if part)
-
-
-def _format_recent_history(state: AgentState, *, limit: int = 6) -> str:
-    """Format recent history entries for prompt injection."""
-
-    history = state["history"][-limit:]
-    if not history:
-        return "(no prior history)"
-
-    return "\n".join(
-        f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-        for turn in history
-        if turn.get("content")
-    )
 
 
 def _format_found_resources(resources: list[dict[str, str]]) -> str:

@@ -183,7 +183,7 @@ class _FakeExtractionLLM(BaseLLMClient):
             return cast(
                 StructuredResponseT,
                 DispatchDecision(
-                    mode="supportive",
+                    response_style="supportive",
                     reasoning="fake dispatcher — supportive for extraction tests",
                     confidence="high",
                 ),

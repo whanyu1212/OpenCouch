@@ -1,3 +1,7 @@
+# macOS resource forks
+._*
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -242,3 +246,6 @@ skills/
 apps/backend/.store/
 eval/.session_trajectory_eval.sqlite3
 eval/.session_arc_eval.sqlite3
+
+# dogfood transcripts (not ready for commit)
+eval/dogfood/

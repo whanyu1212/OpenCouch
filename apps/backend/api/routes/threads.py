@@ -89,7 +89,7 @@ async def get_thread_history(
         MessageResponse(
             role=m.role.value,
             content=m.content,
-            mode=m.mode,
+            response_style=m.response_style,
         )
         for m in messages
     ]

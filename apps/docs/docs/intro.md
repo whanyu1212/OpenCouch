@@ -55,7 +55,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       <strong>Adaptive response</strong>
     </div>
-    <p>Six therapeutic modes — supportive, reflective, clarifying, psychoeducation, guided exercise, closing — selected by a hybrid dispatcher per turn.</p>
+    <p>Seven response styles — supportive, reflective, technique, clarifying, psychoeducation, guided exercise, closing — paired with a therapeutic approach (CBT, ACT, MI, etc.) by a hybrid dispatcher per turn.</p>
   </div>
 
   <div className="doc-card">

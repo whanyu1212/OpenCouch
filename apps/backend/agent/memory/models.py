@@ -39,7 +39,7 @@ Structure of this file:
     §5. Relationship models      (RelationshipKind, RelationshipEdge)
     §6. Crisis log models        (CrisisLogRecord, CrisisLogAggregate)
     §7. Consolidation models     (phase 4; deferred skeletons)
-    §8. Therapeutic models       (DispatchDecision, TherapeuticMode)
+    §8. Therapeutic models       (DispatchDecision, TherapeuticResponseStyle)
 """
 
 from __future__ import annotations
@@ -217,6 +217,89 @@ class ExtractionResult(BaseModel):
 # ─── §3. Episodic memory models ─────────────────────────────────────────────
 
 
+# ─── §3a. Modality context models ───────────────────────────────────────────
+#
+# Typed per-modality structured data that the session summarizer can
+# attach to a SessionArc. Each model uses a discriminator literal so
+# Pydantic can round-trip the union through JSON cleanly. All fields
+# are Optional with None/empty defaults — the summarizer should only
+# populate fields where the conversation clearly produced that artifact.
+
+
+class CBTContext(BaseModel):
+    """Structured context from a CBT-oriented session."""
+
+    modality: Literal["cbt"] = "cbt"
+    thought_examined: str | None = None
+    action_step: str | None = None
+    tool_used: str | None = (
+        None  # "thought_record", "behavioral_experiment", "activation"
+    )
+
+
+class MIContext(BaseModel):
+    """Structured context from a motivational interviewing session."""
+
+    modality: Literal["motivational_interviewing"] = "motivational_interviewing"
+    readiness_stage: str | None = None
+    change_talk_themes: list[str] = Field(default_factory=list)
+    sustain_talk_themes: list[str] = Field(default_factory=list)
+
+
+class ACTContext(BaseModel):
+    """Structured context from an ACT-oriented session."""
+
+    modality: Literal["act"] = "act"
+    values_identified: list[str] = Field(default_factory=list)
+    fusion_patterns: list[str] = Field(default_factory=list)
+    committed_action: str | None = None
+
+
+class GriefContext(BaseModel):
+    """Structured context from a grief support session."""
+
+    modality: Literal["grief_support"] = "grief_support"
+    person_lost: str | None = None
+    relationship: str | None = None
+    time_since_loss: str | None = None
+
+
+class IPTContext(BaseModel):
+    """Structured context from an interpersonal therapy session."""
+
+    modality: Literal["interpersonal_therapy"] = "interpersonal_therapy"
+    problem_area: str | None = None
+    key_relationship: str | None = None
+    communication_step_planned: str | None = None
+
+
+class DBTContext(BaseModel):
+    """Structured context from a DBT skills session."""
+
+    modality: Literal["dbt_skills"] = "dbt_skills"
+    skills_used: list[str] = Field(default_factory=list)
+    primary_domain: str | None = None
+
+
+class PFAContext(BaseModel):
+    """Structured context from a psychological first aid session."""
+
+    modality: Literal["pfa"] = "pfa"
+    crisis_type: str | None = None
+    support_connected: str | None = None
+
+
+ModalityContext = (
+    CBTContext
+    | MIContext
+    | ACTContext
+    | GriefContext
+    | IPTContext
+    | DBTContext
+    | PFAContext
+)
+
+
 class MoodArc(BaseModel):
     """Session-level mood summary — how the user opened and closed.
 
@@ -267,6 +350,15 @@ class SessionArc(BaseModel):
 
     open_loops: list[str] = Field(default_factory=list)
     resolved_threads: list[str] = Field(default_factory=list)
+
+    # ── Modality-specific structured context (Option D) ─────────────────
+    # Populated by the summarizer when a therapeutic modality was active
+    # during the session. Both fields are optional — sessions without a
+    # clear modality (clarifying, closing-only) will have None for both.
+    # The typed ModalityContext union gives the LLM schema pressure to
+    # produce correct field names per modality.
+    approach_used: TherapeuticApproach | None = None
+    approach_context: ModalityContext | None = None
 
 
 class StoredSessionArc(SessionArc):
@@ -789,21 +881,22 @@ ConsolidationRunRecord.model_rebuild()
 # simpler, more testable, and easier for the dispatcher to classify —
 # but flagged here so future-you knows the wall exists and doesn't
 # just keep adding cells to an enum that's outgrown itself.
-TherapeuticMode = Literal[
+TherapeuticResponseStyle = Literal[
     "supportive",
     "reflective",
     "psychoeducation",
     "guided_exercise",
     "closing",
     "clarifying",
+    "technique",
 ]
 
-# Therapeutic modalities are orthogonal to modes — they represent the
-# therapeutic *framework* (CBT, ACT, grief support) while modes represent
-# the response *style* (supportive, reflective, etc.). The dispatcher
-# picks both in a single LLM call so the mode node can load the right
-# knowledge overlay.
-TherapeuticModality = Literal[
+# Therapeutic approaches are orthogonal to response styles — they represent
+# the therapeutic *framework* (CBT, ACT, grief support) while response
+# styles represent the *shape* of the turn (supportive, reflective, etc.).
+# The dispatcher picks both in a single LLM call so the response node can
+# load the right knowledge overlay.
+TherapeuticApproach = Literal[
     "motivational_interviewing",
     "cbt",
     "act",
@@ -820,16 +913,16 @@ class DispatchDecision(BaseModel):
 
     The dispatcher is given the current message, recent history, and
     retrieved memory, and it returns a DispatchDecision. The decision
-    includes the picked mode, therapeutic modality, and a brief
-    reasoning string for observability (LangSmith spans, debugging).
+    includes the picked response style, therapeutic approach, and a
+    brief reasoning string for observability (LangSmith spans, debugging).
 
     The reasoning is SHORT — single sentence, max ~40 words. It exists
     for debugging, not for the user. It should never be shown to the
     user.
     """
 
-    mode: TherapeuticMode
-    modality: TherapeuticModality = "none"
+    response_style: TherapeuticResponseStyle
+    therapeutic_approach: TherapeuticApproach = "none"
     reasoning: str = Field(min_length=1, max_length=240)
     confidence: ConfidenceLevel
 
@@ -902,12 +995,21 @@ __all__ = [
     "EntityType",
     "EntityRef",
     "HotPathEdgeType",
-    "TherapeuticModality",
+    "TherapeuticApproach",
     # §2 semantic
     "SemanticCategory",
     "MemoryWrite",
     "SemanticFact",
     "ExtractionResult",
+    # §3 episodic — modality context
+    "CBTContext",
+    "MIContext",
+    "ACTContext",
+    "GriefContext",
+    "IPTContext",
+    "DBTContext",
+    "PFAContext",
+    "ModalityContext",
     # §3 episodic
     "MoodArc",
     "SessionArc",
@@ -940,7 +1042,7 @@ __all__ = [
     "ConsolidationRunRecord",
     "MergeProposalDetail",
     # §8 therapeutic
-    "TherapeuticMode",
+    "TherapeuticResponseStyle",
     "DispatchDecision",
     # §9 session feedback
     "FeedbackLabel",

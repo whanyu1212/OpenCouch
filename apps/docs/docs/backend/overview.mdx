@@ -35,7 +35,7 @@ response, memory retrieval is skipped entirely.
 | Storage | SQLite via `aiosqlite` | Single-file, no server, survives restart |
 | Memory | `MemoryStore` protocol | In-memory for incognito/tests; SQLite for persistent |
 | Retrieval | Hybrid RRF | Embedding cosine + token-recall fused via Reciprocal Rank Fusion |
-| Knowledge | `knowledge/*.md` files | Reviewed content outside code; composed at runtime |
+| Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime |
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn |
 | Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics |
 | Observability | LangSmith + local diagnostics | LangSmith for trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
@@ -76,7 +76,7 @@ composition logic.
 | `agent/` | Graph entrypoint, state schema, models, runtime context |
 | `agent/nodes/` | One file per graph node (8 nodes) |
 | `agent/memory/` | Store protocol, embeddings, retrieval, dedup, hashing |
-| `agent/therapeutic/` | Subgraph: dispatcher, six mode nodes, prompts |
+| `agent/therapeutic/` | Subgraph: dispatcher, seven response style nodes, prompts |
 | `agent/tools/` | Web search for crisis resources |
 | `services/llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |

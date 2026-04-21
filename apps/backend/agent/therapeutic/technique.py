@@ -1,4 +1,10 @@
-"""Reflective response mode — pattern naming and gentle probing."""
+"""Technique response style — the therapeutic approach drives the turn.
+
+In technique mode, the approach knowledge (CBT arc, ACT process, MI
+rhythm, etc.) is the primary behavioral instruction. The response
+style instruction just says "follow the approach's process guidance."
+This is the one style where the approach is loud, not background.
+"""
 
 from __future__ import annotations
 
@@ -12,49 +18,50 @@ from agent.models import ModeType, ResponseKind
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import (
-    build_reflective_system_prompt,
+    build_technique_system_prompt,
     build_therapeutic_response_prompt,
 )
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_REFLECTIVE_REPLY = (
-    "I notice you keep coming back to this — it sounds like there might be a "
-    "pattern here that's worth looking at together. "
-    "What do you think connects these moments for you?"
+_DEFAULT_TECHNIQUE_REPLY = (
+    "Let's stay with what you just described. "
+    "What's the thought that shows up most in that moment?"
 )
 
 
-async def run_reflective_response_node(
+async def run_technique_response_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, Any]:
-    """Generate a pattern-recognizing reflective response.
+    """Generate a response driven by the active therapeutic approach.
 
-    Activated when the user describes a recurring pattern, asks "why does
-    this keep happening?", or surfaces a theme across multiple turns. The
-    agent gently names the pattern and invites reflection.
+    The technique response style delegates behavioral control to the
+    approach knowledge loaded in the system prompt. The approach's arc
+    template, Socratic rhythm, transition signals, etc. shape the
+    response — the style instruction just says "follow the approach."
 
-    Falls back to a deterministic template when no LLM client is available.
+    Falls back to a deterministic template when no LLM client is
+    available.
     """
 
     llm_client = runtime.context.response_llm or runtime.context.llm_client
 
-    response_text = _DEFAULT_REFLECTIVE_REPLY
+    response_text = _DEFAULT_TECHNIQUE_REPLY
     if llm_client is not None:
         try:
             writer = get_stream_writer()
             chunks: list[str] = []
             async for chunk in llm_client.generate_text_stream(
-                prompt=build_therapeutic_response_prompt(state, mode="reflective"),
-                system_instruction=build_reflective_system_prompt(state),
+                prompt=build_therapeutic_response_prompt(state, mode="technique"),
+                system_instruction=build_technique_system_prompt(state),
             ):
                 chunks.append(chunk)
                 writer({"type": "chunk", "text": chunk})
             response_text = "".join(chunks)
         except Exception:
             logger.warning(
-                "Reflective response LLM call failed; using deterministic fallback.",
+                "Technique response LLM call failed; using deterministic fallback.",
                 exc_info=True,
             )
 
@@ -66,7 +73,7 @@ async def run_reflective_response_node(
         },
         "routing": {
             **state.get("routing", {}),
-            "response_style": "reflective",
+            "response_style": "technique",
             "response_style_source": "therapeutic_dispatch",
             "response_style_type": ModeType.THERAPEUTIC,
         },

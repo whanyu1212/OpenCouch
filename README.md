@@ -62,7 +62,7 @@ The current voice tab is an **experimental Realtime speech preview**. It now use
 
 The backend now also has an initial Google Cloud Run deployment path for close-beta preview and internal testing. That path is functional for API deployment, but it is not yet fully production-ready because persistence and final rollout hardening still need to be completed.
 
-It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, six therapeutic response modes, and seven LLM-routed modalities keep responses safe, grounded, and adaptive.
+It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, seven response styles (including a technique style where the therapeutic approach drives the turn), and seven LLM-routed therapeutic approaches keep responses safe, grounded, and adaptive.
 
 ## ✨ Key Features
 
@@ -168,7 +168,7 @@ flowchart TD
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
-        TS[["therapeutic_subgraph<br/>6 modes • 7 modalities"]]:::safeNode
+        TS[["therapeutic_subgraph<br/>7 styles • 7 approaches"]]:::safeNode
         LM ==> TS
     end
 
@@ -247,8 +247,7 @@ OpenCouch/
 │   │   └── tests/              # 720+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
-├── eval/                       # Evaluation harnesses + curated datasets
-└── knowledge/                  # Therapeutic prompts, policy, and source-of-truth content
+└── eval/                       # Evaluation harnesses + curated datasets
 ```
 </details>
 
@@ -258,14 +257,17 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
-- **Memory robustness** — Unicode-aware tokenizer (CJK/Cyrillic/accented Latin), procedural rule cap with eviction, atomic batch write protocol, episodic date filter, enriched semantic triples in working memory, and fail-loud owner_id validation
-- **Web UI memory management** — per-record deletion of facts, session arcs, and procedural rules from the Memory page with two-click confirmation
-- **CLI visual redesign** — "Midnight Journal" aesthetic with warm amber/sage palette, Unicode block-art wordmark, minimal left-bar info messages, and lowercased panel titles
-- **Memory system rewrite** — reworked memory writing around policy-based candidate extraction, session-end commit, repetition-gated promotion, reconciliation/supersession, and unified lifecycle handling across text, web, API shutdown, timeout, CLI, and voice disconnect
-- **Response model tiers** — split pinned control-plane LLM usage from selectable response-writer LLM usage, with `fast` vs `quality` text-response switching now available in both the web UI and the CLI
-- **Realtime voice rewrite** — rebuilt the backend voice bridge and standalone harness around the GA Realtime event model, with bounded prompt assembly, server truncation sync, and local ducking for faster interruption feel
+- **Therapeutic knowledge enrichment** — CBT conversation arc template with 5-phase session shape, long-session guidance (second-pass routing, regulation gates, rupture detection), cross-session continuity, memory hooks for all 7 approaches, and a continuum technique exercise
+- **Technique response style** — 7th response style where the therapeutic approach drives the turn directly, resolving the style-vs-approach conflict where reflective instructions overrode CBT arc guidance
+- **Modality-specific episodic memory** — typed ModalityContext (CBT, MI, ACT, grief, IPT, DBT, PFA) attached to session arcs so cross-session retrieval surfaces structured therapeutic artifacts
+- **Architecture rename** — `mode` → `response_style`, `modality` → `therapeutic_approach` across the entire codebase for clearer terminology
+- **Prompt reorganization** — moved prompt sources into `agent/prompts/sources/`, deduplicated shared helpers into a single module
+- **Memory robustness** — Unicode-aware tokenizer, procedural rule cap, atomic batch writes, episodic date filter, enriched semantic triples, fail-loud owner_id validation
+- **CLI visual redesign** — "Midnight Journal" aesthetic with warm amber/sage palette, Unicode block-art wordmark, minimal left-bar info messages
+- **Memory system rewrite** — policy-based candidate extraction, session-end commit, repetition-gated promotion, reconciliation/supersession
+- **Response model tiers** — `fast` vs `quality` text-response switching in both web UI and CLI
 - **Crisis gate hardening** — LLM-primary architecture with regex fallback, shadow monitoring, and adversarial-resistant prompt
-- **Therapeutic dispatcher rewrite** — LLM-primary routing for all 6 modes and 7 modalities, mid-exercise exit detection
+- **Therapeutic dispatcher rewrite** — LLM-primary routing for all 7 response styles and 7 approaches, mid-exercise exit detection
 
 ---
 

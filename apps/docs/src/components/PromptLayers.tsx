@@ -34,15 +34,15 @@ const LAYERS: Layer[] = [
   {
     id: 'modality',
     depth: 3,
-    label: '3. Modality overlay',
-    source: 'knowledge/modalities/*.md',
+    label: '3. Approach overlay',
+    source: 'agent/prompts/sources/modalities/*.md',
     desc: 'Therapeutic framework overlay — MI, PFA, CBT, grief, IPT, ACT, or DBT. Selected per turn by the dispatcher. Optional.',
   },
   {
     id: 'mode',
     depth: 4,
     label: '2. Mode knowledge',
-    source: 'knowledge/response_modes/*.md',
+    source: 'agent/prompts/sources/response_modes/*.md',
     desc: 'Mode-specific knowledge file. Supportive, reflective, psychoeducation, closing, and guided exercise each have a dedicated file.',
   },
   {

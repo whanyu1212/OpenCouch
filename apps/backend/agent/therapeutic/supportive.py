@@ -67,8 +67,8 @@ async def run_supportive_response_node(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "supportive",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "supportive",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }

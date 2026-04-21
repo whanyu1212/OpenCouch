@@ -79,6 +79,26 @@ class SessionMemoryBuffer(BaseModel):
     semantic_candidates: list[SemanticCandidate] = Field(default_factory=list)
     procedural_candidates: list[ProceduralCandidate] = Field(default_factory=list)
 
+    # Per-turn modality accumulator. The runtime increments the count for
+    # the dispatched modality after each turn. At session end, the most
+    # frequent modality is passed to the summarizer as a hint so it can
+    # extract modality-specific structured context. Entries with key
+    # "none" or absent modality are ignored when computing the dominant.
+    approach_counts: dict[str, int] = Field(default_factory=dict)
+
+    def record_approach(self, modality: str | None) -> None:
+        """Increment the count for a dispatched modality after a turn."""
+
+        if modality and modality != "none":
+            self.approach_counts[modality] = self.approach_counts.get(modality, 0) + 1
+
+    def dominant_approach(self) -> str | None:
+        """Return the most frequent non-none modality, or None."""
+
+        if not self.approach_counts:
+            return None
+        return max(self.approach_counts, key=self.approach_counts.get)  # type: ignore[arg-type]
+
 
 class PolicyDecision(BaseModel):
     """The final deterministic decision returned by the write policy."""

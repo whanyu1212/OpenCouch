@@ -116,7 +116,7 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: true,
     description:
-      'Compiled subgraph with dispatcher + 6 mode nodes. Uses TherapeuticSubgraphOutput to restrict what flows back to the parent, preventing reducer double-counting on transcript/history. Each child node has its own RetryPolicy.',
+      'Compiled subgraph with dispatcher + 7 response style nodes. Uses TherapeuticSubgraphOutput to restrict what flows back to the parent, preventing reducer double-counting on transcript/history. Each child node has its own RetryPolicy.',
     file: 'agent/therapeutic/graph.py',
     fn: 'build_therapeutic_subgraph',
   },
@@ -125,7 +125,7 @@ const NODES: NodeSpec[] = [
     name: 'finalize_turn_node',
     category: 'TERMINAL',
     order: 6,
-    inputs: ['state.response.text', 'state.routing.mode'],
+    inputs: ['state.response.text', 'state.routing.response_style'],
     outputs: ['state.transcript [+1]', 'state.history [+1]'],
     retry: false,
     llm: false,

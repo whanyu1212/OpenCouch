@@ -22,13 +22,15 @@ class SemanticWorkingMemoryEntry(TypedDict, total=False):
     object: str
 
 
-class EpisodicWorkingMemoryEntry(TypedDict):
+class EpisodicWorkingMemoryEntry(TypedDict, total=False):
     """Episodic session arc retrieved for the current turn."""
 
-    type: Literal["episodic"]
-    summary: str
-    primary_themes: list[str]
-    is_catch_up: bool
+    type: Literal["episodic"]  # required
+    summary: str  # required
+    primary_themes: list[str]  # required
+    is_catch_up: bool  # required
+    approach_used: str
+    approach_context: dict
 
 
 WorkingMemoryEntry: TypeAlias = SemanticWorkingMemoryEntry | EpisodicWorkingMemoryEntry
@@ -64,15 +66,72 @@ def make_episodic_working_memory_entry(
     summary: str,
     primary_themes: list[str] | None = None,
     is_catch_up: bool,
+    approach_used: str | None = None,
+    approach_context: dict | None = None,
 ) -> EpisodicWorkingMemoryEntry:
     """Build an episodic working-memory entry."""
 
-    return {
+    entry: EpisodicWorkingMemoryEntry = {
         "type": "episodic",
         "summary": summary,
         "primary_themes": list(primary_themes or []),
         "is_catch_up": is_catch_up,
     }
+    if approach_used:
+        entry["approach_used"] = approach_used
+    if approach_context:
+        entry["approach_context"] = approach_context
+    return entry
+
+
+def _format_approach_context(ctx: dict) -> list[str]:
+    """Render approach_context fields as concise human-readable fragments.
+
+    Returns a list of short strings like "Thought: I'm going to get fired"
+    or "Action step: speak up in one meeting". Empty/null fields are skipped.
+    """
+
+    parts: list[str] = []
+    # Map of context keys → human-readable labels. Order determines
+    # rendering order. Keys not present in ctx are silently skipped.
+    _LABELS = {
+        # CBT
+        "thought_examined": "Thought",
+        "action_step": "Action step",
+        "tool_used": "Tool",
+        # MI
+        "readiness_stage": "Readiness",
+        "change_talk_themes": "Change talk",
+        "sustain_talk_themes": "Sustain talk",
+        # ACT
+        "values_identified": "Values",
+        "fusion_patterns": "Fusion",
+        "committed_action": "Committed action",
+        # Grief
+        "person_lost": "Person lost",
+        "relationship": "Relationship",
+        "time_since_loss": "Time since loss",
+        # IPT
+        "problem_area": "Problem area",
+        "key_relationship": "Key relationship",
+        "communication_step_planned": "Communication step",
+        # DBT
+        "skills_used": "Skills used",
+        "primary_domain": "Domain",
+        # PFA
+        "crisis_type": "Crisis type",
+        "support_connected": "Support connected",
+    }
+    for key, label in _LABELS.items():
+        value = ctx.get(key)
+        if not value:
+            continue
+        if isinstance(value, list):
+            value = ", ".join(str(v) for v in value if v)
+            if not value:
+                continue
+        parts.append(f"{label}: {value}")
+    return parts
 
 
 def format_working_memory_entry(entry: WorkingMemoryEntry | str) -> str:
@@ -104,8 +163,20 @@ def format_working_memory_entry(entry: WorkingMemoryEntry | str) -> str:
         if not summary:
             return ""
         themes = entry.get("primary_themes") or []
-        themes_str = ", ".join(themes) if themes else "untagged"
-        return f"Last session ({themes_str}): {summary}"
+        modality = entry.get("approach_used")
+        # Build the parenthetical: themes + modality label
+        tag_parts = list(themes) if themes else []
+        if modality and modality != "none":
+            tag_parts.append(modality.upper().replace("_", " "))
+        tags_str = ", ".join(tag_parts) if tag_parts else "untagged"
+        base = f"Last session ({tags_str}): {summary}"
+
+        # Append modality-specific context as a concise suffix
+        ctx = entry.get("approach_context") or {}
+        ctx_parts = _format_approach_context(ctx) if ctx else []
+        if ctx_parts:
+            base += " [" + "; ".join(ctx_parts) + "]"
+        return base
 
     return ""
 

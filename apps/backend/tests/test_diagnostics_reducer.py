@@ -133,7 +133,7 @@ def _state_with_pre_existing_diagnostics(**extra: Any) -> Any:
             "open_loops": [],
             "current_goal": None,
         },
-        "routing": {"route": "therapeutic", "mode": "pending"},
+        "routing": {"route": "therapeutic", "response_style": "pending"},
         "response": {"text": "", "kind": "therapeutic"},
         "progress": {"turn_count": 1},
         "diagnostics": {"pre_existing_key": 42, "another_key": "val"},

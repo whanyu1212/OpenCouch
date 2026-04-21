@@ -12,7 +12,6 @@ RUN uv sync --locked --no-dev
 
 WORKDIR /workspace
 
-COPY knowledge ./knowledge
 COPY apps/backend ./apps/backend
 
 WORKDIR /workspace/apps/backend

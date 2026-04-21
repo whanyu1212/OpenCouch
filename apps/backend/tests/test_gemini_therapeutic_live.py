@@ -60,8 +60,8 @@ async def test_live_gemini_picks_reflective_for_implicit_pattern() -> None:
     )
 
     assert result.response_type == ResponseKind.THERAPEUTIC
-    assert result.mode == "reflective", (
-        f"Expected reflective but dispatcher picked {result.mode}. "
+    assert result.response_style == "reflective", (
+        f"Expected reflective but dispatcher picked {result.response_style}. "
         "The LLM should recognize this as an implicit pattern recognition."
     )
 
@@ -82,8 +82,8 @@ async def test_live_gemini_picks_supportive_for_venting() -> None:
     )
 
     assert result.response_type == ResponseKind.THERAPEUTIC
-    assert result.mode == "supportive", (
-        f"Expected supportive but dispatcher picked {result.mode}."
+    assert result.response_style == "supportive", (
+        f"Expected supportive but dispatcher picked {result.response_style}."
     )
 
 
@@ -103,8 +103,8 @@ async def test_live_gemini_picks_clarifying_for_ambiguous_pronoun() -> None:
     )
 
     assert result.response_type == ResponseKind.THERAPEUTIC
-    assert result.mode == "clarifying", (
-        f"Expected clarifying but dispatcher picked {result.mode}."
+    assert result.response_style == "clarifying", (
+        f"Expected clarifying but dispatcher picked {result.response_style}."
     )
 
 
@@ -124,6 +124,6 @@ async def test_live_gemini_supportive_default_for_neutral_self_report() -> None:
     )
 
     assert result.response_type == ResponseKind.THERAPEUTIC
-    assert result.mode == "supportive", (
-        f"Expected supportive but dispatcher picked {result.mode}."
+    assert result.response_style == "supportive", (
+        f"Expected supportive but dispatcher picked {result.response_style}."
     )

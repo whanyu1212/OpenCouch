@@ -90,8 +90,8 @@ async def run_closing_response_node(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "closing",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "closing",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }

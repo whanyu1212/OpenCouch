@@ -37,7 +37,7 @@ export default function TurnPipeline() {
             therapeutic path
           </div>
           <Node num="2b" label="load_memory_node" desc="Hybrid RRF retrieval across 3 namespaces" accent="var(--safe-color)" compact />
-          <Node num="3b" label="therapeutic_subgraph" desc="Dispatcher → 1 of 6 modes × 7 modalities" accent="var(--safe-color)" compact />
+          <Node num="3b" label="therapeutic_subgraph" desc="Dispatcher → 1 of 7 response styles × 7 approaches" accent="var(--safe-color)" compact />
         </div>
       </div>
 

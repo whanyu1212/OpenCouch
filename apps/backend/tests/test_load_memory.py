@@ -281,10 +281,9 @@ class TestLoadMemoryNode:
         assert "0 procedural rule(s)" in summary
         assert "recall=off" in summary
         assert "3 meaningful token(s)" in summary
-        # v0.8.1: path indicator — token_recall when there's no embedding
-        # provider in the runtime context (the fake runtime fixture
-        # doesn't wire one).
-        assert "path=token_recall" in summary
+        # Empty-store short-circuit: when both semantic and episodic
+        # stores are empty, the embedding call is skipped entirely.
+        assert "path=skipped_empty_store" in summary
         # Specifically NOT the guest session string:
         assert "Guest session" not in summary
 
@@ -1089,7 +1088,7 @@ class TestFinalizeTurnNode:
         and history.
 
         v0.8 observability: the assistant turn dict also carries a
-        ``mode`` field sourced from ``state["routing"]["mode"]``. This
+        ``mode`` field sourced from ``state["routing"]["response_style"]``. This
         state has no routing, so the mode resolves to ``None``.
 
         Phase C changed transcript/history to reducer-backed fields, so
@@ -1111,7 +1110,7 @@ class TestFinalizeTurnNode:
         assert delta["transcript"][0] == {
             "role": MessageRole.ASSISTANT.value,
             "content": "Hello, how can I help?",
-            "mode": None,
+            "response_style": None,
         }
         assert delta["history"] == delta["transcript"]
 
@@ -1173,7 +1172,7 @@ class TestFinalizeTurnNode:
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [],
             "response": {"text": "Hello"},
-            "routing": {"mode": "supportive"},
+            "routing": {"response_style": "supportive"},
             "memory": {"summary": "x"},
         }
         runtime = _FakeRuntime({})

@@ -164,7 +164,7 @@ def _make_agent_output(
         response_text=response_text,
         response_type=ResponseKind.THERAPEUTIC,
         crisis=CrisisAssessment(),
-        mode="support",
+        response_style="support",
         mode_source="test",
         diagnostics=diagnostics,
     )
@@ -2197,7 +2197,7 @@ def test_render_response_shows_footer_metadata(capsys) -> None:
     assert "thread-a" in out
     assert "turn" in out
     assert "3" in out
-    assert "mode" in out
+    assert "style" in out
     assert "support" in out
 
 
@@ -2207,9 +2207,9 @@ def test_render_meta_defaults_to_compact_summary(capsys) -> None:
     from opencouch_cli.app import render_meta
 
     render_meta(
-        mode="support",
-        mode_source="keyword",
-        mode_type="therapeutic",
+        response_style="support",
+        response_style_source="keyword",
+        response_style_type="therapeutic",
         response_type="support",
         level=0,
         needs_clarification=False,

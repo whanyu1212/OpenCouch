@@ -737,6 +737,12 @@ class PersistentAgentRuntime:
     ) -> StoredSessionArc | None:
         """Run the shared session-end summarization + commit seam."""
 
+        # Compute dominant modality from the session buffer's per-turn
+        # accumulator. Falls back to None when no buffer exists (e.g.,
+        # end_transcript_session with a fresh buffer) or no modality was
+        # dispatched during the session.
+        approach_hint = session_buffer.dominant_approach() if session_buffer else None
+
         stored_arc = await run_summarize_session(
             state,
             llm_client=llm_client,
@@ -747,6 +753,7 @@ class PersistentAgentRuntime:
             ended_at=ended_at,
             crisis_level_max=crisis_level_max,
             embedding_provider=self._embedding_provider,
+            approach_hint=approach_hint,
         )
 
         commit_result = await run_commit_session_memory(
@@ -862,7 +869,7 @@ class PersistentAgentRuntime:
 
         metadata = {
             "thread_id": thread_id,
-            "modality": "text",
+            "therapeutic_approach": "text",
             "streaming": streaming,
             "channel": channel.value if channel is not None else None,
             "user_scope": "persistent" if user_id else "guest",
@@ -936,8 +943,10 @@ class PersistentAgentRuntime:
             content = (turn.get("content") or "").strip()
             if role not in {"system", "user", "assistant"} or not content:
                 continue
-            mode = turn.get("mode") if role == "assistant" else None
-            messages.append(Message(role=MessageRole(role), content=content, mode=mode))
+            style = turn.get("response_style") if role == "assistant" else None
+            messages.append(
+                Message(role=MessageRole(role), content=content, response_style=style)
+            )
         return messages
 
     def _get_graph(self) -> CompiledStateGraph:
@@ -1127,6 +1136,17 @@ class PersistentAgentRuntime:
             )
         prior_max = self._max_crisis_levels.get(thread_id, 0)
         self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
+
+        # Record the dispatched modality for session-end dominant-modality
+        # computation. Mirrors the crisis-level tracking pattern above.
+        turn_routing = final_state.get("routing") or {}
+        turn_modality = (
+            turn_routing.get("therapeutic_approach")
+            if isinstance(turn_routing, dict)
+            else getattr(turn_routing, "therapeutic_approach", None)
+        )
+        self._session_memory_buffer_for_thread(thread_id).record_approach(turn_modality)
+
         await self._persist_runtime_session_tracking(thread_id)
 
         return PersistentTurnResult(
@@ -1575,6 +1595,16 @@ class PersistentAgentRuntime:
             )
         prior_max = self._max_crisis_levels.get(thread_id, 0)
         self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
+
+        # Record dispatched modality — same logic as run_turn.
+        turn_routing = final_state.get("routing") or {}
+        turn_modality = (
+            turn_routing.get("therapeutic_approach")
+            if isinstance(turn_routing, dict)
+            else getattr(turn_routing, "therapeutic_approach", None)
+        )
+        self._session_memory_buffer_for_thread(thread_id).record_approach(turn_modality)
+
         await self._persist_runtime_session_tracking(thread_id)
 
         yield DoneEvent(output=state_to_output(final_state))

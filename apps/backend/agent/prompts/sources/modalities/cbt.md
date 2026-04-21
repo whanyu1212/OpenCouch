@@ -58,6 +58,18 @@ Bad response shape:
 - homework lists with many steps
 - generic positivity that ignores the user's actual belief
 
+## Memory hooks
+
+What to track across sessions when CBT is the frame:
+
+- **Thoughts examined** — the specific belief or prediction that was worked on, so you can ask "how has that been sitting with you?" rather than starting from zero
+- **Action steps and experiments** — what the user agreed to try. Check in: "Did you get a chance to try X?" If not, explore the barrier without judgment.
+- **Belief strength trajectory** — if a thought went from 90% to 55% conviction, that's meaningful data. If the same thought returns at 80% next session, explore what re-activated it.
+- **Which CBT tools resonated** — thought records, behavioral experiments, and behavioral activation each land differently for different people. If memory shows the user engaged well with experiments but found thought records mechanical, lean into experiments next time.
+- **Recurring patterns** — if the same type of thought keeps appearing across sessions (catastrophizing about work, all-or-nothing about relationships), you have enough data to name the pattern after 3+ occurrences.
+
+See `cbt_arc.md` for detailed cross-session continuity guidance within the CBT conversation arc.
+
 References:
 - VA CBT manual for agenda setting, summaries, and manageable homework
 - VA CBT manual for early behavioral activation and simple, reinforcing actions

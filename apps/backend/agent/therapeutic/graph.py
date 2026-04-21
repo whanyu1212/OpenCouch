@@ -56,12 +56,14 @@ from agent.therapeutic.dispatcher import (
     PSYCHOEDUCATION_NODE,
     REFLECTIVE_NODE,
     SUPPORTIVE_NODE,
+    TECHNIQUE_NODE,
     run_therapeutic_dispatch_node,
 )
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 from agent.therapeutic.psychoeducation import run_psychoeducation_response_node
 from agent.therapeutic.reflective import run_reflective_response_node
 from agent.therapeutic.supportive import run_supportive_response_node
+from agent.therapeutic.technique import run_technique_response_node
 
 # Dispatcher node name exported so the parent graph (or tests) can
 # reference it without importing from dispatcher.py directly.
@@ -142,15 +144,19 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
     subgraph.add_node(
         GUIDED_EXERCISE_NODE, run_guided_exercise_response_node, retry_policy=_io_retry
     )
+    subgraph.add_node(
+        TECHNIQUE_NODE, run_technique_response_node, retry_policy=_io_retry
+    )
 
     subgraph.add_edge(START, DISPATCH_NODE)
-    # therapeutic_dispatch_node returns Command(goto=<mode>); no
-    # conditional edge needed. Each mode node terminates at END.
+    # therapeutic_dispatch_node returns Command(goto=<style>); no
+    # conditional edge needed. Each style node terminates at END.
     subgraph.add_edge(SUPPORTIVE_NODE, END)
     subgraph.add_edge(REFLECTIVE_NODE, END)
     subgraph.add_edge(CLARIFYING_NODE, END)
     subgraph.add_edge(PSYCHOEDUCATION_NODE, END)
     subgraph.add_edge(CLOSING_NODE, END)
     subgraph.add_edge(GUIDED_EXERCISE_NODE, END)
+    subgraph.add_edge(TECHNIQUE_NODE, END)
 
     return subgraph.compile()

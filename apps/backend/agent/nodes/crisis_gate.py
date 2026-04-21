@@ -438,11 +438,13 @@ def _build_crisis_delta(
         "routing": {
             **routing,
             "route": route,
-            "mode": "safety_check" if route == "crisis" else routing.get("mode"),
-            "mode_source": "crisis_gate",
-            "mode_type": ModeType.CRISIS
+            "response_style": "safety_check"
             if route == "crisis"
-            else routing.get("mode_type"),
+            else routing.get("response_style"),
+            "response_style_source": "crisis_gate",
+            "response_style_type": ModeType.CRISIS
+            if route == "crisis"
+            else routing.get("response_style_type"),
             # Crisis debug metadata — read by crisis_log_node for the
             # audit record. Always populated on crisis-gate runs so the
             # audit trail reflects the actual code path taken.

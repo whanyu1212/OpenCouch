@@ -732,6 +732,64 @@ _VALUES_COMPASS_STEPS: tuple[ExerciseStep, ...] = (
 # A short positive-psychology exercise for building positive affect.
 # 3 steps, item_count mode. Good session closer.
 
+EXERCISE_CONTINUUM = "thought_work_continuum"
+
+# The continuum technique targets rigid all-or-nothing beliefs by
+# converting an absolute label into a 0-100 dimension, then placing
+# the user on it honestly. Most users discover they're mid-range, not
+# at zero — which is already a shift from the absolute framing.
+_CONTINUUM_STEPS: tuple[ExerciseStep, ...] = (
+    ExerciseStep(
+        prompt_fallback=(
+            "Let's look at that belief more closely. Can you state it "
+            "as an absolute — the all-or-nothing version? Something like "
+            "'I'm a terrible [X]' or 'I always [Y].'"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Now let's turn that into a scale. If we put that quality on "
+            "a 0-to-100 spectrum — what would a 0 look like? The absolute "
+            "worst-case version, someone who truly has none of that quality?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "And what would 100 look like? The impossibly perfect version "
+            "— which nobody actually is?"
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "Where would you honestly place yourself on that scale right "
+            "now? Just a number — there's no wrong answer."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+    ExerciseStep(
+        prompt_fallback=(
+            "That's not zero. What's one small thing that would move you "
+            "about 5 points up from where you are? Something concrete and "
+            "doable this week."
+        ),
+        expected_count=1,
+        min_count_for_completion=1,
+        completion_mode="item_count",
+    ),
+)
+
+
 EXERCISE_GRATITUDE = "emotion_regulation_gratitude"
 
 _GRATITUDE_STEPS: tuple[ExerciseStep, ...] = (
@@ -784,6 +842,7 @@ _EXERCISE_REGISTRY: dict[str, tuple[ExerciseStep, ...]] = {
     EXERCISE_IMPROVE: _IMPROVE_STEPS,
     EXERCISE_VALUES_COMPASS: _VALUES_COMPASS_STEPS,
     EXERCISE_GRATITUDE: _GRATITUDE_STEPS,
+    EXERCISE_CONTINUUM: _CONTINUUM_STEPS,
 }
 
 # Display names for exercise-aware fallback messages.
@@ -800,6 +859,7 @@ _EXERCISE_DISPLAY_NAMES: dict[str, str] = {
     EXERCISE_IMPROVE: "an IMPROVE the moment exercise",
     EXERCISE_VALUES_COMPASS: "a values compass exercise",
     EXERCISE_GRATITUDE: "a gratitude inventory",
+    EXERCISE_CONTINUUM: "a continuum exercise",
 }
 
 
@@ -1028,6 +1088,22 @@ _EXERCISE_SELECTORS: tuple[tuple[tuple[str, ...], str], ...] = (
             "check if",
         ),
         EXERCISE_BEHAVIORAL_EXPERIMENT,
+    ),
+    # Continuum: targets explicit all-or-nothing self-labels and direct
+    # requests. Triggers are intentionally narrow — "always" and "never"
+    # alone are too common. We match patterns that combine absolute
+    # language with self-reference ("I'm a terrible", "I always fail")
+    # plus explicit exercise requests.
+    (
+        (
+            "continuum",
+            "all.or.nothing",
+            "black.and.white",
+            r"i'?m (?:a )?(?:terrible|horrible|worst|complete|total)",
+            r"i (?:always|never) (?:fail|mess|ruin|screw|disappoint|let)",
+            r"100\s*%",
+        ),
+        EXERCISE_CONTINUUM,
     ),
     (
         (
@@ -1287,9 +1363,9 @@ def _handle_start(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "guided_exercise",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "guided_exercise",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
 
@@ -1374,9 +1450,9 @@ def _build_exit_delta(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "guided_exercise",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "guided_exercise",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
 
@@ -1433,9 +1509,9 @@ async def _build_stuck_delta(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "guided_exercise",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "guided_exercise",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
 
@@ -1491,9 +1567,9 @@ async def _build_hold_delta(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "guided_exercise",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "guided_exercise",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
 
@@ -1557,9 +1633,9 @@ async def _build_advance_delta(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "guided_exercise",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "guided_exercise",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
 
@@ -1638,9 +1714,9 @@ async def _build_complete_delta(
         },
         "routing": {
             **state.get("routing", {}),
-            "mode": "guided_exercise",
-            "mode_source": "therapeutic_dispatch",
-            "mode_type": ModeType.THERAPEUTIC,
+            "response_style": "guided_exercise",
+            "response_style_source": "therapeutic_dispatch",
+            "response_style_type": ModeType.THERAPEUTIC,
         },
     }
 

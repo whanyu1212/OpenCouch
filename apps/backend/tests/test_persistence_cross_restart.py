@@ -153,7 +153,7 @@ class _FakeCrossRestartLLM(BaseLLMClient):
             return cast(
                 StructuredResponseT,
                 DispatchDecision(
-                    mode="supportive",
+                    response_style="supportive",
                     reasoning="fake dispatcher for cross-restart smoke test",
                     confidence="high",
                 ),

@@ -93,19 +93,19 @@ class ChatResponse(BaseModel):
 
     response_text: str = Field(description="The agent's reply text.")
     response_type: str = Field(description="'therapeutic' or 'crisis'.")
-    mode: str | None = Field(
+    response_style: str | None = Field(
         default=None,
-        description="Which therapeutic mode shaped the reply "
-        "(supportive, reflective, clarifying, psychoeducation, "
+        description="Which response style shaped the reply "
+        "(supportive, reflective, technique, clarifying, psychoeducation, "
         "guided_exercise, closing, or None for crisis path).",
     )
-    mode_source: str | None = Field(
+    response_style_source: str | None = Field(
         default=None,
-        description="How the mode was selected: keyword, llm, default.",
+        description="How the response style was selected: keyword, llm, default.",
     )
-    modality: str | None = Field(
+    therapeutic_approach: str | None = Field(
         default=None,
-        description="Which therapeutic modality informed the reply "
+        description="Which therapeutic approach informed the reply "
         "(motivational_interviewing, cbt, act, dbt_skills, "
         "grief_support, interpersonal_therapy, pfa, or none).",
     )
@@ -136,9 +136,9 @@ class MessageResponse(BaseModel):
 
     role: str = Field(description="'user' or 'assistant'.")
     content: str
-    mode: str | None = Field(
+    response_style: str | None = Field(
         default=None,
-        description="Routing mode for assistant turns, None for user turns.",
+        description="Response style for assistant turns, None for user turns.",
     )
 
 

@@ -613,6 +613,7 @@ class TestRegistryCompleteness:
             EXERCISE_5_4_3_2_1,
             EXERCISE_BEHAVIORAL_EXPERIMENT,
             EXERCISE_BOX_BREATHING,
+            EXERCISE_CONTINUUM,
             EXERCISE_GRATITUDE,
             EXERCISE_IMPROVE,
             EXERCISE_LEAVES_ON_STREAM,
@@ -638,9 +639,10 @@ class TestRegistryCompleteness:
             EXERCISE_IMPROVE,
             EXERCISE_VALUES_COMPASS,
             EXERCISE_GRATITUDE,
+            EXERCISE_CONTINUUM,
         }
         assert set(_EXERCISE_REGISTRY.keys()) == expected
-        assert len(_EXERCISE_REGISTRY) == 12
+        assert len(_EXERCISE_REGISTRY) == 13
 
     def test_all_exercises_have_display_names(self) -> None:
         from agent.therapeutic.guided_exercise import (

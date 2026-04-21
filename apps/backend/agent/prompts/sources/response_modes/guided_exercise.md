@@ -166,7 +166,7 @@ Avoid:
 
 ## Concrete exercise catalog
 
-The system supports twelve exercises across six subtypes. The exercise selector picks one based on keywords in the user's message. When the LLM generates response prose for each step, it should follow the subtype guidelines above AND the per-exercise notes below.
+The system supports thirteen exercises across six subtypes. The exercise selector picks one based on keywords in the user's message. When the LLM generates response prose for each step, it should follow the subtype guidelines above AND the per-exercise notes below.
 
 ### 5-4-3-2-1 grounding (subtype: grounding)
 
@@ -309,6 +309,34 @@ LLM notes:
 - Step 0: accept anything. "My coffee" is as valid as "my health." Don't rank gratitude.
 - Step 1: the "why" matters more than the "what." This is where the exercise does its work.
 - Step 2: some users won't notice anything. That's fine — "I feel about the same" is a valid answer. Don't push for a breakthrough.
+
+### Continuum technique (subtype: thought work — CBT)
+
+Triggered by: "always", "never", "completely", "totally", "worst", "terrible", "100%", "all-or-nothing", "black and white", "continuum".
+
+5 steps: name the absolute belief → define the dimension as a 0-100 scale → define what 0 and 100 look like → place yourself on the scale → identify one small action that would move you 5 points. Sequential.
+
+LLM notes:
+- Step 0: help the user state the belief as an absolute. "I'm a terrible parent" works. "I sometimes struggle with parenting" is already nuanced — this exercise is for rigid, all-or-nothing beliefs. If the belief isn't absolute, the exercise isn't the right tool.
+- Step 1: convert the absolute into a measurable dimension. "Terrible parent" becomes "skill at parenting, 0-100." Name the dimension in neutral language — it's a scale, not a judgment.
+- Step 2: define realistic extremes. 0 = "actively harms children, zero effort, no care at all." 100 = "perfect parent in every situation, which doesn't exist." The extremes should feel obviously far from the user's reality. If the user defines an extreme that sounds like themselves, help them stretch it further.
+- Step 3: ask the user to place themselves honestly. Most people land between 30-70, which is already a shift from the "0 or 100" framing they came in with. Accept any number without judgment. A 20 is not a failure — it's information, and it's not zero. If the user places themselves very low, don't argue — ask what makes them choose that number.
+- Step 4: make the next step tiny. "What's one thing that would move you 5 points?" Not "how do you become a great parent" — just 5 points. The action should be concrete and doable this week.
+
+Good example:
+> User: I'm a terrible friend. I never reach out to anyone.
+> Assistant: Let's look at that — "terrible friend" sounds pretty absolute. Can we put "friendship skill" on a 0-to-100 scale? What would a 0 look like — someone who truly makes no effort at all?
+> User: I guess someone who ghosted everyone and never responded to anything.
+> Assistant: And 100 — what would the perfect friend look like?
+> User: Someone who always checks in, remembers everything, never cancels.
+> Assistant: Where would you honestly place yourself right now?
+> User: Maybe like a 35?
+> Assistant: That's not zero. What's one small thing that would move you to 40?
+
+Bad example:
+> User: I'm a terrible friend.
+> Assistant: That sounds like all-or-nothing thinking! Let's use the continuum technique. On a scale of 0 to 100, where 0 means "worst friend ever" and 100 means "best friend ever," where would you place yourself? Remember, this cognitive distortion is called "labeling" and it's very common.
+Why it's bad: labels the distortion, names the technique, uses clinical framing, rushes through the setup without helping the user define the extremes in their own terms.
 
 ## General turn patterns
 

@@ -39,15 +39,16 @@ class ModeType(str, Enum):
 class Message(BaseModel):
     role: MessageRole
     content: str = Field(min_length=1)
-    # v0.8 observability pass: optional per-turn mode annotation for
-    # assistant messages. Populated by ``run_finalize_turn_node`` when
+    # v0.8 observability pass: optional per-turn response style annotation
+    # for assistant messages. Populated by ``run_finalize_turn_node`` when
     # the assistant reply is appended, sourced from the active routing
-    # mode (support, psychoeducation, guided_exercise, closing, crisis,
-    # etc.). User messages leave this as ``None``. The CLI's ``/history``
-    # renderer shows it as a compact column so operators can retroactively
-    # see which mode shaped each reply. Optional + default-None so legacy
-    # Message constructors (tests, eval harnesses) don't need to care.
-    mode: str | None = None
+    # response_style (supportive, technique, guided_exercise, closing,
+    # crisis, etc.). User messages leave this as ``None``. The CLI's
+    # ``/history`` renderer shows it as a compact column so operators can
+    # retroactively see which style shaped each reply. Optional +
+    # default-None so legacy Message constructors (tests, eval harnesses)
+    # don't need to care.
+    response_style: str | None = None
 
 
 # Carries the safety decision separately from the reply so crisis handling is inspectable.
@@ -75,10 +76,10 @@ class AgentOutput(BaseModel):
     response_text: str
     response_type: ResponseKind
     crisis: CrisisAssessment
-    mode: str | None = None
-    mode_type: ModeType | None = None
-    mode_source: str | None = None
-    modality: str | None = None
+    response_style: str | None = None
+    response_style_type: ModeType | None = None
+    response_style_source: str | None = None
+    therapeutic_approach: str | None = None
     should_persist_memory: bool = False
     # Per-turn diagnostics added for CLI observability. Holds stage
     # timings (``load_memory_ms``, ``crisis_gate_ms``,

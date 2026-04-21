@@ -24,8 +24,9 @@ deterministic overrides for critical boundary cases, LLM as primary
 classifier, regex as graceful degradation.
 
 The dispatcher returns ``Command(goto=<node_name>)`` with a routing
-update that includes the selected modality. The individual mode nodes
-set ``routing.mode``, ``routing.mode_source``, and ``routing.mode_type``
+update that includes the selected therapeutic approach. The individual
+response style nodes set ``routing.response_style``,
+``routing.response_style_source``, and ``routing.response_style_type``
 in their own deltas.
 """
 
@@ -54,6 +55,7 @@ CLARIFYING_NODE = "clarifying_response_node"
 PSYCHOEDUCATION_NODE = "psychoeducation_response_node"
 CLOSING_NODE = "closing_response_node"
 GUIDED_EXERCISE_NODE = "guided_exercise_response_node"
+TECHNIQUE_NODE = "technique_response_node"
 
 
 # ─── Dispatch patterns ─────────────────────────────────────────────────────
@@ -303,6 +305,24 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "they want REFLECTION — that's reflective. The tell is whether "
         "the user is asking for understanding ('why am I doing this?') "
         "or inviting pattern exploration ('here's what I keep doing').\n"
+        "- technique: the user is actively doing structured therapeutic "
+        "work — examining evidence for a thought, looking at a belief from "
+        "different angles, identifying values, testing predictions, or "
+        "working through a therapeutic process step by step. Use when the "
+        "conversation has moved beyond reflection into active engagement "
+        "with a therapeutic technique. The therapeutic_approach knowledge "
+        "drives the response shape in this style. "
+        "Signals that technique is right: the user has identified a "
+        "specific thought and is ready to examine it, the user is "
+        "evaluating evidence for and against a belief, the user is "
+        "testing a prediction or planning a behavioral experiment, "
+        "the user is exploring values or working through acceptance. "
+        "Signals that technique is wrong: the user is venting or "
+        "expressing emotion (use supportive), the user is noticing a "
+        "pattern but not ready to work on it (use reflective), the user "
+        "is asking 'why does this happen?' (use psychoeducation). "
+        "Technique requires an active therapeutic_approach — if no "
+        "approach fits, do not use technique.\n"
         "- closing: short, warm farewell. Use ONLY when the user is "
         "explicitly signaling they're winding down or want to stop — "
         "'I should go', 'thanks, this helped', 'I need to step away', "
@@ -350,9 +370,9 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "a complete self-report and should NOT route to clarifying. A "
         "session-opening greeting is NOT clarifying territory — route those "
         "to supportive.\n\n"
-        "Pick one mode. "
-        "Additionally, pick the therapeutic modality that best fits this "
-        "turn's content. The modality determines which therapeutic "
+        "Pick one response_style. "
+        "Additionally, pick the therapeutic_approach that best fits this "
+        "turn's content. The therapeutic approach determines which "
         "framework informs the response:\n"
         "- motivational_interviewing: user exploring change, ambivalence, "
         "autonomy, stuck between options\n"
@@ -382,7 +402,7 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "- pfa: user in acute distress needing stabilization and "
         "practical support, not deep exploration\n"
         "- none: clarifying or closing turns, or when no specific "
-        "modality fits better than the default\n\n"
+        "approach fits better than the default\n\n"
         "Return your decision in the structured schema. "
         "Keep the reasoning to one short sentence — it's for debugging, "
         "not for the user."
@@ -458,7 +478,7 @@ async def _pick_mode_and_modality_with_llm(
         system_instruction=build_therapeutic_dispatch_system_prompt(),
     )
 
-    return raw.mode, raw.modality  # type: ignore[return-value]
+    return raw.response_style, raw.therapeutic_approach  # type: ignore[return-value]
 
 
 # ─── Node-name mapping ─────────────────────────────────────────────────────
@@ -473,6 +493,7 @@ _MODE_NODE_MAP: dict[str, str] = {
     "psychoeducation": PSYCHOEDUCATION_NODE,
     "closing": CLOSING_NODE,
     "guided_exercise": GUIDED_EXERCISE_NODE,
+    "technique": TECHNIQUE_NODE,
 }
 
 
@@ -522,7 +543,9 @@ async def run_therapeutic_dispatch_node(
 
     # Helper to build routing update with modality.
     def _routing_update(modality: str) -> dict:
-        return {"routing": {**state.get("routing", {}), "modality": modality}}
+        return {
+            "routing": {**state.get("routing", {}), "therapeutic_approach": modality}
+        }
 
     def _clear_active_exercise_update(modality: str) -> dict:
         progress = state.get("progress", {}) or {}
@@ -562,25 +585,28 @@ async def run_therapeutic_dispatch_node(
                 if mode == "guided_exercise":
                     # LLM says continue — preserve the entry modality.
                     existing_modality = (
-                        state.get("routing", {}).get("modality") or modality
+                        state.get("routing", {}).get("therapeutic_approach") or modality
                     )
                     return Command(
                         update=_routing_update(existing_modality),
                         goto=GUIDED_EXERCISE_NODE,
                     )
 
-                if mode == "clarifying":
-                    # Mid-exercise repair turn ("what do you mean by
-                    # notice?"). Keep exercise state alive so the user
-                    # can resume after the clarification. Route to
-                    # clarifying WITHOUT clearing exercise state.
+                if mode in ("clarifying", "psychoeducation"):
+                    # Mid-exercise side-turn: the user asked a question
+                    # ("what do you mean by notice?" → clarifying) or
+                    # wants a brief explanation ("how does grounding
+                    # work?" → psychoeducation). Keep exercise state
+                    # alive so the user can resume afterward. Route to
+                    # the requested style WITHOUT clearing exercise state.
                     logger.debug(
-                        "therapeutic_dispatch: mid-exercise clarification "
-                        "(exercise state preserved)"
+                        "therapeutic_dispatch: mid-exercise %s "
+                        "(exercise state preserved)",
+                        mode,
                     )
                     return Command(
                         update=_routing_update(modality),
-                        goto=CLARIFYING_NODE,
+                        goto=_MODE_NODE_MAP[mode],
                     )
 
                 # Any other non-exercise mode is an exit signal —
@@ -610,7 +636,9 @@ async def run_therapeutic_dispatch_node(
     # the explicit patterns already checked above.
     if exercise_active:
         logger.debug("therapeutic_dispatch: regex fallback — continuing exercise")
-        existing_modality = state.get("routing", {}).get("modality") or "none"
+        existing_modality = (
+            state.get("routing", {}).get("therapeutic_approach") or "none"
+        )
         return Command(
             update=_routing_update(existing_modality), goto=GUIDED_EXERCISE_NODE
         )
