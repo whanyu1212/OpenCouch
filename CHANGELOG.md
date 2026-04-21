@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-04-22 — Therapeutic Knowledge Enrichment + Architecture Overhaul
+
+### Knowledge enrichment
+- Added CBT conversation arc template (`cbt_arc.md`) with 5-phase session shape (Orient → Identify → Examine → Shift → Ground), transition signals, and arc-level failure modes
+- Added long-session guidance: second-pass routing (underlying belief exploration, cross-situational pattern work, detailed experiment design, consolidation), regulation gates, rupture detection, and last-20% pacing rule
+- Added cross-session continuity guidance (`cross_session_continuity.md`) covering session bridging, noticing change over time, handling regression/setbacks, and cross-session pattern naming
+- Added memory hooks to all 7 modality files describing what retrieved memory matters per therapeutic approach and how to use it
+- Added continuum technique to the guided exercise catalog (13th exercise) for all-or-nothing beliefs, with 5 steps and compound keyword triggers
+
+### Modality-specific episodic memory (Option D)
+- Added typed `ModalityContext` discriminated union (CBTContext, MIContext, ACTContext, GriefContext, IPTContext, DBTContext, PFAContext) to `SessionArc` for structured therapeutic artifacts
+- Session summarizer now receives an `approach_hint` (dominant approach computed from per-turn accumulation in `SessionMemoryBuffer`) and extracts approach-specific fields
+- Working memory formatting renders approach context as concise suffixes: `Last session (work stress, CBT): ... [Thought: I'm going to get fired; Action step: speak up in one meeting]`
+- Load memory node passes approach fields through to episodic working memory entries
+
+### Architecture: rename mode → response_style, modality → therapeutic_approach
+- Renamed `TherapeuticMode` → `TherapeuticResponseStyle` and `TherapeuticModality` → `TherapeuticApproach` across models, state, dispatcher, prompts, API, CLI, tests, eval, and docs
+- `RoutingState` fields: `mode` → `response_style`, `mode_source` → `response_style_source`, `mode_type` → `response_style_type`, `modality` → `therapeutic_approach`
+- `AgentOutput`, `Message`, `ChatResponse`, `MessageResponse` fields updated accordingly
+- `SessionArc`: `modality_used` → `approach_used`, `modality_context` → `approach_context`
+
+### Architecture: technique response style
+- Added `technique` as the 7th response style — when active, the therapeutic approach drives the response shape directly (e.g., CBT Socratic questioning rhythm overrides generic reflective instructions)
+- Resolves the mode-vs-modality conflict discovered during dogfooding where `reflective` mode instructions overrode CBT arc guidance
+- Dispatcher LLM prompt describes technique routing signals: active thought examination, evidence evaluation, values exploration, prediction testing
+- Falls back to supportive when no approach is active
+
+### Prompt system reorganization
+- Moved `knowledge/` (repo root) → `agent/prompts/sources/` (co-located with prompt assembly code)
+- Deduplicated shared helpers: `CORE_SOURCES`, `compose_sources()`, `format_recent_history()` extracted into `agent/prompts/__init__.py` — single source of truth for both `crisis.py` and `therapeutic/prompts.py`
+- Dockerfile simplified (removed separate `COPY knowledge` line)
+- CI workflow simplified (removed `knowledge/**` path trigger)
+
+### Bug fixes
+- Fixed mid-exercise psychoeducation clearing exercise state — asking "how does grounding work?" during a grounding exercise no longer kills the exercise and restarts from scratch
+- Added empty-store short-circuit in `load_memory_node` — skips the embedding API call (~100-200ms) when semantic and episodic stores are both empty
+
+### Tooling
+- Added `scripts/inspect_memory.py` for inspecting the SQLite memory store during dogfooding (`--user`, `--namespace`, `--all-users`, `--raw`)
+- Added `eval/dogfood/` directory for manual dogfood transcripts (gitignored)
+
 ## 2026-04-20 — Memory Robustness + CLI Visual Redesign
 
 ### Memory robustness fixes
