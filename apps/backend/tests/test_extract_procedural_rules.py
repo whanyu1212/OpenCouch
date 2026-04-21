@@ -138,7 +138,7 @@ class _MockRuntime:
             llm_client=llm_client,
             memory_store=memory_store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_response_style=memory_mode,
+            memory_mode=memory_mode,
             session_memory_buffer=session_memory_buffer,
         )
 
@@ -197,7 +197,7 @@ class TestEarlyExits:
         runtime = _MockRuntime(
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.INCOGNITO,
+            memory_mode=MemoryMode.INCOGNITO,
         )
         state = _partial_state()
 

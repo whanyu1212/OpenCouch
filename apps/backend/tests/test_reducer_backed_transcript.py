@@ -156,7 +156,7 @@ class _FakeRuntime:
             llm_client=None,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
         )
 
 

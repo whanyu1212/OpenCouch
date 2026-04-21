@@ -55,10 +55,10 @@ class _FakeDispatchLLM(BaseLLMClient):
     def __init__(
         self,
         *,
-        mode: str = "supportive",
+        response_style: str = "supportive",
         should_raise: bool = False,
     ) -> None:
-        self.mode = mode
+        self.response_style = response_style
         self.should_raise = should_raise
         self.structured_calls = 0
         self.text_calls = 0
@@ -94,7 +94,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         return cast(
             StructuredResponseT,
             DispatchDecision(
-                response_style=self.mode,  # type: ignore[arg-type]
+                response_style=self.response_style,  # type: ignore[arg-type]
                 reasoning="fake dispatch decision",
                 confidence="high",
             ),
@@ -114,7 +114,7 @@ class _MockRuntime:
             llm_client=llm_client,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
         )
 
 

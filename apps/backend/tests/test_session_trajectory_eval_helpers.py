@@ -60,7 +60,7 @@ async def test_snapshot_memory_state_reads_actual_store_contents() -> None:
     await store.aput(
         (owner_id, "semantic"),
         fact.id,
-        fact.model_dump(response_style="json"),
+        fact.model_dump(mode="json"),
     )
 
     await aadd_procedural_rule(
@@ -96,7 +96,7 @@ async def test_snapshot_memory_state_reads_actual_store_contents() -> None:
     await store.aput(
         (owner_id, "episodic"),
         arc.id,
-        arc.model_dump(response_style="json"),
+        arc.model_dump(mode="json"),
     )
 
     snapshot = await _snapshot_memory_state(store, owner_id=owner_id)

@@ -39,8 +39,8 @@ class TestModalityContextSchema:
             action_step="speak up in one meeting",
             tool_used="thought_record",
         )
-        dumped = ctx.model_dump(response_style="json")
-        assert dumped["therapeutic_approach"] == "cbt"
+        dumped = ctx.model_dump(mode="json")
+        assert dumped["modality"] == "cbt"
         reloaded = CBTContext.model_validate(dumped)
         assert reloaded.thought_examined == "I'm going to get fired"
 
@@ -50,8 +50,8 @@ class TestModalityContextSchema:
             change_talk_themes=["health", "kids"],
             sustain_talk_themes=["effort"],
         )
-        dumped = ctx.model_dump(response_style="json")
-        assert dumped["therapeutic_approach"] == "motivational_interviewing"
+        dumped = ctx.model_dump(mode="json")
+        assert dumped["modality"] == "motivational_interviewing"
         reloaded = MIContext.model_validate(dumped)
         assert reloaded.readiness_stage == "contemplation"
         assert reloaded.change_talk_themes == ["health", "kids"]
@@ -61,14 +61,14 @@ class TestModalityContextSchema:
             values_identified=["family", "honesty"],
             committed_action="call my sister this week",
         )
-        dumped = ctx.model_dump(response_style="json")
+        dumped = ctx.model_dump(mode="json")
         reloaded = ACTContext.model_validate(dumped)
         assert reloaded.values_identified == ["family", "honesty"]
         assert reloaded.committed_action == "call my sister this week"
 
     def test_grief_context_round_trip(self) -> None:
         ctx = GriefContext(person_lost="Mom", relationship="mother")
-        dumped = ctx.model_dump(response_style="json")
+        dumped = ctx.model_dump(mode="json")
         reloaded = GriefContext.model_validate(dumped)
         assert reloaded.person_lost == "Mom"
         assert reloaded.time_since_loss is None
@@ -79,7 +79,7 @@ class TestModalityContextSchema:
             key_relationship="partner",
             communication_step_planned="tell them I need space",
         )
-        dumped = ctx.model_dump(response_style="json")
+        dumped = ctx.model_dump(mode="json")
         reloaded = IPTContext.model_validate(dumped)
         assert reloaded.problem_area == "role_transition"
 
@@ -87,7 +87,7 @@ class TestModalityContextSchema:
         ctx = DBTContext(
             skills_used=["TIPP", "opposite action"], primary_domain="distress_tolerance"
         )
-        dumped = ctx.model_dump(response_style="json")
+        dumped = ctx.model_dump(mode="json")
         reloaded = DBTContext.model_validate(dumped)
         assert reloaded.skills_used == ["TIPP", "opposite action"]
 
@@ -95,7 +95,7 @@ class TestModalityContextSchema:
         ctx = PFAContext(
             crisis_type="panic attack", support_connected="crisis text line"
         )
-        dumped = ctx.model_dump(response_style="json")
+        dumped = ctx.model_dump(mode="json")
         reloaded = PFAContext.model_validate(dumped)
         assert reloaded.crisis_type == "panic attack"
 
@@ -117,7 +117,7 @@ class TestModalityContextSchema:
                 action_step="ask for feedback",
             ),
         )
-        dumped = arc.model_dump(response_style="json")
+        dumped = arc.model_dump(mode="json")
         reloaded = SessionArc.model_validate(dumped)
         assert isinstance(reloaded.approach_context, CBTContext)
         assert reloaded.approach_context.thought_examined == "I'm incompetent"
@@ -153,7 +153,7 @@ class TestWorkingMemoryModalityFormatting:
             is_catch_up=True,
             approach_used="cbt",
             approach_context={
-                "therapeutic_approach": "cbt",
+                "modality": "cbt",
                 "thought_examined": "I'll get fired",
                 "action_step": "speak up in one meeting",
                 "tool_used": "thought_record",
@@ -193,7 +193,7 @@ class TestWorkingMemoryModalityFormatting:
             is_catch_up=True,
             approach_used="grief_support",
             approach_context={
-                "therapeutic_approach": "grief_support",
+                "modality": "grief_support",
                 "person_lost": "Dad",
                 "relationship": None,
                 "time_since_loss": None,
@@ -211,7 +211,7 @@ class TestWorkingMemoryModalityFormatting:
             is_catch_up=False,
             approach_used="motivational_interviewing",
             approach_context={
-                "therapeutic_approach": "motivational_interviewing",
+                "modality": "motivational_interviewing",
                 "readiness_stage": "contemplation",
                 "change_talk_themes": ["health", "kids", "energy"],
                 "sustain_talk_themes": [],
@@ -235,7 +235,7 @@ class TestEpisodicEntryFromRecordModality:
             "primary_themes": ["work"],
             "approach_used": "cbt",
             "approach_context": {
-                "therapeutic_approach": "cbt",
+                "modality": "cbt",
                 "thought_examined": "I always fail",
                 "action_step": None,
                 "tool_used": None,
@@ -306,7 +306,7 @@ class TestSessionMemoryBufferModality:
         buf = SessionMemoryBuffer(session_id="test")
         buf.record_approach("grief_support")
         buf.record_approach("grief_support")
-        dumped = buf.model_dump(response_style="json")
+        dumped = buf.model_dump(mode="json")
         reloaded = SessionMemoryBuffer.model_validate(dumped)
         assert reloaded.dominant_approach() == "grief_support"
 

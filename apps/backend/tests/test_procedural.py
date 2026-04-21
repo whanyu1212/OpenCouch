@@ -115,7 +115,7 @@ async def test_aget_profile_deserializes_stored_record() -> None:
     await store.aput(
         ("alice", "procedural"),
         PROCEDURAL_KEY,
-        existing.model_dump(response_style="json"),
+        existing.model_dump(mode="json"),
     )
 
     loaded = await aget_procedural_profile(store, user_id="alice")

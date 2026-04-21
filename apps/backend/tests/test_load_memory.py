@@ -281,10 +281,9 @@ class TestLoadMemoryNode:
         assert "0 procedural rule(s)" in summary
         assert "recall=off" in summary
         assert "3 meaningful token(s)" in summary
-        # v0.8.1: path indicator — token_recall when there's no embedding
-        # provider in the runtime context (the fake runtime fixture
-        # doesn't wire one).
-        assert "path=token_recall" in summary
+        # Empty-store short-circuit: when both semantic and episodic
+        # stores are empty, the embedding call is skipped entirely.
+        assert "path=skipped_empty_store" in summary
         # Specifically NOT the guest session string:
         assert "Guest session" not in summary
 
@@ -681,7 +680,7 @@ def _make_episodic_record_value(
     We construct the dict directly rather than going through the pydantic
     model to keep these tests focused on load_memory_node behavior.
     The shape here mirrors what the summarizer actually writes via
-    ``stored_arc.model_dump(response_style='json')``.
+    ``stored_arc.model_dump(mode='json')``.
     """
 
     return {

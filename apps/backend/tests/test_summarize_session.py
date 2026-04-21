@@ -242,7 +242,7 @@ class TestSummarizerEarlyExits:
             state,
             llm_client=None,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -269,7 +269,7 @@ class TestSummarizerEarlyExits:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.INCOGNITO,
+            memory_mode=MemoryMode.INCOGNITO,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -310,7 +310,7 @@ class TestSummarizerHappyPath:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -347,7 +347,7 @@ class TestSummarizerHappyPath:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -376,7 +376,7 @@ class TestSummarizerHappyPath:
                 state,
                 llm_client=fake,
                 memory_store=store,
-                memory_response_style=MemoryMode.LOCAL,
+                memory_mode=MemoryMode.LOCAL,
                 session_id="session-test",
                 started_at="2026-04-10T12:00:00Z",
             )
@@ -403,7 +403,7 @@ class TestSummarizerHappyPath:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-abc",
             started_at="2026-04-10T12:00:00Z",
         )
@@ -439,7 +439,7 @@ class TestSummarizerFailureModes:
                 state,
                 llm_client=fake,
                 memory_store=store,
-                memory_response_style=MemoryMode.LOCAL,
+                memory_mode=MemoryMode.LOCAL,
                 session_id="session-test",
                 started_at="2026-04-10T12:00:00Z",
             )
@@ -471,7 +471,7 @@ class TestSummarizerFailureModes:
                 state,
                 llm_client=fake,
                 memory_store=store,
-                memory_response_style=MemoryMode.LOCAL,
+                memory_mode=MemoryMode.LOCAL,
                 session_id="session-test",
                 started_at="not-a-real-timestamp",
                 ended_at="also-bad",
@@ -499,7 +499,7 @@ class TestSummarizerFailureModes:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
             ended_at=None,  # explicitly None — summarizer should fill in
@@ -556,7 +556,7 @@ class TestSummarizerModalityContext:
         stored = _session_arc_to_stored(arc, owner_id="user-1")
 
         # Round-trip through JSON (same path as store.aput / store.aget)
-        dumped = stored.model_dump(response_style="json")
+        dumped = stored.model_dump(mode="json")
         reloaded = StoredSessionArc.model_validate(dumped)
 
         assert reloaded.approach_used == "cbt"
@@ -588,7 +588,7 @@ class TestSummarizerModalityContext:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
             approach_hint="cbt",
@@ -614,7 +614,7 @@ class TestSummarizerModalityContext:
             state,
             llm_client=fake,
             memory_store=store,
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
         )

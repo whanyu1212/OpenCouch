@@ -113,7 +113,7 @@ class _FakeRuntime:
             llm_client=None,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_response_style=MemoryMode.LOCAL,
+            memory_mode=MemoryMode.LOCAL,
             **overrides,
         )
 
@@ -274,7 +274,7 @@ async def test_full_turn_diagnostics_merge_all_node_keys() -> None:
         AgentInput(message="I feel a bit anxious today", session_id="test-diag"),
         memory_store=store,
         crisis_log_backend=crisis_log,
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
     )
     diag = result.diagnostics
 

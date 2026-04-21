@@ -69,7 +69,7 @@ def _runtime(memory_mode: MemoryMode = MemoryMode.LOCAL) -> PersistentAgentRunti
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
         feedback_sqlite_path=":memory:",
-        memory_response_style=memory_mode,
+        memory_mode=memory_mode,
     )
 
 
@@ -145,7 +145,7 @@ async def test_incognito_scrubs_user_id_to_null() -> None:
     scrub it to ``None`` in incognito mode. This matches the
     crisis_log incognito contract."""
 
-    async with _runtime(memory_response_style=MemoryMode.INCOGNITO) as rt:
+    async with _runtime(memory_mode=MemoryMode.INCOGNITO) as rt:
         # Simulate a turn that wrote user_id into the checkpoint.
         await rt.run_turn(
             thread_id="incog",
@@ -166,7 +166,7 @@ async def test_local_mode_reads_user_id_from_state() -> None:
     value — NOT the caller. The method signature doesn't expose
     ``user_id``, so this is the only source of truth."""
 
-    async with _runtime(memory_response_style=MemoryMode.LOCAL) as rt:
+    async with _runtime(memory_mode=MemoryMode.LOCAL) as rt:
         await rt.run_turn(
             thread_id="t-alice",
             message="hi",

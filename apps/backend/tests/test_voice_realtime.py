@@ -115,7 +115,7 @@ async def test_start_configures_ga_realtime_audio_session(
     session = realtime.RealtimeVoiceSession(
         openai_api_key="test",
         memory_store=_FakeMemoryStore(),
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
         user_id="voice-user",
         thread_id="voice-thread",
     )
@@ -163,7 +163,7 @@ async def test_send_audio_and_truncate_forward_client_events() -> None:
     session = realtime.RealtimeVoiceSession(
         openai_api_key="test",
         memory_store=_FakeMemoryStore(),
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
         user_id="voice-user",
         thread_id="voice-thread",
     )
@@ -219,7 +219,7 @@ async def test_listen_events_forward_user_and_assistant_transcripts(
     session = realtime.RealtimeVoiceSession(
         openai_api_key="test",
         memory_store=_FakeMemoryStore(),
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
         user_id="voice-user",
         thread_id="voice-thread",
         on_transcript=_on_transcript,
@@ -333,7 +333,7 @@ async def test_listen_events_interrupts_current_audio_and_drops_late_deltas(
     session = realtime.RealtimeVoiceSession(
         openai_api_key="test",
         memory_store=_FakeMemoryStore(),
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
         user_id="voice-user",
         thread_id="voice-thread",
         on_audio_delta=_on_audio_delta,
@@ -409,7 +409,7 @@ async def test_listen_events_forwards_realtime_errors(
     session = realtime.RealtimeVoiceSession(
         openai_api_key="test",
         memory_store=_FakeMemoryStore(),
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
         user_id="voice-user",
         thread_id="voice-thread",
         on_error=_on_error,
@@ -452,7 +452,7 @@ async def test_end_session_forwards_voice_transcript_to_runtime(
     session = realtime.RealtimeVoiceSession(
         openai_api_key="test",
         memory_store=_FakeMemoryStore(),
-        memory_response_style=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.LOCAL,
         user_id="voice-user",
         thread_id="voice-thread",
         runtime=runtime,
