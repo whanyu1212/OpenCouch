@@ -18,7 +18,7 @@ What's shipped, what's in progress, and what's planned.
 | **Voice Chat** | Experimental OpenAI Realtime speech preview with a FastAPI websocket bridge, standalone test harness, and Next.js voice UI. Current path is speech-only and non-agentic. Lives in `apps/backend/voice/`. |
 | **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /threads/{id}/end`. SQLite-backed, incognito-safe. |
 | **Session Trajectory Eval** | Unified runner for short (inline) and long (checkpoint) trajectory datasets. 25 long-trajectory cases covering approach, boundary enforcement, crisis arcs, closing, venting, and response style transitions. Concurrent hybrid execution with `--concurrency`, `--case`, `--verbose`. |
-| **Crisis Gate — LLM-primary** | LLM is the primary crisis classifier; regex is fallback only. Override precedence fix, shadow monitoring, prompt hardening (conversation fencing, anti-injection, adversarial examples), strict truth table enforcement. |
+| **Crisis Gate — LLM-primary** | LLM is the primary crisis classifier; regex is fallback only. Override precedence fix, prompt hardening (conversation fencing, anti-injection, adversarial examples), strict truth table enforcement. |
 | **Dispatcher — LLM-primary** | LLM handles all response style + approach classification. Context-blind regex fast paths removed. LLM-based mid-exercise exit detection. Exercise approach persistence. |
 | **Knowledge Overhaul** | `soul.md` expanded with therapeutic grounding, cultural sensitivity, repair patterns, boundary-setting voice. `identity.md` rewritten with product philosophy. `boundaries.md` expanded with redirection patterns and dependency framing. |
 | **OpenAI Embeddings** | `text-embedding-3-large` as default provider, Gemini as fallback. Hybrid RRF retrieval achieves 14/17 recall@5 vs 6/17 token-only. |
@@ -86,9 +86,8 @@ dataset expectations.
 ### Crisis Gate Production Telemetry
 
 Model ID, prompt version, raw/normalized levels, confidence values,
-deterministic shadow results, disagreement rates, timeout/parse
-failure counters, and degraded-mode alerts. The shadow monitoring
-infrastructure is in place; the production telemetry layer is not.
+timeout/parse failure counters, and degraded-mode alerts. The
+production telemetry layer is not yet in place.
 
 ### Clinical Review
 

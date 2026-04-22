@@ -13,7 +13,7 @@ import pytest
 
 from agent.graph import build_initial_state, run_agent
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord
-from agent.models import AgentInput, ResponseKind
+from agent.models import AgentInput, ResponseCategory
 from agent.nodes.crisis_gate import (
     assess_crisis_risk_deterministically,
     detect_crisis_override,
@@ -29,7 +29,7 @@ async def test_routes_clear_imminent_risk_to_crisis() -> None:
     )
 
     assert result.crisis.level == 3
-    assert result.response_type == ResponseKind.CRISIS
+    assert result.response_type == ResponseCategory.CRISIS
     assert result.crisis.needs_crisis_response
 
 
@@ -42,7 +42,7 @@ async def test_routes_clear_ideation_to_crisis() -> None:
     )
 
     assert result.crisis.level == 2
-    assert result.response_type == ResponseKind.CRISIS
+    assert result.response_type == ResponseCategory.CRISIS
 
 
 @pytest.mark.asyncio
@@ -141,7 +141,7 @@ async def test_crisis_path_succeeds_with_broken_store() -> None:
     )
 
     assert result.crisis.level == 3
-    assert result.response_type == ResponseKind.CRISIS
+    assert result.response_type == ResponseCategory.CRISIS
     assert result.crisis.needs_crisis_response
 
 
@@ -156,7 +156,7 @@ async def test_crisis_turns_skip_extractors() -> None:
     )
 
     assert result.crisis.level >= 2
-    assert result.response_type == ResponseKind.CRISIS
+    assert result.response_type == ResponseCategory.CRISIS
     # Both extractors should have short-circuited with crisis_path reason
     diag = result.diagnostics
     assert diag.get("extract_facts_reason") == "skipped: crisis_path"

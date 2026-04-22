@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
@@ -103,7 +103,7 @@ async def run_crisis_response_node(
     return {
         "response": {
             **response_with_resources,
-            "kind": ResponseKind.CRISIS,
+            "kind": ResponseCategory.CRISIS,
             "text": response_text,
         },
         "routing": {

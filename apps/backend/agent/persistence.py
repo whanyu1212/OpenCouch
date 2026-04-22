@@ -80,6 +80,7 @@ ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "Channel"),
     ("agent.models", "CrisisAssessment"),
     ("agent.models", "ModeType"),
+    ("agent.models", "ResponseCategory"),
     ("agent.models", "ResponseKind"),
 ]
 SESSION_TIMEOUT = timedelta(minutes=20)

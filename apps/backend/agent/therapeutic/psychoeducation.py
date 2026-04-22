@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import (
@@ -71,7 +71,7 @@ async def run_psychoeducation_response_node(
     return {
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": response_text,
         },
         "routing": {

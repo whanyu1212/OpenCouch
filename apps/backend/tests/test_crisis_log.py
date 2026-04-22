@@ -25,7 +25,7 @@ from agent.memory.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.models import CrisisLogRecord
-from agent.models import AgentInput, CrisisAssessment, ResponseKind
+from agent.models import AgentInput, CrisisAssessment, ResponseCategory
 from agent.nodes.crisis_log import _hash_session_id, run_crisis_log_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -266,7 +266,7 @@ class TestCrisisLogEndToEnd:
             crisis_log_backend=backend,
         )
 
-        assert result.response_type == ResponseKind.CRISIS
+        assert result.response_type == ResponseCategory.CRISIS
         assert await backend.arecord_count() == 1
 
     @pytest.mark.asyncio
@@ -279,7 +279,7 @@ class TestCrisisLogEndToEnd:
             crisis_log_backend=backend,
         )
 
-        assert result.response_type == ResponseKind.THERAPEUTIC
+        assert result.response_type == ResponseCategory.THERAPEUTIC
         assert await backend.arecord_count() == 0
 
     @pytest.mark.asyncio

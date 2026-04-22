@@ -648,7 +648,7 @@ class RelatesToEdge(BaseModel):
 # ─── §6. Crisis log models ──────────────────────────────────────────────────
 
 
-CrisisOverrideKind = Literal["imminent_risk", "idiomatic_safe", "none"]
+CrisisOverrideOutcome = Literal["imminent_risk", "idiomatic_safe", "none"]
 CrisisClassifierPath = Literal[
     "deterministic", "llm_primary", "llm_fallback", "override"
 ]
@@ -679,7 +679,7 @@ class CrisisLogRecord(BaseModel):
     detected_at: str  # ISO-8601
 
     level: Literal[0, 1, 2, 3]
-    override_kind: CrisisOverrideKind
+    override_kind: CrisisOverrideOutcome
     classifier_path: CrisisClassifierPath
     reason: str = Field(max_length=500)
     response_node_completed: bool
@@ -1030,7 +1030,7 @@ __all__ = [
     "CARE_KINDS",
     "RelatesToEdge",
     # §6 crisis log
-    "CrisisOverrideKind",
+    "CrisisOverrideOutcome",
     "CrisisClassifierPath",
     "CrisisLogRecord",
     "CrisisLogLevelCounts",

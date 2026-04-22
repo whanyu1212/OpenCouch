@@ -81,7 +81,7 @@ from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 from agent.therapeutic.prompts import (
@@ -1367,7 +1367,7 @@ def _handle_start(
         **start_progress_delta,
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": response_text,
         },
         "routing": {
@@ -1454,7 +1454,7 @@ def _build_exit_delta(
         **cleared,
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": _FALLBACK_EXIT,
         },
         "routing": {
@@ -1513,7 +1513,7 @@ async def _build_stuck_delta(
     return {
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": response_text,
         },
         "routing": {
@@ -1571,7 +1571,7 @@ async def _build_hold_delta(
     return {
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": response_text,
         },
         "routing": {
@@ -1637,7 +1637,7 @@ async def _build_advance_delta(
         **advance_progress,
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": response_text,
         },
         "routing": {
@@ -1720,7 +1720,7 @@ async def _build_complete_delta(
         **cleared,
         "response": {
             **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": response_text,
             "should_persist_memory": True,
         },

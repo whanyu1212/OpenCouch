@@ -24,9 +24,14 @@ class MessageRole(str, Enum):
 
 
 # Keeps the public agent result explicit about whether the reply is normal or safety-driven.
-class ResponseKind(str, Enum):
+class ResponseCategory(str, Enum):
     THERAPEUTIC = "therapeutic"
     CRISIS = "crisis"
+
+
+# Backward-compatible alias for older persisted state that still refers
+# to the pre-rename enum name.
+ResponseKind = ResponseCategory
 
 
 class ModeType(str, Enum):
@@ -74,7 +79,7 @@ class AgentInput(BaseModel):
 # Defines the normalized result so API, CLI, and tests can all consume the same shape.
 class AgentOutput(BaseModel):
     response_text: str
-    response_type: ResponseKind
+    response_type: ResponseCategory
     crisis: CrisisAssessment
     response_style: str | None = None
     response_style_type: ModeType | None = None

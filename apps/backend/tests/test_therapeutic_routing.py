@@ -24,7 +24,7 @@ from agent.memory.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.models import DispatchDecision
 from agent.memory.store import OpenCouchMemoryStore
-from agent.models import AgentInput, ResponseKind
+from agent.models import AgentInput, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.dispatcher import (
@@ -469,7 +469,7 @@ class TestEndToEndRouting:
             AgentInput(message="I had a really rough day at work today.")
         )
 
-        assert result.response_type == ResponseKind.THERAPEUTIC
+        assert result.response_type == ResponseCategory.THERAPEUTIC
         assert result.response_style == "supportive"
         assert result.response_text  # non-empty
         # Deterministic fallback response should include a warm opener
@@ -488,7 +488,7 @@ class TestEndToEndRouting:
             )
         )
 
-        assert result.response_type == ResponseKind.THERAPEUTIC
+        assert result.response_type == ResponseCategory.THERAPEUTIC
         assert result.response_style == "reflective"
         assert result.response_text
         assert "pattern" in result.response_text.lower()
@@ -499,7 +499,7 @@ class TestEndToEndRouting:
 
         result = await run_agent(AgentInput(message="huh?"))
 
-        assert result.response_type == ResponseKind.THERAPEUTIC
+        assert result.response_type == ResponseCategory.THERAPEUTIC
         assert result.response_style == "clarifying"
         assert result.response_text
         # Clarifying fallback should end with a question (it asks for context)
@@ -539,7 +539,7 @@ class TestEndToEndRouting:
 
         delta = await run_psychoeducation_response_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["response"]["kind"] == ResponseKind.THERAPEUTIC
+        assert delta["response"]["kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response"]["text"]  # non-empty
         assert delta["routing"]["response_style"] == "psychoeducation"
         assert delta["routing"]["response_style_source"] == "therapeutic_dispatch"
@@ -571,7 +571,7 @@ class TestEndToEndRouting:
 
         delta = await run_closing_response_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["response"]["kind"] == ResponseKind.THERAPEUTIC
+        assert delta["response"]["kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response"]["text"]  # non-empty
         assert delta["routing"]["response_style"] == "closing"
         assert delta["routing"]["response_style_source"] == "therapeutic_dispatch"
@@ -617,7 +617,7 @@ class TestEndToEndRouting:
         )
 
         # Response delta is populated with the start-step text
-        assert delta["response"]["kind"] == ResponseKind.THERAPEUTIC
+        assert delta["response"]["kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response"]["text"]
         assert "five things" in delta["response"]["text"].lower()
         assert delta["routing"]["response_style"] == "guided_exercise"
@@ -835,7 +835,7 @@ class TestEndToEndRouting:
             AgentInput(message="I have pills and I am going to kill myself tonight.")
         )
 
-        assert result.response_type == ResponseKind.CRISIS
+        assert result.response_type == ResponseCategory.CRISIS
         assert result.crisis.level == 3
         assert result.crisis.needs_crisis_response is True
         # The therapeutic subgraph should NOT have set the mode
@@ -862,7 +862,7 @@ class TestEndToEndRouting:
             AgentInput(message="I just wish I could disappear for a while.")
         )
 
-        assert result.response_type == ResponseKind.THERAPEUTIC
+        assert result.response_type == ResponseCategory.THERAPEUTIC
         assert result.response_style in {"supportive", "reflective", "clarifying"}
         assert result.response_text
         # Critically: response text is NOT the bootstrap stub

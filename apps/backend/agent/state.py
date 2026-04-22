@@ -5,8 +5,8 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Any, NotRequired, TypedDict
 
-from agent.memory.models import CrisisClassifierPath, CrisisOverrideKind
-from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
+from agent.memory.models import CrisisClassifierPath, CrisisOverrideOutcome
+from agent.models import Channel, CrisisAssessment, ModeType, ResponseCategory
 from agent.working_memory import WorkingMemoryEntry
 
 
@@ -158,7 +158,7 @@ class RoutingState(TypedDict):
     #
     # All three are NotRequired — non-crisis turns leave them unset,
     # and the log node's fallback path reads defaults if missing.
-    crisis_override_kind: NotRequired[CrisisOverrideKind]
+    crisis_override_kind: NotRequired[CrisisOverrideOutcome]
     crisis_classifier_path: NotRequired[CrisisClassifierPath]
     crisis_llm_failure_occurred: NotRequired[bool]
 
@@ -169,7 +169,7 @@ class ResponseState(TypedDict):
     # Turn-specific prompt shaping guidance derived after mode selection.
     guidance: NotRequired[str]
     # Makes the output type explicit before the final response is returned.
-    kind: NotRequired[ResponseKind]
+    kind: NotRequired[ResponseCategory]
     # Holds the generated text from the chosen response node.
     text: NotRequired[str]
     # Signals whether a later wrapper should persist memory after reply completion.

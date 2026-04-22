@@ -192,7 +192,7 @@ from agent.models import (
     DoneEvent,
     Message,
     MessageRole,
-    ResponseKind,
+    ResponseCategory,
     ResponseReadyEvent,
     StatusEvent,
     friendly_stage,
@@ -629,7 +629,9 @@ def render_response(
 
     output = AgentOutput(
         response_text=response_text,
-        response_type=ResponseKind.CRISIS if is_crisis else ResponseKind.THERAPEUTIC,
+        response_type=(
+            ResponseCategory.CRISIS if is_crisis else ResponseCategory.THERAPEUTIC
+        ),
         crisis=CrisisAssessment(),
         response_style="crisis" if is_crisis else "support",
         response_style_source="cli",

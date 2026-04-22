@@ -3,7 +3,7 @@ import os
 import pytest
 
 from agent.graph import run_agent
-from agent.models import AgentInput, ResponseKind
+from agent.models import AgentInput, ResponseCategory
 from services.llm.factory import create_llm_client
 
 
@@ -34,7 +34,7 @@ async def test_live_openai_flags_clear_suicidal_ideation() -> None:
     )
 
     assert result.crisis.level >= 2
-    assert result.response_type == ResponseKind.CRISIS
+    assert result.response_type == ResponseCategory.CRISIS
     assert result.crisis.needs_crisis_response
 
 

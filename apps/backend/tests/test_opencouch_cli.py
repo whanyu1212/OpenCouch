@@ -15,7 +15,7 @@ from agent.models import (
     DoneEvent,
     Message,
     MessageRole,
-    ResponseKind,
+    ResponseCategory,
     ResponseReadyEvent,
     StatusEvent,
 )
@@ -162,7 +162,7 @@ def _make_agent_output(
         diagnostics["turn_total_ms"] = turn_total_ms
     return AgentOutput(
         response_text=response_text,
-        response_type=ResponseKind.THERAPEUTIC,
+        response_type=ResponseCategory.THERAPEUTIC,
         crisis=CrisisAssessment(),
         response_style="support",
         mode_source="test",

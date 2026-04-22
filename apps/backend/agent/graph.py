@@ -38,7 +38,7 @@ from agent.models import (
     CrisisAssessment,
     MessageRole,
     ModeType,
-    ResponseKind,
+    ResponseCategory,
 )
 from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
@@ -172,7 +172,7 @@ def build_initial_state(
         },
         response={
             "guidance": "pending",
-            "kind": ResponseKind.THERAPEUTIC,
+            "kind": ResponseCategory.THERAPEUTIC,
             "text": "",
             "should_persist_memory": False,
         },
@@ -193,7 +193,7 @@ def state_to_output(state: AgentState) -> AgentOutput:
 
     return AgentOutput(
         response_text=response_state.get("text", ""),
-        response_type=response_state.get("kind", ResponseKind.THERAPEUTIC),
+        response_type=response_state.get("kind", ResponseCategory.THERAPEUTIC),
         crisis=state.get("crisis", CrisisAssessment()),
         response_style=routing_state.get("response_style"),
         response_style_type=routing_state.get("response_style_type"),
