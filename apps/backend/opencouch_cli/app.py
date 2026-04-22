@@ -876,7 +876,6 @@ def render_context(state: AgentState | None) -> None:
     progress = state.get("progress", {})
     memory = state.get("memory", {})
     response_state = state.get("response", {})
-    routing_state = state.get("routing", {})
 
     table = Table(show_header=False, box=box.SIMPLE)
     table.add_column(style="hint", no_wrap=True)
@@ -932,13 +931,13 @@ def render_context(state: AgentState | None) -> None:
     table.add_row("proactive_recall", "on" if recall_enabled else "off")
 
     # v0.8: guided-exercise tracking. The therapeutic subgraph writes
-    # ``exercise_type`` and ``exercise_step`` into ``routing`` when a
+    # ``exercise_type`` and ``exercise_step`` into ``progress`` when a
     # guided mode is active (box breathing, grounding, etc.). Dogfood
     # feedback flagged that exercise mid-run state was invisible —
     # surface it here so the operator can see "we're on step 3 of box
     # breathing" without inspecting the raw state.
-    exercise_type = routing_state.get("exercise_type")
-    exercise_step = routing_state.get("exercise_step")
+    exercise_type = progress.get("exercise_type")
+    exercise_step = progress.get("exercise_step")
     if exercise_type:
         step_display = f" (step {exercise_step})" if exercise_step is not None else ""
         table.add_row("exercise", f"{exercise_type}{step_display}")
@@ -1635,9 +1634,7 @@ async def render_memory_recall_toggle(
     v0.7 Stage E. Toggles the ``proactive_recall_enabled`` flag on
     the active thread's procedural profile and shows a confirmation
     message. When flipping from OFF to ON, also renders the
-    first-run explanation from ``schema.yaml §6 retrieval
-    proactive_recall.opt_in_confirmation_example`` so the user
-    understands what changes.
+    first-run explanation so the user understands what changes.
 
     Behavior:
 
@@ -1682,8 +1679,7 @@ async def render_memory_recall_toggle(
     await aset_proactive_recall(store, user_id=session.owner_id(), enabled=enable)
 
     if enable:
-        # Flipping OFF → ON. Show the first-run explanation per
-        # schema.yaml §6 retrieval proactive_recall.opt_in_confirmation_example.
+        # Flipping OFF → ON. Show the explanatory first-run message.
         # This fires every time the user goes off→on, not just the
         # very first time — simpler than tracking a "has seen
         # explanation" flag and arguably better UX because users who
@@ -2314,10 +2310,10 @@ async def render_memory_clear(
 # ``agent/memory/crisis_log.py`` for the 90-day default rationale.
 #
 # Default cutoff window (in days) for ``/memory purge-crisis``. 90 days
-# matches the retention policy documented in schema.yaml §2 and the
-# legal-review caveat on the always-on crisis log. Operators can
-# override per-invocation (e.g., ``/memory purge-crisis 30`` for a
-# tighter sweep) but the default should match the documented policy.
+# matches the documented default retention policy and legal-review caveat
+# on the always-on crisis log. Operators can override per-invocation
+# (e.g., ``/memory purge-crisis 30`` for a tighter sweep) but the
+# default should match the documented policy.
 DEFAULT_CRISIS_RETENTION_DAYS = 90
 
 
@@ -3075,7 +3071,7 @@ async def handle_command(
         if args[0] == "recall":
             # /memory recall on|off — toggle proactive recall for the
             # active thread. When flipping off→on, the handler shows
-            # the first-run explanation from schema.yaml.
+            # the explanatory first-run message.
             if len(args) < 2 or args[1] not in ("on", "off"):
                 render_info(
                     "Usage: /memory recall on  |  /memory recall off",
@@ -3139,7 +3135,7 @@ async def handle_command(
             # /memory purge-crisis [days] — v0.8.1 retention operation.
             # Deletes crisis log records older than the retention
             # window. Default is 90 days (DEFAULT_CRISIS_RETENTION_DAYS)
-            # to match the policy in schema.yaml §2. Operators can
+            # to match the documented policy. Operators can
             # override per-call, e.g., ``/memory purge-crisis 30`` for
             # a tighter sweep. Requires typed ``purge`` confirmation,
             # same UX pattern as /memory clear.
