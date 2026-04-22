@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-04-23 — Memory Internals Streamlining + Crisis Gate Cleanup
+
+### Memory internals
+- Removed stale design artifacts and dead stubs from `agent/memory/` (`schema.yaml`, `nodes_sketch.py`, `graph_store.py`, `profile_store.py`) so the runtime package reflects only live code
+- Split `agent/memory/models.py` into domain modules under `agent/memory/types/` while keeping `agent.memory.models` as a compatibility re-export surface
+- Centralized shared semantic and procedural write-policy heuristics to eliminate drift between candidate building, policy decisions, and extraction-time guards
+- Extracted shared hybrid retrieval scoring into `agent/memory/retrieval.py` so the in-memory and SQLite stores now share the same lexical/dense fusion logic
+- Standardized substantive memory-module function docstrings on the VS Code autodocstring `Args:` / `Returns:` format for more consistent maintenance
+
+### Load-memory retrieval quality
+- Refactored `load_memory_node` into smaller retrieval, mapping, summary, and diagnostics helpers with named retrieval constants and typed `retrieval_path` values
+- Replaced the old capped semantic-store scan in diagnostics with exact namespace counts via `arecord_count(...)`, so observability no longer silently undercounts past 1000 records
+- Fixed semantic retrieval so inactive facts are filtered before hybrid ranking and truncation, preventing dormant or superseded records from crowding active memory out of the top retrieval window
+- Added standalone `load_memory` node coverage plus backend-parity regression tests for hybrid retrieval filtering behavior
+
+### Crisis gate cleanup
+- Moved deterministic crisis regex policy into `agent/safety/crisis_rules.py` so `crisis_gate.py` now focuses on node orchestration, schema normalization, and routing
+- Tightened `CrisisAssessmentSchema` with schema-native field descriptions and simplified the node flow by removing duplicate validation layers
+- Removed unused crisis-gate shadow monitoring and disagreement logging after confirming it was adding complexity without an active operational consumer
+- Added direct standalone `run_crisis_gate_node(...)` tests for override routing, deterministic fallback, LLM-primary success, LLM-exception fallback, and truth-table enforcement
+
+### Other fixes
+- Fixed mid-exercise text routing to read live exercise state from `progress` instead of stale routing state, preventing exercise continuity from drifting after side turns
+- Renamed `ResponseKind` to `ResponseCategory` and `CrisisOverrideKind` to `CrisisOverrideOutcome` for clearer shared model terminology
+
 ## 2026-04-22 — Therapeutic Knowledge Enrichment + Architecture Overhaul
 
 ### Knowledge enrichment

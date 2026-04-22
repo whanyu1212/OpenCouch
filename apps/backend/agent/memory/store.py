@@ -65,6 +65,7 @@ Design decisions:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -271,6 +272,7 @@ class MemoryStore(Protocol):
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
+        record_filter: Callable[[StoreRecord], bool] | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid lexical-plus-dense retrieval in a namespace.
 
@@ -281,6 +283,8 @@ class MemoryStore(Protocol):
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
+            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
+                applied to candidate records before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.
@@ -519,6 +523,7 @@ class OpenCouchMemoryStore:
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
+        record_filter: Callable[[StoreRecord], bool] | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid retrieval over in-memory records.
 
@@ -529,6 +534,8 @@ class OpenCouchMemoryStore:
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
+            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
+                applied to candidate records before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.
@@ -567,6 +574,12 @@ class OpenCouchMemoryStore:
             IndexedRecord(record=record, insertion_index=insertion_index)
             for insertion_index, record in enumerate(candidates.values())
         ]
+        if record_filter is not None:
+            indexed_candidates = [
+                candidate
+                for candidate in indexed_candidates
+                if record_filter(candidate.record)
+            ]
         lexical_scored = lexical_rank(
             indexed_candidates,
             query_text=query_text,

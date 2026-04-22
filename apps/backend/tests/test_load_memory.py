@@ -30,7 +30,11 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
 from agent.nodes.finalize_turn import run_finalize_turn_node
-from agent.nodes.load_memory import run_load_memory_node
+from agent.nodes.load_memory import (
+    SEMANTIC_SEARCH_LIMIT,
+    SEMANTIC_WORKING_MEMORY_LIMIT,
+    run_load_memory_node,
+)
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.working_memory import format_working_memory_entry
@@ -210,7 +214,7 @@ class TestLoadMemoryNode:
         # Substring assertions are more robust to future extensions than
         # pinning the full string.
         summary = delta["memory"]["summary"]
-        assert "Retrieved 1 of 1 semantic" in summary
+        assert "Retrieved 1 of 1 semantic record(s)" in summary
         assert "0 of 0 episodic record(s)" in summary
         assert "0 procedural rule(s)" in summary
         assert "recall=off" in summary
@@ -251,7 +255,49 @@ class TestLoadMemoryNode:
             delta["working_memory"][0],
             evidence_quote="Actually, my sister moved back in this week.",
         )
-        assert "Retrieved 1 of 1 semantic" in delta["memory"]["summary"]
+        assert "Retrieved 1 of 2 semantic record(s)" in delta["memory"]["summary"]
+
+    @pytest.mark.asyncio
+    async def test_inactive_semantic_records_do_not_crowd_out_active_hits(
+        self,
+    ) -> None:
+        """Active semantic hits should survive even when stale records dominate the raw rank window."""
+
+        store = OpenCouchMemoryStore()
+        for index in range(SEMANTIC_SEARCH_LIMIT):
+            await store.aput(
+                ("thread-test", "semantic"),
+                f"fact-inactive-{index}",
+                {
+                    "evidence_quote": f"My sister moved inactive entry {index}",
+                    "user_visible": True,
+                    "dormant_at": "2026-04-20T12:00:00Z",
+                    "superseded_by": f"fact-active-{index}",
+                },
+            )
+        for index in range(SEMANTIC_WORKING_MEMORY_LIMIT):
+            await store.aput(
+                ("thread-test", "semantic"),
+                f"fact-active-{index}",
+                {
+                    "evidence_quote": f"My sister moved active entry {index}",
+                    "user_visible": True,
+                },
+            )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(message="sister moved")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert [entry["evidence_quote"] for entry in delta["working_memory"]] == [
+            f"My sister moved active entry {index}"
+            for index in range(SEMANTIC_WORKING_MEMORY_LIMIT)
+        ]
+        assert (
+            f"Retrieved {SEMANTIC_WORKING_MEMORY_LIMIT} of "
+            f"{SEMANTIC_SEARCH_LIMIT + SEMANTIC_WORKING_MEMORY_LIMIT} semantic record(s)"
+        ) in delta["memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_retrieval_miss_returns_empty_with_zero_snippet_summary(
@@ -276,7 +322,7 @@ class TestLoadMemoryNode:
         # load-bearing substrings rather than pinning the full string so
         # future observability additions don't require updating this test.
         summary = delta["memory"]["summary"]
-        assert "Retrieved 0 of 0 semantic" in summary
+        assert "Retrieved 0 of 0 semantic record(s)" in summary
         assert "0 of 0 episodic record(s)" in summary
         assert "0 procedural rule(s)" in summary
         assert "recall=off" in summary
@@ -317,7 +363,7 @@ class TestLoadMemoryNode:
 
         # 0 hits, BUT store size is 2 — this is the discriminating line.
         assert delta["working_memory"] == []
-        assert "0 of 2 semantic" in delta["memory"]["summary"]
+        assert "0 of 2 semantic record(s)" in delta["memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_summary_reports_meaningful_token_count_after_stopword_filter(
@@ -363,7 +409,7 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        assert "0 of 1 semantic" in delta["memory"]["summary"]
+        assert "0 of 1 semantic record(s)" in delta["memory"]["summary"]
         assert "query had 0 meaningful token(s)" in delta["memory"]["summary"]
 
     @pytest.mark.asyncio
@@ -997,7 +1043,7 @@ class TestEpisodicRetrieval:
 
         summary_str = delta["memory"]["summary"]
         # Semantic count: 2 in store, 1 hit on "Sarah" query
-        assert "1 of 2 semantic" in summary_str
+        assert "1 of 2 semantic record(s)" in summary_str
         # Episodic count: 1 in store, 0 hit (query doesn't match "work pressure"
         # and this is not a first turn)
         assert "0 of 1 episodic" in summary_str

@@ -257,6 +257,9 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Memory internals cleanup** — removed stale memory-package artifacts, split monolithic memory models into typed submodules, and centralized shared retrieval/policy logic
+- **Load-memory retrieval quality** — semantic recall now filters inactive facts before hybrid ranking and truncation, so dormant or superseded memory no longer crowds out active context
+- **Crisis gate cleanup** — deterministic crisis policy lives in `agent/safety`, shadow monitoring was removed, and the node now has direct standalone coverage
 - **Therapeutic knowledge enrichment** — CBT conversation arc template with 5-phase session shape, long-session guidance (second-pass routing, regulation gates, rupture detection), cross-session continuity, memory hooks for all 7 approaches, and a continuum technique exercise
 - **Technique response style** — 7th response style where the therapeutic approach drives the turn directly, resolving the style-vs-approach conflict where reflective instructions overrode CBT arc guidance
 - **Modality-specific episodic memory** — typed ModalityContext (CBT, MI, ACT, grief, IPT, DBT, PFA) attached to session arcs so cross-session retrieval surfaces structured therapeutic artifacts

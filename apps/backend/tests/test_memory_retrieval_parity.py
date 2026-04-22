@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from agent.memory.reconciliation import is_active_semantic_record_value
 from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 
@@ -187,5 +188,49 @@ async def test_asearch_similar_respects_max_age_days(
         )
 
         assert [record.key for record in results] == ["recent"]
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory",
+    [_make_memory_store, _make_sqlite_store],
+    ids=["memory", "sqlite"],
+)
+async def test_asearch_similar_filters_candidates_before_limit_truncation(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    namespace = ("user-1", "semantic")
+
+    try:
+        for index in range(25):
+            await store.aput(
+                namespace,
+                f"fact-{index}",
+                {
+                    "evidence_quote": f"My sister moved entry {index}",
+                    "user_visible": True,
+                    "dormant_at": "2026-04-20T12:00:00Z" if index < 20 else None,
+                    "superseded_by": f"fact-new-{index}" if index < 20 else None,
+                },
+            )
+
+        results = await store.asearch_similar(
+            namespace,
+            query_text="sister moved",
+            query_embedding=None,
+            limit=5,
+            record_filter=lambda record: is_active_semantic_record_value(record.value),
+        )
+
+        assert [record.key for record in results] == [
+            "fact-20",
+            "fact-21",
+            "fact-22",
+            "fact-23",
+            "fact-24",
+        ]
     finally:
         await store.aclose()

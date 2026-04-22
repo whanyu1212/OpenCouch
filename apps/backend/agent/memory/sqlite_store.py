@@ -66,6 +66,7 @@ import asyncio
 import json
 import logging
 import struct
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -640,6 +641,7 @@ class SqliteMemoryStore:
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
+        record_filter: Callable[[StoreRecord], bool] | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid retrieval over SQLite-backed records.
 
@@ -650,6 +652,8 @@ class SqliteMemoryStore:
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
+            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
+                applied to candidate records before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.
@@ -684,6 +688,12 @@ class SqliteMemoryStore:
             )
             for insertion_index, row in enumerate(lexical_rows)
         ]
+        if record_filter is not None:
+            lexical_candidates = [
+                candidate
+                for candidate in lexical_candidates
+                if record_filter(candidate.record)
+            ]
         lexical_scored = lexical_rank(
             lexical_candidates,
             query_text=query_text,
@@ -713,6 +723,12 @@ class SqliteMemoryStore:
                 )
                 for insertion_index, row in enumerate(dense_rows)
             ]
+            if record_filter is not None:
+                dense_candidates = [
+                    candidate
+                    for candidate in dense_candidates
+                    if record_filter(candidate.record)
+                ]
             dense_scored = dense_rank(
                 dense_candidates,
                 query_embedding=query_embedding,
