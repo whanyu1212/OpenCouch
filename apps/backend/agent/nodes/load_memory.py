@@ -299,8 +299,7 @@ async def _retrieve_procedural_state(
     Unlike semantic and episodic retrieval, procedural retrieval is
     NOT query-based. The full rule set is always loaded — rules are
     directives, and the agent needs to see all of them on every turn
-    to apply them consistently. See schema.yaml §6 retrieval for the
-    rationale (``procedural.enabled: true`` unconditionally).
+    to apply them consistently.
 
     The empty-default-on-miss behavior comes from ``aget_procedural_profile``
     in ``agent/memory/procedural.py``: a user with no record yet gets

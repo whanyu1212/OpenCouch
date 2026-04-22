@@ -68,7 +68,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from agent.memory.text_tokens import tokenize, tokenize_meaningful
+from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
 
 # A namespace is a tuple of strings, typically ``(user_id, kind)`` where
 # kind is one of "semantic", "episodic", "procedural". The tuple shape
@@ -190,22 +190,17 @@ class MemoryStore(Protocol):
         embedding: list[float] | None = None,
         embedding_model: str | None = None,
     ) -> None:
-        """Store a record under ``(namespace, key)``.
+        """Store one record under a namespace/key pair.
 
-        v0.8.1: the optional ``embedding`` and ``embedding_model``
-        parameters let callers attach a pre-computed embedding
-        alongside the record. When present, the store uses them
-        for the embedding-similarity path in :meth:`asearch_similar`.
-        When absent (the common case for existing callers and for
-        tests that don't need embeddings), the record is stored
-        without an embedding and only the token-recall path
-        applies. Both parameters default to None so existing
-        callers are unchanged.
+        Args:
+            namespace (Namespace): Record namespace tuple.
+            key (str): Record key within the namespace.
+            value (dict[str, Any]): Serialized record payload.
+            embedding (list[float] | None): Optional precomputed embedding vector.
+            embedding_model (str | None): Optional embedding model identifier.
 
-        The ``embedding_model`` string identifies which model
-        produced the embedding — stored alongside the vector so
-        future model migrations can detect cohort mismatches and
-        skip cross-model similarity computations.
+        Returns:
+            None: Stores or overwrites the record.
         """
         ...
 
@@ -221,12 +216,14 @@ class MemoryStore(Protocol):
             ]
         ],
     ) -> None:
-        """Atomically write multiple records.
+        """Write multiple records in one batch.
 
-        Each item is ``(namespace, key, value, embedding, embedding_model)``.
-        Either all writes succeed or none do. In the SQLite implementation
-        this uses a single transaction; in the in-memory implementation
-        it is a simple loop (atomic under the GIL).
+        Args:
+            items (list[tuple[Namespace, str, dict[str, Any], list[float] | None, str | None]]):
+                Items shaped as ``(namespace, key, value, embedding, embedding_model)``.
+
+        Returns:
+            None: Persists the batch atomically for the backend.
         """
         ...
 
@@ -235,7 +232,15 @@ class MemoryStore(Protocol):
         namespace: Namespace,
         key: str,
     ) -> StoreRecord | None:
-        """Fetch one record by its ``(namespace, key)``."""
+        """Fetch one record by namespace and key.
+
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            key (str): Record key within the namespace.
+
+        Returns:
+            StoreRecord | None: Matching record, or ``None``.
+        """
         ...
 
     async def asearch(
@@ -245,13 +250,15 @@ class MemoryStore(Protocol):
         query: str | None = None,
         limit: int = 10,
     ) -> list[StoreRecord]:
-        """Search for records within ``namespace`` matching ``query``.
+        """Search records in a namespace with lexical scoring.
 
-        v0.3.1 token-recall path. Retained as of v0.8.1 for (a)
-        backward compatibility with existing callers that don't
-        compute embeddings, (b) the ``query=None`` enumeration
-        path used by dedup, and (c) the fallback path inside
-        :meth:`asearch_similar` when no embedding is available.
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            query (str | None): Optional lexical query. ``None`` enumerates records.
+            limit (int): Maximum number of records to return.
+
+        Returns:
+            list[StoreRecord]: Matching records in backend-defined order.
         """
         ...
 
@@ -265,32 +272,18 @@ class MemoryStore(Protocol):
         limit: int = 10,
         max_age_days: int | None = None,
     ) -> list[StoreRecord]:
-        """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
+        """Run hybrid lexical-plus-dense retrieval in a namespace.
 
-        Runs the v0.3.1 token-recall scan and an embedding-similarity
-        scan on the same namespace, then combines the two ranked
-        lists with RRF (see :mod:`agent.memory.retrieval`). Returns
-        the top-``limit`` records from the fused ranking.
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            query_text (str): Query text for the lexical scorer.
+            query_embedding (list[float] | None): Optional dense query embedding.
+            embedding_model (str | None): Optional query embedding model identifier.
+            limit (int): Maximum number of records to return.
+            max_age_days (int | None): Optional age filter in days.
 
-        ``query_text`` is always required (it's the input to the
-        token-recall path). ``query_embedding`` is optional: when
-        ``None``, the method degenerates to pure token-recall
-        (which is how guest mode, no-provider mode, and tests
-        without embedding mocks continue to work). When provided,
-        the embedding must match the dimensionality of the stored
-        embeddings for this namespace — mismatches are silently
-        skipped.
-
-        ``embedding_model`` (optional) is the identifier of the
-        model that produced ``query_embedding``. When present, the
-        store skips records whose stored ``embedding_model`` doesn't
-        match, preventing cross-model cosine similarity that isn't
-        meaningful. When ``None``, the store uses every record's
-        stored embedding regardless of model.
-
-        Returns records sorted by hybrid RRF score descending, with
-        insertion-order tiebreaking — same determinism contract as
-        the token-recall ``asearch``.
+        Returns:
+            list[StoreRecord]: Top fused retrieval results.
         """
         ...
 
@@ -299,50 +292,52 @@ class MemoryStore(Protocol):
         namespace: Namespace,
         key: str,
     ) -> bool:
-        """Delete a record by ``(namespace, key)``."""
+        """Delete one record by namespace and key.
+
+        Args:
+            namespace (Namespace): Namespace tuple containing the record.
+            key (str): Record key within the namespace.
+
+        Returns:
+            bool: ``True`` when a record was deleted.
+        """
         ...
 
     async def aclose(self) -> None:
-        """Release any resources held by the store."""
+        """Release backend resources.
+
+        Returns:
+            None: Closes the store.
+        """
         ...
 
     async def arecord_count(self, namespace: Namespace | None = None) -> int:
-        """Return the total number of records, optionally filtered by namespace.
+        """Count stored records.
 
-        Included in the protocol because the CLI ``/memory status`` and
-        ``/memory list`` commands both read it. Async because the
-        SQLite-backed implementation needs to share the aiosqlite
-        connection — a sync version would either open a second
-        connection (breaking ``:memory:`` databases) or block the
-        event loop.
+        Args:
+            namespace (Namespace | None): Optional namespace filter.
 
-        The ``a`` prefix matches the other async methods; the in-memory
-        implementation just doesn't need to await anything but
-        still has to be declared ``async`` to satisfy the protocol.
+        Returns:
+            int: Total record count for the store or namespace.
         """
         ...
 
     async def anamespaces(self) -> list[Namespace]:
-        """Return every namespace that currently contains at least one record.
+        """List namespaces that currently contain records.
 
-        Same async rationale as :meth:`arecord_count`.
+        Returns:
+            list[Namespace]: Non-empty namespaces.
         """
         ...
 
     async def alatest(self, namespace: Namespace) -> StoreRecord | None:
-        """Return the most recently inserted record in ``namespace``.
+        """Fetch the most recently inserted record in a namespace.
 
-        Returns ``None`` when the namespace is empty or does not exist.
+        Args:
+            namespace (Namespace): Namespace tuple to inspect.
 
-        Added in v0.9 to fix the episodic catch-up bug: the previous
-        approach (``asearch(query=None, limit=50)`` + ``[-1]``) silently
-        returned the 50th-oldest record once a user exceeded 50 episodic
-        sessions, because ``asearch`` returns records in ascending
-        insertion order.
-
-        The in-memory implementation uses ``reversed(dict.values())``
-        (dict preserves insertion order in Python 3.7+). The SQLite
-        implementation uses ``ORDER BY insertion_order DESC LIMIT 1``.
+        Returns:
+            StoreRecord | None: Most recent record, or ``None``.
         """
         ...
 
@@ -377,7 +372,14 @@ class OpenCouchMemoryStore:
             raise RuntimeError("OpenCouchMemoryStore is closed.")
 
     def _bucket(self, namespace: Namespace) -> _NamespaceBucket:
-        """Get (or create) the bucket for a namespace."""
+        """Get or create the bucket for a namespace.
+
+        Args:
+            namespace (Namespace): Namespace tuple to resolve.
+
+        Returns:
+            _NamespaceBucket: Bucket backing the namespace.
+        """
 
         bucket = self._buckets.get(namespace)
         if bucket is None:
@@ -394,21 +396,17 @@ class OpenCouchMemoryStore:
         embedding: list[float] | None = None,
         embedding_model: str | None = None,
     ) -> None:
-        """Store a record under ``(namespace, key)``.
+        """Store or overwrite one in-memory record.
 
-        If a record already exists at that key, it is overwritten. The
-        store does NOT perform hot-path deduplication here — that logic
-        lives in the node layer (see ``extract_semantic_facts_node``
-        in the design sketch) so the store stays a pure key-value layer.
+        Args:
+            namespace (Namespace): Record namespace tuple.
+            key (str): Record key within the namespace.
+            value (dict[str, Any]): Serialized record payload.
+            embedding (list[float] | None): Optional precomputed embedding vector.
+            embedding_model (str | None): Optional embedding model identifier.
 
-        v0.8.1: ``embedding`` and ``embedding_model`` are optional
-        keyword args. When the caller has a pre-computed embedding
-        (via an :class:`agent.memory.embeddings.EmbeddingProvider`),
-        it passes both here and the store keeps them alongside the
-        record for use in :meth:`asearch_similar`. When the caller
-        doesn't have an embedding (guest mode, no provider, tests),
-        both default to None and the record participates in
-        hybrid retrieval via the token-recall path only.
+        Returns:
+            None: Updates the in-memory store.
         """
 
         self._ensure_open()
@@ -433,7 +431,15 @@ class OpenCouchMemoryStore:
             ]
         ],
     ) -> None:
-        """Write multiple records atomically (trivial under the GIL)."""
+        """Write multiple in-memory records.
+
+        Args:
+            items (list[tuple[Namespace, str, dict[str, Any], list[float] | None, str | None]]):
+                Items shaped as ``(namespace, key, value, embedding, embedding_model)``.
+
+        Returns:
+            None: Updates the in-memory store.
+        """
 
         self._ensure_open()
         for namespace, key, value, embedding, embedding_model in items:
@@ -451,9 +457,14 @@ class OpenCouchMemoryStore:
         namespace: Namespace,
         key: str,
     ) -> StoreRecord | None:
-        """Fetch one record by its ``(namespace, key)``.
+        """Fetch one in-memory record.
 
-        Returns ``None`` when the record does not exist.
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            key (str): Record key within the namespace.
+
+        Returns:
+            StoreRecord | None: Matching record, or ``None``.
         """
 
         self._ensure_open()
@@ -469,35 +480,15 @@ class OpenCouchMemoryStore:
         query: str | None = None,
         limit: int = 10,
     ) -> list[StoreRecord]:
-        """Search for records within ``namespace`` matching ``query``.
+        """Search in-memory records with lexical scoring.
 
-        v0.3.1 uses **query-token recall scoring** against the serialized
-        value of each record. For each record:
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            query (str | None): Optional lexical query. ``None`` enumerates records.
+            limit (int): Maximum number of records to return.
 
-        1. Concatenate its non-null string-coercible field values into a
-           haystack string.
-        2. Tokenize the haystack with the full (non-stopword-filtered)
-           tokenizer so every query token has a chance to land.
-        3. Tokenize the query with the stopword-and-length-filtered
-           tokenizer so connective words don't inflate overlap.
-        4. Compute ``recall = |query ∩ haystack| / |query|``.
-        5. Keep the record if ``recall >= SEARCH_MATCH_THRESHOLD``.
-
-        Results are returned sorted by recall descending, with insertion
-        order as the tiebreaker. This makes ``load_memory_node``'s
-        top-k retrieval genuinely pick the "best" matches instead of
-        the first ``limit`` substring hits.
-
-        Degenerate-query handling: if the query has no meaningful tokens
-        after stopword filtering (e.g. the user typed "I am so" or "!!!"),
-        returns an empty list. Returning the full namespace would be
-        surprising behavior for a one-word noise query; returning
-        nothing fails fast and lets the caller degrade however makes
-        sense for its context.
-
-        When ``query`` is ``None``, returns all records in the namespace
-        (up to ``limit``) in insertion order. This path is used by
-        ``extract_facts`` to enumerate existing records for dedup.
+        Returns:
+            list[StoreRecord]: Matching records in recall-score order.
         """
 
         self._ensure_open()
@@ -508,32 +499,16 @@ class OpenCouchMemoryStore:
         if query is None:
             return list(bucket.records.values())[:limit]
 
-        query_tokens = tokenize_meaningful(query)
-        if not query_tokens:
-            # No meaningful query tokens → nothing to score against.
-            # Better to return empty than to flood the caller with
-            # everything in the namespace.
-            return []
-
-        query_token_count = len(query_tokens)
-        scored: list[tuple[float, int, StoreRecord]] = []
-        for insertion_index, record in enumerate(bucket.records.values()):
-            haystack = " ".join(str(v) for v in record.value.values() if v is not None)
-            haystack_tokens = tokenize(haystack)
-            if not haystack_tokens:
-                continue
-            overlap = len(query_tokens & haystack_tokens)
-            recall = overlap / query_token_count
-            if recall >= SEARCH_MATCH_THRESHOLD:
-                # ``insertion_index`` is the tiebreaker that preserves
-                # insertion order when two records have the same recall
-                # score — keeps the test_memory_store_search_respects_limit
-                # assertion deterministic.
-                scored.append((recall, insertion_index, record))
-
-        # Sort by (recall desc, insertion_index asc) then slice to limit.
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [record for _, _, record in scored[:limit]]
+        candidates = [
+            IndexedRecord(record=record, insertion_index=insertion_index)
+            for insertion_index, record in enumerate(bucket.records.values())
+        ]
+        scored = lexical_rank(
+            candidates,
+            query_text=query,
+            match_threshold=SEARCH_MATCH_THRESHOLD,
+        )
+        return [scored_record.record for scored_record in scored[:limit]]
 
     async def asearch_similar(
         self,
@@ -545,24 +520,19 @@ class OpenCouchMemoryStore:
         limit: int = 10,
         max_age_days: int | None = None,
     ) -> list[StoreRecord]:
-        """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
+        """Run hybrid retrieval over in-memory records.
 
-        Combines the v0.3.1 token-recall scan with an embedding-
-        similarity scan. See :mod:`agent.memory.retrieval` for the
-        RRF fusion rationale and :data:`SEARCH_MATCH_THRESHOLD` /
-        :data:`agent.memory.retrieval.EMBEDDING_MATCH_THRESHOLD`
-        for the per-scorer cutoffs.
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            query_text (str): Query text for lexical scoring.
+            query_embedding (list[float] | None): Optional dense query embedding.
+            embedding_model (str | None): Optional query embedding model identifier.
+            limit (int): Maximum number of records to return.
+            max_age_days (int | None): Optional age filter in days.
 
-        When ``max_age_days`` is set, records whose ``created_at``
-        timestamp is older than the cutoff are excluded before scoring.
+        Returns:
+            list[StoreRecord]: Top fused retrieval results.
         """
-
-        from agent.memory.retrieval import (
-            EMBEDDING_MATCH_THRESHOLD,
-            ScoredRecord,
-            cosine_similarity,
-            rrf_fuse,
-        )
 
         self._ensure_open()
         bucket = self._buckets.get(namespace)
@@ -593,59 +563,20 @@ class OpenCouchMemoryStore:
         else:
             candidates = bucket.records
 
-        # ── Token-recall side (lexical) ───────────────────────────────
-        lexical_scored: list[ScoredRecord] = []
-        query_tokens = tokenize_meaningful(query_text)
-        if query_tokens:
-            query_token_count = len(query_tokens)
-            for insertion_index, record in enumerate(candidates.values()):
-                haystack = " ".join(
-                    str(v) for v in record.value.values() if v is not None
-                )
-                haystack_tokens = tokenize(haystack)
-                if not haystack_tokens:
-                    continue
-                overlap = len(query_tokens & haystack_tokens)
-                recall = overlap / query_token_count
-                if recall >= SEARCH_MATCH_THRESHOLD:
-                    lexical_scored.append(
-                        ScoredRecord(
-                            record=record,
-                            score=recall,
-                            insertion_index=insertion_index,
-                        )
-                    )
-            lexical_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
-
-        # ── Embedding-similarity side (dense) ─────────────────────────
-        dense_scored: list[ScoredRecord] = []
-        if query_embedding is not None:
-            for insertion_index, record in enumerate(candidates.values()):
-                if record.embedding is None:
-                    continue
-                # Skip cross-model similarity — comparing embeddings
-                # from different models with cosine is noise.
-                if (
-                    embedding_model is not None
-                    and record.embedding_model is not None
-                    and record.embedding_model != embedding_model
-                ):
-                    continue
-                # Dimensionality mismatch is also a skip; caller is
-                # expected to have passed the right model, but we
-                # guard against schema drift.
-                if len(record.embedding) != len(query_embedding):
-                    continue
-                sim = cosine_similarity(query_embedding, record.embedding)
-                if sim >= EMBEDDING_MATCH_THRESHOLD:
-                    dense_scored.append(
-                        ScoredRecord(
-                            record=record,
-                            score=sim,
-                            insertion_index=insertion_index,
-                        )
-                    )
-            dense_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+        indexed_candidates = [
+            IndexedRecord(record=record, insertion_index=insertion_index)
+            for insertion_index, record in enumerate(candidates.values())
+        ]
+        lexical_scored = lexical_rank(
+            indexed_candidates,
+            query_text=query_text,
+            match_threshold=SEARCH_MATCH_THRESHOLD,
+        )
+        dense_scored = dense_rank(
+            indexed_candidates,
+            query_embedding=query_embedding,
+            embedding_model=embedding_model,
+        )
 
         if not lexical_scored and not dense_scored:
             return []
@@ -661,11 +592,14 @@ class OpenCouchMemoryStore:
         namespace: Namespace,
         key: str,
     ) -> bool:
-        """Delete a record by ``(namespace, key)``.
+        """Delete one in-memory record.
 
-        Returns ``True`` if a record was deleted, ``False`` if no record
-        existed at that key. The distinction lets callers (e.g. the CLI
-        ``/memory forget`` command) report success accurately.
+        Args:
+            namespace (Namespace): Namespace tuple containing the record.
+            key (str): Record key within the namespace.
+
+        Returns:
+            bool: ``True`` when a record was deleted.
         """
 
         self._ensure_open()
@@ -676,10 +610,10 @@ class OpenCouchMemoryStore:
         return True
 
     async def aclose(self) -> None:
-        """Mark the store as closed and clear its contents.
+        """Close the in-memory store.
 
-        Closed stores raise ``RuntimeError`` on any further access.
-        Calling ``aclose`` on an already-closed store is a no-op.
+        Returns:
+            None: Marks the store closed and clears in-memory data.
         """
 
         if self._closed:
@@ -690,13 +624,13 @@ class OpenCouchMemoryStore:
     # ── Debug / observability helpers ────────────────────────────────────
 
     async def arecord_count(self, namespace: Namespace | None = None) -> int:
-        """Return the total number of records, optionally filtered by namespace.
+        """Count in-memory records.
 
-        Used by ``/memory status`` and ``/memory list`` CLI commands
-        and by tests. NOT part of the graph-node interface — nodes
-        should use ``asearch`` with ``query=None`` if they need to
-        enumerate. Async to match the SQLite implementation's
-        connection-sharing contract (see :class:`MemoryStore` protocol).
+        Args:
+            namespace (Namespace | None): Optional namespace filter.
+
+        Returns:
+            int: Total record count for the store or namespace.
         """
 
         if self._closed:
@@ -707,10 +641,10 @@ class OpenCouchMemoryStore:
         return sum(len(b.records) for b in self._buckets.values())
 
     async def anamespaces(self) -> list[Namespace]:
-        """Return every namespace that currently contains at least one record.
+        """List non-empty in-memory namespaces.
 
-        Async to match the SQLite implementation's connection-sharing
-        contract (see :class:`MemoryStore` protocol).
+        Returns:
+            list[Namespace]: Namespaces that currently contain records.
         """
 
         if self._closed:
@@ -718,10 +652,13 @@ class OpenCouchMemoryStore:
         return [ns for ns, bucket in self._buckets.items() if bucket.records]
 
     async def alatest(self, namespace: Namespace) -> StoreRecord | None:
-        """Return the most recently inserted record in ``namespace``.
+        """Fetch the latest in-memory record in a namespace.
 
-        Dict preserves insertion order in Python 3.7+, so
-        ``reversed(values())`` yields most-recent-first without a sort.
+        Args:
+            namespace (Namespace): Namespace tuple to inspect.
+
+        Returns:
+            StoreRecord | None: Most recent record, or ``None``.
         """
 
         self._ensure_open()

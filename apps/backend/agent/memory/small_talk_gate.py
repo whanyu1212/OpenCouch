@@ -170,20 +170,13 @@ SMALL_TALK_VOCABULARY: frozenset[str] = frozenset(
 
 
 def is_small_talk(message: str) -> bool:
-    """Return True if the message is unambiguously small talk.
+    """Return whether the message is unambiguously small talk.
 
-    Both conditions must hold:
-    1. The stripped message is under :data:`MAX_SMALL_TALK_LENGTH` chars.
-    2. Every meaningful token (after stopword filtering) is in
-       :data:`SMALL_TALK_VOCABULARY`.
+    Args:
+        message (str): User message to evaluate.
 
-    Returns False (= let the message through to the LLM extractor) when
-    either condition fails, or when the message is empty (empty messages
-    are handled upstream by the node's "no message" guard and shouldn't
-    reach the gate, but returning False is the safe default).
-
-    The function is deterministic and sub-millisecond — it does string
-    length + set membership checks, no model inference, no network.
+    Returns:
+        bool: ``True`` when the message is short and all meaningful tokens are small-talk vocabulary.
     """
 
     stripped = message.strip()

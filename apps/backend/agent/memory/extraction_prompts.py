@@ -29,16 +29,10 @@ from agent.state import AgentState
 
 
 def build_extraction_system_prompt() -> str:
-    """Build the system prompt for the semantic extraction LLM call.
-
-    Kept inline (not loaded from a knowledge markdown file) because the
-    prompt is tightly coupled to the ``MemoryWrite``/``ExtractionResult``
-    schemas and any schema change requires a corresponding prompt
-    change. Cohesion beats the slight duplication with knowledge files.
+    """Build the semantic-extraction system prompt.
 
     Returns:
-        The full system prompt as a single string, ready to pass to
-        ``generate_structured(system_instruction=...)``.
+        str: Full system prompt for ``generate_structured``.
     """
 
     return (
@@ -189,18 +183,14 @@ def build_extraction_user_prompt(
     *,
     turn_index: int,
 ) -> str:
-    """Build the user/task prompt for a single extraction call.
-
-    Injects the current user message, a short window of recent history
-    for context, and the session id + turn index so the extractor can
-    populate the provenance fields of each :class:`MemoryWrite`.
+    """Build the semantic-extraction user prompt.
 
     Args:
-        state: Current graph state. Reads ``message``, ``history``,
-            ``session_id``.
-        turn_index: Zero-based index of the current turn within the
-            session. The extractor writes this into each MemoryWrite's
-            ``source_turn_index`` field.
+        state (AgentState): Current graph state with message/history/session context.
+        turn_index (int): Zero-based turn index for extraction provenance.
+
+    Returns:
+        str: User prompt for a single extraction call.
     """
 
     history = state.get("history", [])[-6:]

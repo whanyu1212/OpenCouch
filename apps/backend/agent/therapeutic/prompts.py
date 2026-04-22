@@ -121,9 +121,8 @@ def _format_working_memory(state: AgentState) -> str:
 #    when recall is on.
 #
 # 3. **Recall toggle governs semantic/episodic only.** The constraint
-#    block's text is copied verbatim from schema.yaml §6 retrieval
-#    proactive_recall.enforcement — lines 549-559. When recall is off,
-#    the model is told to use retrieved memories for shaping but NOT to
+#    block is intentionally kept stable here. When recall is off, the
+#    model is told to use retrieved memories for shaping but NOT to
 #    explicitly reference past sessions or statements. When recall is
 #    on, the constraint is relaxed. The constraint text deliberately
 #    refers to "past sessions or past statements" rather than "memory"
@@ -175,11 +174,10 @@ def _format_recall_toggle_constraint(state: AgentState) -> str:
     - **When True**: relaxes the constraint so the model may reference
       past memories sparingly when they add value to the current moment.
 
-    The constraint text is copied verbatim from schema.yaml §6 retrieval
-    proactive_recall.enforcement (lines 549-559). The constraint refers
-    specifically to "past sessions or past statements" — semantic facts
-    and episodic summaries — and does NOT govern procedural rules, which
-    are separately handled by :func:`_format_procedural_rules_block`.
+    The constraint refers specifically to "past sessions or past
+    statements" — semantic facts and episodic summaries — and does NOT
+    govern procedural rules, which are separately handled by
+    :func:`_format_procedural_rules_block`.
     """
 
     memory = state.get("memory", {}) or {}

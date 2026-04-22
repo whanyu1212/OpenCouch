@@ -9,10 +9,29 @@ and prevents circular imports between those two modules.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 def contains_any(text: str, markers: tuple[str, ...]) -> bool:
-    """Return True if *text* contains any of the given marker substrings."""
+    """Return whether text contains any of the given marker substrings.
+
+    Args:
+        text (str): Text to scan.
+        markers (tuple[str, ...]): Marker substrings to check for.
+
+    Returns:
+        bool: ``True`` when any marker appears in ``text``.
+    """
     return any(marker in text for marker in markers)
+
+
+@dataclass(frozen=True, slots=True)
+class ProceduralRequestClassification:
+    """Deterministic marker-based classification of a procedural request."""
+
+    explicit: bool
+    turn_scoped: bool
+    safety_conflict: bool
 
 
 PROCEDURAL_EXPLICIT_REQUEST_MARKERS: tuple[str, ...] = (
@@ -57,3 +76,21 @@ PROCEDURAL_SAFETY_CONFLICT_MARKERS: tuple[str, ...] = (
     "don't mention 988",
     "dont mention 988",
 )
+
+
+def classify_procedural_request(text: str) -> ProceduralRequestClassification:
+    """Classify procedural-request text using the shared marker sets.
+
+    Args:
+        text (str): Combined procedural-request text to classify.
+
+    Returns:
+        ProceduralRequestClassification: Marker-based procedural request signals.
+    """
+
+    lowered = text.lower()
+    return ProceduralRequestClassification(
+        explicit=contains_any(lowered, PROCEDURAL_EXPLICIT_REQUEST_MARKERS),
+        turn_scoped=contains_any(lowered, PROCEDURAL_TURN_SCOPED_MARKERS),
+        safety_conflict=contains_any(lowered, PROCEDURAL_SAFETY_CONFLICT_MARKERS),
+    )

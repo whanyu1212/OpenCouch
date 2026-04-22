@@ -1445,7 +1445,7 @@ async def test_memory_recall_on_from_off_writes_and_explains(capsys) -> None:
 
     # First-run explanation content is present
     assert "Proactive recall is now ON" in captured.out
-    # The example from schema.yaml opt_in_confirmation_example
+    # The first-run explanation should mention past conversations.
     assert "past conversations" in captured.out
     # The reassurance that style rules are independent of the toggle
     assert "Style rules" in captured.out

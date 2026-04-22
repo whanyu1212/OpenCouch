@@ -60,17 +60,16 @@ solved problem). Calendar-gated on dataset and model maturity.
 
 Graphiti + Neo4j for entity/relationship extraction from semantic
 facts. Enables relational reasoning: "you mentioned your sister and
-your work stress — they tend to co-occur." The wire frame exists
-(`agent/memory/graph_store.py` with `NullGraphMemoryStore`); the
-`graphiti-core` dependency is in `pyproject.toml` but the
-integration is intentionally disabled pending design.
+your work stress — they tend to co-occur." The `graphiti-core`
+dependency is in `pyproject.toml`, but the integration is
+intentionally disabled pending design.
 
 ### Background Consolidation
 
 Automatic fact merging, dormant marking, and a `consolidation_runs`
 log. Schema is defined (`ConsolidationProposal`,
 `ConsolidationRunRecord` in `agent/memory/models.py`); the
-implementation node is sketched but not wired into the graph. Adds
+implementation is planned but not wired into the graph. Adds
 `/memory restore` as an undo for destructive operations.
 
 ### Session Intent, Stage, and Response Guidance

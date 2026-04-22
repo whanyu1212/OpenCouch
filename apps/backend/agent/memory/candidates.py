@@ -19,13 +19,15 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agent.memory.constants import (
-    PROCEDURAL_EXPLICIT_REQUEST_MARKERS as _PROCEDURAL_EXPLICIT_REQUEST_MARKERS,
-    PROCEDURAL_SAFETY_CONFLICT_MARKERS as _PROCEDURAL_SAFETY_CONFLICT_MARKERS,
-    PROCEDURAL_TURN_SCOPED_MARKERS as _PROCEDURAL_TURN_SCOPED_MARKERS,
-    contains_any as _contains_any,
-)
+from agent.memory.constants import classify_procedural_request
 from agent.memory.models import MemoryWrite, ProceduralRuleDraft
+from agent.memory.semantic_policy import (
+    SEMANTIC_SESSION_ONLY_CATEGORIES,
+    SEMANTIC_STABLE_CATEGORIES,
+    contains_emerging_pattern,
+    contains_negative_self_belief,
+    looks_transient_context,
+)
 
 CandidateLayer = Literal["semantic", "procedural"]
 CandidateExplicitness = Literal["explicit", "implied"]
@@ -87,13 +89,24 @@ class SessionMemoryBuffer(BaseModel):
     approach_counts: dict[str, int] = Field(default_factory=dict)
 
     def record_approach(self, modality: str | None) -> None:
-        """Increment the count for a dispatched modality after a turn."""
+        """Record one occurrence of a dispatched modality.
+
+        Args:
+            modality (str | None): Modality used for the completed turn.
+
+        Returns:
+            None: Updates ``approach_counts`` in place.
+        """
 
         if modality and modality != "none":
             self.approach_counts[modality] = self.approach_counts.get(modality, 0) + 1
 
     def dominant_approach(self) -> str | None:
-        """Return the most frequent non-none modality, or None."""
+        """Return the most frequent recorded modality.
+
+        Returns:
+            str | None: Most frequent non-``"none"`` modality, or ``None``.
+        """
 
         if not self.approach_counts:
             return None
@@ -108,89 +121,44 @@ class PolicyDecision(BaseModel):
     policy_version: str = "phase1_v1"
 
 
-_NEGATIVE_SELF_BELIEF_MARKERS = (
-    "i always assume",
-    "everyone will see i'm",
-    "everyone will see im",
-    "everyone will think i'm",
-    "everyone will think im",
-    "one mistake means",
-    "i'm incompetent",
-    "im incompetent",
-    "i'm a failure",
-    "im a failure",
-    "i always fail",
-    "i never get it right",
-)
-
-_EMERGING_PATTERN_MARKERS = (
-    "it keeps happening",
-    "every new task makes me feel like",
-    "every task makes me feel like",
-    "i'm about to fail",
-    "im about to fail",
-    "every relationship ends",
-    "this always happens",
-)
-
-_DURABILITY_MARKERS = (
-    "for years",
-    "for a long time",
-    "i always",
-    "i usually",
-    "every time",
-    "whenever",
-    "ever since",
-)
-
-_TRANSIENT_MARKERS = (
-    "today",
-    "tonight",
-    "right now",
-    "this week",
-    "this month",
-    "this morning",
-    "last night",
-    "yesterday",
-    "lately",
-    "recently",
-)
-
-
 def build_semantic_candidate(
     write: MemoryWrite,
     *,
     message: str,
 ) -> SemanticCandidate:
-    """Promote a ``MemoryWrite`` into a phase-1 semantic candidate."""
+    """Promote an extracted semantic fact into a memory candidate.
+
+    Args:
+        write (MemoryWrite): Extracted semantic fact.
+        message (str): Current user message for durability/sensitivity heuristics.
+
+    Returns:
+        SemanticCandidate: Phase-1 semantic candidate with deterministic policy hints.
+    """
 
     lowered = f"{message} {write.evidence_quote}".lower()
     category = write.category
 
-    if _contains_any(lowered, _NEGATIVE_SELF_BELIEF_MARKERS) or _contains_any(
-        lowered, _EMERGING_PATTERN_MARKERS
-    ):
+    if contains_negative_self_belief(lowered) or contains_emerging_pattern(lowered):
         sensitivity: CandidateSensitivity = "high"
         durability: CandidateDurability = "possible"
         scope: CandidateScope = "session"
         recommendation: PolicyRecommendation = "require_repetition"
         reason = "negative self-belief or emerging pattern needs repetition"
-    elif category in {"loss", "trigger"}:
+    elif category in SEMANTIC_SESSION_ONLY_CATEGORIES:
         sensitivity = "high"
         durability = "possible"
         scope = "session"
         recommendation = "commit_at_session_end"
         reason = "high-sensitivity semantic content should wait for session review"
-    elif category in {"relationship", "preference", "coping_strategy", "goal"}:
+    elif category in SEMANTIC_STABLE_CATEGORIES:
         sensitivity = "low"
         durability = "stable"
         scope = "cross_session"
         recommendation = "commit_now"
         reason = "explicit stable semantic fact"
     elif category == "context":
-        if _contains_any(lowered, _TRANSIENT_MARKERS) and not _contains_any(
-            lowered, _DURABILITY_MARKERS
-        ):
+        if looks_transient_context(lowered):
             sensitivity = "medium"
             durability = "possible"
             scope = "session"
@@ -231,13 +199,24 @@ def build_procedural_candidate(
     session_id: str,
     turn_index: int,
 ) -> ProceduralCandidate:
-    """Promote a ``ProceduralRuleDraft`` into a phase-1 procedural candidate."""
+    """Promote an extracted procedural draft into a memory candidate.
+
+    Args:
+        draft (ProceduralRuleDraft): Extracted procedural rule draft.
+        message (str): Current user message for procedural heuristics.
+        session_id (str): Session identifier for candidate provenance.
+        turn_index (int): Turn index for candidate provenance.
+
+    Returns:
+        ProceduralCandidate: Phase-1 procedural candidate with deterministic policy hints.
+    """
 
     lowered = f"{message} {draft.rule} {' '.join(draft.evidence)}".lower()
 
-    explicit = _contains_any(lowered, _PROCEDURAL_EXPLICIT_REQUEST_MARKERS)
-    turn_scoped = _contains_any(lowered, _PROCEDURAL_TURN_SCOPED_MARKERS)
-    safety_conflict = _contains_any(lowered, _PROCEDURAL_SAFETY_CONFLICT_MARKERS)
+    classification = classify_procedural_request(lowered)
+    explicit = classification.explicit
+    turn_scoped = classification.turn_scoped
+    safety_conflict = classification.safety_conflict
 
     if safety_conflict:
         recommendation: PolicyRecommendation = "drop"

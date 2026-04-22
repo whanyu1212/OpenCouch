@@ -6,8 +6,8 @@ the gate is recorded — with ``user_id`` nulled out and the ``session_id``
 replaced by its SHA-256 hash — so operators retain a safety audit trail
 without storing user-identifying information.
 
-See schema.yaml §2 namespaces.crisis_log and §9 q6 for the full rationale
-and the legal-review caveat on the 90-day retention default.
+The 90-day default retention policy and legal-review caveat are part of
+the current memory design.
 
 Phase 1 v0.8 scope:
 - :class:`CrisisLogBackend` protocol that any backend must implement
@@ -21,8 +21,8 @@ Phase 1 v0.8 scope:
   exits.
 
 v0.8.1 adds :meth:`CrisisLogBackend.apurge_before` to enforce the
-90-day retention policy documented in schema.yaml §2. The purge
-is exposed to the CLI via ``/memory purge-crisis [days]`` with a
+90-day retention policy. The purge is exposed to the CLI via
+``/memory purge-crisis [days]`` with a
 typed ``purge`` confirmation to prevent accidental audit-trail
 deletion — matching the v0.9 ``/memory clear`` UX pattern for
 destructive operations. The append-only contract still holds
@@ -76,65 +76,51 @@ class CrisisLogBackend(Protocol):
     """
 
     async def aappend(self, record: CrisisLogRecord) -> None:
-        """Append a crisis event record to the log.
+        """Append one crisis event record.
 
-        Implementations MUST be append-only — existing records are
-        never modified. Duplicate ``record.id`` values on the same day
-        should be treated as a bug by the caller; the backend should
-        either overwrite (simplest, current InMemoryCrisisLogBackend
-        behavior) or raise, but not silently merge.
+        Args:
+            record (CrisisLogRecord): Crisis event record to append.
+
+        Returns:
+            None: Persists the record in the backend.
         """
         ...
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
-        """Return all crisis log records from a given day.
+        """List crisis records for one date.
 
-        Returns an empty list if no records exist for that day. Results
-        are returned in insertion order.
+        Args:
+            day (date): Calendar day to query.
+
+        Returns:
+            list[CrisisLogRecord]: Records for the day in insertion order.
         """
         ...
 
     async def arecord_count(self) -> int:
-        """Return the total number of crisis records across all dates.
+        """Count crisis records across the backend.
 
-        Used by ``/memory status`` CLI command and by tests. Async as
-        of v0.8 for the same reason the memory store's helper is
-        async: the SQLite backend shares a single connection across
-        its async methods, and a sync helper would either open a
-        second connection (breaking ``:memory:`` databases) or require
-        separate caching.
+        Returns:
+            int: Total crisis-log record count.
         """
         ...
 
     async def apurge_before(self, cutoff: date) -> int:
-        """Delete all records with ``detected_date < cutoff``.
+        """Purge crisis records older than a cutoff date.
 
-        v0.8.1 retention-purge interface. Implementations MUST NOT
-        delete records where ``detected_date == cutoff`` — the
-        boundary is exclusive so a caller asking "delete everything
-        older than today" doesn't accidentally lose today's events.
+        Args:
+            cutoff (date): Exclusive cutoff date.
 
-        Returns the number of records deleted. Returns 0 if nothing
-        matched, the backend is empty, or the backend is closed. The
-        count lets the CLI confirm to the operator what the purge
-        actually did, which matters because destructive operations
-        on the safety audit trail need to be observable.
-
-        Not invoked by any graph node. The agent's append-only
-        contract still holds for normal turn processing — this
-        method is a retention operation called by the CLI (via
-        ``/memory purge-crisis``) or by a future scheduled cleanup
-        job. See schema.yaml §2 namespaces.crisis_log retention
-        for the 90-day default and legal-review caveat.
+        Returns:
+            int: Number of records deleted.
         """
         ...
 
     async def aclose(self) -> None:
-        """Release any resources held by the backend.
+        """Release backend resources.
 
-        Safe to call on an already-closed backend (should be a no-op).
-        Required by every implementation because the ``PersistentAgentRuntime``
-        lifecycle calls it on ``__aexit__``.
+        Returns:
+            None: Closes the backend.
         """
         ...
 
@@ -159,11 +145,13 @@ class InMemoryCrisisLogBackend:
             raise RuntimeError("InMemoryCrisisLogBackend is closed.")
 
     async def aappend(self, record: CrisisLogRecord) -> None:
-        """Append a record under today's date bucket.
+        """Append one in-memory crisis record.
 
-        The date bucket is derived from ``record.detected_at`` so
-        backfilled records land in the correct day's bucket even if
-        they're written later.
+        Args:
+            record (CrisisLogRecord): Crisis event record to append.
+
+        Returns:
+            None: Stores the record in memory.
         """
 
         self._ensure_open()
@@ -174,16 +162,23 @@ class InMemoryCrisisLogBackend:
         self._records_by_date[day].append(record)
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
-        """Return all records for a given day in insertion order."""
+        """List in-memory crisis records for one date.
+
+        Args:
+            day (date): Calendar day to query.
+
+        Returns:
+            list[CrisisLogRecord]: Records for the day in insertion order.
+        """
 
         self._ensure_open()
         return list(self._records_by_date.get(day, []))
 
     async def aclose(self) -> None:
-        """Mark the backend as closed and clear its contents.
+        """Close the in-memory crisis backend.
 
-        Closed backends raise ``RuntimeError`` on any further access.
-        Calling ``aclose`` on an already-closed backend is a no-op.
+        Returns:
+            None: Marks the backend closed and clears in-memory data.
         """
 
         if self._closed:
@@ -192,11 +187,10 @@ class InMemoryCrisisLogBackend:
         self._records_by_date.clear()
 
     async def arecord_count(self) -> int:
-        """Return the total number of records across all dates.
+        """Count in-memory crisis records.
 
-        Used by ``/memory status`` CLI command and by tests. Async
-        as of v0.8 to match the protocol — see the module docstring
-        for the rationale (matching the memory store's refactor).
+        Returns:
+            int: Total crisis-log record count.
         """
 
         if self._closed:
@@ -204,16 +198,13 @@ class InMemoryCrisisLogBackend:
         return sum(len(records) for records in self._records_by_date.values())
 
     async def apurge_before(self, cutoff: date) -> int:
-        """Delete all in-memory date buckets older than ``cutoff``.
+        """Purge in-memory crisis records older than a cutoff date.
 
-        v0.8.1: scans the per-date dict, removes every bucket whose
-        date is strictly less than ``cutoff``, and returns the total
-        number of records removed. The boundary is exclusive — the
-        cutoff date itself is preserved — so "purge before today"
-        doesn't drop today's records.
+        Args:
+            cutoff (date): Exclusive cutoff date.
 
-        Closed backends return 0 without touching any state, matching
-        the other methods' closed-safe contract.
+        Returns:
+            int: Number of records deleted.
         """
 
         if self._closed:
@@ -237,26 +228,55 @@ class NullCrisisLogBackend:
     """
 
     async def aappend(self, record: CrisisLogRecord) -> None:
-        """Discard the record without storing it."""
+        """Discard a crisis record.
+
+        Args:
+            record (CrisisLogRecord): Crisis event record to ignore.
+
+        Returns:
+            None: No-op for the null backend.
+        """
 
         return None
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
-        """Always return an empty list."""
+        """List crisis records for one date.
+
+        Args:
+            day (date): Calendar day to query.
+
+        Returns:
+            list[CrisisLogRecord]: Always an empty list.
+        """
 
         return []
 
     async def aclose(self) -> None:
-        """No resources to release."""
+        """Close the null crisis backend.
+
+        Returns:
+            None: No-op for the null backend.
+        """
 
         return None
 
     async def arecord_count(self) -> int:
-        """Always zero."""
+        """Count crisis records in the null backend.
+
+        Returns:
+            int: Always ``0``.
+        """
 
         return 0
 
     async def apurge_before(self, cutoff: date) -> int:  # noqa: ARG002 — contract
-        """No-op: the null backend has nothing to purge."""
+        """Purge crisis records from the null backend.
+
+        Args:
+            cutoff (date): Exclusive cutoff date.
+
+        Returns:
+            int: Always ``0``.
+        """
 
         return 0

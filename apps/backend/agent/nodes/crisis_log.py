@@ -4,8 +4,7 @@ Writes a :class:`CrisisLogRecord` to the crisis log backend whenever a
 crisis event is detected and the crisis response has run. Always-on
 regardless of memory mode: in incognito mode, ``user_id_or_null`` is
 null and ``session_id_opaque`` is a SHA-256 hash of the session id with
-no reverse mapping. See ``agent/memory/schema.yaml`` §2 namespaces.
-crisis_log for the full privacy asymmetry rationale.
+no reverse mapping.
 
 Phase 1 v0.1 scope:
 - Writes one record per crisis event, keyed off ``state["crisis"]``.

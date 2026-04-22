@@ -7,17 +7,99 @@ removed pending the therapeutic-response rebuild.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 import pytest
 
 from agent.graph import build_initial_state, run_agent
+from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.modes import MemoryMode
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord
 from agent.models import AgentInput, ResponseCategory
 from agent.nodes.crisis_gate import (
+    CrisisAssessmentSchema,
     assess_crisis_risk_deterministically,
     detect_crisis_override,
+    run_crisis_gate_node,
 )
+from agent.runtime_context import WorkflowContext
+from services.llm.base import BaseLLMClient, StructuredResponseT
+
+
+class _MockRuntime:
+    """Minimal runtime stand-in exposing the workflow context only."""
+
+    def __init__(self, *, llm_client: BaseLLMClient | None = None) -> None:
+        self.context = WorkflowContext(
+            llm_client=llm_client,
+            memory_store=OpenCouchMemoryStore(),
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+
+class _CannedStructuredLLM(BaseLLMClient):
+    """Fake LLM client returning one canned crisis assessment."""
+
+    def __init__(self, response: CrisisAssessmentSchema) -> None:
+        self._response = response
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "unused"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        return cast(StructuredResponseT, self._response)
+
+
+class _FailingStructuredLLM(BaseLLMClient):
+    """Fake LLM client that raises on structured generation."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "unused"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        raise RuntimeError("simulated classifier failure")
 
 
 @pytest.mark.asyncio
@@ -98,6 +180,136 @@ def test_detects_idiomatic_safe_override_separately() -> None:
     kind, assessment = override
     assert kind == "idiomatic_safe"
     assert assessment.level == 0
+
+
+# ─── Standalone crisis-gate node tests ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_run_crisis_gate_node_override_path_standalone() -> None:
+    """The node should route imminent-risk override turns on its own."""
+
+    state = build_initial_state(
+        AgentInput(message="I have pills and I am going to kill myself tonight."),
+        include_input_history=True,
+    )
+
+    command = await run_crisis_gate_node(state, _MockRuntime())  # type: ignore[arg-type]
+
+    assert command.goto == "crisis_response_node"
+    assert command.update["crisis"].level == 3
+    assert command.update["crisis"].needs_crisis_response is True
+    assert command.update["routing"]["route"] == "crisis"
+    assert command.update["routing"]["crisis_override_kind"] == "imminent_risk"
+    assert command.update["routing"]["crisis_classifier_path"] == "override"
+    assert command.update["routing"]["crisis_llm_failure_occurred"] is False
+    assert command.update["response"]["kind"] == ResponseCategory.CRISIS
+
+
+@pytest.mark.asyncio
+async def test_run_crisis_gate_node_no_llm_path_standalone() -> None:
+    """Without an LLM client, the node should use deterministic classification."""
+
+    state = build_initial_state(
+        AgentInput(message="I just wish I could disappear for a while."),
+        include_input_history=True,
+    )
+
+    command = await run_crisis_gate_node(state, _MockRuntime())  # type: ignore[arg-type]
+
+    assert command.goto == "load_memory_node"
+    assert command.update["crisis"].level == 1
+    assert command.update["crisis"].needs_crisis_response is False
+    assert command.update["crisis"].needs_clarification is True
+    assert command.update["routing"]["route"] == "therapeutic"
+    assert command.update["routing"]["crisis_override_kind"] == "none"
+    assert command.update["routing"]["crisis_classifier_path"] == "deterministic"
+    assert command.update["routing"]["crisis_llm_failure_occurred"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_crisis_gate_node_llm_success_path_standalone() -> None:
+    """The node should use the primary LLM verdict when the call succeeds."""
+
+    state = build_initial_state(
+        AgentInput(message="I just wish I could disappear for a while."),
+        include_input_history=True,
+    )
+    llm = _CannedStructuredLLM(
+        CrisisAssessmentSchema(
+            level=2,
+            confidence="high",
+            reason="LLM escalated the message to level 2",
+            needs_crisis_response=True,
+            needs_clarification=False,
+        )
+    )
+
+    command = await run_crisis_gate_node(  # type: ignore[arg-type]
+        state,
+        _MockRuntime(llm_client=llm),
+    )
+
+    assert command.goto == "crisis_response_node"
+    assert command.update["crisis"].level == 2
+    assert command.update["routing"]["route"] == "crisis"
+    assert command.update["routing"]["crisis_override_kind"] == "none"
+    assert command.update["routing"]["crisis_classifier_path"] == "llm_primary"
+    assert command.update["routing"]["crisis_llm_failure_occurred"] is False
+    assert command.update["response"]["kind"] == ResponseCategory.CRISIS
+
+
+@pytest.mark.asyncio
+async def test_run_crisis_gate_node_llm_failure_fallback_standalone() -> None:
+    """The node should fall back to deterministic classification on LLM failure."""
+
+    state = build_initial_state(
+        AgentInput(message="I just wish I could disappear for a while."),
+        include_input_history=True,
+    )
+
+    command = await run_crisis_gate_node(  # type: ignore[arg-type]
+        state,
+        _MockRuntime(llm_client=_FailingStructuredLLM()),
+    )
+
+    assert command.goto == "load_memory_node"
+    assert command.update["crisis"].level == 1
+    assert command.update["crisis"].needs_crisis_response is False
+    assert command.update["crisis"].needs_clarification is True
+    assert command.update["routing"]["crisis_override_kind"] == "none"
+    assert command.update["routing"]["crisis_classifier_path"] == "deterministic"
+    assert command.update["routing"]["crisis_llm_failure_occurred"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_crisis_gate_node_enforces_truth_table_on_llm_output() -> None:
+    """The node should normalize inconsistent LLM booleans to match the level."""
+
+    state = build_initial_state(
+        AgentInput(message="I just wish I could disappear for a while."),
+        include_input_history=True,
+    )
+    llm = _CannedStructuredLLM(
+        CrisisAssessmentSchema(
+            level=0,
+            confidence="medium",
+            reason="LLM returned inconsistent booleans",
+            needs_crisis_response=True,
+            needs_clarification=True,
+        )
+    )
+
+    command = await run_crisis_gate_node(  # type: ignore[arg-type]
+        state,
+        _MockRuntime(llm_client=llm),
+    )
+
+    assert command.goto == "load_memory_node"
+    assert command.update["crisis"].level == 0
+    assert command.update["crisis"].needs_crisis_response is False
+    assert command.update["crisis"].needs_clarification is False
+    assert command.update["routing"]["crisis_classifier_path"] == "llm_primary"
 
 
 # ─── v0.9 safety-reorder regression tests ─────────────────────────────────

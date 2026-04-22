@@ -13,8 +13,7 @@ Procedural rules are few (typically 5-15 per user) and need to stay
 coherent as a set. If two rules contradict each other, the agent needs
 to see both at once to decide which wins. A collection model would make
 "get all rules for this user" require a range scan; a profile model
-gets them in one atomic read. See schema.yaml §2 namespaces.procedural
-for the rationale.
+gets them in one atomic read.
 
 The profile also houses the ``proactive_recall_enabled`` toggle (the
 ``/memory recall on|off`` setting), because the setting is a per-user
@@ -77,8 +76,7 @@ from agent.memory.models import (
 from agent.memory.reconciliation import plan_procedural_rule_write
 from agent.memory.store import MemoryStore, Namespace
 
-# The fixed record key for every user's procedural profile. Matches
-# schema.yaml §2 namespaces.procedural.record_schema.id.
+# The fixed record key for every user's procedural profile.
 PROCEDURAL_KEY = "user_response_style"
 ProceduralUpsertAction = Literal["added", "replaced", "skipped"]
 
@@ -97,10 +95,13 @@ class ProceduralUpsertResult:
 
 
 def procedural_namespace(user_id: str) -> Namespace:
-    """Return the ``(user_id, "procedural")`` namespace tuple.
+    """Return the procedural namespace tuple for a user.
 
-    Keeps the string literal in exactly one place so the rest of the
-    codebase doesn't scatter references to the namespace name.
+    Args:
+        user_id (str): User identifier.
+
+    Returns:
+        Namespace: ``(user_id, "procedural")`` namespace tuple.
     """
 
     return (user_id, "procedural")
@@ -111,19 +112,14 @@ async def aget_procedural_profile(
     *,
     user_id: str,
 ) -> ProceduralProfile:
-    """Return the procedural profile for ``user_id``.
+    """Return the procedural profile for a user.
 
-    When no profile exists yet (the common case for a new user),
-    returns a **fresh empty profile** with ``proactive_recall_enabled``
-    set to the schema default (False) and an empty ``rules`` list.
-    The empty profile is not written to the store — callers that want
-    to persist it must call :func:`aput_procedural_profile` explicitly.
+    Args:
+        store (MemoryStore): Memory store to read from.
+        user_id (str): User identifier.
 
-    This empty-default-on-miss behavior matches the schema's intent:
-    every user has a procedural profile; it's just implicit until
-    something writes to it. The alternative (returning ``None`` and
-    making every caller handle the null case) would scatter defensive
-    code across every reader.
+    Returns:
+        ProceduralProfile: Existing profile or a fresh empty default profile.
     """
 
     record = await store.aget(procedural_namespace(user_id), PROCEDURAL_KEY)
@@ -143,12 +139,12 @@ async def aput_procedural_profile(
     user_id: str,
     profile: ProceduralProfile,
 ) -> None:
-    """Persist ``profile`` as the procedural profile for ``user_id``.
+    """Persist a procedural profile for a user.
 
-    Overwrites any existing profile at the same key. Callers that want
-    additive semantics should use :func:`aadd_procedural_rule` or
-    :func:`aset_proactive_recall` instead, which load the existing
-    profile first and mutate it in place.
+    Args:
+        store (MemoryStore): Memory store to write to.
+        user_id (str): User identifier.
+        profile (ProceduralProfile): Procedural profile to persist.
     """
 
     await store.aput(
@@ -164,17 +160,15 @@ async def aadd_procedural_rule(
     user_id: str,
     rule: ProceduralRule,
 ) -> ProceduralProfile:
-    """Add ``rule`` to the user's procedural profile.
+    """Add a procedural rule to a user's profile.
 
-    Convenience helper for the writer node: loads the current profile
-    (empty if none), reconciles the new rule against the existing set,
-    writes the profile back when it changes, and returns the updated
-    profile.
+    Args:
+        store (MemoryStore): Memory store to update.
+        user_id (str): User identifier.
+        rule (ProceduralRule): Procedural rule to add.
 
-    Phase D nuance: duplicate rules are skipped and weaker/conflicting
-    rules can be replaced by the new rule, with the replaced rule moved
-    into ``profile.archived_rules`` for auditability. Callers that need
-    the exact action should use :func:`aupsert_procedural_rule`.
+    Returns:
+        ProceduralProfile: Updated procedural profile.
     """
 
     result = await aupsert_procedural_rule(store, user_id=user_id, rule=rule)
@@ -182,11 +176,10 @@ async def aadd_procedural_rule(
 
 
 def _evict_oldest_rules(profile: ProceduralProfile) -> None:
-    """Archive the oldest rules if the profile exceeds MAX_ACTIVE_RULES.
+    """Archive the oldest rules if the profile exceeds the active-rule cap.
 
-    Evicts by earliest ``added_at`` timestamp. Evicted rules are moved
-    to ``archived_rules`` with ``superseded_by="eviction"`` so they
-    remain auditable but stop inflating the response prompt.
+    Args:
+        profile (ProceduralProfile): Profile to mutate in place.
     """
 
     while len(profile.rules) > MAX_ACTIVE_RULES:
@@ -210,7 +203,16 @@ async def aupsert_procedural_rule(
     user_id: str,
     rule: ProceduralRule,
 ) -> ProceduralUpsertResult:
-    """Add or reconcile ``rule`` against the user's procedural profile."""
+    """Add or reconcile a procedural rule against the user's profile.
+
+    Args:
+        store (MemoryStore): Memory store to update.
+        user_id (str): User identifier.
+        rule (ProceduralRule): Procedural rule to upsert.
+
+    Returns:
+        ProceduralUpsertResult: Updated profile plus the reconciliation action taken.
+    """
 
     profile = await aget_procedural_profile(store, user_id=user_id)
     plan = plan_procedural_rule_write(rule, profile.rules)
@@ -251,17 +253,15 @@ async def aset_proactive_recall(
     user_id: str,
     enabled: bool,
 ) -> ProceduralProfile:
-    """Set the ``proactive_recall_enabled`` toggle for this user.
+    """Set the proactive-recall toggle for a user.
 
-    Convenience helper for the ``/memory recall on|off`` CLI command:
-    loads the current profile (empty if none), updates the toggle,
-    writes the profile back. Returns the updated profile so the CLI
-    can render a confirmation message.
+    Args:
+        store (MemoryStore): Memory store to update.
+        user_id (str): User identifier.
+        enabled (bool): Desired proactive-recall setting.
 
-    Unlike :func:`aadd_procedural_rule`, this helper does change state
-    even on an empty profile — the toggle is part of the profile's
-    scalar state, so setting it to True on a new user creates a
-    profile with the toggle on and an empty rules list.
+    Returns:
+        ProceduralProfile: Updated procedural profile.
     """
 
     profile = await aget_procedural_profile(store, user_id=user_id)
@@ -275,15 +275,14 @@ async def aget_proactive_recall(
     *,
     user_id: str,
 ) -> bool:
-    """Return whether proactive recall is currently enabled for this user.
+    """Return whether proactive recall is enabled for a user.
 
-    Convenience helper for the prompt builders: most callers just
-    want the toggle value, not the full profile. Pulling the full
-    profile is still a single store read, so this wrapper is a small
-    clarity win rather than a performance optimization.
+    Args:
+        store (MemoryStore): Memory store to read from.
+        user_id (str): User identifier.
 
-    Returns ``False`` for users with no profile yet — matches the
-    schema default.
+    Returns:
+        bool: Current proactive-recall setting.
     """
 
     profile = await aget_procedural_profile(store, user_id=user_id)
@@ -300,17 +299,19 @@ def build_procedural_rule(
     write_reason: str = "",
     policy_version: str = "phase1_v1",
 ) -> ProceduralRule:
-    """Construct a :class:`ProceduralRule` with sensible defaults for v0.7.
+    """Construct a procedural rule with the project's default metadata.
 
-    Hot-path writes use ``source="explicit_user"`` with
-    ``confidence="high"``. Session-end promotion can override those
-    defaults with ``source="consolidation"`` and a lower confidence.
-    This helper centralizes the common metadata so callers don't have
-    to spell it out on every call.
+    Args:
+        rule_text (str): Rule text to store.
+        evidence (list[str]): Evidence snippets supporting the rule.
+        confidence (ConfidenceLevel): Confidence level for the rule.
+        source (ProceduralRuleSource): Rule source label.
+        write_timing (MemoryWriteTiming): Memory write timing label.
+        write_reason (str): Reason for the write decision.
+        policy_version (str): Policy version associated with the write.
 
-    The ``added_at`` timestamp is set to "now" in UTC ISO-8601 format
-    with a ``Z`` suffix — matching the timestamp convention used by
-    every other memory model in the system.
+    Returns:
+        ProceduralRule: New procedural rule with timestamps and defaults populated.
     """
 
     return ProceduralRule(

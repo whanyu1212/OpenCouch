@@ -1,8 +1,8 @@
 """Memory persistence modes for the OpenCouch agent.
 
 The ``MemoryMode`` enum replaces the earlier ``is_guest_mode`` boolean
-and represents the three persistence tiers locked in the schema v1
-decisions log (see ``agent/memory/schema.yaml`` §1):
+and represents the three persistence tiers locked during the memory
+redesign:
 
 - ``INCOGNITO`` — ephemeral, in-memory only. Checkpointer runs against
   ``:memory:``. Nothing survives the runtime instance dying. The crisis

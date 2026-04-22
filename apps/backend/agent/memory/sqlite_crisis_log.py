@@ -174,14 +174,13 @@ class SqliteCrisisLogBackend:
     """
 
     def __init__(self, sqlite_path: str | Path) -> None:
-        """Initialize the backend with a SQLite file path.
+        """Initialize the SQLite-backed crisis backend.
 
         Args:
-            sqlite_path: Path to the SQLite file. Use ``":memory:"``
-                for a pure in-RAM database — tests that want SQL
-                semantics without disk writes should use this path.
-                Parent directories for file paths are created lazily
-                on first connection open.
+            sqlite_path (str | Path): SQLite file path or ``":memory:"``.
+
+        Returns:
+            None: Stores connection configuration for lazy initialization.
         """
 
         self.sqlite_path = (
@@ -193,11 +192,10 @@ class SqliteCrisisLogBackend:
     # ── Connection lifecycle ──────────────────────────────────────────
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
-        """Open the aiosqlite connection lazily on first use.
+        """Open the SQLite connection on first use.
 
-        Subsequent calls are cheap no-ops that just return the
-        already-open connection. Raises ``RuntimeError`` if the
-        backend has been closed.
+        Returns:
+            aiosqlite.Connection: Shared connection for the backend instance.
         """
 
         if self._closed:
@@ -215,7 +213,14 @@ class SqliteCrisisLogBackend:
 
     @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        """Run the schema DDL. Idempotent — safe to call repeatedly."""
+        """Ensure the SQLite crisis-log schema exists.
+
+        Args:
+            conn (aiosqlite.Connection): Open SQLite connection.
+
+        Returns:
+            None: Applies schema DDL.
+        """
 
         for ddl in CRISIS_LOG_SCHEMA_DDL:
             await conn.execute(ddl)
@@ -224,18 +229,13 @@ class SqliteCrisisLogBackend:
     # ── Public interface (CrisisLogBackend protocol) ──────────────────
 
     async def aappend(self, record: CrisisLogRecord) -> None:
-        """Append a crisis event record.
+        """Append one SQLite-backed crisis record.
 
-        Writes the full record as JSON plus the indexed columns the
-        schema needs for fast lookups. Computes ``detected_date``
-        from ``record.detected_at`` at insert time so the date index
-        can serve ``alist_by_date`` queries directly.
+        Args:
+            record (CrisisLogRecord): Crisis event record to append.
 
-        Duplicate ids (same ``record.id`` appended twice) are
-        rejected at the UNIQUE constraint layer and raise a database
-        error, matching the protocol's "duplicate ids are a caller
-        bug" contract. The in-memory backend silently appends
-        duplicates; the SQLite backend is stricter.
+        Returns:
+            None: Writes the record to SQLite.
         """
 
         conn = await self._ensure_connection()
@@ -263,12 +263,13 @@ class SqliteCrisisLogBackend:
         await conn.commit()
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
-        """Return all records for a given day in insertion order.
+        """List SQLite-backed crisis records for one date.
 
-        Uses the ``idx_crisis_detected_date`` B-tree index for an
-        O(log n) lookup. Records within a day are ordered by
-        ``insertion_order ASC`` to match the in-memory backend's
-        chronological order contract.
+        Args:
+            day (date): Calendar day to query.
+
+        Returns:
+            list[CrisisLogRecord]: Records for the day in insertion order.
         """
 
         conn = await self._ensure_connection()
@@ -287,12 +288,10 @@ class SqliteCrisisLogBackend:
         ]
 
     async def arecord_count(self) -> int:
-        """Return the total number of records across all dates.
+        """Count SQLite-backed crisis records.
 
-        Used by the CLI ``/memory status`` command and by tests.
-        Returns 0 if the backend is closed — consistent with the
-        memory store's ``arecord_count`` contract, so CLI code can
-        call it without defensive try/except.
+        Returns:
+            int: Total crisis-log record count.
         """
 
         if self._closed:
@@ -303,30 +302,13 @@ class SqliteCrisisLogBackend:
         return int(row[0]) if row else 0
 
     async def apurge_before(self, cutoff: date) -> int:
-        """Delete all crisis records with ``detected_date < cutoff``.
+        """Purge SQLite-backed crisis records older than a cutoff date.
 
-        v0.8.1 retention-purge implementation. Issues a single
-        ``DELETE WHERE detected_date < ?`` which uses the
-        ``idx_crisis_detected_date`` B-tree index for an O(log n)
-        lookup regardless of table size. Returns the number of
-        rows deleted so the caller (CLI command, scheduled job)
-        can report the purge outcome.
+        Args:
+            cutoff (date): Exclusive cutoff date.
 
-        The boundary is **exclusive**: records on the cutoff date
-        itself are preserved. "Purge everything older than 90 days
-        ago" computed as ``today - 90 days`` cleanly keeps today's
-        and the past 89 days' records, removing only day 90 and
-        older. That's the intuitive semantics for retention windows.
-
-        Transactional: the DELETE runs inside the single aiosqlite
-        connection and is committed atomically. A partial failure
-        mid-purge would leave the table in a consistent state (some
-        rows deleted, some not), which is acceptable for a retention
-        operation — the next run picks up where this one left off
-        because the predicate is idempotent.
-
-        Closed backends return 0 without opening a connection,
-        matching the contract of :meth:`arecord_count`.
+        Returns:
+            int: Number of records deleted.
         """
 
         if self._closed:
@@ -344,11 +326,10 @@ class SqliteCrisisLogBackend:
         return int(cursor.rowcount or 0)
 
     async def aclose(self) -> None:
-        """Close the aiosqlite connection.
+        """Close the SQLite crisis backend.
 
-        Idempotent — safe to call on an already-closed backend,
-        matching the in-memory version's contract. After closing,
-        any subsequent method call raises ``RuntimeError``.
+        Returns:
+            None: Marks the backend closed and releases the connection.
         """
 
         if self._closed:
@@ -369,18 +350,13 @@ class SqliteCrisisLogBackend:
 
     @staticmethod
     def _extract_date_prefix(detected_at: str) -> str:
-        """Extract the ``YYYY-MM-DD`` prefix from an ISO-8601 timestamp.
+        """Extract the date prefix from an ISO-8601 timestamp.
 
-        The ``CrisisLogRecord.detected_at`` field is always a string
-        in ``YYYY-MM-DDTHH:MM:SSZ`` form (see the pydantic model's
-        docstring). Splitting on ``T`` gives the date prefix without
-        needing full datetime parsing — faster and more tolerant of
-        minor format variations.
+        Args:
+            detected_at (str): ISO-8601 crisis detection timestamp.
 
-        Raises ``ValueError`` via ``date.fromisoformat`` if the
-        string isn't a valid ISO-8601 date prefix. Caller bugs that
-        pass a malformed ``detected_at`` fail loudly at insert time
-        rather than silently landing records in a bad date bucket.
+        Returns:
+            str: ``YYYY-MM-DD`` date prefix.
         """
 
         date_prefix = detected_at.split("T", 1)[0]

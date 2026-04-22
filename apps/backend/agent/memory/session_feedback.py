@@ -60,52 +60,53 @@ class SessionFeedbackBackend(Protocol):
     """
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:
-        """Append a feedback record to the store.
+        """Append one feedback record.
 
-        Implementations MUST be append-only — existing records are
-        never modified. Two calls with the same ``record.id`` produce
-        two rows in Phase 1 (no idempotency).
+        Args:
+            record (SessionFeedbackRecord): Feedback record to append.
+
+        Returns:
+            None: Persists the record in the backend.
         """
         ...
 
     async def alist_by_session(
         self, session_id_opaque: str
     ) -> list[SessionFeedbackRecord]:
-        """Return all feedback records for a given opaque session id.
+        """List feedback records for one opaque session id.
 
-        Returns an empty list when the session has no recorded
-        feedback. Results are returned in insertion order.
+        Args:
+            session_id_opaque (str): Opaque session identifier to query.
+
+        Returns:
+            list[SessionFeedbackRecord]: Records for the session in insertion order.
         """
         ...
 
     async def arecord_count(self) -> int:
-        """Return the total number of feedback records.
+        """Count feedback records across the backend.
 
-        Used by ``/memory status`` CLI command and the
-        ``MemoryStatusResponse.session_feedback_count`` API field.
-        Async for the same reason the crisis_log helper is async (see
-        that module for the aiosqlite-connection rationale).
+        Returns:
+            int: Total feedback record count.
         """
         ...
 
     async def apurge_before(self, cutoff: date) -> int:
-        """Delete all records with ``recorded_at`` strictly before ``cutoff``.
+        """Purge feedback records older than a cutoff date.
 
-        The boundary is exclusive — records recorded on ``cutoff``
-        itself are preserved, matching the crisis_log contract. Returns
-        the number of records deleted.
+        Args:
+            cutoff (date): Exclusive cutoff date.
 
-        Not invoked by any agent code. This is a retention operation
-        called by the CLI or by a future scheduled cleanup job.
+        Returns:
+            int: Number of records deleted.
         """
         ...
 
     async def aclose(self) -> None:
-        """Release any resources held by the backend.
+        """Release backend resources.
 
-        Safe to call on an already-closed backend. Required by every
-        implementation because :class:`agent.persistence.PersistentAgentRuntime`
-        calls it on ``__aexit__``.
+        Returns:
+            None: Closes the backend.
         """
         ...
 
@@ -133,7 +134,14 @@ class InMemorySessionFeedbackBackend:
             raise RuntimeError("InMemorySessionFeedbackBackend is closed.")
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:
-        """Append the record under its session bucket."""
+        """Append one in-memory feedback record.
+
+        Args:
+            record (SessionFeedbackRecord): Feedback record to append.
+
+        Returns:
+            None: Stores the record in memory.
+        """
 
         self._ensure_open()
         self._records_by_session[record.session_id_opaque].append(record)
@@ -141,17 +149,23 @@ class InMemorySessionFeedbackBackend:
     async def alist_by_session(
         self, session_id_opaque: str
     ) -> list[SessionFeedbackRecord]:
-        """Return all records for a given session in insertion order."""
+        """List in-memory feedback records for one session.
+
+        Args:
+            session_id_opaque (str): Opaque session identifier to query.
+
+        Returns:
+            list[SessionFeedbackRecord]: Records for the session in insertion order.
+        """
 
         self._ensure_open()
         return list(self._records_by_session.get(session_id_opaque, []))
 
     async def aclose(self) -> None:
-        """Mark the backend as closed and clear its contents.
+        """Close the in-memory feedback backend.
 
-        Closed backends raise ``RuntimeError`` on any further write /
-        read access. Calling ``aclose`` on an already-closed backend
-        is a no-op.
+        Returns:
+            None: Marks the backend closed and clears in-memory data.
         """
 
         if self._closed:
@@ -160,19 +174,24 @@ class InMemorySessionFeedbackBackend:
         self._records_by_session.clear()
 
     async def arecord_count(self) -> int:
-        """Return the total number of records across all sessions."""
+        """Count in-memory feedback records.
+
+        Returns:
+            int: Total feedback record count.
+        """
 
         if self._closed:
             return 0
         return sum(len(records) for records in self._records_by_session.values())
 
     async def apurge_before(self, cutoff: date) -> int:
-        """Delete all records with ``recorded_at`` strictly before ``cutoff``.
+        """Purge in-memory feedback records older than a cutoff date.
 
-        Scans every session bucket, drops any record whose date is
-        strictly less than ``cutoff``, and returns the total number of
-        records removed. Closed backends return 0 without touching
-        state, matching the other methods' closed-safe contract.
+        Args:
+            cutoff (date): Exclusive cutoff date.
+
+        Returns:
+            int: Number of records deleted.
         """
 
         if self._closed:
@@ -213,29 +232,58 @@ class NullSessionFeedbackBackend:
     """
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:  # noqa: ARG002
-        """Discard the record without storing it."""
+        """Discard a feedback record.
+
+        Args:
+            record (SessionFeedbackRecord): Feedback record to ignore.
+
+        Returns:
+            None: No-op for the null backend.
+        """
 
         return None
 
     async def alist_by_session(
         self, session_id_opaque: str
     ) -> list[SessionFeedbackRecord]:  # noqa: ARG002
-        """Always return an empty list."""
+        """List feedback records for one session.
+
+        Args:
+            session_id_opaque (str): Opaque session identifier to query.
+
+        Returns:
+            list[SessionFeedbackRecord]: Always an empty list.
+        """
 
         return []
 
     async def aclose(self) -> None:
-        """No resources to release."""
+        """Close the null feedback backend.
+
+        Returns:
+            None: No-op for the null backend.
+        """
 
         return None
 
     async def arecord_count(self) -> int:
-        """Always zero."""
+        """Count feedback records in the null backend.
+
+        Returns:
+            int: Always ``0``.
+        """
 
         return 0
 
     async def apurge_before(self, cutoff: date) -> int:  # noqa: ARG002
-        """Nothing to purge — always zero."""
+        """Purge feedback records from the null backend.
+
+        Args:
+            cutoff (date): Exclusive cutoff date.
+
+        Returns:
+            int: Always ``0``.
+        """
 
         return 0
 

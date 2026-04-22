@@ -164,13 +164,13 @@ class SqliteSessionFeedbackBackend:
     """
 
     def __init__(self, sqlite_path: str | Path) -> None:
-        """Initialize the backend with a SQLite file path.
+        """Initialize the SQLite-backed feedback backend.
 
         Args:
-            sqlite_path: Path to the SQLite file. Use ``":memory:"``
-                for a pure in-RAM database (tests that want SQL
-                semantics without disk writes). Parent directories for
-                file paths are created lazily on first connection open.
+            sqlite_path (str | Path): SQLite file path or ``":memory:"``.
+
+        Returns:
+            None: Stores connection configuration for lazy initialization.
         """
 
         self.sqlite_path = (
@@ -182,7 +182,11 @@ class SqliteSessionFeedbackBackend:
     # ── Connection lifecycle ──────────────────────────────────────────
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
-        """Open the aiosqlite connection lazily on first use."""
+        """Open the SQLite connection on first use.
+
+        Returns:
+            aiosqlite.Connection: Shared connection for the backend instance.
+        """
 
         if self._closed:
             raise RuntimeError("SqliteSessionFeedbackBackend is closed.")
@@ -199,7 +203,14 @@ class SqliteSessionFeedbackBackend:
 
     @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        """Run the schema DDL. Idempotent — safe to call repeatedly."""
+        """Ensure the SQLite session-feedback schema exists.
+
+        Args:
+            conn (aiosqlite.Connection): Open SQLite connection.
+
+        Returns:
+            None: Applies schema DDL.
+        """
 
         for ddl in SESSION_FEEDBACK_SCHEMA_DDL:
             await conn.execute(ddl)
@@ -208,17 +219,13 @@ class SqliteSessionFeedbackBackend:
     # ── Public interface (SessionFeedbackBackend protocol) ────────────
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:
-        """Append a feedback record.
+        """Append one SQLite-backed feedback record.
 
-        Writes the full record as JSON plus the indexed columns the
-        schema needs for fast lookups. Computes ``recorded_date`` from
-        ``record.recorded_at`` at insert time so the date index can
-        serve :meth:`apurge_before` queries directly.
+        Args:
+            record (SessionFeedbackRecord): Feedback record to append.
 
-        No duplicate-id detection: Phase 1 allows two calls with the
-        same ``record.id`` to produce two rows. If that ever becomes
-        a problem, the fix is an explicit idempotency-key column, not
-        a retrofitted UNIQUE constraint on ``id``.
+        Returns:
+            None: Writes the record to SQLite.
         """
 
         conn = await self._ensure_connection()
@@ -252,12 +259,13 @@ class SqliteSessionFeedbackBackend:
     async def alist_by_session(
         self, session_id_opaque: str
     ) -> list[SessionFeedbackRecord]:
-        """Return all records for a given opaque session id.
+        """List SQLite-backed feedback records for one session.
 
-        Uses the ``idx_feedback_session`` B-tree index for an O(log n)
-        lookup. Records within a session are ordered by
-        ``insertion_order ASC`` to match the in-memory backend's
-        chronological contract.
+        Args:
+            session_id_opaque (str): Opaque session identifier to query.
+
+        Returns:
+            list[SessionFeedbackRecord]: Records for the session in insertion order.
         """
 
         conn = await self._ensure_connection()
@@ -276,10 +284,10 @@ class SqliteSessionFeedbackBackend:
         ]
 
     async def arecord_count(self) -> int:
-        """Return the total number of records across all sessions.
+        """Count SQLite-backed feedback records.
 
-        Returns 0 if the backend is closed — matches the crisis_log
-        contract so CLI / API callers don't need defensive try/except.
+        Returns:
+            int: Total feedback record count.
         """
 
         if self._closed:
@@ -290,17 +298,13 @@ class SqliteSessionFeedbackBackend:
         return int(row[0]) if row else 0
 
     async def apurge_before(self, cutoff: date) -> int:
-        """Delete all feedback records with ``recorded_date < cutoff``.
+        """Purge SQLite-backed feedback records older than a cutoff date.
 
-        Single ``DELETE WHERE recorded_date < ?`` using the
-        ``idx_feedback_recorded_date`` B-tree index for O(log n)
-        lookups regardless of table size. Returns the rows deleted so
-        the CLI / scheduled job can report outcome.
+        Args:
+            cutoff (date): Exclusive cutoff date.
 
-        Boundary is exclusive — records recorded on the cutoff date
-        itself are preserved, matching crisis_log's purge contract.
-
-        Closed backends return 0 without opening a connection.
+        Returns:
+            int: Number of records deleted.
         """
 
         if self._closed:
@@ -318,11 +322,10 @@ class SqliteSessionFeedbackBackend:
         return int(cursor.rowcount or 0)
 
     async def aclose(self) -> None:
-        """Close the aiosqlite connection.
+        """Close the SQLite feedback backend.
 
-        Idempotent — safe to call on an already-closed backend. After
-        closing, any subsequent method call raises ``RuntimeError``
-        via ``_ensure_connection``.
+        Returns:
+            None: Marks the backend closed and releases the connection.
         """
 
         if self._closed:
@@ -343,15 +346,13 @@ class SqliteSessionFeedbackBackend:
 
     @staticmethod
     def _extract_date_prefix(recorded_at: str) -> str:
-        """Extract the ``YYYY-MM-DD`` prefix from an ISO-8601 timestamp.
+        """Extract the date prefix from an ISO-8601 timestamp.
 
-        ``SessionFeedbackRecord.recorded_at`` is always a string in
-        ``YYYY-MM-DDTHH:MM:SSZ`` form (produced by ``iso_now()``).
-        Splitting on ``T`` gives the date prefix without full datetime
-        parsing. The prefix is validated via ``date.fromisoformat`` —
-        malformed input raises ``ValueError``, letting caller bugs
-        fail loudly at insert time rather than silently landing in a
-        bad date bucket.
+        Args:
+            recorded_at (str): ISO-8601 feedback timestamp.
+
+        Returns:
+            str: ``YYYY-MM-DD`` date prefix.
         """
 
         date_prefix = recorded_at.split("T", 1)[0]

@@ -1,59 +1,69 @@
-"""Compatibility facade for memory-layer model types.
-
-The concrete type definitions now live under ``agent.memory.types``.
-This module remains as the stable import surface for existing callers.
-"""
+"""Compatibility export surface for memory-layer model types."""
 
 from __future__ import annotations
 
-from agent.memory.types import (
-    ACTContext,
-    CARE_KINDS,
-    CBTContext,
-    ConfidenceLevel,
-    ConsolidationProposal,
-    ConsolidationProposalType,
-    ConsolidationRunRecord,
+from agent.memory.types.audit import (
     CrisisClassifierPath,
     CrisisLogAggregate,
     CrisisLogLevelCounts,
     CrisisLogPathCounts,
     CrisisLogRecord,
     CrisisOverrideOutcome,
-    DBTContext,
-    DispatchDecision,
-    EntityRef,
-    EntityType,
-    ExtractionResult,
-    FAMILY_KINDS,
-    FRIENDSHIP_KINDS,
     FeedbackLabel,
     FeedbackSource,
+    SessionFeedbackRecord,
+)
+from agent.memory.types.consolidation import (
+    ConsolidationProposal,
+    ConsolidationProposalType,
+    ConsolidationRunRecord,
+    MergeProposalDetail,
+)
+from agent.memory.types.episodic import (
+    ACTContext,
+    CBTContext,
+    DBTContext,
     GriefContext,
-    HotPathEdgeType,
     IPTContext,
     MIContext,
-    MemoryWrite,
-    MemoryWriteTiming,
-    MergeProposalDetail,
-    ModalityContext,
     MoodArc,
+    ModalityContext,
     PFAContext,
-    PROFESSIONAL_KINDS,
+    SessionArc,
+    StoredSessionArc,
+    SummarizationResult,
+)
+from agent.memory.types.primitives import (
+    ConfidenceLevel,
+    EntityRef,
+    EntityType,
+    HotPathEdgeType,
+    MemoryWriteTiming,
+)
+from agent.memory.types.procedural import (
     ProceduralExtractionResult,
     ProceduralProfile,
     ProceduralRule,
     ProceduralRuleDraft,
     ProceduralRuleSource,
+)
+from agent.memory.types.relationships import (
+    CARE_KINDS,
+    FAMILY_KINDS,
+    FRIENDSHIP_KINDS,
+    PROFESSIONAL_KINDS,
     ROMANTIC_KINDS,
-    RelatesToEdge,
     RelationshipKind,
+    RelatesToEdge,
+)
+from agent.memory.types.semantic import (
+    ExtractionResult,
+    MemoryWrite,
     SemanticCategory,
     SemanticFact,
-    SessionArc,
-    SessionFeedbackRecord,
-    StoredSessionArc,
-    SummarizationResult,
+)
+from agent.memory.types.therapeutic import (
+    DispatchDecision,
     TherapeuticApproach,
     TherapeuticResponseStyle,
 )

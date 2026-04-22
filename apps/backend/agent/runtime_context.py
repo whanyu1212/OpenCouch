@@ -32,9 +32,8 @@ class WorkflowContext:
     # or :class:`SqliteMemoryStore` for persistent (v0.8+, local mode).
     # See ``agent/memory/store.py`` for the protocol definition.
     memory_store: MemoryStore
-    # The always-on crisis safety log. Writes regardless of memory_mode
-    # — see schema.yaml §2 namespaces.crisis_log for the privacy
-    # asymmetry rationale.
+    # The always-on crisis safety log. Writes regardless of memory_mode;
+    # incognito mode still records events, but without user identity.
     crisis_log_backend: CrisisLogBackend
     memory_mode: MemoryMode
     response_llm: BaseLLMClient | None = None

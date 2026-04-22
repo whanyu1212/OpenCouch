@@ -64,7 +64,14 @@ class ProceduralReconciliationPlan:
 
 
 def is_active_semantic_record_value(value: dict[str, Any]) -> bool:
-    """Return whether a stored semantic fact is still active."""
+    """Return whether a stored semantic fact is still active.
+
+    Args:
+        value (dict[str, Any]): Serialized semantic fact payload.
+
+    Returns:
+        bool: ``True`` when the record is visible and not dormant or superseded.
+    """
 
     if not value.get("user_visible", True):
         return False
@@ -76,7 +83,14 @@ def is_active_semantic_record_value(value: dict[str, Any]) -> bool:
 
 
 def filter_active_semantic_records(records: list[StoreRecord]) -> list[StoreRecord]:
-    """Return only semantic records that are still active."""
+    """Return only semantic records that are still active.
+
+    Args:
+        records (list[StoreRecord]): Candidate records to filter.
+
+    Returns:
+        list[StoreRecord]: Active semantic records only.
+    """
 
     return [
         record for record in records if is_active_semantic_record_value(record.value)
@@ -84,7 +98,15 @@ def filter_active_semantic_records(records: list[StoreRecord]) -> list[StoreReco
 
 
 def _semantic_slot_matches(fact: SemanticFact, record: StoreRecord) -> bool:
-    """Return whether two semantic records occupy the same conceptual slot."""
+    """Return whether two semantic records occupy the same conceptual slot.
+
+    Args:
+        fact (SemanticFact): New semantic fact.
+        record (StoreRecord): Existing stored semantic record.
+
+    Returns:
+        bool: ``True`` when the records share the same conceptual slot.
+    """
 
     value = record.value
     return (
@@ -105,7 +127,15 @@ def _identifier_tokens(identifier: str) -> frozenset[str]:
 
 
 def _identifier_subset_overlap(left: str, right: str) -> bool:
-    """Return whether one identifier is a token-subset of the other."""
+    """Return whether one identifier is a token-subset of the other.
+
+    Args:
+        left (str): First identifier.
+        right (str): Second identifier.
+
+    Returns:
+        bool: ``True`` when either token set is a subset of the other.
+    """
 
     left_tokens = _identifier_tokens(left)
     right_tokens = _identifier_tokens(right)
@@ -115,7 +145,15 @@ def _identifier_subset_overlap(left: str, right: str) -> bool:
 
 
 def _prefer_new_identifier(new_identifier: str, existing_identifier: str) -> bool:
-    """Return whether the new identifier is more specific than the existing one."""
+    """Return whether the new identifier is more specific than the existing one.
+
+    Args:
+        new_identifier (str): Candidate replacement identifier.
+        existing_identifier (str): Existing stored identifier.
+
+    Returns:
+        bool: ``True`` when the new identifier is more specific.
+    """
 
     new_tokens = _identifier_tokens(new_identifier)
     existing_tokens = _identifier_tokens(existing_identifier)
@@ -130,7 +168,15 @@ def _has_explicit_correction(text: str) -> bool:
 
 
 def _semantic_topic_overlap(fact: SemanticFact, record: StoreRecord) -> int:
-    """Return rough topical overlap between two semantic facts."""
+    """Return rough topical overlap between two semantic facts.
+
+    Args:
+        fact (SemanticFact): New semantic fact.
+        record (StoreRecord): Existing stored semantic record.
+
+    Returns:
+        int: Count of overlapping topical tokens.
+    """
 
     candidate_tokens = tokenize_meaningful(
         f"{fact.object.identifier} {fact.evidence_quote}"
@@ -150,7 +196,15 @@ def plan_semantic_write(
     fact: SemanticFact,
     existing_records: list[StoreRecord],
 ) -> SemanticReconciliationPlan:
-    """Return whether a semantic fact should bump, supersede, or coexist."""
+    """Return whether a semantic fact should bump, supersede, or coexist.
+
+    Args:
+        fact (SemanticFact): New semantic fact to reconcile.
+        existing_records (list[StoreRecord]): Existing semantic records.
+
+    Returns:
+        SemanticReconciliationPlan: Reconciliation action for the semantic fact.
+    """
 
     plan = SemanticReconciliationPlan()
     correction_records: list[StoreRecord] = []
@@ -202,7 +256,14 @@ def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
 
 
 def _procedural_rule_signature(rule: ProceduralRule) -> str:
-    """Return one text blob for conflict/dedup checks."""
+    """Return one text blob for conflict and dedup checks.
+
+    Args:
+        rule (ProceduralRule): Procedural rule to serialize.
+
+    Returns:
+        str: Combined procedural rule text and evidence.
+    """
 
     return " ".join([rule.rule, *rule.evidence]).strip()
 
@@ -219,7 +280,15 @@ def plan_procedural_rule_write(
     new_rule: ProceduralRule,
     existing_rules: list[ProceduralRule],
 ) -> ProceduralReconciliationPlan:
-    """Return whether a procedural rule should append, replace, or skip."""
+    """Return whether a procedural rule should append, replace, or skip.
+
+    Args:
+        new_rule (ProceduralRule): New procedural rule to reconcile.
+        existing_rules (list[ProceduralRule]): Existing procedural rules.
+
+    Returns:
+        ProceduralReconciliationPlan: Reconciliation action for the new rule.
+    """
 
     new_signature = _procedural_rule_signature(new_rule)
     new_text = new_signature.lower().strip()

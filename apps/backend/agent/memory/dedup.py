@@ -21,8 +21,8 @@ Phase 1 v0.3 design:
   design: false-negative duplicates just produce a redundant-looking
   ``/memory list`` entry; false-positive merges lose signal
   permanently. Conservative wins.
-- **Threshold is 0.85.** Higher than the 0.95 that schema.yaml §9 q5
-  locks for vector similarity, because Jaccard is stricter: 0.85
+- **Threshold is 0.85.** Higher than the 0.95 target we'd use for
+  vector similarity, because Jaccard is stricter: 0.85
   Jaccard roughly corresponds to "almost all the same words, maybe
   one or two different." 0.95 would require near-identical quotes,
   which is rarely achievable across two distinct turns.
@@ -55,11 +55,14 @@ JACCARD_DUPLICATE_THRESHOLD = 0.85
 
 
 def _jaccard_similarity(a: frozenset[str], b: frozenset[str]) -> float:
-    """Compute the Jaccard similarity of two token sets.
+    """Compute Jaccard similarity for two token sets.
 
-    Returns 0.0 when both sets are empty (degenerate case — empty
-    quotes shouldn't reach this function but the guard prevents a
-    division-by-zero if they do).
+    Args:
+        a (frozenset[str]): First token set.
+        b (frozenset[str]): Second token set.
+
+    Returns:
+        float: Jaccard similarity in ``[0.0, 1.0]``.
     """
 
     if not a and not b:
@@ -73,12 +76,14 @@ def _triples_match(
     candidate: MemoryWrite,
     existing: StoreRecord,
 ) -> bool:
-    """Return whether two facts have matching (subject, predicate, object) triples.
+    """Return whether two facts have matching semantic triples.
 
-    The existing record's ``value`` dict is the serialized ``SemanticFact``,
-    so the subject/object are nested dicts with ``type`` and ``identifier``
-    keys. This helper reaches into those without needing to reconstruct
-    the full pydantic model, which keeps the dedup path cheap.
+    Args:
+        candidate (MemoryWrite): Candidate fact to compare.
+        existing (StoreRecord): Existing stored fact record.
+
+    Returns:
+        bool: ``True`` when subject, predicate, and object all align.
     """
 
     value = existing.value

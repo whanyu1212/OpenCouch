@@ -65,44 +65,17 @@ from agent.memory.reconciliation import (
 )
 from agent.memory.models import ExtractionResult, MemoryWrite, SemanticFact
 from agent.memory.modes import MemoryMode
+from agent.memory.semantic_policy import (
+    contains_emerging_pattern,
+    contains_negative_self_belief,
+    has_durability_marker,
+)
 from agent.memory.store import MemoryStore
 from agent.memory.write_policy import decide_semantic_candidate
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
-
-
-_EARLY_PATTERN_LANGUAGE = (
-    "it keeps happening",
-    "every new task makes me feel like",
-    "every task makes me feel like",
-    "i'm about to fail",
-    "im about to fail",
-)
-
-_NEGATIVE_SELF_BELIEF_LANGUAGE = (
-    "i always assume",
-    "everyone will see i'm",
-    "everyone will see im",
-    "everyone will think i'm",
-    "everyone will think im",
-    "one mistake means",
-    "i'm incompetent",
-    "im incompetent",
-    "i'm a failure",
-    "im a failure",
-)
-
-_DURABILITY_MARKERS = (
-    "for years",
-    "for a long time",
-    "i always",
-    "i usually",
-    "every time",
-    "whenever",
-    "ever since",
-)
 
 
 def _should_skip_early_emerging_pattern(message: str, turn_index: int) -> bool:
@@ -123,12 +96,12 @@ def _should_skip_early_emerging_pattern(message: str, turn_index: int) -> bool:
     if turn_index > 1:
         return False
 
-    if any(marker in lowered for marker in _NEGATIVE_SELF_BELIEF_LANGUAGE):
+    if contains_negative_self_belief(lowered):
         return True
 
-    if not any(marker in lowered for marker in _EARLY_PATTERN_LANGUAGE):
+    if not contains_emerging_pattern(lowered):
         return False
-    if any(marker in lowered for marker in _DURABILITY_MARKERS):
+    if has_durability_marker(lowered):
         return False
     return True
 

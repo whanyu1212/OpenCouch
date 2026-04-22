@@ -71,33 +71,25 @@ from typing import Any
 
 import aiosqlite
 
+from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
 from agent.memory.store import (
     SEARCH_MATCH_THRESHOLD,
     MemoryStore,
     Namespace,
     StoreRecord,
 )
-from agent.memory.text_tokens import tokenize, tokenize_meaningful
 
 logger = logging.getLogger(__name__)
 
 
 def _encode_embedding(embedding: list[float] | None) -> bytes | None:
-    """Serialize a float embedding to a BLOB for SQLite storage.
+    """Serialize an embedding vector for SQLite storage.
 
-    v0.8.1 stores embeddings as raw little-endian ``float32`` arrays
-    via ``struct.pack``. Each float is 4 bytes so a 768-dim embedding
-    is 3,072 bytes — small enough that SQLite BLOB storage handles
-    it without row overflow, and cheap to decode.
+    Args:
+        embedding (list[float] | None): Embedding vector to encode.
 
-    Returns ``None`` when the input is None, so the caller can pass
-    the result directly to the ``INSERT`` statement and get a NULL
-    column value.
-
-    We chose ``struct.pack`` over ``numpy.tobytes`` because struct
-    is in the stdlib and avoids adding numpy as a runtime dependency
-    just for serialization. The decoding cost on the read path is
-    microseconds per vector at 768 dimensions.
+    Returns:
+        bytes | None: Little-endian ``float32`` blob, or ``None``.
     """
 
     if embedding is None:
@@ -106,12 +98,13 @@ def _encode_embedding(embedding: list[float] | None) -> bytes | None:
 
 
 def _decode_embedding(blob: bytes | None) -> list[float] | None:
-    """Deserialize a BLOB column into a float embedding.
+    """Deserialize a SQLite embedding blob.
 
-    Inverse of :func:`_encode_embedding`. Returns ``None`` for NULL
-    columns. Raises ``struct.error`` if the BLOB length isn't a
-    multiple of 4 bytes (which should never happen for well-formed
-    data but is a cheap sanity check).
+    Args:
+        blob (bytes | None): Raw SQLite blob value.
+
+    Returns:
+        list[float] | None: Decoded embedding vector, or ``None``.
     """
 
     if blob is None:
@@ -255,14 +248,13 @@ class SqliteMemoryStore:
     """
 
     def __init__(self, sqlite_path: str | Path) -> None:
-        """Initialize the store with a SQLite file path.
+        """Initialize the SQLite-backed memory store.
 
         Args:
-            sqlite_path: Path to the SQLite file. Use ``":memory:"``
-                for a pure in-RAM database — tests that want the SQL
-                semantics without the disk writes should use this
-                path. Parent directories for file paths are created
-                lazily on first connection open.
+            sqlite_path (str | Path): SQLite file path or ``":memory:"``.
+
+        Returns:
+            None: Stores connection configuration for lazy initialization.
         """
 
         self.sqlite_path = (
@@ -275,19 +267,10 @@ class SqliteMemoryStore:
     # ── Connection lifecycle ──────────────────────────────────────────
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
-        """Open the aiosqlite connection lazily on first use.
+        """Open the SQLite connection on first use.
 
-        Subsequent calls are cheap no-ops that just return the
-        already-open connection. Raises ``RuntimeError`` if the store
-        has been closed — matches the in-memory store's ``_ensure_open``
-        semantics.
-
-        v0.9: uses an ``asyncio.Lock`` to prevent the initialization
-        race that ``asyncio.gather`` can trigger when multiple store
-        calls start concurrently before the connection exists. Without
-        the lock, each task can race past ``self._connection is None``
-        and open its own connection — especially bad for ``:memory:``
-        databases where each connection gets a separate empty DB.
+        Returns:
+            aiosqlite.Connection: Shared connection for the store instance.
         """
 
         if self._closed:
@@ -324,22 +307,13 @@ class SqliteMemoryStore:
 
     @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        """Run the schema DDL and any needed migrations.
+        """Ensure the SQLite schema is present and migrated.
 
-        Idempotent — safe to call repeatedly. The ``CREATE TABLE
-        IF NOT EXISTS`` in :data:`MEMORY_RECORDS_DDL` creates the
-        table with all columns for fresh databases. For existing
-        v0.8 databases that predate v0.8.1's embedding columns, the
-        migration block detects missing columns via
-        ``PRAGMA table_info`` and runs ``ALTER TABLE ADD COLUMN``
-        in-place.
+        Args:
+            conn (aiosqlite.Connection): Open SQLite connection.
 
-        SQLite's ``ALTER TABLE ADD COLUMN`` is an O(1) metadata
-        operation — no table rewrite — so the migration is cheap
-        even on large existing stores. All three embedding columns
-        are nullable so pre-v0.8.1 records naturally have NULL
-        embeddings and the read path treats them as "token-recall
-        only" without further fixup.
+        Returns:
+            None: Applies schema DDL and lightweight migrations.
         """
 
         for ddl in MEMORY_SCHEMA_DDL:
@@ -383,27 +357,17 @@ class SqliteMemoryStore:
         embedding: list[float] | None = None,
         embedding_model: str | None = None,
     ) -> None:
-        """Store a record under ``(namespace, key)``.
+        """Store or overwrite one SQLite-backed record.
 
-        If a record already exists at that key, it is overwritten —
-        the ``id`` column has a UNIQUE constraint, and we use
-        ``INSERT OR REPLACE`` to match the in-memory store's
-        overwrite-on-collision semantics.
+        Args:
+            namespace (Namespace): Record namespace tuple.
+            key (str): Record key within the namespace.
+            value (dict): Serialized record payload.
+            embedding (list[float] | None): Optional precomputed embedding vector.
+            embedding_model (str | None): Optional embedding model identifier.
 
-        Namespace is a ``(owner_id, kind)`` tuple; we unpack it into
-        the normalized columns. The full ``value`` dict is
-        JSON-serialized into the ``value`` column so the caller
-        can read it back as-is via ``aget`` / ``asearch``.
-
-        v0.8.1: ``embedding`` and ``embedding_model`` are optional
-        keyword args matching the :class:`MemoryStore` protocol.
-        When provided, the embedding is serialized to a BLOB via
-        :func:`_encode_embedding` and written to the ``embedding``
-        column, the length goes to ``embedding_dim``, and the model
-        name goes to ``embedding_model``. When absent, all three
-        columns are written as NULL and the record participates in
-        hybrid retrieval via the token-recall path only — same
-        contract as the in-memory store.
+        Returns:
+            None: Writes the record to SQLite.
         """
 
         conn = await self._ensure_connection()
@@ -472,10 +436,14 @@ class SqliteMemoryStore:
             ]
         ],
     ) -> None:
-        """Write multiple records in a single transaction.
+        """Write multiple SQLite-backed records in one transaction.
 
-        Either all writes succeed or none do — on failure the
-        transaction is rolled back.
+        Args:
+            items (list[tuple[Namespace, str, dict[str, Any], list[float] | None, str | None]]):
+                Items shaped as ``(namespace, key, value, embedding, embedding_model)``.
+
+        Returns:
+            None: Commits the batch or rolls it back on failure.
         """
 
         if not items:
@@ -539,19 +507,14 @@ class SqliteMemoryStore:
         row: aiosqlite.Row,
         namespace: Namespace,
     ) -> StoreRecord:
-        """Map a ``memory_records`` row into a :class:`StoreRecord`.
+        """Convert a SQLite row into a store record.
 
-        v0.8.1 helper: all three read paths (``aget``, ``asearch``,
-        ``asearch_similar``) need the same row→record transformation
-        including the embedding decode. Extracted here so a schema
-        change only touches one place.
+        Args:
+            row (aiosqlite.Row): Row from ``memory_records``.
+            namespace (Namespace): Namespace tuple for the row.
 
-        Callers must ``SELECT`` at minimum the ``id``, ``value``,
-        ``embedding``, and ``embedding_model`` columns. The helper
-        does NOT require every column to be present — if ``embedding``
-        or ``embedding_model`` is missing from the row, it defaults
-        to None (which happens for old test fixtures that SELECT
-        only id+value).
+        Returns:
+            StoreRecord: Converted store record.
         """
 
         # Row access via sqlite3.Row supports both name and index
@@ -580,12 +543,14 @@ class SqliteMemoryStore:
         namespace: Namespace,
         key: str,
     ) -> StoreRecord | None:
-        """Fetch one record by its ``(namespace, key)``.
+        """Fetch one SQLite-backed record.
 
-        Returns ``None`` when the record does not exist. The namespace
-        is verified alongside the key — a record with the same id
-        under a different namespace returns ``None``, matching the
-        in-memory store's bucket isolation.
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            key (str): Record key within the namespace.
+
+        Returns:
+            StoreRecord | None: Matching record, or ``None``.
         """
 
         conn = await self._ensure_connection()
@@ -610,21 +575,15 @@ class SqliteMemoryStore:
         query: str | None = None,
         limit: int = 10,
     ) -> list[StoreRecord]:
-        """Search for records within ``namespace`` matching ``query``.
+        """Search SQLite-backed records with lexical scoring.
 
-        Semantics match :meth:`OpenCouchMemoryStore.asearch` exactly:
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            query (str | None): Optional lexical query. ``None`` enumerates records.
+            limit (int): Maximum number of records to return.
 
-        - When ``query`` is ``None``, returns all records in the
-          namespace in insertion order, up to ``limit``.
-        - When ``query`` has no meaningful tokens after stopword
-          filtering, returns an empty list.
-        - Otherwise, computes query-token recall against each
-          record's serialized value and returns matches sorted by
-          recall descending with insertion order as the tiebreaker.
-
-        The SQL layer does the per-namespace filter (cheap, indexed);
-        the Python layer does the scoring (same code path as the
-        in-memory store, so behavior is identical).
+        Returns:
+            list[StoreRecord]: Matching records in recall-score order.
         """
 
         conn = await self._ensure_connection()
@@ -644,10 +603,6 @@ class SqliteMemoryStore:
                 rows = await cursor.fetchall()
             return [self._row_to_store_record(row, namespace) for row in rows]
 
-        query_tokens = tokenize_meaningful(query)
-        if not query_tokens:
-            return []
-
         # Pull all rows for this namespace (ordered by insertion_order)
         # and run the recall scorer in Python. This matches the
         # in-memory store's loop exactly — see store.py asearch for
@@ -662,27 +617,19 @@ class SqliteMemoryStore:
         ) as cursor:
             rows = await cursor.fetchall()
 
-        query_token_count = len(query_tokens)
-        scored: list[tuple[float, int, StoreRecord]] = []
-        for insertion_index, row in enumerate(rows):
-            value_dict = json.loads(row["value"])
-            haystack = " ".join(str(v) for v in value_dict.values() if v is not None)
-            haystack_tokens = tokenize(haystack)
-            if not haystack_tokens:
-                continue
-            overlap = len(query_tokens & haystack_tokens)
-            recall = overlap / query_token_count
-            if recall >= SEARCH_MATCH_THRESHOLD:
-                scored.append(
-                    (
-                        recall,
-                        insertion_index,
-                        self._row_to_store_record(row, namespace),
-                    )
-                )
-
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [record for _, _, record in scored[:limit]]
+        candidates = [
+            IndexedRecord(
+                record=self._row_to_store_record(row, namespace),
+                insertion_index=insertion_index,
+            )
+            for insertion_index, row in enumerate(rows)
+        ]
+        scored = lexical_rank(
+            candidates,
+            query_text=query,
+            match_threshold=SEARCH_MATCH_THRESHOLD,
+        )
+        return [scored_record.record for scored_record in scored[:limit]]
 
     async def asearch_similar(
         self,
@@ -694,19 +641,19 @@ class SqliteMemoryStore:
         limit: int = 10,
         max_age_days: int | None = None,
     ) -> list[StoreRecord]:
-        """Hybrid retrieval via Reciprocal Rank Fusion (v0.8.1).
+        """Run hybrid retrieval over SQLite-backed records.
 
-        Same contract as :meth:`OpenCouchMemoryStore.asearch_similar`.
-        When ``max_age_days`` is set, records older than the cutoff
-        are excluded via SQL WHERE clause on the ``created_at`` column.
+        Args:
+            namespace (Namespace): Namespace tuple to search.
+            query_text (str): Query text for lexical scoring.
+            query_embedding (list[float] | None): Optional dense query embedding.
+            embedding_model (str | None): Optional query embedding model identifier.
+            limit (int): Maximum number of records to return.
+            max_age_days (int | None): Optional age filter in days.
+
+        Returns:
+            list[StoreRecord]: Top fused retrieval results.
         """
-
-        from agent.memory.retrieval import (
-            EMBEDDING_MATCH_THRESHOLD,
-            ScoredRecord,
-            cosine_similarity,
-            rrf_fuse,
-        )
 
         conn = await self._ensure_connection()
         owner_id, namespace_kind = self._unpack_namespace(namespace)
@@ -720,50 +667,33 @@ class SqliteMemoryStore:
             age_clause = " AND datetime(created_at) >= datetime('now', ?)"
             age_params = (f"-{max_age_days} days",)
 
-        # ── Token-recall side (lexical) ───────────────────────────────
-        lexical_scored: list[ScoredRecord] = []
-        query_tokens = tokenize_meaningful(query_text)
-        if query_tokens:
-            async with conn.execute(
-                f"""
-                SELECT id, value, embedding, embedding_model FROM memory_records
-                WHERE owner_id = ? AND namespace_kind = ?{age_clause}
-                ORDER BY insertion_order ASC
-                """,
-                (owner_id, namespace_kind, *age_params),
-            ) as cursor:
-                rows = await cursor.fetchall()
+        async with conn.execute(
+            f"""
+            SELECT id, value, embedding, embedding_model FROM memory_records
+            WHERE owner_id = ? AND namespace_kind = ?{age_clause}
+            ORDER BY insertion_order ASC
+            """,
+            (owner_id, namespace_kind, *age_params),
+        ) as cursor:
+            lexical_rows = await cursor.fetchall()
 
-            query_token_count = len(query_tokens)
-            for insertion_index, row in enumerate(rows):
-                value_dict = json.loads(row["value"])
-                haystack = " ".join(
-                    str(v) for v in value_dict.values() if v is not None
-                )
-                haystack_tokens = tokenize(haystack)
-                if not haystack_tokens:
-                    continue
-                overlap = len(query_tokens & haystack_tokens)
-                recall = overlap / query_token_count
-                if recall >= SEARCH_MATCH_THRESHOLD:
-                    record = self._row_to_store_record(row, namespace)
-                    lexical_scored.append(
-                        ScoredRecord(
-                            record=record,
-                            score=recall,
-                            insertion_index=insertion_index,
-                        )
-                    )
-            lexical_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+        lexical_candidates = [
+            IndexedRecord(
+                record=self._row_to_store_record(row, namespace),
+                insertion_index=insertion_index,
+            )
+            for insertion_index, row in enumerate(lexical_rows)
+        ]
+        lexical_scored = lexical_rank(
+            lexical_candidates,
+            query_text=query_text,
+            match_threshold=SEARCH_MATCH_THRESHOLD,
+        )
 
-        # ── Embedding-similarity side (dense) ─────────────────────────
-        dense_scored: list[ScoredRecord] = []
+        dense_scored = []
         if query_embedding is not None:
-            # Pull only rows with a non-NULL embedding to avoid
-            # scanning records that can't contribute to the dense
-            # side anyway. The order matches the lexical scan (by
-            # insertion_order) so the insertion_index tiebreaker
-            # is consistent between the two scans.
+            # Keep the dense-side row selection unchanged so this refactor
+            # preserves the SQLite store's current insertion-index semantics.
             async with conn.execute(
                 f"""
                 SELECT id, value, embedding, embedding_model, insertion_order
@@ -774,34 +704,20 @@ class SqliteMemoryStore:
                 """,
                 (owner_id, namespace_kind, *age_params),
             ) as cursor:
-                rows = await cursor.fetchall()
+                dense_rows = await cursor.fetchall()
 
-            for insertion_index, row in enumerate(rows):
-                stored_model = row["embedding_model"]
-                # Skip cross-model similarity (same guard as the
-                # in-memory store).
-                if (
-                    embedding_model is not None
-                    and stored_model is not None
-                    and stored_model != embedding_model
-                ):
-                    continue
-                stored_embedding = _decode_embedding(row["embedding"])
-                if stored_embedding is None:
-                    continue
-                if len(stored_embedding) != len(query_embedding):
-                    continue
-                sim = cosine_similarity(query_embedding, stored_embedding)
-                if sim >= EMBEDDING_MATCH_THRESHOLD:
-                    record = self._row_to_store_record(row, namespace)
-                    dense_scored.append(
-                        ScoredRecord(
-                            record=record,
-                            score=sim,
-                            insertion_index=insertion_index,
-                        )
-                    )
-            dense_scored.sort(key=lambda sr: (-sr.score, sr.insertion_index))
+            dense_candidates = [
+                IndexedRecord(
+                    record=self._row_to_store_record(row, namespace),
+                    insertion_index=insertion_index,
+                )
+                for insertion_index, row in enumerate(dense_rows)
+            ]
+            dense_scored = dense_rank(
+                dense_candidates,
+                query_embedding=query_embedding,
+                embedding_model=embedding_model,
+            )
 
         if not lexical_scored and not dense_scored:
             return []
@@ -817,12 +733,14 @@ class SqliteMemoryStore:
         namespace: Namespace,
         key: str,
     ) -> bool:
-        """Delete a record by ``(namespace, key)``.
+        """Delete one SQLite-backed record.
 
-        Returns ``True`` if a record was deleted, ``False`` if no
-        record existed at that key. Matches the in-memory store's
-        return-value contract so ``/memory forget`` CLI commands
-        can report accurately.
+        Args:
+            namespace (Namespace): Namespace tuple containing the record.
+            key (str): Record key within the namespace.
+
+        Returns:
+            bool: ``True`` when a record was deleted.
         """
 
         conn = await self._ensure_connection()
@@ -838,21 +756,10 @@ class SqliteMemoryStore:
         return (cursor.rowcount or 0) > 0
 
     async def aclose(self) -> None:
-        """Close the aiosqlite connection.
+        """Close the SQLite store connection.
 
-        Safe to call on an already-closed store (idempotent no-op,
-        matches the in-memory store's contract). After closing, any
-        subsequent method call raises ``RuntimeError``.
-
-        Known limitation: if an in-flight store operation (e.g., aput
-        mid-commit) is suspended when aclose() runs, that operation
-        may resume against a closed handle and raise
-        ``ProgrammingError``. In practice this only happens during
-        process shutdown where the runtime closes the store while a
-        turn is still in progress. A full solution requires a
-        read-write lock around every store method — deferred to a
-        future version where graceful shutdown is a first-class
-        concern.
+        Returns:
+            None: Marks the store closed and releases the connection.
         """
 
         if self._closed:
@@ -884,11 +791,13 @@ class SqliteMemoryStore:
     # both ``:memory:`` and file-backed paths.
 
     async def arecord_count(self, namespace: Namespace | None = None) -> int:
-        """Return the total number of records, optionally filtered by namespace.
+        """Count SQLite-backed records.
 
-        Used by ``/memory status`` and ``/memory list`` CLI commands,
-        by tests, and by ``load_memory_node`` to populate the
-        session summary count. Returns 0 if the store is closed.
+        Args:
+            namespace (Namespace | None): Optional namespace filter.
+
+        Returns:
+            int: Total record count for the store or namespace.
         """
 
         if self._closed:
@@ -910,10 +819,10 @@ class SqliteMemoryStore:
         return int(row[0]) if row else 0
 
     async def anamespaces(self) -> list[Namespace]:
-        """Return every namespace that currently contains at least one record.
+        """List non-empty SQLite namespaces.
 
-        Returns an empty list if the store is closed or the database
-        is empty.
+        Returns:
+            list[Namespace]: Namespaces that currently contain records.
         """
 
         if self._closed:
@@ -929,10 +838,13 @@ class SqliteMemoryStore:
         return [(row["owner_id"], row["namespace_kind"]) for row in rows]
 
     async def alatest(self, namespace: Namespace) -> StoreRecord | None:
-        """Return the most recently inserted record in ``namespace``.
+        """Fetch the latest SQLite-backed record in a namespace.
 
-        Uses ``ORDER BY insertion_order DESC LIMIT 1`` for an efficient
-        single-row fetch regardless of namespace size.
+        Args:
+            namespace (Namespace): Namespace tuple to inspect.
+
+        Returns:
+            StoreRecord | None: Most recent record, or ``None``.
         """
 
         if self._closed:
@@ -957,15 +869,13 @@ class SqliteMemoryStore:
 
     @staticmethod
     def _unpack_namespace(namespace: Namespace) -> tuple[str, str]:
-        """Extract ``(owner_id, namespace_kind)`` from the tuple.
+        """Extract normalized namespace fields from the tuple.
 
-        Raises ``ValueError`` if the namespace tuple is malformed
-        (wrong length or non-string elements). The in-memory store
-        silently accepts any tuple shape; the SQLite store has to
-        validate because the ``namespace_kind`` column has a CHECK
-        constraint. Failing loudly at the boundary is safer than
-        letting SQLite produce a constraint-violation exception
-        several layers deep.
+        Args:
+            namespace (Namespace): Namespace tuple to validate and unpack.
+
+        Returns:
+            tuple[str, str]: ``(owner_id, namespace_kind)`` pair.
         """
 
         if len(namespace) != 2:

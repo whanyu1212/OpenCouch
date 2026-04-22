@@ -228,11 +228,10 @@ class PersistentAgentRuntime:
                 mode-based selection as ``memory_store``:
                 :class:`InMemoryCrisisLogBackend` for INCOGNITO,
                 :class:`SqliteCrisisLogBackend` for LOCAL/SYNCED. The
-                crisis log is always-on regardless of memory_mode (see
-                schema.yaml §2 namespaces.crisis_log for the privacy
-                asymmetry), but the *backend* still follows the mode:
-                incognito means no crisis events hit disk; local means
-                they do. Tests can override with NullCrisisLogBackend
+                crisis log is always-on regardless of memory_mode, but
+                the *backend* still follows the mode: incognito means
+                no crisis events hit disk; local means they do. Tests
+                can override with NullCrisisLogBackend
                 or a mock to assert specific behaviors.
             memory_mode: Persistence tier for the runtime. ``INCOGNITO``
                 uses ephemeral in-memory stores only; ``LOCAL`` persists
