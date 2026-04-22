@@ -764,3 +764,167 @@ class TestExerciseCompletionMemory:
 
         # Should complete normally without error
         assert delta["progress"]["exercise_type"] is None
+
+
+# ── Exercise modality lifecycle tests ────────────────────────────────
+
+
+class TestExerciseModality:
+    """Verify exercise_modality is captured at start, cleared on exit/completion,
+    and used by the prompt builder."""
+
+    @pytest.mark.asyncio
+    async def test_start_captures_routing_modality(self) -> None:
+        """Starting an exercise stores routing.therapeutic_approach in progress."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_THOUGHT_RECORD,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("let's do a thought record")
+        state["routing"] = {"therapeutic_approach": "cbt"}
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["progress"]["exercise_type"] == EXERCISE_THOUGHT_RECORD
+        assert delta["progress"]["exercise_modality"] == "cbt"
+
+    @pytest.mark.asyncio
+    async def test_start_without_modality_stores_none(self) -> None:
+        """Starting with no routing modality stores None (modality-agnostic)."""
+        from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("can we do a breathing exercise")
+        state["routing"] = {}
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["progress"]["exercise_modality"] is None
+
+    @pytest.mark.asyncio
+    async def test_completion_clears_modality(self) -> None:
+        """Completing the last step clears exercise_modality."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
+        state["progress"]["exercise_modality"] = "dbt_skills"
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["progress"]["exercise_type"] is None
+        assert delta["progress"]["exercise_modality"] is None
+
+    @pytest.mark.asyncio
+    async def test_exit_clears_modality(self) -> None:
+        """Exiting mid-exercise clears exercise_modality."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("stop, I don't want to do this", EXERCISE_BOX_BREATHING, 1)
+        state["progress"]["exercise_modality"] = "dbt_skills"
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["progress"]["exercise_type"] is None
+        assert delta["progress"]["exercise_modality"] is None
+
+    def test_prompt_builder_prefers_exercise_modality(self) -> None:
+        """build_guided_exercise_system_prompt reads progress.exercise_modality
+        over routing.therapeutic_approach when an exercise is active."""
+        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+
+        state: dict[str, Any] = {
+            "progress": {
+                "exercise_type": "defusion_leaves_on_stream",
+                "exercise_step": 1,
+                "exercise_modality": "act",
+            },
+            "routing": {"therapeutic_approach": "cbt"},
+            "working_memory": [],
+            "memory": {},
+        }
+
+        prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
+        # ACT overlay should be present (acceptance/defusion content)
+        assert "acceptance" in prompt.lower()
+        # CBT-specific content should NOT dominate — verify ACT was chosen
+        # by checking for ACT-specific language that wouldn't appear in CBT
+        assert "defusion" in prompt.lower() or "willingness" in prompt.lower()
+
+    def test_prompt_builder_falls_back_to_routing(self) -> None:
+        """When exercise_modality is None, falls back to routing approach."""
+        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+
+        state: dict[str, Any] = {
+            "progress": {"exercise_modality": None},
+            "routing": {"therapeutic_approach": "cbt"},
+            "working_memory": [],
+            "memory": {},
+        }
+
+        prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
+        # CBT overlay should be present
+        assert "cbt" in prompt.lower() or "cognitive" in prompt.lower()
+
+    def test_prompt_builder_ignores_stale_modality_without_exercise(self) -> None:
+        """When exercise_type is None but exercise_modality is stale,
+        the prompt builder ignores the stale modality and falls back to routing."""
+        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+
+        state: dict[str, Any] = {
+            "progress": {
+                "exercise_type": None,
+                "exercise_modality": "act",
+            },
+            "routing": {"therapeutic_approach": "cbt"},
+            "working_memory": [],
+            "memory": {},
+        }
+
+        prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
+        # Should use CBT from routing, not stale ACT from progress
+        assert "cbt" in prompt.lower() or "cognitive" in prompt.lower()
+
+
+class TestCompletionCheckIn:
+    """Verify the completion fallback includes the check-in question."""
+
+    @pytest.mark.asyncio
+    async def test_completion_fallback_asks_how_it_felt(self) -> None:
+        """The deterministic completion text includes a check-in question."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        text = delta["response"]["text"]
+        assert "how was that for you" in text.lower()

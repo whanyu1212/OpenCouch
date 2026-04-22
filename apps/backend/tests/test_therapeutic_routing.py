@@ -56,9 +56,11 @@ class _FakeDispatchLLM(BaseLLMClient):
         self,
         *,
         response_style: str = "supportive",
+        therapeutic_approach: str = "none",
         should_raise: bool = False,
     ) -> None:
         self.response_style = response_style
+        self.therapeutic_approach = therapeutic_approach
         self.should_raise = should_raise
         self.structured_calls = 0
         self.text_calls = 0
@@ -95,6 +97,7 @@ class _FakeDispatchLLM(BaseLLMClient):
             StructuredResponseT,
             DispatchDecision(
                 response_style=self.response_style,  # type: ignore[arg-type]
+                therapeutic_approach=self.therapeutic_approach,  # type: ignore[arg-type]
                 reasoning="fake dispatch decision",
                 confidence="high",
             ),
@@ -865,3 +868,137 @@ class TestEndToEndRouting:
         # Critically: response text is NOT the bootstrap stub
         assert "Persistent mode is active" not in result.response_text
         assert "Guest mode is active" not in result.response_text
+
+
+# ── Mid-exercise modality preservation tests ─────────────────────────
+
+
+class TestMidExerciseModalityPreservation:
+    """Verify modality routing behavior on mid-exercise side-turns."""
+
+    @pytest.mark.asyncio
+    async def test_clarifying_preserves_exercise_modality(self) -> None:
+        """A clarifying side-turn preserves the exercise's modality in routing."""
+
+        llm = _FakeDispatchLLM(
+            response_style="clarifying",
+            therapeutic_approach="grief_support",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state: Any = {
+            "message": "what do you mean by notice?",
+            "history": [],
+            "progress": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 2,
+                "turn_count": 3,
+            },
+            "response": {},
+            "routing": {"therapeutic_approach": "cbt"},
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        # Clarifying should preserve the exercise's existing modality (cbt),
+        # NOT use the LLM's fresh pick (grief_support).
+        assert cmd.update["routing"]["therapeutic_approach"] == "cbt"
+        assert cmd.goto == CLARIFYING_NODE
+        # Exercise state must still be intact
+        assert "exercise_type" not in cmd.update.get("progress", {})
+
+    @pytest.mark.asyncio
+    async def test_psychoeducation_uses_fresh_modality(self) -> None:
+        """A psychoeducation side-turn uses the LLM's fresh modality pick."""
+
+        llm = _FakeDispatchLLM(
+            response_style="psychoeducation",
+            therapeutic_approach="grief_support",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state: Any = {
+            "message": "how does grief work?",
+            "history": [],
+            "progress": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 2,
+                "turn_count": 3,
+            },
+            "response": {},
+            "routing": {"therapeutic_approach": "cbt"},
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        # Psychoeducation should use the LLM's fresh pick (grief_support),
+        # NOT the exercise's modality (cbt).
+        assert cmd.update["routing"]["therapeutic_approach"] == "grief_support"
+        assert cmd.goto == PSYCHOEDUCATION_NODE
+        # Exercise state must still be intact
+        assert "exercise_type" not in cmd.update.get("progress", {})
+
+    @pytest.mark.asyncio
+    async def test_deterministic_exit_clears_exercise_modality(self) -> None:
+        """Deterministic exit override clears exercise_modality in progress."""
+
+        llm = _FakeDispatchLLM(response_style="supportive")
+        runtime = _MockRuntime(llm_client=llm)
+        state: Any = {
+            "message": "never mind",
+            "history": [],
+            "progress": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 2,
+                "exercise_modality": "cbt",
+                "turn_count": 3,
+            },
+            "response": {},
+            "routing": {"therapeutic_approach": "cbt"},
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        # Exit must clear all exercise state including modality
+        assert cmd.update["progress"]["exercise_type"] is None
+        assert cmd.update["progress"]["exercise_step"] is None
+        assert cmd.update["progress"]["exercise_modality"] is None
+        assert cmd.goto == SUPPORTIVE_NODE
+
+    @pytest.mark.asyncio
+    async def test_llm_exit_clears_exercise_modality(self) -> None:
+        """LLM-driven exit from active exercise clears exercise_modality."""
+
+        llm = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="none",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state: Any = {
+            "message": "actually let's talk about something else",
+            "history": [],
+            "progress": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 2,
+                "exercise_modality": "cbt",
+                "turn_count": 3,
+            },
+            "response": {},
+            "routing": {"therapeutic_approach": "cbt"},
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.update["progress"]["exercise_type"] is None
+        assert cmd.update["progress"]["exercise_step"] is None
+        assert cmd.update["progress"]["exercise_modality"] is None

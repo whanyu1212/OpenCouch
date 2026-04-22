@@ -490,11 +490,18 @@ def build_closing_system_prompt(state: AgentState) -> str:
 def build_guided_exercise_system_prompt(state: AgentState) -> str:
     """Build the system prompt for guided_exercise-mode responses.
 
-    Loads the base exercise knowledge plus the dispatcher-selected
-    approach overlay (CBT for thought records, ACT for defusion, etc.).
+    Loads the base exercise knowledge plus the approach overlay (CBT for
+    thought records, ACT for defusion, etc.).  Prefers the stable
+    ``progress.exercise_modality`` captured at exercise start over the
+    per-turn ``routing.therapeutic_approach`` — the latter can drift if
+    the user takes a clarifying or psychoeducation side-turn mid-exercise.
     """
 
-    approach = _read_approach(state)
+    progress = state.get("progress", {})
+    # Only trust exercise_modality when an exercise is actually active.
+    approach = (
+        progress.get("exercise_modality") if progress.get("exercise_type") else None
+    ) or _read_approach(state)
     files = _knowledge_for_mode("guided_exercise", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(

@@ -555,6 +555,7 @@ async def run_therapeutic_dispatch_node(
                 **progress,
                 "exercise_type": None,
                 "exercise_step": None,
+                "exercise_modality": None,
             },
         }
 
@@ -592,21 +593,41 @@ async def run_therapeutic_dispatch_node(
                         goto=GUIDED_EXERCISE_NODE,
                     )
 
-                if mode in ("clarifying", "psychoeducation"):
-                    # Mid-exercise side-turn: the user asked a question
-                    # ("what do you mean by notice?" → clarifying) or
-                    # wants a brief explanation ("how does grounding
-                    # work?" → psychoeducation). Keep exercise state
-                    # alive so the user can resume afterward. Route to
-                    # the requested style WITHOUT clearing exercise state.
+                if mode == "clarifying":
+                    # Mid-exercise clarifying turn: the user asked
+                    # "what do you mean by notice?" etc. Clarifying is
+                    # modality-agnostic, so preserve the existing
+                    # therapeutic_approach for when the exercise resumes.
+                    existing_modality = (
+                        state.get("routing", {}).get("therapeutic_approach") or modality
+                    )
                     logger.debug(
-                        "therapeutic_dispatch: mid-exercise %s "
-                        "(exercise state preserved)",
-                        mode,
+                        "therapeutic_dispatch: mid-exercise clarifying "
+                        "(exercise state preserved, modality=%s)",
+                        existing_modality,
+                    )
+                    return Command(
+                        update=_routing_update(existing_modality),
+                        goto=_MODE_NODE_MAP["clarifying"],
+                    )
+
+                if mode == "psychoeducation":
+                    # Mid-exercise psychoeducation turn: the user wants
+                    # a brief explanation ("how does grounding work?").
+                    # Psychoeducation reads routing.therapeutic_approach
+                    # for its own overlay, so use the LLM's fresh pick
+                    # to serve the right knowledge. Exercise state is
+                    # preserved — exercise_modality in progress state
+                    # ensures the exercise resumes with the correct
+                    # modality regardless of what routing says.
+                    logger.debug(
+                        "therapeutic_dispatch: mid-exercise psychoeducation "
+                        "(exercise state preserved, modality=%s)",
+                        modality,
                     )
                     return Command(
                         update=_routing_update(modality),
-                        goto=_MODE_NODE_MAP[mode],
+                        goto=_MODE_NODE_MAP["psychoeducation"],
                     )
 
                 # Any other non-exercise mode is an exit signal —

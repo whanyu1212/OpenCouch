@@ -1007,14 +1007,22 @@ def _start_exercise_delta(
     *,
     exercise_type: str,
 ) -> dict[str, Any]:
-    """Return the progress delta that starts a new exercise at step 0."""
+    """Return the progress delta that starts a new exercise at step 0.
+
+    Captures the current ``routing.therapeutic_approach`` as
+    ``exercise_modality`` so the prompt builder can use a stable
+    modality for the entire exercise lifetime, immune to mid-exercise
+    side-turn drift.
+    """
 
     progress = state.get("progress", {})
+    modality = state.get("routing", {}).get("therapeutic_approach")
     return {
         "progress": {
             **progress,
             "exercise_type": exercise_type,
             "exercise_step": 0,
+            "exercise_modality": modality,
         },
     }
 
@@ -1035,8 +1043,8 @@ def _advance_step_delta(state: AgentState) -> dict[str, Any]:
 def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
     """Return the progress delta that clears exercise state.
 
-    Used on both exit and natural completion. Setting both fields to
-    ``None`` is the marker for "no exercise running" that the
+    Used on both exit and natural completion. Setting all three fields
+    to ``None`` is the marker for "no exercise running" that the
     dispatcher fast-path checks for.
     """
 
@@ -1046,6 +1054,7 @@ def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
             **progress,
             "exercise_type": None,
             "exercise_step": None,
+            "exercise_modality": None,
         },
     }
 
@@ -1661,12 +1670,15 @@ async def _build_complete_delta(
         f"The user just finished the LAST step of the exercise. "
         f"Briefly acknowledge what they shared, name what they just did "
         f"({display_name}), and invite them to notice how their body "
-        f"feels now. Do NOT start a new exercise or ask a new question."
+        f"feels now. End with a gentle, open check-in question about "
+        f"how the exercise felt for them (e.g. 'How was that for you?'). "
+        f"Do NOT start a new exercise."
     )
 
     fallback_complete = (
         f"You just walked yourself through {display_name}. "
-        f"Notice how your body feels now compared to when we started."
+        f"Notice how your body feels now compared to when we started. "
+        f"How was that for you?"
     )
     response_text = fallback_complete
     if llm_client is not None:

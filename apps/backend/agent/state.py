@@ -120,6 +120,11 @@ class SessionProgressState(TypedDict):
     # to enumerate every supported exercise at the TypedDict level.
     exercise_type: NotRequired[str | None]
     exercise_step: NotRequired[int | None]
+    # Therapeutic modality captured at exercise start. The prompt builder
+    # reads this instead of ``routing.therapeutic_approach`` so that
+    # mid-exercise side-turns (clarifying, psychoeducation) cannot drift
+    # the modality used for exercise continuation prompts.
+    exercise_modality: NotRequired[str | None]
 
 
 class RoutingState(TypedDict):
@@ -177,9 +182,6 @@ class ResponseState(TypedDict):
     # may want to shorten the inactivity timeout for this session. Does NOT
     # directly terminate the session — session termination is runtime-owned.
     closing_hint_shown: NotRequired[bool]
-    # Multi-turn exercise step counter for guided_exercise mode. Reset to
-    # None when the exercise is abandoned or completed.
-    exercise_step: NotRequired[int | None]
 
 
 class AgentState(TypedDict):
