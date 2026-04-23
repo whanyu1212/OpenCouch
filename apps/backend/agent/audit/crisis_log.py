@@ -15,7 +15,7 @@ Phase 1 v0.8 scope:
 - :class:`InMemoryCrisisLogBackend` — original v0.1 implementation.
   Dict-backed, ephemeral, fast. Used for tests and incognito-mode
   CLI sessions where crisis events shouldn't persist to disk.
-- :class:`agent.memory.sqlite_crisis_log.SqliteCrisisLogBackend`
+- :class:`agent.audit.sqlite_crisis_log.SqliteCrisisLogBackend`
   (v0.8) — aiosqlite-backed, durable across process restarts. Used
   by persistent-mode CLI sessions so the crisis log survives CLI
   exits.

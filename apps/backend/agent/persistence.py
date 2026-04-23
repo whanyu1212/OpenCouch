@@ -15,7 +15,13 @@ from uuid import uuid4
 
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.memory.candidates import SessionMemoryBuffer
-from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.audit.session_feedback import (
+    InMemorySessionFeedbackBackend,
+    SessionFeedbackBackend,
+)
+from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import (
@@ -30,12 +36,6 @@ from agent.memory.models import (
     StoredSessionArc,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.session_feedback import (
-    InMemorySessionFeedbackBackend,
-    SessionFeedbackBackend,
-)
-from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.memory.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (

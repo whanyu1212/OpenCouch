@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext

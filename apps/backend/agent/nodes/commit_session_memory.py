@@ -32,7 +32,10 @@ from agent.memory.procedural import (
     aupsert_procedural_rule,
     build_procedural_rule,
 )
-from agent.memory.reconciliation import plan_semantic_write
+from agent.memory.reconciliation import (
+    filter_semantic_collision_candidates,
+    plan_semantic_write,
+)
 from agent.memory.store import MemoryStore, StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.memory.write_policy import (
@@ -450,8 +453,12 @@ async def run_commit_session_memory(
 
         for candidate_index, candidate in enumerate(semantic_candidates_to_commit):
             write = candidate.payload
+            collision_records = filter_semantic_collision_candidates(
+                write,
+                existing_records,
+            )
             try:
-                matched = find_near_duplicate(write, existing_records)
+                matched = find_near_duplicate(write, collision_records)
             except Exception:
                 logger.warning(
                     "commit_session_memory: dedup check failed for buffered semantic "
@@ -495,7 +502,7 @@ async def run_commit_session_memory(
                     write_reason=write_reason,
                     policy_version="phase3_v1",
                 )
-                reconciliation = plan_semantic_write(fact, existing_records)
+                reconciliation = plan_semantic_write(fact, collision_records)
                 if reconciliation.bump_record is not None:
                     await _bump_last_referenced_at(
                         memory_store,

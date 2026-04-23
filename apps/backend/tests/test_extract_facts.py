@@ -29,7 +29,7 @@ from typing import Any, cast
 import pytest
 
 from agent.graph import run_agent
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.dedup import JACCARD_DUPLICATE_THRESHOLD
 from agent.memory.models import (
     EntityRef,
@@ -430,6 +430,60 @@ class TestExtractFactsNodeUnit:
         assert updated.value["last_referenced_at"] != old_ts
         # Quote preserved — the bump doesn't overwrite evidence.
         assert updated.value["evidence_quote"] == "my sister Sarah came over last night"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_beyond_old_scan_cap_still_bumps(self) -> None:
+        """A duplicate beyond the old 1000-record scan cap should still be found."""
+
+        store = OpenCouchMemoryStore()
+        namespace = ("user-1", "semantic")
+
+        for index in range(1000):
+            filler_write = _make_memory_write(
+                category="context",
+                predicate="EXPERIENCED",
+                object_type="Event",
+                object_identifier=f"irrelevant-event-{index}",
+                evidence_quote=f"irrelevant semantic fact {index}",
+            )
+            filler_fact = _memory_write_to_semantic_fact(filler_write)
+            await store.aput(
+                namespace,
+                key=filler_fact.id,
+                value=filler_fact.model_dump(mode="json"),
+            )
+
+        seed_write = _make_memory_write(
+            evidence_quote="my sister Sarah came over last night",
+        )
+        seed_fact = _memory_write_to_semantic_fact(seed_write)
+        old_ts = "2026-01-01T00:00:00Z"
+        seed_value = seed_fact.model_dump(mode="json")
+        seed_value["last_referenced_at"] = old_ts
+        await store.aput(namespace, key=seed_fact.id, value=seed_value)
+
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        evidence_quote="my sister Sarah came over last night",
+                    )
+                ],
+                reason="duplicate just beyond the old fetch cap",
+            )
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state()
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["semantic_bumps"] == 1
+        assert await store.arecord_count(namespace) == 1001
+
+        updated = await store.aget(namespace, key=seed_fact.id)
+        assert updated is not None
+        assert updated.value["last_referenced_at"] != old_ts
 
     @pytest.mark.asyncio
     async def test_mixed_batch_new_plus_duplicate(self) -> None:

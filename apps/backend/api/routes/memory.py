@@ -22,8 +22,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent.memory.reconciliation import filter_active_semantic_records
 from agent.memory.procedural import (
+    adelete_procedural_rule,
     aget_procedural_profile,
-    aput_procedural_profile,
 )
 from agent.memory.store import StoreRecord
 from agent.persistence import PersistentAgentRuntime
@@ -263,8 +263,17 @@ async def delete_rule(
             detail=f"Rule #{index} does not exist (only {len(profile.rules)} rule(s)).",
         )
 
-    removed_rule = profile.rules.pop(index - 1)
-    await aput_procedural_profile(store, user_id=owner_id, profile=profile)
+    deleted = await adelete_procedural_rule(
+        store,
+        user_id=owner_id,
+        rule_id=profile.rules[index - 1].id,
+    )
+    if deleted is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Rule #{index} no longer exists for this owner.",
+        )
+    profile, removed_rule = deleted
     return DeleteResponse(
         deleted=True,
         detail=f"Deleted rule #{index} ({removed_rule.rule[:60]}). "

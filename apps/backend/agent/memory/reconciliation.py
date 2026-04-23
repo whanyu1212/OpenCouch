@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from agent.memory.models import ProceduralRule, SemanticFact
+from agent.memory.models import MemoryWrite, ProceduralRule, SemanticFact
 from agent.memory.store import StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
 
@@ -97,11 +97,14 @@ def filter_active_semantic_records(records: list[StoreRecord]) -> list[StoreReco
     ]
 
 
-def _semantic_slot_matches(fact: SemanticFact, record: StoreRecord) -> bool:
+def _semantic_slot_matches(
+    candidate: MemoryWrite | SemanticFact,
+    record: StoreRecord,
+) -> bool:
     """Return whether two semantic records occupy the same conceptual slot.
 
     Args:
-        fact (SemanticFact): New semantic fact.
+        candidate (MemoryWrite | SemanticFact): New semantic candidate.
         record (StoreRecord): Existing stored semantic record.
 
     Returns:
@@ -110,12 +113,33 @@ def _semantic_slot_matches(fact: SemanticFact, record: StoreRecord) -> bool:
 
     value = record.value
     return (
-        fact.category == value.get("category")
-        and fact.subject.type == value.get("subject", {}).get("type")
-        and fact.subject.identifier == value.get("subject", {}).get("identifier")
-        and fact.predicate == value.get("predicate")
-        and fact.object.type == value.get("object", {}).get("type")
+        candidate.category == value.get("category")
+        and candidate.subject.type == value.get("subject", {}).get("type")
+        and candidate.subject.identifier == value.get("subject", {}).get("identifier")
+        and candidate.predicate == value.get("predicate")
+        and candidate.object.type == value.get("object", {}).get("type")
     )
+
+
+def filter_semantic_collision_candidates(
+    candidate: MemoryWrite | SemanticFact,
+    existing_records: list[StoreRecord],
+) -> list[StoreRecord]:
+    """Return active semantic records that could collide with the candidate.
+
+    Args:
+        candidate (MemoryWrite | SemanticFact): New semantic candidate.
+        existing_records (list[StoreRecord]): Existing semantic records.
+
+    Returns:
+        list[StoreRecord]: Active records in the same conceptual slot.
+    """
+
+    return [
+        record
+        for record in filter_active_semantic_records(existing_records)
+        if _semantic_slot_matches(candidate, record)
+    ]
 
 
 def _normalized_identifier(identifier: str) -> str:
@@ -209,10 +233,7 @@ def plan_semantic_write(
     plan = SemanticReconciliationPlan()
     correction_records: list[StoreRecord] = []
 
-    for record in filter_active_semantic_records(existing_records):
-        if not _semantic_slot_matches(fact, record):
-            continue
-
+    for record in filter_semantic_collision_candidates(fact, existing_records):
         existing_identifier = str(
             record.value.get("object", {}).get("identifier") or ""
         )

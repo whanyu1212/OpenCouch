@@ -24,15 +24,15 @@ from pathlib import Path
 
 import pytest
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode
-from agent.memory.session_feedback import (
+from agent.audit.session_feedback import (
     InMemorySessionFeedbackBackend,
     NullSessionFeedbackBackend,
 )
-from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.memory.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import (

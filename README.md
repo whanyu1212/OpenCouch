@@ -257,6 +257,7 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Memory package boundary cleanup** — moved the always-on audit backends (`crisis_log`, `session_feedback`, SQLite variants) into `agent/audit/`, updated imports across runtime/evals/tests, and added a dedicated `agent/memory/README.md` to map the subsystem
 - **Memory internals cleanup** — removed stale memory-package artifacts, split monolithic memory models into typed submodules, and centralized shared retrieval/policy logic
 - **Load-memory retrieval quality** — semantic recall now filters inactive facts before hybrid ranking and truncation, so dormant or superseded memory no longer crowds out active context
 - **Crisis gate cleanup** — deterministic crisis policy lives in `agent/safety`, shadow monitoring was removed, and the node now has direct standalone coverage

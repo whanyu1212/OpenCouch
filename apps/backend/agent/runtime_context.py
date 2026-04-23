@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.memory.candidates import SessionMemoryBuffer
-from agent.memory.crisis_log import CrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore

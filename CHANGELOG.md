@@ -9,6 +9,11 @@
 - Extracted shared hybrid retrieval scoring into `agent/memory/retrieval.py` so the in-memory and SQLite stores now share the same lexical/dense fusion logic
 - Standardized substantive memory-module function docstrings on the VS Code autodocstring `Args:` / `Returns:` format for more consistent maintenance
 
+### Memory package boundary cleanup
+- Moved the always-on audit backends (`crisis_log`, `session_feedback`, and their SQLite implementations) out of `agent/memory/` into `agent/audit/` so the memory package now stays focused on retrieval, write policy, and storage concerns
+- Updated runtime, API, CLI, eval, and test imports to the new `agent.audit.*` paths, fixing stale references after the package move
+- Added `apps/backend/agent/memory/README.md` documenting the package boundary, functionality map, and common entry points for the memory subsystem
+
 ### Load-memory retrieval quality
 - Refactored `load_memory_node` into smaller retrieval, mapping, summary, and diagnostics helpers with named retrieval constants and typed `retrieval_path` values
 - Replaced the old capped semantic-store scan in diagnostics with exact namespace counts via `arecord_count(...)`, so observability no longer silently undercounts past 1000 records

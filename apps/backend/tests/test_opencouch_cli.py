@@ -2095,19 +2095,20 @@ class TestRenderContext:
         assert "on" in out
 
     def test_shows_exercise_state_when_active(self, capsys) -> None:
-        """Guided exercise type + step render when routing carries them."""
+        """Guided exercise type + step render when progress carries them."""
 
         from opencouch_cli.app import render_context
 
         state = {
-            "progress": {"turn_count": 1},
-            "memory": {"summary": "", "current_goal": None},
-            "response": {"guidance": "-"},
-            "working_memory": [],
-            "routing": {
+            "progress": {
+                "turn_count": 1,
                 "exercise_type": "box_breathing",
                 "exercise_step": 3,
             },
+            "memory": {"summary": "", "current_goal": None},
+            "response": {"guidance": "-"},
+            "working_memory": [],
+            "routing": {},
         }
         render_context(state)  # type: ignore[arg-type]
         out = capsys.readouterr().out
@@ -3131,7 +3132,7 @@ class FakeRuntimeWithCrisisLog:
     """
 
     def __init__(self) -> None:
-        from agent.memory.crisis_log import InMemoryCrisisLogBackend
+        from agent.audit.crisis_log import InMemoryCrisisLogBackend
         from agent.memory.store import OpenCouchMemoryStore
 
         self.memory_store = OpenCouchMemoryStore()

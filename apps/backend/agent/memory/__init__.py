@@ -1,6 +1,6 @@
-"""Memory layer for the OpenCouch agent.
+"""Prompt-memory layer for the OpenCouch agent.
 
-Holds the runtime models, storage backends, retrieval helpers, write
-policy utilities, and safety/audit persistence helpers used by the
-agent's long-term memory features.
+Holds the runtime models, storage backends, retrieval helpers, and
+write-policy utilities used by the agent's long-term memory features.
+Always-on audit persistence lives under ``agent.audit``.
 """

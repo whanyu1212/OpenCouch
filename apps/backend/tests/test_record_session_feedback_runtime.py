@@ -30,7 +30,7 @@ import pytest
 
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
-from agent.memory.session_feedback import SessionFeedbackBackend
+from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.persistence import PersistentAgentRuntime
 
 

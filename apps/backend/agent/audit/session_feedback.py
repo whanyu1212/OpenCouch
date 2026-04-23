@@ -3,7 +3,7 @@
 Explicit end-of-session feedback ("was this session helpful?") written
 by :meth:`PersistentAgentRuntime.record_session_feedback` when the user
 provides a thumbs rating at ``/end``, ``/exit`` (save=y), or
-``POST /threads/{id}/end``. Mirrors :mod:`agent.memory.crisis_log` in
+``POST /threads/{id}/end``. Mirrors :mod:`agent.audit.crisis_log` in
 shape and privacy posture — always-on regardless of memory mode, but
 ``user_id_or_null`` is ALWAYS ``None`` in incognito mode.
 
@@ -20,11 +20,11 @@ Phase 1 scope:
 - :class:`NullSessionFeedbackBackend` — no-op; reserved for test
   fixtures that want to assert "no feedback was written". NOT a
   valid production backend.
-- :class:`agent.memory.sqlite_session_feedback.SqliteSessionFeedbackBackend`
+- :class:`agent.audit.sqlite_session_feedback.SqliteSessionFeedbackBackend`
   — aiosqlite-backed, durable across process restarts. Used by
   persistent-mode runtimes.
 
-Design parallels with :mod:`agent.memory.crisis_log`:
+Design parallels with :mod:`agent.audit.crisis_log`:
 - Append-only from the runtime's perspective; ``apurge_before`` is an
   operator / scheduled-cleanup concern, not touched by normal write
   paths.

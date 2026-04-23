@@ -29,7 +29,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (

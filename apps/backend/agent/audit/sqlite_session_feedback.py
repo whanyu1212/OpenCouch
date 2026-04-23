@@ -2,13 +2,13 @@
 
 The v0.10 session-feedback collector needs a durable store so end-of-
 session thumbs ratings survive CLI / server restarts. Structurally
-parallel to :mod:`agent.memory.sqlite_crisis_log`:
+parallel to :mod:`agent.audit.sqlite_crisis_log`:
 
 - INCOGNITO mode → :class:`InMemorySessionFeedbackBackend`, nothing
   touches disk.
 - LOCAL / SYNCED mode → this backend, paired with
   :class:`agent.memory.sqlite_store.SqliteMemoryStore` and
-  :class:`agent.memory.sqlite_crisis_log.SqliteCrisisLogBackend`.
+  :class:`agent.audit.sqlite_crisis_log.SqliteCrisisLogBackend`.
 
 Design decisions mirrored from the crisis_log SQLite backend:
 
@@ -65,8 +65,8 @@ from pathlib import Path
 
 import aiosqlite
 
+from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.memory.models import SessionFeedbackRecord
-from agent.memory.session_feedback import SessionFeedbackBackend
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ class SqliteSessionFeedbackBackend:
     persist to disk instead of living in a dict.
 
     Connection lifecycle (same pattern as
-    :class:`agent.memory.sqlite_crisis_log.SqliteCrisisLogBackend`):
+    :class:`agent.audit.sqlite_crisis_log.SqliteCrisisLogBackend`):
 
     - ``__init__`` stores the SQLite path but does NOT open the
       connection. Construction is cheap and doesn't touch disk.

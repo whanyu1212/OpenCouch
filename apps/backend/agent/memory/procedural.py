@@ -48,22 +48,20 @@ that need sync access are doing something wrong — agent nodes and CLI
 command handlers are both async, so there's no call site that would
 need a sync variant.
 
-Concurrency note: the profile-as-document shape means writes are
-**last-write-wins** with no merging. If two code paths load the
-profile concurrently, mutate different fields, and put it back, one
-side's changes will be lost. In phase 1 this isn't a concern because
-the runtime is single-threaded per session and nodes within a turn
-run sequentially — but it's worth flagging for phase 4 background
-consolidation, where a nightly job might touch the profile while a
-user is active. A write-then-read-back verification pattern or a
-schema-level ``version`` field is the standard fix; we don't need
-either yet.
+Concurrency note: additive procedural mutations are serialized with a
+per-user async lock inside this module, so concurrent writes in the
+same backend process do not clobber each other. The raw overwrite
+helper (:func:`aput_procedural_profile`) is still intentionally
+last-write-wins for seeding/tests/admin-style writes. Cross-process
+conflicts are also still last-write-wins; solving those would require
+schema-level versioning or compare-and-swap support at the store layer.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-from typing import Literal
+from typing import Callable, Literal, TypeVar
 
 from agent.memory.hashing import iso_now
 from agent.memory.models import (
@@ -84,6 +82,8 @@ ProceduralUpsertAction = Literal["added", "replaced", "skipped"]
 # archive. Enforced at write time only — existing oversized profiles
 # remain readable but will be trimmed on the next rule write.
 MAX_ACTIVE_RULES = 20
+_PROCEDURAL_PROFILE_LOCKS: dict[str, asyncio.Lock] = {}
+_MutationResultT = TypeVar("_MutationResultT")
 
 
 @dataclass(slots=True)
@@ -92,6 +92,49 @@ class ProceduralUpsertResult:
 
     profile: ProceduralProfile
     action: ProceduralUpsertAction
+
+
+def _procedural_profile_lock(user_id: str) -> asyncio.Lock:
+    """Return the process-local lock for one user's procedural profile.
+
+    Args:
+        user_id (str): User identifier.
+
+    Returns:
+        asyncio.Lock: Lock guarding this user's procedural profile mutations.
+    """
+
+    lock = _PROCEDURAL_PROFILE_LOCKS.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PROCEDURAL_PROFILE_LOCKS[user_id] = lock
+    return lock
+
+
+async def _mutate_procedural_profile(
+    store: MemoryStore,
+    *,
+    user_id: str,
+    mutator: Callable[[ProceduralProfile], tuple[_MutationResultT, bool]],
+) -> _MutationResultT:
+    """Run one procedural profile mutation under the per-user write lock.
+
+    Args:
+        store (MemoryStore): Memory store to update.
+        user_id (str): User identifier.
+        mutator (callable): Function that mutates the loaded profile and returns
+            ``(result, should_persist)``.
+
+    Returns:
+        _MutationResultT: Result returned by the mutator.
+    """
+
+    async with _procedural_profile_lock(user_id):
+        profile = await aget_procedural_profile(store, user_id=user_id)
+        result, should_persist = mutator(profile)
+        if should_persist:
+            await aput_procedural_profile(store, user_id=user_id, profile=profile)
+        return result
 
 
 def procedural_namespace(user_id: str) -> Namespace:
@@ -214,37 +257,43 @@ async def aupsert_procedural_rule(
         ProceduralUpsertResult: Updated profile plus the reconciliation action taken.
     """
 
-    profile = await aget_procedural_profile(store, user_id=user_id)
-    plan = plan_procedural_rule_write(rule, profile.rules)
-    if plan.action == "skip":
-        return ProceduralUpsertResult(profile=profile, action="skipped")
+    def _mutate(
+        profile: ProceduralProfile,
+    ) -> tuple[ProceduralUpsertResult, bool]:
+        plan = plan_procedural_rule_write(rule, profile.rules)
+        if plan.action == "skip":
+            return ProceduralUpsertResult(profile=profile, action="skipped"), False
 
-    if plan.action == "replace":
-        archived_rules = list(profile.archived_rules)
-        for index in plan.replace_indexes:
-            archived_rule = profile.rules[index].model_copy(
-                update={
-                    "dormant_at": iso_now(),
-                    "superseded_by": rule.id,
-                    "user_visible": False,
-                }
-            )
-            archived_rules.append(archived_rule)
-        profile.rules = [
-            existing_rule
-            for index, existing_rule in enumerate(profile.rules)
-            if index not in plan.replace_indexes
-        ]
-        profile.archived_rules = archived_rules
+        if plan.action == "replace":
+            archived_rules = list(profile.archived_rules)
+            for index in plan.replace_indexes:
+                archived_rule = profile.rules[index].model_copy(
+                    update={
+                        "dormant_at": iso_now(),
+                        "superseded_by": rule.id,
+                        "user_visible": False,
+                    }
+                )
+                archived_rules.append(archived_rule)
+            profile.rules = [
+                existing_rule
+                for index, existing_rule in enumerate(profile.rules)
+                if index not in plan.replace_indexes
+            ]
+            profile.archived_rules = archived_rules
+            profile.rules.append(rule)
+            _evict_oldest_rules(profile)
+            return ProceduralUpsertResult(profile=profile, action="replaced"), True
+
         profile.rules.append(rule)
         _evict_oldest_rules(profile)
-        await aput_procedural_profile(store, user_id=user_id, profile=profile)
-        return ProceduralUpsertResult(profile=profile, action="replaced")
+        return ProceduralUpsertResult(profile=profile, action="added"), True
 
-    profile.rules.append(rule)
-    _evict_oldest_rules(profile)
-    await aput_procedural_profile(store, user_id=user_id, profile=profile)
-    return ProceduralUpsertResult(profile=profile, action="added")
+    return await _mutate_procedural_profile(
+        store,
+        user_id=user_id,
+        mutator=_mutate,
+    )
 
 
 async def aset_proactive_recall(
@@ -264,10 +313,80 @@ async def aset_proactive_recall(
         ProceduralProfile: Updated procedural profile.
     """
 
-    profile = await aget_procedural_profile(store, user_id=user_id)
-    profile.proactive_recall_enabled = enabled
-    await aput_procedural_profile(store, user_id=user_id, profile=profile)
-    return profile
+    def _mutate(profile: ProceduralProfile) -> tuple[ProceduralProfile, bool]:
+        profile.proactive_recall_enabled = enabled
+        return profile, True
+
+    return await _mutate_procedural_profile(
+        store,
+        user_id=user_id,
+        mutator=_mutate,
+    )
+
+
+async def adelete_procedural_rule(
+    store: MemoryStore,
+    *,
+    user_id: str,
+    rule_id: str,
+) -> tuple[ProceduralProfile, ProceduralRule] | None:
+    """Delete one procedural rule by id under the per-user write lock.
+
+    Args:
+        store (MemoryStore): Memory store to update.
+        user_id (str): User identifier.
+        rule_id (str): Procedural rule id to delete.
+
+    Returns:
+        tuple[ProceduralProfile, ProceduralRule] | None: Updated profile plus the
+        removed rule, or ``None`` when the rule does not exist.
+    """
+
+    def _mutate(
+        profile: ProceduralProfile,
+    ) -> tuple[tuple[ProceduralProfile, ProceduralRule] | None, bool]:
+        for index, existing_rule in enumerate(profile.rules):
+            if existing_rule.id != rule_id:
+                continue
+            removed_rule = profile.rules.pop(index)
+            return (profile, removed_rule), True
+        return None, False
+
+    return await _mutate_procedural_profile(
+        store,
+        user_id=user_id,
+        mutator=_mutate,
+    )
+
+
+async def aclear_procedural_rules(
+    store: MemoryStore,
+    *,
+    user_id: str,
+) -> tuple[ProceduralProfile, int]:
+    """Clear active procedural rules while preserving the recall toggle.
+
+    Args:
+        store (MemoryStore): Memory store to update.
+        user_id (str): User identifier.
+
+    Returns:
+        tuple[ProceduralProfile, int]: Updated profile plus the number of removed
+        active rules.
+    """
+
+    def _mutate(
+        profile: ProceduralProfile,
+    ) -> tuple[tuple[ProceduralProfile, int], bool]:
+        cleared_count = len(profile.rules)
+        profile.rules = []
+        return (profile, cleared_count), True
+
+    return await _mutate_procedural_profile(
+        store,
+        user_id=user_id,
+        mutator=_mutate,
+    )
 
 
 async def aget_proactive_recall(

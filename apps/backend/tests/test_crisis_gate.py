@@ -13,7 +13,7 @@ from typing import Any, cast
 import pytest
 
 from agent.graph import build_initial_state, run_agent
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord
 from agent.models import AgentInput, ResponseCategory

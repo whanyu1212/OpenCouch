@@ -60,7 +60,7 @@ from agent.memory.extraction_prompts import (
 )
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.reconciliation import (
-    filter_active_semantic_records,
+    filter_semantic_collision_candidates,
     plan_semantic_write,
 )
 from agent.memory.models import ExtractionResult, MemoryWrite, SemanticFact
@@ -160,17 +160,13 @@ async def _fetch_existing_user_records(
     at the boundary so the caller doesn't have to import StoreRecord
     from the store module). The typing penalty is small and the
     looseness keeps the node's import surface minimal.
-
-    With the in-memory store and v0.3's conservative extraction, the
-    record count per user is small (tens to low hundreds at most). The
-    ``limit=1000`` cap is defensive; we don't expect to hit it. When
-    v0.8 adds SQLite backing, this function can become a narrower query
-    (e.g. "facts with similar triples") instead of fetching everything.
     """
 
     namespace = (owner_id, "semantic")
-    records = await store.asearch(namespace, query=None, limit=1000)
-    return filter_active_semantic_records(records)
+    record_count = await store.arecord_count(namespace)
+    if record_count == 0:
+        return []
+    return await store.asearch(namespace, query=None, limit=record_count)
 
 
 async def _write_new_fact(
@@ -507,8 +503,12 @@ async def run_extract_semantic_facts_node(
     bumped = 0
     for candidate_index, (candidate, decision) in enumerate(immediate_candidates):
         write = candidate.payload
+        collision_records = filter_semantic_collision_candidates(
+            write,
+            existing_records,
+        )
         try:
-            matched = find_near_duplicate(write, existing_records)
+            matched = find_near_duplicate(write, collision_records)
         except Exception:
             logger.warning(
                 "extract_semantic_facts_node: dedup check raised for candidate "
@@ -540,7 +540,7 @@ async def run_extract_semantic_facts_node(
                 write_reason=decision.reason,
                 policy_version=decision.policy_version,
             )
-            reconciliation = plan_semantic_write(fact, existing_records)
+            reconciliation = plan_semantic_write(fact, collision_records)
             if reconciliation.bump_record is not None:
                 await _bump_last_referenced_at(
                     store,

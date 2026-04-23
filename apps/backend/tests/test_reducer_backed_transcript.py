@@ -23,7 +23,7 @@ from typing import Annotated, Any, NotRequired, get_type_hints
 
 import pytest
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.graph import build_initial_state

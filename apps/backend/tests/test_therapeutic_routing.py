@@ -20,7 +20,7 @@ from typing import Any, cast
 import pytest
 
 from agent.graph import run_agent
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.models import DispatchDecision
 from agent.memory.store import OpenCouchMemoryStore

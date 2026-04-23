@@ -180,8 +180,9 @@ from agent.persistence import (
     ThreadSummary,
 )
 from agent.memory.procedural import (
+    aclear_procedural_rules,
+    adelete_procedural_rule,
     aget_procedural_profile,
-    aput_procedural_profile,
     aset_proactive_recall,
 )
 from agent.models import (
@@ -1811,8 +1812,18 @@ async def render_memory_forget_rule(
     # a load → mutate → put round-trip against the profile, not an
     # individual record delete, because procedural memory is stored
     # as a single profile document.
-    profile.rules.pop(index_1based - 1)
-    await aput_procedural_profile(store, user_id=session.owner_id(), profile=profile)
+    deleted = await adelete_procedural_rule(
+        store,
+        user_id=session.owner_id(),
+        rule_id=target_rule.id,
+    )
+    if deleted is None:
+        render_info(
+            "The selected rule changed before deletion could be applied.",
+            style="warning",
+        )
+        return
+    profile, _removed_rule = deleted
     render_info(
         f"Deleted rule #{index_1based}. "
         f"{len(profile.rules)} rule(s) remaining for this thread.",
@@ -2275,10 +2286,10 @@ async def render_memory_clear(
         # Procedural is a profile-document, not per-record. Reset
         # the rules list but preserve the recall toggle (it's a
         # user preference, not content) and re-put the profile.
-        profile = await aget_procedural_profile(store, user_id=owner_id)
-        deleted_counts["rules"] = len(profile.rules)
-        profile.rules = []
-        await aput_procedural_profile(store, user_id=owner_id, profile=profile)
+        _profile, deleted_counts["rules"] = await aclear_procedural_rules(
+            store,
+            user_id=owner_id,
+        )
 
     # Render a success summary listing every kind that was touched.
     # Zero-count lines are suppressed so the panel is compact when

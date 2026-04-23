@@ -27,9 +27,9 @@ from datetime import date
 
 import pytest
 
-from agent.memory.crisis_log import CrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend
 from agent.memory.models import CrisisLogRecord
-from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────

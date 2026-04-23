@@ -10,7 +10,7 @@ single-process tests and incognito-mode CLI sessions but died at CLI
 restart — crisis events vanished the moment the Python process exited.
 
 :class:`SqliteCrisisLogBackend` implements the same
-:class:`agent.memory.crisis_log.CrisisLogBackend` protocol but backs
+:class:`agent.audit.crisis_log.CrisisLogBackend` protocol but backs
 its records with an aiosqlite connection so they survive restarts.
 The runtime picks between the two implementations based on memory
 mode:
@@ -74,7 +74,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from agent.memory.crisis_log import CrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend
 from agent.memory.models import CrisisLogRecord
 
 logger = logging.getLogger(__name__)

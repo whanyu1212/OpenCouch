@@ -13,12 +13,16 @@ builders can import them with confidence.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent.memory.models import ProceduralProfile, ProceduralRule
 from agent.memory.procedural import (
     PROCEDURAL_KEY,
     aadd_procedural_rule,
+    aclear_procedural_rules,
+    adelete_procedural_rule,
     aget_procedural_profile,
     aget_proactive_recall,
     aput_procedural_profile,
@@ -27,6 +31,42 @@ from agent.memory.procedural import (
     procedural_namespace,
 )
 from agent.memory.store import OpenCouchMemoryStore
+
+
+class _BlockingFirstProceduralPutStore(OpenCouchMemoryStore):
+    """Store test double that pauses the first procedural profile write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_procedural_put_started = asyncio.Event()
+        self.allow_first_procedural_put = asyncio.Event()
+        self._blocked_first_put = False
+
+    async def aput(
+        self,
+        namespace,
+        key,
+        value,
+        *,
+        embedding=None,
+        embedding_model=None,
+    ) -> None:
+        if (
+            namespace == ("alice", "procedural")
+            and key == PROCEDURAL_KEY
+            and not self._blocked_first_put
+        ):
+            self._blocked_first_put = True
+            self.first_procedural_put_started.set()
+            await self.allow_first_procedural_put.wait()
+
+        await super().aput(
+            namespace,
+            key,
+            value,
+            embedding=embedding,
+            embedding_model=embedding_model,
+        )
 
 
 # ─── Namespace + key constants ────────────────────────────────────────────
@@ -309,6 +349,35 @@ async def test_aadd_rule_preserves_proactive_recall_setting() -> None:
     assert len(reloaded.rules) == 1
 
 
+@pytest.mark.asyncio
+async def test_concurrent_rule_write_and_recall_toggle_preserve_both_updates() -> None:
+    """Concurrent procedural mutations should serialize per user."""
+
+    store = _BlockingFirstProceduralPutStore()
+    rule = build_procedural_rule(
+        rule_text="You prefer short replies.",
+        evidence=["Please keep it short"],
+    )
+
+    add_task = asyncio.create_task(
+        aadd_procedural_rule(store, user_id="alice", rule=rule)
+    )
+    await store.first_procedural_put_started.wait()
+
+    recall_task = asyncio.create_task(
+        aset_proactive_recall(store, user_id="alice", enabled=True)
+    )
+    await asyncio.sleep(0)
+    assert not recall_task.done()
+
+    store.allow_first_procedural_put.set()
+    await asyncio.gather(add_task, recall_task)
+
+    reloaded = await aget_procedural_profile(store, user_id="alice")
+    assert len(reloaded.rules) == 1
+    assert reloaded.proactive_recall_enabled is True
+
+
 # ─── aset_proactive_recall + aget_proactive_recall ────────────────────────
 
 
@@ -414,6 +483,57 @@ async def test_aset_recall_preserves_existing_rules() -> None:
     assert reloaded.proactive_recall_enabled is True
     assert len(reloaded.rules) == 1
     assert reloaded.rules[0].rule == "You prefer short replies."
+
+
+@pytest.mark.asyncio
+async def test_adelete_procedural_rule_removes_exact_rule_and_preserves_toggle() -> (
+    None
+):
+    """Deleting a rule should preserve the recall toggle."""
+
+    store = OpenCouchMemoryStore()
+    keep_rule = build_procedural_rule(
+        rule_text="You prefer short replies.",
+        evidence=["Please keep it short"],
+    )
+    delete_rule = build_procedural_rule(
+        rule_text="Don't suggest meditation again.",
+        evidence=["Please don't suggest meditation again"],
+    )
+    await aadd_procedural_rule(store, user_id="alice", rule=keep_rule)
+    await aadd_procedural_rule(store, user_id="alice", rule=delete_rule)
+    await aset_proactive_recall(store, user_id="alice", enabled=True)
+
+    deleted = await adelete_procedural_rule(
+        store,
+        user_id="alice",
+        rule_id=delete_rule.id,
+    )
+
+    assert deleted is not None
+    profile, removed_rule = deleted
+    assert removed_rule.id == delete_rule.id
+    assert profile.proactive_recall_enabled is True
+    assert [rule.id for rule in profile.rules] == [keep_rule.id]
+
+
+@pytest.mark.asyncio
+async def test_aclear_procedural_rules_preserves_toggle() -> None:
+    """Clearing active rules should not reset recall preferences."""
+
+    store = OpenCouchMemoryStore()
+    rule = build_procedural_rule(
+        rule_text="You prefer short replies.",
+        evidence=["Please keep it short"],
+    )
+    await aadd_procedural_rule(store, user_id="alice", rule=rule)
+    await aset_proactive_recall(store, user_id="alice", enabled=True)
+
+    profile, cleared_count = await aclear_procedural_rules(store, user_id="alice")
+
+    assert cleared_count == 1
+    assert profile.rules == []
+    assert profile.proactive_recall_enabled is True
 
 
 @pytest.mark.asyncio

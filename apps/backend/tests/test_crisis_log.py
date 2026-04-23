@@ -21,7 +21,7 @@ from typing import Any, cast
 import pytest
 
 from agent.graph import run_agent
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.models import CrisisLogRecord
@@ -706,7 +706,7 @@ class TestNullCrisisLogRetentionPurge:
 
     @pytest.mark.asyncio
     async def test_null_purge_returns_zero(self) -> None:
-        from agent.memory.crisis_log import NullCrisisLogBackend
+        from agent.audit.crisis_log import NullCrisisLogBackend
 
         backend = NullCrisisLogBackend()
         deleted = await backend.apurge_before(date(2026, 4, 1))
