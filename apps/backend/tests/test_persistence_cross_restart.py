@@ -174,6 +174,60 @@ class _FakeCrossRestartLLM(BaseLLMClient):
         raise RuntimeError(f"_FakeCrossRestartLLM: unexpected schema {schema_name}")
 
 
+class _FakeIncognitoExerciseContinuityLLM(_FakeCrossRestartLLM):
+    """Drive a guided-exercise side-turn flow for incognito runtime tests."""
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        if response_schema.__name__ != "DispatchDecision":
+            return await super().generate_structured(
+                prompt=prompt,
+                response_schema=response_schema,
+                system_instruction=system_instruction,
+            )
+
+        self.dispatch_calls += 1
+        from agent.memory.models import DispatchDecision
+
+        lowered = prompt.lower()
+        current_message = lowered.rsplit("current user message:", 1)[-1]
+        if "right now, or just around me in general" in current_message:
+            decision = DispatchDecision(
+                response_style="clarifying",
+                therapeutic_approach="none",
+                reasoning="user is clarifying the exercise instructions",
+                confidence="high",
+            )
+        elif "i can see my desk, lamp, and window" in current_message:
+            decision = DispatchDecision(
+                response_style="guided_exercise",
+                therapeutic_approach="dbt_skills",
+                reasoning="user is answering the active grounding step",
+                confidence="high",
+            )
+        elif "grounding exercise right now" in current_message:
+            decision = DispatchDecision(
+                response_style="guided_exercise",
+                therapeutic_approach="dbt_skills",
+                reasoning="user explicitly asked for grounding",
+                confidence="high",
+            )
+        else:
+            decision = DispatchDecision(
+                response_style="supportive",
+                therapeutic_approach="motivational_interviewing",
+                reasoning="default supportive fallback for test harness",
+                confidence="high",
+            )
+
+        return cast(StructuredResponseT, decision)
+
+
 def _default_extraction_result() -> ExtractionResult:
     """Build a canned extraction result with one Sarah-relationship fact."""
 
@@ -693,6 +747,58 @@ async def test_held_session_buffer_survives_restart_until_end_session(
 
 
 @pytest.mark.asyncio
+async def test_end_session_clears_session_continuity_from_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """Ending a session should clear exercise continuity in the checkpoint."""
+
+    paths = _runtime_paths(tmp_path)
+    llm = _FakeCrossRestartLLM(
+        extraction_result=_empty_extraction_result(),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-end"
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-end",
+            message="Let's start a grounding exercise.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        graph = runtime._get_graph()
+        await graph.aupdate_state(
+            runtime._config_for_thread("thread-end"),
+            {
+                "exercise_state": {
+                    "exercise_type": "grounding_5_4_3_2_1",
+                    "exercise_step": 1,
+                    "exercise_modality": "cbt",
+                },
+                "therapeutic_approach": "cbt",
+            },
+            as_node="finalize_turn_node",
+        )
+
+        stored_arc = await runtime.end_session("thread-end", llm_client=llm)
+
+        assert stored_arc is not None
+        state = await runtime.get_state("thread-end")
+        assert state is not None
+        assert state.get("exercise_state", {}).get("exercise_type") is None
+        assert state.get("exercise_state", {}).get("exercise_step") is None
+        assert state.get("exercise_state", {}).get("exercise_modality") is None
+        assert state.get("therapeutic_approach") is None
+
+
+@pytest.mark.asyncio
 async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
     tmp_path: Path,
 ) -> None:
@@ -720,6 +826,19 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
         )
         prior_state = await runtime.get_state("thread-timeout")
         prior_transcript_len = len((prior_state or {}).get("transcript", []))
+        graph = runtime._get_graph()
+        await graph.aupdate_state(
+            runtime._config_for_thread("thread-timeout"),
+            {
+                "exercise_state": {
+                    "exercise_type": "grounding_5_4_3_2_1",
+                    "exercise_step": 2,
+                    "exercise_modality": "cbt",
+                },
+                "therapeutic_approach": "cbt",
+            },
+            as_node="finalize_turn_node",
+        )
 
         persisted = await runtime._load_persisted_active_session("thread-timeout")
         assert persisted is not None
@@ -736,21 +855,96 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
         runtime._clear_runtime_session_tracking("thread-timeout")
 
         llm.extraction_result = _empty_extraction_result()
-        await runtime.run_turn(
+        result = await runtime.run_turn(
             thread_id="thread-timeout",
             message="Something else is on my mind today.",
             channel=Channel.TEST,
             user_id="user-1",
-            llm_client=llm,
         )
 
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
         assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
+        assert result.output.response_style == "supportive"
+        assert result.state.get("exercise_state", {}).get("exercise_type") is None
+        assert result.state.get("exercise_state", {}).get("exercise_step") is None
+        assert result.state.get("exercise_state", {}).get("exercise_modality") is None
 
         active = await runtime._load_persisted_active_session("thread-timeout")
         assert active is not None
         assert active.transcript_start_index == prior_transcript_len
         assert not active.session_buffer.semantic_candidates
+
+
+@pytest.mark.asyncio
+async def test_incognito_runtime_preserves_exercise_state_across_side_turns() -> None:
+    """Incognito runtime should not clear active exercises between turns."""
+
+    llm = _FakeIncognitoExerciseContinuityLLM(
+        extraction_result=_empty_extraction_result(),
+    )
+
+    async with PersistentAgentRuntime(
+        memory_mode=MemoryMode.INCOGNITO,
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+        first = await runtime.run_turn(
+            thread_id="thread-incognito-exercise",
+            message="Can you guide me through a grounding exercise right now?",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        assert first.output.response_style == "guided_exercise"
+        assert first.state.get("exercise_state", {}).get("exercise_type") == (
+            "grounding_5_4_3_2_1"
+        )
+        assert first.state.get("exercise_state", {}).get("exercise_step") == 0
+        assert (
+            first.state.get("exercise_state", {}).get("exercise_modality")
+            == "dbt_skills"
+        )
+        assert (
+            await runtime._load_persisted_active_session("thread-incognito-exercise")
+            is None
+        )
+        assert await runtime.has_active_session("thread-incognito-exercise")
+
+        second = await runtime.run_turn(
+            thread_id="thread-incognito-exercise",
+            message="Do you mean things I can see right now, or just around me in general?",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        assert second.output.response_style == "clarifying"
+        assert second.state.get("exercise_state", {}).get("exercise_type") == (
+            "grounding_5_4_3_2_1"
+        )
+        assert second.state.get("exercise_state", {}).get("exercise_step") == 0
+        assert (
+            second.state.get("exercise_state", {}).get("exercise_modality")
+            == "dbt_skills"
+        )
+
+        third = await runtime.run_turn(
+            thread_id="thread-incognito-exercise",
+            message="Right now. I can see my desk, lamp, and window.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        assert third.output.response_style == "guided_exercise"
+        assert third.state.get("exercise_state", {}).get("exercise_type") == (
+            "grounding_5_4_3_2_1"
+        )
+        assert third.state.get("exercise_state", {}).get("exercise_step") == 1
+        assert (
+            third.state.get("exercise_state", {}).get("exercise_modality")
+            == "dbt_skills"
+        )
 
 
 @pytest.mark.asyncio

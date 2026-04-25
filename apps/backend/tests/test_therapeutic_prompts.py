@@ -37,6 +37,7 @@ from typing import Any, cast
 
 from agent.prompts import build_crisis_response_system_prompt
 from agent.state import AgentState
+from agent.therapeutic.dispatcher import build_therapeutic_dispatch_system_prompt
 from agent.therapeutic.prompts import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
@@ -46,6 +47,7 @@ from agent.therapeutic.prompts import (
     build_psychoeducation_system_prompt,
     build_reflective_system_prompt,
     build_supportive_system_prompt,
+    build_technique_system_prompt,
     build_therapeutic_response_prompt,
 )
 
@@ -61,30 +63,32 @@ def _make_state(
 ) -> AgentState:
     """Build a minimal AgentState with procedural fields configured.
 
-    The builders under test only read ``state["memory"]`` for procedural
-    rules and recall toggle, plus ``state["history"]`` and
+    The builders under test only read ``state["procedural_profile"]`` for
+    procedural rules and recall toggle, plus ``state["history"]`` and
     ``state["working_memory"]`` for the user-prompt helpers (which
     aren't exercised here). A partial dict is sufficient — AgentState
     is a TypedDict so the type annotation is a type-checker assertion,
     not a runtime constructor.
     """
 
-    memory_dict: dict[str, Any] = {
+    session_memory: dict[str, Any] = {
         "summary": "",
         "active_concerns": [],
         "open_loops": [],
         "current_goal": None,
     }
+    procedural_profile: dict[str, Any] = {}
     if rules is not None:
-        memory_dict["procedural_rules"] = rules
+        procedural_profile["procedural_rules"] = rules
     if recall_enabled is not None:
-        memory_dict["proactive_recall_enabled"] = recall_enabled
+        procedural_profile["proactive_recall_enabled"] = recall_enabled
 
     state: dict[str, Any] = {
         "message": "hello",
         "history": [],
         "working_memory": working_memory or [],
-        "memory": memory_dict,
+        "session_memory": session_memory,
+        "procedural_profile": procedural_profile,
     }
     return cast(AgentState, state)
 
@@ -101,7 +105,7 @@ class TestRulesBlockHelper:
         state = _make_state(rules=[])
         assert _format_procedural_rules_block(state) == ""
 
-    def test_missing_memory_field_returns_empty_string(self) -> None:
+    def test_missing_procedural_profile_returns_empty_string(self) -> None:
         """Missing ``procedural_rules`` key (e.g., pre-Stage-C state) is safe.
 
         The helper uses ``.get("procedural_rules") or []`` so a state
@@ -113,7 +117,7 @@ class TestRulesBlockHelper:
             "message": "hello",
             "history": [],
             "working_memory": [],
-            "memory": {
+            "session_memory": {
                 "summary": "",
                 "active_concerns": [],
                 "open_loops": [],
@@ -205,7 +209,7 @@ class TestRecallToggleHelper:
             "message": "hello",
             "history": [],
             "working_memory": [],
-            "memory": {
+            "session_memory": {
                 "summary": "",
                 "active_concerns": [],
                 "open_loops": [],
@@ -266,7 +270,7 @@ class TestTherapeuticBuilderInjection:
             )
 
     def test_rules_are_injected_when_present(self) -> None:
-        """When ``memory.procedural_rules`` is populated, the rules
+        """When ``procedural_profile.procedural_rules`` is populated, the rules
         block appears in all 6 builders' output."""
 
         rules = [
@@ -290,6 +294,74 @@ class TestTherapeuticBuilderInjection:
             assert "Follow these rules silently" in prompt, (
                 f"{name}: silent-follow guidance missing"
             )
+
+
+def test_technique_prompt_requires_attuned_opening_before_structure() -> None:
+    state = _make_state()
+    state["therapeutic_approach"] = "cbt"
+
+    prompt = build_technique_system_prompt(state)
+
+    assert "Lead with a brief, attuned acknowledgment before any question" in prompt
+    assert 'Do not open with bare consent ("Yes.", "Okay.", "Sure.")' in prompt
+
+
+def test_closing_prompt_handles_wrap_up_takeaway_requests() -> None:
+    """Closing should answer explicit wrap-up takeaway requests directly."""
+
+    prompt = build_closing_system_prompt(_make_state())
+
+    assert "Give one takeaway when asked" in prompt
+    assert "summarize the main takeaway" in prompt
+    assert "exactly ONE concise" in prompt
+    assert "Do not ask for more" in prompt
+    assert "start a new exercise" in prompt
+    assert "reopen" in prompt
+    assert "exploration" in prompt
+
+
+def test_supportive_prompt_handles_low_content_opening_orientation() -> None:
+    """Supportive openings may orient lightly without becoming intake."""
+
+    prompt = build_supportive_system_prompt(_make_state())
+
+    assert "for low-content openings" in prompt
+    assert "We don't need a plan" in prompt
+    assert "is there something specific you want from this session" in prompt
+    assert "do not use session-plan framing" in prompt
+    assert "respond to that content first" in prompt
+    assert "goals for the session" in prompt
+    assert "Exception: for low-content session openings" in prompt
+    assert "ask exactly one" in prompt
+    assert 'a question ending in "?"' in prompt
+    assert "Good low-content opening" in prompt
+    assert "it does not actually ask the optional orientation question" in prompt
+
+
+def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> None:
+    prompt = build_therapeutic_dispatch_system_prompt()
+
+    assert "NOT asking to start a named exercise track" in prompt
+    assert (
+        "those are guided_exercise turns because the agent should begin the "
+        "matching stepwise exercise" in prompt
+    )
+    assert "can we figure out a way to test it" in prompt
+    assert "can we look at what actually matters to me" in prompt
+    assert "If the user names self-criticism AND explicitly asks to do " in prompt
+    assert (
+        "do NOT use technique just because the user wants to 'talk it through'"
+        in prompt
+    )
+    assert "consolidating progress, naming strengths" in prompt
+    assert (
+        "I keep avoiding work tasks because I get anxious and start spiraling" in prompt
+    )
+    assert "can choose ACT as the therapeutic_approach" in prompt
+    assert "pairs wrap-up language with a takeaway request" in prompt
+    assert "before we wrap up, what's the main takeaway?" in prompt
+    assert "what should I remember from this?" in prompt
+    assert "A turn that says 'thanks, that helps'" in prompt
 
     def test_recall_on_switches_constraint_variant(self) -> None:
         """With ``proactive_recall_enabled=True``, the prompt contains

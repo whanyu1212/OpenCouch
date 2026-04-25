@@ -12,6 +12,13 @@ Supports two dataset schemas:
   ``checkpoints`` graded at specific turn numbers.  Final expectations
   use the key ``final_expectations`` instead of ``final_expect``.
 
+Long-trajectory cases may also include:
+
+- ``seed_memory`` to pre-populate episodic / semantic / procedural memory
+  before the replay begins.
+- ``{"action": "end_session"}`` steps inside ``turns`` to end the current
+  session on the same thread before subsequent user turns continue.
+
 Usage:
     python eval/runners/session_trajectory_eval.py --mode deterministic
     python eval/runners/session_trajectory_eval.py --mode hybrid
@@ -43,8 +50,13 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from agent.memory.modes import MemoryMode
-from agent.memory.models import SemanticFact, StoredSessionArc
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.models import EntityRef, SemanticFact, StoredSessionArc
+from agent.memory.procedural import (
+    aadd_procedural_rule,
+    aget_procedural_profile,
+    aset_proactive_recall,
+    build_procedural_rule,
+)
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import PersistentAgentRuntime
 from core.config import create_configured_llm_client
@@ -195,6 +207,205 @@ def _empty_memory_snapshot() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _build_seed_semantic_fact(
+    owner_id: str,
+    thread_id: str,
+    index: int,
+    payload: dict[str, Any],
+) -> SemanticFact:
+    """Build one seeded semantic fact for a trajectory case.
+
+    Args:
+        owner_id (str): Memory owner id for the case.
+        thread_id (str): Case thread id.
+        index (int): Stable seed index within the case.
+        payload (dict[str, Any]): Dataset payload describing the fact.
+
+    Returns:
+        SemanticFact: Serialized semantic fact ready for store insertion.
+    """
+
+    created_at = payload.get("created_at", f"2026-04-01T00:00:{index:02d}Z")
+    subject_identifier = payload.get("subject_identifier", owner_id)
+    return SemanticFact(
+        id=payload.get("id", f"seed-semantic-{index}"),
+        category=payload["category"],
+        subject=EntityRef(
+            type=payload.get("subject_type", "User"),
+            identifier=subject_identifier,
+        ),
+        predicate=payload["predicate"],
+        object=EntityRef(
+            type=payload.get("object_type", "Concern"),
+            identifier=payload["object_identifier"],
+        ),
+        evidence_quote=payload["evidence_quote"],
+        confidence=payload.get("confidence", "high"),
+        source_session_id=payload.get("source_session_id", thread_id),
+        source_turn_index=int(payload.get("source_turn_index", 0)),
+        created_at=created_at,
+        last_referenced_at=payload.get("last_referenced_at", created_at),
+        dormant_at=payload.get("dormant_at"),
+        superseded_by=payload.get("superseded_by"),
+        user_visible=bool(payload.get("user_visible", True)),
+        write_timing=payload.get("write_timing", "immediate"),
+        write_reason=payload.get("write_reason", "eval seed"),
+        policy_version=payload.get("policy_version", "eval_seed_v1"),
+    )
+
+
+def _build_seed_episodic_arc(
+    owner_id: str,
+    thread_id: str,
+    index: int,
+    payload: dict[str, Any],
+) -> StoredSessionArc:
+    """Build one seeded episodic arc for a trajectory case.
+
+    Args:
+        owner_id (str): Memory owner id for the case.
+        thread_id (str): Case thread id.
+        index (int): Stable seed index within the case.
+        payload (dict[str, Any]): Dataset payload describing the arc.
+
+    Returns:
+        StoredSessionArc: Serialized episodic arc ready for store insertion.
+    """
+
+    started_at = payload.get("started_at", "2026-04-01T00:00:00Z")
+    ended_at = payload.get("ended_at", "2026-04-01T00:10:00Z")
+    created_at = payload.get("created_at", ended_at)
+    return StoredSessionArc(
+        id=payload.get("id", f"seed-arc-{index}"),
+        owner_id=payload.get("owner_id", owner_id),
+        session_id=payload.get("session_id", f"{thread_id}-seed-{index}"),
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=int(payload.get("duration_seconds", 600)),
+        turn_count=int(payload.get("turn_count", 4)),
+        primary_themes=list(payload.get("primary_themes") or []),
+        summary=payload["summary"],
+        mood_arc={
+            "opened": payload.get("mood_opened", "anxious"),
+            "closed": payload.get("mood_closed", "steadier"),
+        },
+        open_loops=list(payload.get("open_loops") or []),
+        resolved_threads=list(payload.get("resolved_threads") or []),
+        approach_used=payload.get("approach_used"),
+        approach_context=payload.get("approach_context"),
+        created_at=created_at,
+        last_referenced_at=payload.get("last_referenced_at", created_at),
+        user_visible=bool(payload.get("user_visible", True)),
+        write_timing=payload.get("write_timing", "session_end"),
+        write_reason=payload.get("write_reason", "eval seed"),
+        policy_version=payload.get("policy_version", "eval_seed_v1"),
+        crisis_level_max=int(payload.get("crisis_level_max", 0)),
+    )
+
+
+async def _seed_case_memory(
+    store: Any,
+    *,
+    owner_id: str,
+    thread_id: str,
+    seed_memory: dict[str, Any] | None,
+) -> None:
+    """Pre-populate memory state for one eval case.
+
+    Args:
+        store (Any): Memory store used by the runtime.
+        owner_id (str): Memory owner id for the case.
+        thread_id (str): Case thread id.
+        seed_memory (dict[str, Any] | None): Seed payload from the dataset.
+
+    Returns:
+        None: Writes seed records into the store in place.
+    """
+
+    if not seed_memory:
+        return
+
+    if "proactive_recall_enabled" in seed_memory:
+        await aset_proactive_recall(
+            store,
+            user_id=owner_id,
+            enabled=bool(seed_memory["proactive_recall_enabled"]),
+        )
+
+    for index, payload in enumerate(seed_memory.get("procedural_rules", []), start=1):
+        if isinstance(payload, str):
+            rule = build_procedural_rule(rule_text=payload, evidence=[])
+        else:
+            rule = build_procedural_rule(
+                rule_text=payload["rule"],
+                evidence=list(payload.get("evidence") or []),
+                confidence=payload.get("confidence", "high"),
+                source=payload.get("source", "manual"),
+                write_reason=payload.get("write_reason", "eval seed"),
+                policy_version=payload.get("policy_version", "eval_seed_v1"),
+            )
+        await aadd_procedural_rule(store, user_id=owner_id, rule=rule)
+
+    for index, payload in enumerate(seed_memory.get("semantic_facts", []), start=1):
+        fact = _build_seed_semantic_fact(owner_id, thread_id, index, payload)
+        await store.aput(
+            (owner_id, "semantic"),
+            fact.id,
+            fact.model_dump(mode="json"),
+        )
+
+    for index, payload in enumerate(seed_memory.get("episodic_arcs", []), start=1):
+        arc = _build_seed_episodic_arc(owner_id, thread_id, index, payload)
+        await store.aput(
+            (owner_id, "episodic"),
+            arc.id,
+            arc.model_dump(mode="json"),
+        )
+
+
+async def _run_action_step(
+    runtime: PersistentAgentRuntime,
+    *,
+    action: str,
+    thread_id: str,
+    owner_id: str,
+    llm_client: BaseLLMClient | None,
+    prior_memory_snapshot: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Execute one non-message dataset step.
+
+    Args:
+        runtime (PersistentAgentRuntime): Runtime under evaluation.
+        action (str): Dataset action name.
+        thread_id (str): Thread identifier for the case.
+        owner_id (str): Memory owner id for the case.
+        llm_client (BaseLLMClient | None): Optional hybrid-mode client.
+        prior_memory_snapshot (dict[str, list[dict[str, Any]]]): Snapshot before the
+            action runs.
+
+    Returns:
+        tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]: Updated memory
+        snapshot plus the action's memory delta.
+
+    Raises:
+        ValueError: If the dataset action is unknown.
+    """
+
+    if action != "end_session":
+        raise ValueError(f"Unsupported session trajectory action: {action!r}")
+
+    await runtime.end_session(thread_id, llm_client=llm_client)
+    current_memory_snapshot = await _snapshot_memory_state(
+        runtime.memory_store,
+        owner_id=owner_id,
+    )
+    memory_delta = _diff_memory_state(
+        prior_memory_snapshot,
+        current_memory_snapshot,
+    )
+    return current_memory_snapshot, memory_delta
+
+
 def _serialize_semantic_fact(fact: SemanticFact) -> dict[str, Any]:
     """Normalize a stored semantic fact into an eval-friendly shape."""
 
@@ -335,14 +546,17 @@ def _normalize_turn_record(
 
     output = result.output
     state = result.state or {}
-    progress = state.get("progress", {}) or {}
-    response = state.get("response", {}) or {}
-    routing = state.get("routing", {}) or {}
+    session_progress = state.get("session_progress", {}) or {}
+    exercise_state = state.get("exercise_state", {}) or {}
+    procedural_profile = state.get("procedural_profile", {}) or {}
+    working_memory = state.get("working_memory", []) or []
+    found_resources = state.get("found_resources", []) or []
 
     return {
         "turn_index": turn_index,
         "user_text": user_text,
         "assistant_text": output.response_text,
+        "mode": output.response_style,
         "response_style": output.response_style,
         "response_type": output.response_type.value
         if output.response_type is not None
@@ -350,15 +564,57 @@ def _normalize_turn_record(
         "crisis_level": output.crisis.level,
         "needs_crisis_response": output.crisis.needs_crisis_response,
         "needs_clarification": output.crisis.needs_clarification,
-        "response_guidance": response.get("guidance"),
-        "session_intent": progress.get("intent"),
-        "session_intent_source": progress.get("intent_source"),
-        "session_stage": progress.get("stage"),
-        "therapeutic_approach": routing.get("therapeutic_approach")
+        "inferred_location": state.get("inferred_location"),
+        "resource_lookup_status": state.get("resource_lookup_status"),
+        "found_resources_count": len(found_resources),
+        "found_resource_names": [
+            resource.get("name")
+            for resource in found_resources
+            if isinstance(resource, dict) and resource.get("name")
+        ],
+        "found_resource_phones": [
+            resource.get("phone")
+            for resource in found_resources
+            if isinstance(resource, dict) and resource.get("phone")
+        ],
+        "session_intent": session_progress.get("intent"),
+        "session_intent_source": session_progress.get("intent_source"),
+        "session_stage": session_progress.get("stage"),
+        "modality": state.get("therapeutic_approach") or output.therapeutic_approach,
+        "therapeutic_approach": state.get("therapeutic_approach")
         or output.therapeutic_approach,
-        "exercise_active": progress.get("exercise_type") is not None,
-        "exercise_type": progress.get("exercise_type"),
-        "exercise_step": progress.get("exercise_step"),
+        "exercise_active": exercise_state.get("exercise_type") is not None,
+        "exercise_type": exercise_state.get("exercise_type"),
+        "exercise_step": exercise_state.get("exercise_step"),
+        "working_memory_types": [
+            entry.get("type")
+            for entry in working_memory
+            if isinstance(entry, dict) and entry.get("type")
+        ],
+        "working_memory_objects": [
+            entry.get("object")
+            for entry in working_memory
+            if isinstance(entry, dict)
+            and entry.get("type") == "semantic"
+            and entry.get("object")
+        ],
+        "working_memory_evidence_quotes": [
+            entry.get("evidence_quote")
+            for entry in working_memory
+            if isinstance(entry, dict)
+            and entry.get("type") == "semantic"
+            and entry.get("evidence_quote")
+        ],
+        "working_memory_summaries": [
+            entry.get("summary")
+            for entry in working_memory
+            if isinstance(entry, dict)
+            and entry.get("type") == "episodic"
+            and entry.get("summary")
+        ],
+        "proactive_recall_enabled": bool(
+            procedural_profile.get("proactive_recall_enabled", False)
+        ),
         "memory_writes": list(memory_delta["memory_writes"]),
         "semantic_fact_count_delta": memory_delta["semantic_fact_count_delta"],
         "procedural_rule_count_delta": memory_delta["procedural_rule_count_delta"],
@@ -376,6 +632,8 @@ def _normalize_turn_record(
             "response_style_source": output.response_style_source,
             "therapeutic_approach": output.therapeutic_approach,
             "diagnostics": output.diagnostics,
+            "working_memory": working_memory,
+            "found_resources": found_resources,
             "memory_snapshot": memory_snapshot,
         },
     }
@@ -429,9 +687,10 @@ def _normalize_final_record(
         # Carry forward from last turn for final grading.
         "session_intent": last.get("session_intent"),
         "session_stage": last.get("session_stage"),
-        "response_style": last.get("mode"),
+        "mode": last.get("mode", last.get("response_style")),
+        "response_style": last.get("mode", last.get("response_style")),
+        "modality": last.get("modality", last.get("therapeutic_approach")),
         "therapeutic_approach": last.get("therapeutic_approach"),
-        "response_guidance": last.get("response_guidance"),
         "assistant_text": last.get("assistant_text"),
         "needs_clarification": last.get("needs_clarification"),
         "needs_crisis_response": last.get("needs_crisis_response"),
@@ -491,6 +750,56 @@ def _check_turn_expectation(
         failures.append(
             f"FAIL [{case_id}] turn {turn_number}: expected needs_clarification="
             f"{expect['needs_clarification']!r}, got {record['needs_clarification']!r}."
+        )
+
+    if (
+        "resource_lookup_status" in expect
+        and record["resource_lookup_status"] != expect["resource_lookup_status"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected resource_lookup_status="
+            f"{expect['resource_lookup_status']!r}, got "
+            f"{record['resource_lookup_status']!r}."
+        )
+
+    if "inferred_location_contains_any" in expect and not _contains_any(
+        record["inferred_location"],
+        expect["inferred_location_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected inferred_location to "
+            f"contain one of {expect['inferred_location_contains_any']!r}, got "
+            f"{record['inferred_location']!r}."
+        )
+
+    if (
+        "found_resources_count_min" in expect
+        and record["found_resources_count"] < expect["found_resources_count_min"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected found_resources_count >= "
+            f"{expect['found_resources_count_min']!r}, got "
+            f"{record['found_resources_count']!r}."
+        )
+
+    if "found_resource_name_contains_any" in expect and not _contains_any(
+        " ".join(record["found_resource_names"]),
+        expect["found_resource_name_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected found resource names to "
+            f"contain one of {expect['found_resource_name_contains_any']!r}, got "
+            f"{record['found_resource_names']!r}."
+        )
+
+    if "found_resource_phone_contains_any" in expect and not _contains_any(
+        " ".join(record["found_resource_phones"]),
+        expect["found_resource_phone_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected found resource phones to "
+            f"contain one of {expect['found_resource_phone_contains_any']!r}, got "
+            f"{record['found_resource_phones']!r}."
         )
 
     # ── Session intent ───────────────────────────────────────────────
@@ -554,27 +863,6 @@ def _check_turn_expectation(
             f"{expect['response_type']!r}, got {record['response_type']!r}."
         )
 
-    # ── Response guidance ────────────────────────────────────────────
-    if "response_guidance_contains_any" in expect and not _contains_any(
-        record["response_guidance"],
-        expect["response_guidance_contains_any"],
-    ):
-        failures.append(
-            f"FAIL [{case_id}] turn {turn_number}: expected response_guidance to contain "
-            f"one of {expect['response_guidance_contains_any']!r}, "
-            f"got {record['response_guidance']!r}."
-        )
-
-    if "response_guidance_contains" in expect and not _contains_substring(
-        record["response_guidance"],
-        expect["response_guidance_contains"],
-    ):
-        failures.append(
-            f"FAIL [{case_id}] turn {turn_number}: expected response_guidance to contain "
-            f"{expect['response_guidance_contains']!r}, "
-            f"got {record['response_guidance']!r}."
-        )
-
     # ── Response text ────────────────────────────────────────────────
     if "response_contains_any" in expect and not _contains_any(
         record["assistant_text"],
@@ -621,6 +909,70 @@ def _check_turn_expectation(
         failures.append(
             f"FAIL [{case_id}] turn {turn_number}: expected exercise_active="
             f"{expect['exercise_active']!r}, got {record['exercise_active']!r}."
+        )
+
+    if "working_memory_types_contains_any" in expect:
+        actual_types = record["working_memory_types"]
+        if not any(
+            entry_type in expect["working_memory_types_contains_any"]
+            for entry_type in actual_types
+        ):
+            failures.append(
+                f"FAIL [{case_id}] turn {turn_number}: expected working_memory_types to "
+                f"contain one of {expect['working_memory_types_contains_any']!r}, got "
+                f"{actual_types!r}."
+            )
+
+    if "working_memory_types_not_contains_any" in expect:
+        actual_types = record["working_memory_types"]
+        if any(
+            entry_type in expect["working_memory_types_not_contains_any"]
+            for entry_type in actual_types
+        ):
+            failures.append(
+                f"FAIL [{case_id}] turn {turn_number}: expected working_memory_types to "
+                f"exclude {expect['working_memory_types_not_contains_any']!r}, got "
+                f"{actual_types!r}."
+            )
+
+    if "working_memory_object_contains_any" in expect and not _contains_any(
+        " ".join(record["working_memory_objects"]),
+        expect["working_memory_object_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected working_memory objects to "
+            f"contain one of {expect['working_memory_object_contains_any']!r}, got "
+            f"{record['working_memory_objects']!r}."
+        )
+
+    if "working_memory_evidence_contains_any" in expect and not _contains_any(
+        " ".join(record["working_memory_evidence_quotes"]),
+        expect["working_memory_evidence_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected working_memory evidence to "
+            f"contain one of {expect['working_memory_evidence_contains_any']!r}, got "
+            f"{record['working_memory_evidence_quotes']!r}."
+        )
+
+    if "working_memory_summary_contains_any" in expect and not _contains_any(
+        " ".join(record["working_memory_summaries"]),
+        expect["working_memory_summary_contains_any"],
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected working_memory summaries to "
+            f"contain one of {expect['working_memory_summary_contains_any']!r}, got "
+            f"{record['working_memory_summaries']!r}."
+        )
+
+    if (
+        "proactive_recall_enabled" in expect
+        and record["proactive_recall_enabled"] != expect["proactive_recall_enabled"]
+    ):
+        failures.append(
+            f"FAIL [{case_id}] turn {turn_number}: expected proactive_recall_enabled="
+            f"{expect['proactive_recall_enabled']!r}, got "
+            f"{record['proactive_recall_enabled']!r}."
         )
 
     # ── Memory writes ────────────────────────────────────────────────
@@ -993,17 +1345,6 @@ def _check_final_expectation(
             f"{expect['required_modalities']!r}, got {record['modality']!r}."
         )
 
-    # ── Response guidance (from last turn) ───────────────────────────
-    if "response_guidance_contains" in expect and not _contains_substring(
-        record["response_guidance"],
-        expect["response_guidance_contains"],
-    ):
-        failures.append(
-            f"FAIL [{case_id}] final: expected response_guidance to contain "
-            f"{expect['response_guidance_contains']!r}, "
-            f"got {record['response_guidance']!r}."
-        )
-
     # ── Crisis signals (from last turn) ──────────────────────────────
     if (
         "needs_clarification" in expect
@@ -1065,6 +1406,7 @@ async def _run_case(
     total_memory_writes = 0
     last_turn_record: dict[str, Any] | None = None
     run_end_session = bool(case.get("run_end_session", False))
+    seed_memory = case.get("seed_memory") or {}
 
     # Build a checkpoint map for the long-trajectory schema.
     # {1-indexed turn number → expect dict}
@@ -1075,6 +1417,10 @@ async def _run_case(
             checkpoint_map[cp["turn"]] = cp["expect"]
 
     turns = case.get("turns", [])
+    user_turn_total = sum(
+        1 for turn in turns if not (isinstance(turn, dict) and turn.get("action"))
+    )
+    action_count = len(turns) - user_turn_total
     case_prefix = (
         f"[case {case_index}/{total_cases}] "
         if case_index is not None and total_cases is not None
@@ -1082,8 +1428,9 @@ async def _run_case(
     )
     _log(
         verbose,
-        f"{case_prefix}Starting {case['id']} ({len(turns)} turn(s), "
-        f"checkpoints={len(checkpoint_map)}, end_session={run_end_session})",
+        f"{case_prefix}Starting {case['id']} ({user_turn_total} turn(s), "
+        f"actions={action_count}, checkpoints={len(checkpoint_map)}, "
+        f"end_session={run_end_session})",
     )
 
     with tempfile.TemporaryDirectory(prefix="opencouch-session-eval-") as tmpdir:
@@ -1095,21 +1442,51 @@ async def _run_case(
         ) as runtime:
             thread_id = f"eval-{case['id']}-{uuid4().hex[:8]}"
             user_id = f"eval-user-{case['id']}"
+            await _seed_case_memory(
+                runtime.memory_store,
+                owner_id=user_id,
+                thread_id=thread_id,
+                seed_memory=seed_memory,
+            )
             prior_memory_snapshot = await _snapshot_memory_state(
                 runtime.memory_store,
                 owner_id=user_id,
             )
 
-            for index, turn in enumerate(turns):
+            turn_index = 0
+            for turn in turns:
+                if isinstance(turn, dict) and turn.get("action"):
+                    action = str(turn["action"])
+                    _log(
+                        verbose,
+                        f"  -> action {action!r} on thread={thread_id!r}",
+                    )
+                    prior_memory_snapshot, action_delta = await _run_action_step(
+                        runtime,
+                        action=action,
+                        thread_id=thread_id,
+                        owner_id=user_id,
+                        llm_client=llm_client,
+                        prior_memory_snapshot=prior_memory_snapshot,
+                    )
+                    total_memory_writes += len(action_delta["memory_writes"])
+                    _log(
+                        verbose,
+                        "     "
+                        f"action_writes={len(action_delta['memory_writes'])}, "
+                        f"episodic_total={len(prior_memory_snapshot['episodic_arcs'])}",
+                    )
+                    continue
+
                 user_text = turn["user"] if isinstance(turn, dict) else turn
-                turn_number = index + 1  # 1-indexed
+                turn_number = turn_index + 1  # 1-indexed conversational turns only
                 preview = user_text.strip().replace("\n", " ")
                 if len(preview) > 100:
                     preview = f"{preview[:97]}..."
                 checkpoint_due = uses_checkpoints and turn_number in checkpoint_map
                 _log(
                     verbose,
-                    f"  -> turn {turn_number}/{len(turns)} input={preview!r}"
+                    f"  -> turn {turn_number}/{user_turn_total} input={preview!r}"
                     + (" [checkpoint]" if checkpoint_due else ""),
                 )
 
@@ -1128,7 +1505,7 @@ async def _run_case(
                     current_memory_snapshot,
                 )
                 record = _normalize_turn_record(
-                    index,
+                    turn_index,
                     user_text,
                     result,
                     memory_snapshot=current_memory_snapshot,
@@ -1137,6 +1514,7 @@ async def _run_case(
                 last_turn_record = record
                 total_memory_writes += len(record["memory_writes"])
                 prior_memory_snapshot = current_memory_snapshot
+                turn_index += 1
 
                 _log(
                     verbose,

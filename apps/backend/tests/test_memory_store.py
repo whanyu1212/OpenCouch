@@ -13,7 +13,7 @@ from datetime import date
 
 import pytest
 
-from agent.memory.crisis_log import (
+from agent.audit.crisis_log import (
     InMemoryCrisisLogBackend,
     NullCrisisLogBackend,
 )

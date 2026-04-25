@@ -1,18 +1,20 @@
 """Unit tests for the refactored load_memory_node and finalize_turn_node.
 
 The pre-refactor version of ``run_load_memory_node`` wrote to seven state
-keys (transcript, history, working_memory, memory, progress, routing,
+keys (transcript, history, working_memory, memory, session_progress,
+exercise_state, routing,
 response) including a deterministic bootstrap reply that was appended
 to the transcript every turn. That behavior was wrong because the node
 runs on the spine, not once per session — see the header comment in
 ``agent/nodes/load_memory.py`` for the full history.
 
-The refactored node only writes ``working_memory`` and ``memory.summary``.
+The refactored node only writes ``working_memory``, ``session_memory``,
+and ``procedural_profile``.
 These tests pin that shape and verify the specific regressions the
 refactor fixed:
 
 1. No phantom assistant turns get appended to the transcript.
-2. The node does NOT touch routing/response/progress.
+2. The node does NOT touch routing/response/session_progress/exercise_state.
 3. Guest mode still short-circuits and returns an empty working memory.
 4. Real retrieval still returns formatted memory snippets.
 5. finalize_turn_node appends the assistant response exactly once at
@@ -25,12 +27,16 @@ from typing import Any
 
 import pytest
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
 from agent.nodes.finalize_turn import run_finalize_turn_node
-from agent.nodes.load_memory import run_load_memory_node
+from agent.nodes.load_memory import (
+    SEMANTIC_SEARCH_LIMIT,
+    SEMANTIC_WORKING_MEMORY_LIMIT,
+    run_load_memory_node,
+)
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.working_memory import format_working_memory_entry
@@ -88,7 +94,8 @@ def _make_state(
     session_id: str | None = "thread-test",
     user_id: str | None = None,
     transcript: list[dict[str, str]] | None = None,
-    memory: dict[str, Any] | None = None,
+    session_memory: dict[str, Any] | None = None,
+    procedural_profile: dict[str, Any] | None = None,
 ) -> AgentState:
     """Build a minimal AgentState for unit testing the node helpers.
 
@@ -105,12 +112,17 @@ def _make_state(
         "transcript": transcript or [],
         "history": transcript or [],
         "working_memory": [],
-        "memory": memory
+        "session_memory": session_memory
         or {
             "summary": "",
             "active_concerns": [],
             "open_loops": [],
             "current_goal": None,
+        },
+        "procedural_profile": procedural_profile
+        or {
+            "procedural_rules": [],
+            "proactive_recall_enabled": False,
         },
     }
     return state  # type: ignore[return-value]
@@ -123,14 +135,17 @@ class TestLoadMemoryNode:
     """Regression tests for the refactored load_memory_node."""
 
     @pytest.mark.asyncio
-    async def test_returns_only_working_memory_and_memory_summary_keys(
+    async def test_returns_only_working_memory_and_memory_state_keys(
         self,
     ) -> None:
-        """The delta must contain exactly ``working_memory``, ``memory``, and
-        (v0.8) ``diagnostics`` — no transcript, no history, no response, no
-        routing, no progress. This is the core regression: the old node
-        wrote to seven keys, and the response/routing/transcript writes
-        caused the phantom assistant turn bug.
+        """The delta must contain only the expected load-memory channels.
+
+        The node now owns ``working_memory``, ``session_memory``,
+        ``procedural_profile``, and ``diagnostics`` — no transcript,
+        history, response, routing, session_progress, or exercise_state.
+        This is the core regression: the old node wrote to seven keys,
+        and the response/routing/transcript writes caused the phantom
+        assistant turn bug.
 
         v0.8 observability added ``diagnostics`` to the allowed-key set
         to carry per-stage timings. The forbidden-keys list is unchanged
@@ -145,13 +160,19 @@ class TestLoadMemoryNode:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        assert set(delta.keys()) == {"working_memory", "memory", "diagnostics"}
+        assert set(delta.keys()) == {
+            "working_memory",
+            "session_memory",
+            "procedural_profile",
+            "diagnostics",
+        }
         # Specifically, none of the forbidden keys:
         assert "transcript" not in delta
         assert "history" not in delta
         assert "response" not in delta
         assert "routing" not in delta
-        assert "progress" not in delta
+        assert "session_progress" not in delta
+        assert "exercise_state" not in delta
 
     @pytest.mark.asyncio
     async def test_incognito_mode_skips_retrieval_and_returns_empty(self) -> None:
@@ -175,7 +196,10 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        assert delta["memory"]["summary"] == "Guest session without long-term memory."
+        assert (
+            delta["session_memory"]["summary"]
+            == "Guest session without long-term memory."
+        )
 
     @pytest.mark.asyncio
     async def test_retrieval_hit_produces_structured_semantic_entry(self) -> None:
@@ -209,8 +233,8 @@ class TestLoadMemoryNode:
         # recall toggle state. v0.8.1: summary extended with retrieval_path.
         # Substring assertions are more robust to future extensions than
         # pinning the full string.
-        summary = delta["memory"]["summary"]
-        assert "Retrieved 1 of 1 semantic" in summary
+        summary = delta["session_memory"]["summary"]
+        assert "Retrieved 1 of 1 semantic record(s)" in summary
         assert "0 of 0 episodic record(s)" in summary
         assert "0 procedural rule(s)" in summary
         assert "recall=off" in summary
@@ -251,7 +275,51 @@ class TestLoadMemoryNode:
             delta["working_memory"][0],
             evidence_quote="Actually, my sister moved back in this week.",
         )
-        assert "Retrieved 1 of 1 semantic" in delta["memory"]["summary"]
+        assert (
+            "Retrieved 1 of 2 semantic record(s)" in delta["session_memory"]["summary"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_inactive_semantic_records_do_not_crowd_out_active_hits(
+        self,
+    ) -> None:
+        """Active semantic hits should survive even when stale records dominate the raw rank window."""
+
+        store = OpenCouchMemoryStore()
+        for index in range(SEMANTIC_SEARCH_LIMIT):
+            await store.aput(
+                ("thread-test", "semantic"),
+                f"fact-inactive-{index}",
+                {
+                    "evidence_quote": f"My sister moved inactive entry {index}",
+                    "user_visible": True,
+                    "dormant_at": "2026-04-20T12:00:00Z",
+                    "superseded_by": f"fact-active-{index}",
+                },
+            )
+        for index in range(SEMANTIC_WORKING_MEMORY_LIMIT):
+            await store.aput(
+                ("thread-test", "semantic"),
+                f"fact-active-{index}",
+                {
+                    "evidence_quote": f"My sister moved active entry {index}",
+                    "user_visible": True,
+                },
+            )
+
+        runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
+        state = _make_state(message="sister moved")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert [entry["evidence_quote"] for entry in delta["working_memory"]] == [
+            f"My sister moved active entry {index}"
+            for index in range(SEMANTIC_WORKING_MEMORY_LIMIT)
+        ]
+        assert (
+            f"Retrieved {SEMANTIC_WORKING_MEMORY_LIMIT} of "
+            f"{SEMANTIC_SEARCH_LIMIT + SEMANTIC_WORKING_MEMORY_LIMIT} semantic record(s)"
+        ) in delta["session_memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_retrieval_miss_returns_empty_with_zero_snippet_summary(
@@ -275,8 +343,8 @@ class TestLoadMemoryNode:
         # retrieval_path is also part of the summary; we assert the
         # load-bearing substrings rather than pinning the full string so
         # future observability additions don't require updating this test.
-        summary = delta["memory"]["summary"]
-        assert "Retrieved 0 of 0 semantic" in summary
+        summary = delta["session_memory"]["summary"]
+        assert "Retrieved 0 of 0 semantic record(s)" in summary
         assert "0 of 0 episodic record(s)" in summary
         assert "0 procedural rule(s)" in summary
         assert "recall=off" in summary
@@ -317,7 +385,7 @@ class TestLoadMemoryNode:
 
         # 0 hits, BUT store size is 2 — this is the discriminating line.
         assert delta["working_memory"] == []
-        assert "0 of 2 semantic" in delta["memory"]["summary"]
+        assert "0 of 2 semantic record(s)" in delta["session_memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_summary_reports_meaningful_token_count_after_stopword_filter(
@@ -341,7 +409,7 @@ class TestLoadMemoryNode:
         # Expect "(query had 3 meaningful token(s))." — the stopword
         # filter dropped the pronouns, copulas, and connectives, but
         # kept the three content words.
-        assert "query had 3 meaningful token(s)" in delta["memory"]["summary"]
+        assert "query had 3 meaningful token(s)" in delta["session_memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_summary_reports_zero_meaningful_tokens_for_stopword_only_query(
@@ -363,20 +431,22 @@ class TestLoadMemoryNode:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        assert "0 of 1 semantic" in delta["memory"]["summary"]
-        assert "query had 0 meaningful token(s)" in delta["memory"]["summary"]
+        assert "0 of 1 semantic record(s)" in delta["session_memory"]["summary"]
+        assert "query had 0 meaningful token(s)" in delta["session_memory"]["summary"]
 
     @pytest.mark.asyncio
-    async def test_preserves_other_memory_fields_via_spread(self) -> None:
-        """When updating memory.summary, the node must preserve the other
-        memory fields (active_concerns, open_loops, current_goal). LangGraph's
-        default reducer replaces whole dict values, so the node must spread
-        the existing memory dict before overwriting summary."""
+    async def test_preserves_other_session_memory_fields_via_spread(self) -> None:
+        """When updating ``session_memory.summary``, the node preserves peers.
+
+        LangGraph's default reducer replaces whole dict values, so the
+        node must spread the existing ``session_memory`` dict before
+        overwriting ``summary``.
+        """
 
         store = OpenCouchMemoryStore()
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(
-            memory={
+            session_memory={
                 "summary": "old summary",
                 "active_concerns": ["work stress"],
                 "open_loops": ["unresolved grief"],
@@ -386,11 +456,11 @@ class TestLoadMemoryNode:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["memory"]["active_concerns"] == ["work stress"]
-        assert delta["memory"]["open_loops"] == ["unresolved grief"]
-        assert delta["memory"]["current_goal"] == "sleep better"
+        assert delta["session_memory"]["active_concerns"] == ["work stress"]
+        assert delta["session_memory"]["open_loops"] == ["unresolved grief"]
+        assert delta["session_memory"]["current_goal"] == "sleep better"
         # summary IS updated to the new structured format:
-        assert delta["memory"]["summary"].startswith("Retrieved")
+        assert delta["session_memory"]["summary"].startswith("Retrieved")
 
     @pytest.mark.asyncio
     async def test_owner_id_falls_back_to_session_id(self) -> None:
@@ -440,8 +510,9 @@ class TestLoadMemoryNode:
 # ─── v0.7 Stage C procedural retrieval tests ───────────────────────────
 #
 # load_memory_node now also loads the user's procedural profile (rules
-# + recall toggle) and attaches it to state["memory"]. These fields are
-# STRUCTURALLY SEPARATE from working_memory because procedural rules
+# + recall toggle) and attaches it to ``state["procedural_profile"]``.
+# These fields are STRUCTURALLY SEPARATE from working_memory because
+# procedural rules
 # are directives (silent style shaping) rather than content to be
 # referenced — see the "Design call" notes in the Stage C plan.
 #
@@ -486,11 +557,11 @@ class TestProceduralRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        memory = delta["memory"]
-        assert memory["procedural_rules"] == []
-        assert memory["proactive_recall_enabled"] is False
+        procedural_profile = delta["procedural_profile"]
+        assert procedural_profile["procedural_rules"] == []
+        assert procedural_profile["proactive_recall_enabled"] is False
         # Verify the "guest session" summary is still produced
-        assert "Guest session" in memory["summary"]
+        assert "Guest session" in delta["session_memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_empty_profile_returns_empty_rules_and_recall_off(
@@ -510,9 +581,9 @@ class TestProceduralRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        memory = delta["memory"]
-        assert memory["procedural_rules"] == []
-        assert memory["proactive_recall_enabled"] is False
+        procedural_profile = delta["procedural_profile"]
+        assert procedural_profile["procedural_rules"] == []
+        assert procedural_profile["proactive_recall_enabled"] is False
 
         # Verify the empty-default read did NOT persist a profile — the
         # store should still have zero records.
@@ -549,8 +620,8 @@ class TestProceduralRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        memory = delta["memory"]
-        assert memory["procedural_rules"] == [
+        procedural_profile = delta["procedural_profile"]
+        assert procedural_profile["procedural_rules"] == [
             "You prefer shorter responses.",
             "You've said meditation makes you more anxious.",
         ]
@@ -576,22 +647,20 @@ class TestProceduralRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["memory"]["proactive_recall_enabled"] is True
+        assert delta["procedural_profile"]["proactive_recall_enabled"] is True
 
     @pytest.mark.asyncio
-    async def test_delta_preserves_unrelated_memory_fields(self) -> None:
-        """The procedural fields are merged INTO the existing memory
-        dict, not replacing it. ``active_concerns``, ``open_loops``,
-        and ``current_goal`` must survive the delta.
+    async def test_delta_preserves_unrelated_session_memory_fields(self) -> None:
+        """The procedural delta must not clobber existing session memory.
 
-        Regression guard: the spread-then-update idiom must be
-        applied correctly in the node's return value.
+        ``active_concerns``, ``open_loops``, and ``current_goal`` must
+        survive while the procedural fields update in their own channel.
         """
 
         store = OpenCouchMemoryStore()
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(
-            memory={
+            session_memory={
                 "summary": "prior summary",
                 "active_concerns": ["work stress"],
                 "open_loops": ["unresolved conflict with partner"],
@@ -601,15 +670,16 @@ class TestProceduralRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        memory = delta["memory"]
+        session_memory = delta["session_memory"]
         # Preserved:
-        assert memory["active_concerns"] == ["work stress"]
-        assert memory["open_loops"] == ["unresolved conflict with partner"]
-        assert memory["current_goal"] == "get through this week"
-        # Overwritten (the node OWNS these four fields):
-        assert "prior summary" not in memory["summary"]  # new summary
-        assert memory["procedural_rules"] == []
-        assert memory["proactive_recall_enabled"] is False
+        assert session_memory["active_concerns"] == ["work stress"]
+        assert session_memory["open_loops"] == ["unresolved conflict with partner"]
+        assert session_memory["current_goal"] == "get through this week"
+        # Overwritten in the session-memory channel:
+        assert "prior summary" not in session_memory["summary"]  # new summary
+        # Procedural state lives separately and resets to empty defaults.
+        assert delta["procedural_profile"]["procedural_rules"] == []
+        assert delta["procedural_profile"]["proactive_recall_enabled"] is False
 
     @pytest.mark.asyncio
     async def test_summary_string_reports_procedural_count_and_recall_state(
@@ -646,7 +716,7 @@ class TestProceduralRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        summary = delta["memory"]["summary"]
+        summary = delta["session_memory"]["summary"]
         assert "1 procedural rule(s)" in summary
         assert "recall=on" in summary
 
@@ -794,7 +864,7 @@ class TestEpisodicRetrieval:
         # And the summary should say 0 of 1 episodic (store has a record
         # but it wasn't retrieved because catch-up didn't fire and the
         # query didn't match)
-        assert "0 of 1 episodic" in delta["memory"]["summary"]
+        assert "0 of 1 episodic" in delta["session_memory"]["summary"]
 
     @pytest.mark.asyncio
     async def test_query_based_episodic_retrieval_on_later_turns(self) -> None:
@@ -966,7 +1036,7 @@ class TestEpisodicRetrieval:
 
     @pytest.mark.asyncio
     async def test_summary_includes_both_namespace_counts(self) -> None:
-        """The memory.summary string must report semantic and episodic
+        """The session-memory summary string must report semantic and episodic
         counts separately. This is the load-bearing dogfood observability
         contract — operators need to tell which layer contributed."""
 
@@ -995,9 +1065,9 @@ class TestEpisodicRetrieval:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
-        summary_str = delta["memory"]["summary"]
+        summary_str = delta["session_memory"]["summary"]
         # Semantic count: 2 in store, 1 hit on "Sarah" query
-        assert "1 of 2 semantic" in summary_str
+        assert "1 of 2 semantic record(s)" in summary_str
         # Episodic count: 1 in store, 0 hit (query doesn't match "work pressure"
         # and this is not a first turn)
         assert "0 of 1 episodic" in summary_str
@@ -1027,7 +1097,10 @@ class TestEpisodicRetrieval:
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["working_memory"] == []
-        assert delta["memory"]["summary"] == "Guest session without long-term memory."
+        assert (
+            delta["session_memory"]["summary"]
+            == "Guest session without long-term memory."
+        )
 
     @pytest.mark.asyncio
     async def test_catch_up_returns_newest_arc_beyond_50_sessions(self) -> None:
@@ -1088,8 +1161,8 @@ class TestFinalizeTurnNode:
         and history.
 
         v0.8 observability: the assistant turn dict also carries a
-        ``mode`` field sourced from ``state["routing"]["response_style"]``. This
-        state has no routing, so the mode resolves to ``None``.
+        ``response_style`` field sourced from top-level state. This state
+        has no style set, so the mode resolves to ``None``.
 
         Phase C changed transcript/history to reducer-backed fields, so
         finalize_turn_node must emit ONLY the assistant turn. Returning
@@ -1100,7 +1173,7 @@ class TestFinalizeTurnNode:
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [{"role": "user", "content": "Hi"}],
-            "response": {"text": "Hello, how can I help?"},
+            "response_text": "Hello, how can I help?",
         }
         runtime = _FakeRuntime({})
 
@@ -1116,7 +1189,7 @@ class TestFinalizeTurnNode:
 
     @pytest.mark.asyncio
     async def test_empty_response_text_returns_empty_delta(self) -> None:
-        """If response.text is empty or missing, the node must return an
+        """If ``response_text`` is empty or missing, the node must return an
         empty delta so the transcript stays clean. This guards against a
         branch short-circuiting without producing a reply, which would
         otherwise inject a blank assistant turn."""
@@ -1124,7 +1197,7 @@ class TestFinalizeTurnNode:
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [{"role": "user", "content": "Hi"}],
-            "response": {"text": ""},
+            "response_text": "",
         }
         runtime = _FakeRuntime({})
 
@@ -1140,7 +1213,7 @@ class TestFinalizeTurnNode:
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [],
-            "response": {"text": "   \n\t  "},
+            "response_text": "   \n\t  ",
         }
         runtime = _FakeRuntime({})
 
@@ -1150,7 +1223,7 @@ class TestFinalizeTurnNode:
 
     @pytest.mark.asyncio
     async def test_missing_response_slot_returns_empty_delta(self) -> None:
-        """If the response dict is entirely absent (defensive case), the
+        """If the response field is entirely absent (defensive case), the
         node should return empty rather than crash."""
 
         state: dict[str, Any] = {
@@ -1171,9 +1244,9 @@ class TestFinalizeTurnNode:
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [],
-            "response": {"text": "Hello"},
-            "routing": {"response_style": "supportive"},
-            "memory": {"summary": "x"},
+            "response_text": "Hello",
+            "response_style": "supportive",
+            "session_memory": {"summary": "x"},
         }
         runtime = _FakeRuntime({})
 

@@ -1,21 +1,22 @@
-"""Embedding providers for semantic retrieval (v0.8.1).
+"""Embedding providers for hybrid memory retrieval.
 
-Before v0.8.1 the memory store's retrieval path was token-recall only:
-the v0.3.1 scorer in ``store.asearch`` computed
-``|query_tokens ∩ haystack_tokens| / |query_tokens|`` and returned
-matches above threshold 0.33. That works for exact-token overlap
-and reasonable paraphrases, but it has documented failure modes:
-stemming ("anxiety" ↔ "anxious"), synonyms ("sister" ↔ "sibling"),
-tense / number variation, and semantic paraphrase without lexical
-overlap. Those gaps are the main dogfood pain points v0.8.1 closes.
+Lexical token recall works well for exact overlap and simple
+paraphrases, but it misses stemming, synonyms, tense changes, and
+semantic paraphrases without shared tokens. Embedding providers add a
+dense retrieval path that complements lexical recall when credentials
+are configured.
 
 This module declares the :class:`EmbeddingProvider` protocol and
-two concrete implementations:
+three concrete implementations:
+
+- :class:`OpenAIEmbeddingProvider` — calls OpenAI's
+  ``text-embedding-3-large`` via the existing ``openai`` client.
+  This is the default when ``OPENAI_API_KEY`` is configured.
 
 - :class:`GeminiEmbeddingProvider` — calls Google's
-  ``text-embedding-004`` via the existing ``google.genai`` client.
-  This is the default when a Gemini API key is configured (via
-  ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY`` env vars).
+  ``gemini-embedding-001`` via the existing ``google.genai`` client.
+  This is the fallback real provider when only ``GEMINI_API_KEY``
+  or ``GOOGLE_API_KEY`` is configured.
 
 - :class:`NullEmbeddingProvider` — a no-op that always returns
   ``None`` for embedding calls. Used when no API key is available,
@@ -24,23 +25,22 @@ two concrete implementations:
   embedding via a ``NullEmbeddingProvider`` get back ``None``,
   which is the signal to fall back to token-recall.
 
-Design decisions locked for v0.8.1:
+Design decisions:
 
 1. **Protocol, not inheritance.** The :class:`EmbeddingProvider`
    protocol has exactly one method (``aembed``) plus two metadata
    properties (``dimension``, ``model_name``). Concrete classes
    implement the protocol structurally rather than inheriting from
-   an abstract base class — this matches the
+   an abstract base class. This matches the
    :class:`agent.memory.store.MemoryStore` pattern and keeps the
    provider surface minimal.
 
 2. **Metadata is part of the protocol.** ``dimension`` and
-   ``model_name`` are required because the store writes them
-   alongside each record's embedding (in the ``embedding_dim`` and
-   ``embedding_model`` columns added in v0.8.1). Later model
-   migrations can compare the stored model name against the current
-   provider's model name and skip retrieval on mismatched cohorts
-   until a re-embed sweep runs.
+   ``model_name`` are required because the store writes the model
+   name alongside each record's embedding in the ``embedding_model``
+   column. Model migrations can compare the stored model name against
+   the current provider's model name and skip retrieval on mismatched
+   cohorts until a re-embed sweep runs.
 
 3. **Batch support.** ``aembed`` takes a list of texts and returns
    a list of embeddings (one per input). This matches the Gemini
@@ -52,7 +52,7 @@ Design decisions locked for v0.8.1:
    store serializes embeddings to a BLOB via
    ``struct.pack``/``unpack`` (see ``sqlite_store.py``). Keeping
    the protocol type as plain lists means callers don't need
-   numpy at the boundary — numpy only enters the picture inside
+   numpy at the boundary. numpy only enters the picture inside
    the retrieval scoring helper in ``retrieval.py``, and even
    there it's optional (the cosine similarity can run on pure
    Python floats).
@@ -73,7 +73,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +96,11 @@ DEFAULT_GEMINI_EMBEDDING_DIMENSION = 3072
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
-    """The async embedding interface for v0.8.1 retrieval.
+    """The async embedding interface for memory retrieval.
 
     Concrete implementations:
-    - :class:`GeminiEmbeddingProvider` — Google text-embedding-004
+    - :class:`OpenAIEmbeddingProvider` — OpenAI text-embedding-3-large
+    - :class:`GeminiEmbeddingProvider` — Google gemini-embedding-001
     - :class:`NullEmbeddingProvider` — the no-embedding fallback
 
     All nodes that need embeddings should type their dependencies
@@ -117,6 +118,9 @@ class EmbeddingProvider(Protocol):
         handle model-migration cohorts. Should be stable across
         calls for a given provider instance — don't return random
         strings or timestamps.
+
+        Returns:
+            str: Stable embedding model identifier.
         """
         ...
 
@@ -129,11 +133,18 @@ class EmbeddingProvider(Protocol):
         cosine similarity. Mismatched dimensions are a signal to
         skip the record in the embedding path (the token-recall
         fallback still applies).
+
+        Returns:
+            int: Expected embedding vector dimension.
         """
         ...
 
     async def awarmup(self) -> None:
-        """Initialize provider resources ahead of the first real embed call."""
+        """Initialize provider resources ahead of first use.
+
+        Returns:
+            None: Warms the provider for later embed calls.
+        """
         ...
 
     async def aembed(
@@ -145,37 +156,11 @@ class EmbeddingProvider(Protocol):
         """Embed a batch of texts.
 
         Args:
-            texts: List of strings to embed. Empty strings are
-                allowed but will produce a zero-vector or a None
-                depending on the provider. Callers should skip
-                empty texts upstream when possible.
-            task_type: The embedding task hint (Gemini-specific).
-                ``"RETRIEVAL_DOCUMENT"`` is the default for
-                document-side embeddings (facts, arcs) written
-                at extraction time. ``"RETRIEVAL_QUERY"`` is used
-                for the query-side embeddings computed in
-                ``load_memory_node``. Asymmetric embeddings tuned
-                for retrieval generally prefer this distinction
-                because document-side and query-side embeddings
-                have different usage patterns. Providers that
-                don't support task types (e.g.,
-                :class:`NullEmbeddingProvider`) can ignore this
-                argument.
+            texts (list[str]): Input texts to embed.
+            task_type (str): Embedding task hint such as query vs document mode.
 
         Returns:
-            A list of embeddings, one per input text. Each entry
-            is either a list of floats (length equal to
-            ``self.dimension``) or ``None`` if embedding computation
-            failed for that specific text. The list length always
-            matches the input length so callers can zip
-            texts with their embeddings by index.
-
-        Never raises: provider errors are caught internally and
-        returned as ``None`` entries in the output list. This is a
-        deliberate contract — the node code above (extractor, load
-        memory) treats an embedding as an optimization, not a
-        correctness requirement, so it should never poison a
-        turn with an embedding-provider exception.
+            list[list[float] | None]: One embedding result per input text.
         """
         ...
 
@@ -202,7 +187,11 @@ class NullEmbeddingProvider:
     dimension: int = 0
 
     async def awarmup(self) -> None:
-        """No-op warmup for the null provider."""
+        """Warm the null provider.
+
+        Returns:
+            None: No-op for the null provider.
+        """
         return
 
     async def aembed(
@@ -211,10 +200,14 @@ class NullEmbeddingProvider:
         *,
         task_type: str = "RETRIEVAL_DOCUMENT",  # noqa: ARG002 — contract
     ) -> list[list[float] | None]:
-        """Return a list of ``None`` values matching the input length.
+        """Return null embeddings for each input text.
 
-        The ``None`` return signals "no embedding available" which
-        callers treat as "skip embedding, use token-recall."
+        Args:
+            texts (list[str]): Input texts to embed.
+            task_type (str): Unused task hint kept for protocol compatibility.
+
+        Returns:
+            list[list[float] | None]: ``None`` for each input text.
         """
 
         return [None] * len(texts)
@@ -273,14 +266,30 @@ class OpenAIEmbeddingProvider:
 
     @property
     def model_name(self) -> str:
+        """Return the configured OpenAI embedding model name.
+
+        Returns:
+            str: Embedding model identifier.
+        """
+
         return self._model
 
     @property
     def dimension(self) -> int:
+        """Return the configured OpenAI embedding dimensionality.
+
+        Returns:
+            int: Expected embedding vector dimension.
+        """
+
         return self._dimension
 
     async def awarmup(self) -> None:
-        """Pre-open provider connections before the first user turn."""
+        """Warm the OpenAI provider.
+
+        Returns:
+            None: Issues a lightweight embed call.
+        """
         await self.aembed([" "], task_type="RETRIEVAL_QUERY")
 
     async def aembed(
@@ -289,12 +298,14 @@ class OpenAIEmbeddingProvider:
         *,
         task_type: str = "RETRIEVAL_DOCUMENT",  # noqa: ARG002 — OpenAI ignores task hints
     ) -> list[list[float] | None]:
-        """Embed a batch of texts via OpenAI's embeddings API.
+        """Embed a batch of texts with OpenAI.
 
-        See :meth:`EmbeddingProvider.aembed` for the contract.
-        Provider errors are caught and returned as all-``None``
-        results so a transient outage degrades to token-recall
-        rather than poisoning the turn.
+        Args:
+            texts (list[str]): Input texts to embed.
+            task_type (str): Unused task hint kept for protocol compatibility.
+
+        Returns:
+            list[list[float] | None]: One embedding result per input text.
         """
 
         if not texts:
@@ -377,16 +388,14 @@ class GeminiEmbeddingProvider:
             api_key: Optional explicit Gemini API key. Falls back to
                 ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY`` env vars.
             model: Embedding model identifier. Defaults to
-                ``text-embedding-004``. Changing this requires a
+                ``gemini-embedding-001``. Changing this requires a
                 re-embed sweep for records already stored with the
                 old model, since cosine similarity across model
                 cohorts is not meaningful.
             dimension: The model's output dimensionality. Used by
                 the store to validate stored-vs-current matches.
-                Defaults to 768 (text-embedding-004's native
-                dimension). Some models support configurable
-                output dimensions (OpenAI 3-small can be 512 or
-                1536); Gemini 004 is fixed at 768.
+                Defaults to 3072 (the current
+                ``gemini-embedding-001`` setting used here).
 
         Raises:
             ValueError: if no Gemini API key can be resolved.
@@ -401,10 +410,8 @@ class GeminiEmbeddingProvider:
                 "Set GEMINI_API_KEY or GOOGLE_API_KEY."
             )
 
-        # Import inside __init__ so the module can be imported in
-        # environments without google-genai installed (though the
-        # project always has it as of v0.8). Matches the laziness
-        # pattern used elsewhere in services/llm/.
+        # Import lazily so this module can load when google-genai is
+        # unavailable or unused.
         from google import genai
 
         self._client = genai.Client(api_key=resolved_key)
@@ -413,14 +420,30 @@ class GeminiEmbeddingProvider:
 
     @property
     def model_name(self) -> str:
+        """Return the configured Gemini embedding model name.
+
+        Returns:
+            str: Embedding model identifier.
+        """
+
         return self._model
 
     @property
     def dimension(self) -> int:
+        """Return the configured Gemini embedding dimensionality.
+
+        Returns:
+            int: Expected embedding vector dimension.
+        """
+
         return self._dimension
 
     async def awarmup(self) -> None:
-        """Pre-open provider connections before the first user turn."""
+        """Warm the Gemini provider.
+
+        Returns:
+            None: Issues a lightweight embed call.
+        """
         await self.aembed([" "], task_type="RETRIEVAL_QUERY")
 
     async def aembed(
@@ -429,18 +452,14 @@ class GeminiEmbeddingProvider:
         *,
         task_type: str = "RETRIEVAL_DOCUMENT",
     ) -> list[list[float] | None]:
-        """Embed a batch of texts via Gemini's embed_content API.
+        """Embed a batch of texts with Gemini.
 
-        See :meth:`EmbeddingProvider.aembed` for the contract.
-        Provider errors are caught and returned as all-``None``
-        results so a transient Gemini outage degrades to token-recall
-        rather than poisoning the turn.
+        Args:
+            texts (list[str]): Input texts to embed.
+            task_type (str): Gemini embedding task type.
 
-        Empty input strings are replaced with a single space before
-        embedding because the Gemini API rejects zero-length
-        content. The caller should ideally filter empty texts
-        upstream, but the fallback means an accidental empty won't
-        crash the whole batch.
+        Returns:
+            list[list[float] | None]: One embedding result per input text.
         """
 
         if not texts:
@@ -458,7 +477,7 @@ class GeminiEmbeddingProvider:
         try:
             response = await self._client.aio.models.embed_content(
                 model=self._model,
-                contents=sanitized,
+                contents=cast(Any, sanitized),
                 config=types.EmbedContentConfig(
                     task_type=task_type,
                 ),
@@ -514,23 +533,10 @@ class GeminiEmbeddingProvider:
 
 
 def create_configured_embedding_provider() -> EmbeddingProvider:
-    """Build the right embedding provider based on environment config.
+    """Build the configured embedding provider for the current environment.
 
-    Resolution order:
-    1. If ``OPENAI_API_KEY`` is set, returns :class:`OpenAIEmbeddingProvider`
-       using ``OPENAI_EMBEDDING_MODEL`` or ``text-embedding-3-large``.
-    2. Else if ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY`` is set, returns
-       :class:`GeminiEmbeddingProvider`.
-    3. Otherwise, returns :class:`NullEmbeddingProvider`.
-
-    This helper is the canonical wiring path used by
-    :class:`agent.persistence.PersistentAgentRuntime`. Tests and
-    one-off scripts can instantiate a concrete provider directly.
-
-    Returns a provider that always satisfies the
-    :class:`EmbeddingProvider` protocol — the caller never has to
-    handle a ``None`` return here. Graceful degradation happens at
-    the ``aembed`` call level, not at construction time.
+    Returns:
+        EmbeddingProvider: OpenAI, Gemini, or null provider based on env config.
     """
 
     if os.getenv("OPENAI_API_KEY"):

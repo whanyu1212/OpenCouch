@@ -57,7 +57,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
@@ -149,7 +149,7 @@ def _build_state(case: dict[str, Any]) -> AgentState:
         "history": case.get("history", []),
         "user_id": case.get("user_id") or "eval-user",
         "session_id": case.get("session_id") or "eval-session",
-        "progress": {"turn_count": 1},
+        "session_progress": {"turn_count": 1},
         "transcript": [],
     }
     return cast(AgentState, state)

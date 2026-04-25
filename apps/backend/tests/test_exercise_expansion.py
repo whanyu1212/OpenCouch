@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
@@ -63,19 +63,18 @@ def _make_state(
 ) -> Any:
     """Build a minimal state dict for exercise tests."""
 
-    progress: dict[str, Any] = {"turn_count": 1}
+    exercise_state: dict[str, Any] = {}
     if exercise_type is not None:
-        progress["exercise_type"] = exercise_type
+        exercise_state["exercise_type"] = exercise_type
     if exercise_step is not None:
-        progress["exercise_step"] = exercise_step
+        exercise_state["exercise_step"] = exercise_step
 
     return {
         "message": message,
         "session_id": "test-exercise",
         "history": [],
-        "progress": progress,
-        "response": {},
-        "routing": {},
+        "session_progress": {"turn_count": 1},
+        "exercise_state": exercise_state,
     }
 
 
@@ -380,9 +379,9 @@ class TestBoxBreathingFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] == EXERCISE_BOX_BREATHING
-        assert delta["progress"]["exercise_step"] == 0
-        assert "breathe in" in delta["response"]["text"].lower()
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_BOX_BREATHING
+        assert delta["exercise_state"]["exercise_step"] == 0
+        assert "breathe in" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_confirmation_advances_box_breathing(self) -> None:
@@ -399,8 +398,8 @@ class TestBoxBreathingFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_step"] == 1
-        assert "hold" in delta["response"]["text"].lower()
+        assert delta["exercise_state"]["exercise_step"] == 1
+        assert "hold" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_box_breathing_completion(self) -> None:
@@ -419,9 +418,9 @@ class TestBoxBreathingFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] is None
-        assert delta["progress"]["exercise_step"] is None
-        assert "box breathing" in delta["response"]["text"].lower()
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
+        assert "box breathing" in delta["response_text"].lower()
 
 
 class TestThoughtRecordFlow:
@@ -442,9 +441,9 @@ class TestThoughtRecordFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] == EXERCISE_THOUGHT_RECORD
-        assert delta["progress"]["exercise_step"] == 0
-        assert "situation" in delta["response"]["text"].lower()
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_THOUGHT_RECORD
+        assert delta["exercise_state"]["exercise_step"] == 0
+        assert "situation" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_thought_record_advances_on_description(self) -> None:
@@ -465,7 +464,7 @@ class TestThoughtRecordFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_step"] == 1
+        assert delta["exercise_state"]["exercise_step"] == 1
 
 
 class TestMuscleRelaxationFlow:
@@ -486,11 +485,11 @@ class TestMuscleRelaxationFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
-        assert delta["progress"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
+        assert delta["exercise_state"]["exercise_step"] == 0
         assert (
-            "hands" in delta["response"]["text"].lower()
-            or "fist" in delta["response"]["text"].lower()
+            "hands" in delta["response_text"].lower()
+            or "fist" in delta["response_text"].lower()
         )
 
     @pytest.mark.asyncio
@@ -508,8 +507,8 @@ class TestMuscleRelaxationFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_step"] == 1
-        assert "shoulder" in delta["response"]["text"].lower()
+        assert delta["exercise_state"]["exercise_step"] == 1
+        assert "shoulder" in delta["response_text"].lower()
 
 
 class TestSelfCompassionFlow:
@@ -530,8 +529,8 @@ class TestSelfCompassionFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] == EXERCISE_SELF_COMPASSION
-        assert delta["progress"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_SELF_COMPASSION
+        assert delta["exercise_state"]["exercise_step"] == 0
 
     @pytest.mark.asyncio
     async def test_self_compassion_completes_in_3_steps(self) -> None:
@@ -555,8 +554,8 @@ class TestSelfCompassionFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] is None
-        assert delta["progress"]["exercise_step"] is None
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
 
 
 class TestExitMidExercise:
@@ -577,11 +576,11 @@ class TestExitMidExercise:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] is None
-        assert delta["progress"]["exercise_step"] is None
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
         assert (
-            "stop" in delta["response"]["text"].lower()
-            or "helpful" in delta["response"]["text"].lower()
+            "stop" in delta["response_text"].lower()
+            or "helpful" in delta["response_text"].lower()
         )
 
     @pytest.mark.asyncio
@@ -601,8 +600,8 @@ class TestExitMidExercise:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["progress"]["exercise_type"] is None
-        assert delta["progress"]["exercise_step"] is None
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
 
 
 class TestRegistryCompleteness:
@@ -763,4 +762,167 @@ class TestExerciseCompletionMemory:
         )
 
         # Should complete normally without error
-        assert delta["progress"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_type"] is None
+
+
+# ── Exercise modality lifecycle tests ────────────────────────────────
+
+
+class TestExerciseModality:
+    """Verify exercise_modality is captured at start, cleared on exit/completion,
+    and used by the prompt builder."""
+
+    @pytest.mark.asyncio
+    async def test_start_captures_routing_modality(self) -> None:
+        """Starting an exercise stores routing.therapeutic_approach in exercise_state."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_THOUGHT_RECORD,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("let's do a thought record")
+        state["therapeutic_approach"] = "cbt"
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_THOUGHT_RECORD
+        assert delta["exercise_state"]["exercise_modality"] == "cbt"
+
+    @pytest.mark.asyncio
+    async def test_start_without_modality_stores_none(self) -> None:
+        """Starting with no modality stores None (modality-agnostic)."""
+        from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("can we do a breathing exercise")
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_modality"] is None
+
+    @pytest.mark.asyncio
+    async def test_completion_clears_modality(self) -> None:
+        """Completing the last step clears exercise_modality."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
+        state["exercise_state"]["exercise_modality"] = "dbt_skills"
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_modality"] is None
+
+    @pytest.mark.asyncio
+    async def test_exit_clears_modality(self) -> None:
+        """Exiting mid-exercise clears exercise_modality."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("stop, I don't want to do this", EXERCISE_BOX_BREATHING, 1)
+        state["exercise_state"]["exercise_modality"] = "dbt_skills"
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_modality"] is None
+
+    def test_prompt_builder_prefers_exercise_modality(self) -> None:
+        """build_guided_exercise_system_prompt reads exercise_state.exercise_modality
+        over routing.therapeutic_approach when an exercise is active."""
+        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+
+        state: dict[str, Any] = {
+            "exercise_state": {
+                "exercise_type": "defusion_leaves_on_stream",
+                "exercise_step": 1,
+                "exercise_modality": "act",
+            },
+            "therapeutic_approach": "cbt",
+            "working_memory": [],
+            "procedural_profile": {},
+        }
+
+        prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
+        # ACT overlay should be present (acceptance/defusion content)
+        assert "acceptance" in prompt.lower()
+        # CBT-specific content should NOT dominate — verify ACT was chosen
+        # by checking for ACT-specific language that wouldn't appear in CBT
+        assert "defusion" in prompt.lower() or "willingness" in prompt.lower()
+
+    def test_prompt_builder_falls_back_to_routing(self) -> None:
+        """When exercise_modality is None, falls back to routing approach."""
+        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+
+        state: dict[str, Any] = {
+            "exercise_state": {"exercise_modality": None},
+            "therapeutic_approach": "cbt",
+            "working_memory": [],
+            "procedural_profile": {},
+        }
+
+        prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
+        # CBT overlay should be present
+        assert "cbt" in prompt.lower() or "cognitive" in prompt.lower()
+
+    def test_prompt_builder_ignores_stale_modality_without_exercise(self) -> None:
+        """When exercise_type is None but exercise_modality is stale,
+        the prompt builder ignores the stale modality and falls back to routing."""
+        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+
+        state: dict[str, Any] = {
+            "exercise_state": {
+                "exercise_type": None,
+                "exercise_modality": "act",
+            },
+            "therapeutic_approach": "cbt",
+            "working_memory": [],
+            "procedural_profile": {},
+        }
+
+        prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
+        # Should use CBT from routing, not stale ACT from exercise_state
+        assert "cbt" in prompt.lower() or "cognitive" in prompt.lower()
+
+
+class TestCompletionCheckIn:
+    """Verify the completion fallback includes the check-in question."""
+
+    @pytest.mark.asyncio
+    async def test_completion_fallback_asks_how_it_felt(self) -> None:
+        """The deterministic completion text includes a check-in question."""
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        text = delta["response_text"]
+        assert "how was that for you" in text.lower()

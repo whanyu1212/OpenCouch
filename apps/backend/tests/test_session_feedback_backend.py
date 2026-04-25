@@ -28,12 +28,12 @@ from pathlib import Path
 import pytest
 
 from agent.memory.models import SessionFeedbackRecord
-from agent.memory.session_feedback import (
+from agent.audit.session_feedback import (
     InMemorySessionFeedbackBackend,
     NullSessionFeedbackBackend,
     SessionFeedbackBackend,
 )
-from agent.memory.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
 
 
 # ─── Test helpers ────────────────────────────────────────────────────

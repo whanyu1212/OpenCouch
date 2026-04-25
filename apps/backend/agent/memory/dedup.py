@@ -7,7 +7,7 @@ record's ``last_referenced_at`` instead of inserting a new row. This
 prevents the semantic namespace from filling up with restatements of
 the same fact across multiple turns.
 
-Phase 1 v0.3 design:
+Design:
 - **Comparison is field-aware.** Two facts are duplicates only when
   their structural fields match (same subject, predicate, object) AND
   their evidence quotes are highly similar. This matches the schema's
@@ -16,22 +16,18 @@ Phase 1 v0.3 design:
   to align for a collision to count.
 - **Similarity is token-set Jaccard on the evidence quote.** Strict
   word-overlap matching. Two paraphrases with different word choices
-  are NOT considered duplicates under Jaccard (they'd be under vector
-  similarity, but that's deferred to v0.8). This is conservative by
-  design: false-negative duplicates just produce a redundant-looking
-  ``/memory list`` entry; false-positive merges lose signal
-  permanently. Conservative wins.
-- **Threshold is 0.85.** Higher than the 0.95 that schema.yaml §9 q5
-  locks for vector similarity, because Jaccard is stricter: 0.85
+  are not considered duplicates under Jaccard. This is conservative by
+  design: false-negative duplicates produce a redundant-looking
+  ``/memory list`` entry, while false-positive merges lose signal
+  permanently.
+- **Threshold is 0.85.** Higher than the 0.95 target we'd use for
+  vector similarity, because Jaccard is stricter: 0.85
   Jaccard roughly corresponds to "almost all the same words, maybe
   one or two different." 0.95 would require near-identical quotes,
   which is rarely achievable across two distinct turns.
 
-When v0.8 ships SQLite backing + real embeddings, this module can
-either (a) be replaced with a vector-similarity implementation, or
-(b) sit alongside the new code as a deterministic fallback. The
-public interface (``find_near_duplicate``) should stay stable so
-the caller in :mod:`agent.nodes.extract_facts` doesn't need updating.
+The public interface (``find_near_duplicate``) stays narrow so callers
+do not need to know which duplicate-detection heuristic is active.
 """
 
 from __future__ import annotations
@@ -44,10 +40,9 @@ from agent.memory.text_tokens import tokenize as _tokenize
 # duplicate. See module docstring for rationale on the value.
 JACCARD_DUPLICATE_THRESHOLD = 0.85
 
-# ``_tokenize`` is imported from ``agent.memory.text_tokens`` and
-# re-exported under the old private name so existing tests that import
-# ``_tokenize`` from this module (see test_memory_dedup.py) keep working
-# without change. Dedup uses the **full** token set — no stopword
+# ``_tokenize`` is imported from ``agent.memory.text_tokens`` and kept
+# under this private name for compatibility with tests that import it
+# from this module. Dedup uses the **full** token set — no stopword
 # filtering — because even pronouns and articles matter when deciding
 # whether two evidence quotes describe the same fact ("I feel sad" vs
 # "she feels sad" must remain distinct, so dropping pronouns would
@@ -55,11 +50,14 @@ JACCARD_DUPLICATE_THRESHOLD = 0.85
 
 
 def _jaccard_similarity(a: frozenset[str], b: frozenset[str]) -> float:
-    """Compute the Jaccard similarity of two token sets.
+    """Compute Jaccard similarity for two token sets.
 
-    Returns 0.0 when both sets are empty (degenerate case — empty
-    quotes shouldn't reach this function but the guard prevents a
-    division-by-zero if they do).
+    Args:
+        a (frozenset[str]): First token set.
+        b (frozenset[str]): Second token set.
+
+    Returns:
+        float: Jaccard similarity in ``[0.0, 1.0]``.
     """
 
     if not a and not b:
@@ -73,12 +71,14 @@ def _triples_match(
     candidate: MemoryWrite,
     existing: StoreRecord,
 ) -> bool:
-    """Return whether two facts have matching (subject, predicate, object) triples.
+    """Return whether two facts have matching semantic triples.
 
-    The existing record's ``value`` dict is the serialized ``SemanticFact``,
-    so the subject/object are nested dicts with ``type`` and ``identifier``
-    keys. This helper reaches into those without needing to reconstruct
-    the full pydantic model, which keeps the dedup path cheap.
+    Args:
+        candidate (MemoryWrite): Candidate fact to compare.
+        existing (StoreRecord): Existing stored fact record.
+
+    Returns:
+        bool: ``True`` when subject, predicate, and object all align.
     """
 
     value = existing.value
@@ -122,10 +122,9 @@ def find_near_duplicate(
     ``last_referenced_at`` timestamp instead of writing the new one.
 
     Performance note: this function iterates the full ``existing_records``
-    list. For v0.3's in-memory store with ~hundreds of records per user,
-    O(n) is fine. When v0.8 ships SQLite backing, a future variant can
-    push the triple match into a WHERE clause and only compute Jaccard
-    on the narrow subset that structurally matches.
+    list. That is acceptable for the current expected scale of hundreds
+    of records per user. A store-specific implementation can push the
+    triple match into a WHERE clause if this path becomes hot.
 
     Args:
         candidate: The new fact the extractor wants to write.
@@ -134,8 +133,8 @@ def find_near_duplicate(
             ``store.asearch(namespace, query=None, limit=<large>)``.
         threshold: Minimum Jaccard similarity to count as a duplicate.
             Defaults to :data:`JACCARD_DUPLICATE_THRESHOLD` (0.85).
-            Higher values are more permissive (fewer merges); lower
-            values are more aggressive (more merges).
+            Higher values are stricter (fewer merges); lower values are
+            more aggressive (more merges).
 
     Returns:
         The first matching ``StoreRecord``, or ``None`` if no duplicate

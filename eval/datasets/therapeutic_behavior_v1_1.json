@@ -1,0 +1,412 @@
+[
+  {
+    "id": "regex_supportive_distress_no_exercise_push",
+    "dispatch_tier": "regex",
+    "message": "I feel really overwhelmed and exhausted today.",
+    "expected_response_style": "supportive",
+    "assertions": {
+      "must_not_include_any": [
+        "exercise",
+        "grounding",
+        "5-4-3-2-1",
+        "box breathing",
+        "breathing technique"
+      ],
+      "max_sentences": 5
+    },
+    "notes": "Distress self-report should stay supportive and avoid jumping into exercises."
+  },
+  {
+    "id": "regex_supportive_short_self_report",
+    "dispatch_tier": "regex",
+    "message": "I'm anxious about tomorrow.",
+    "expected_response_style": "supportive",
+    "assertions": {
+      "must_not_include_any": [
+        "exercise",
+        "grounding"
+      ]
+    },
+    "notes": "Short self-report should not be routed to clarifying."
+  },
+  {
+    "id": "regex_reflective_pattern_question",
+    "dispatch_tier": "regex",
+    "message": "Why do I keep ending up in the same fight with my partner?",
+    "expected_response_style": "reflective",
+    "assertions": {
+      "require_question": true
+    },
+    "notes": "Reflective mode should probe gently and usually ask a question."
+  },
+  {
+    "id": "regex_reflective_i_notice_pattern",
+    "dispatch_tier": "regex",
+    "message": "I notice I keep apologizing first even when I'm hurt.",
+    "expected_response_style": "reflective",
+    "assertions": {
+      "require_question": true
+    },
+    "notes": "Pattern naming should stay reflective."
+  },
+  {
+    "id": "regex_clarifying_sparse_ok",
+    "dispatch_tier": "regex",
+    "message": "ok",
+    "expected_response_style": "clarifying",
+    "assertions": {
+      "require_question": true,
+      "must_include_any": [
+        "can you",
+        "help me understand",
+        "what"
+      ]
+    },
+    "notes": "Sparse input should elicit one focused clarifying question."
+  },
+  {
+    "id": "regex_clarifying_huh",
+    "dispatch_tier": "regex",
+    "message": "Huh?",
+    "expected_response_style": "clarifying",
+    "assertions": {
+      "require_question": true
+    },
+    "notes": "Explicit confusion marker should route to clarifying."
+  },
+  {
+    "id": "llm_supportive_capability_opening",
+    "dispatch_tier": "llm",
+    "message": "Hi, what can you do for me?",
+    "expected_response_style": "supportive",
+    "assertions": {
+      "must_not_include_any": [
+        "can you clarify",
+        "what do you mean"
+      ],
+      "max_sentences": 6
+    },
+    "notes": "Session-opening capability ask should feel warm/supportive rather than interrogative."
+  },
+  {
+    "id": "llm_supportive_low_content_opening_optional_plan",
+    "dispatch_tier": "llm",
+    "message": "Hi, I don't really know where to start.",
+    "expected_response_style": "supportive",
+    "assertions": {
+      "require_question": true,
+      "max_question_marks": 1,
+      "max_sentences": 5,
+      "must_include_any": [
+        "specific",
+        "plan",
+        "what you want",
+        "want from this",
+        "what's most present",
+        "most present",
+        "where to start"
+      ],
+      "must_not_include_any": [
+        "goal for this session",
+        "goals for this session",
+        "what would you like to achieve",
+        "intake"
+      ]
+    },
+    "notes": "Low-content opening should invite optional orientation without becoming intake."
+  },
+  {
+    "id": "llm_supportive_emotional_opening_no_session_plan",
+    "dispatch_tier": "llm",
+    "message": "Hi. I'm barely holding it together after a fight with my partner.",
+    "expected_response_style": "supportive",
+    "assertions": {
+      "max_sentences": 5,
+      "must_not_include_any": [
+        "what do you want from this session",
+        "specific plan",
+        "goal for this session",
+        "goals for this session",
+        "what would you like to achieve",
+        "what are we working on today"
+      ]
+    },
+    "notes": "Emotionally loaded openings should receive support first, not session-plan orientation."
+  },
+  {
+    "id": "llm_supportive_not_ready_for_technique",
+    "dispatch_tier": "llm",
+    "message": "I'm spiraling and I can't think straight. Please don't give me techniques right now.",
+    "expected_response_style": "supportive",
+    "assertions": {
+      "must_not_include_any": [
+        "let's do an exercise",
+        "grounding exercise",
+        "5-4-3-2-1",
+        "box breathing",
+        "technique we can do"
+      ]
+    },
+    "notes": "Readiness-sensitive case: should avoid structured interventions when user declines."
+  },
+  {
+    "id": "llm_psychoeducation_reaction_frame",
+    "dispatch_tier": "llm",
+    "message": "My heart races and my chest gets tight at night. Why does this happen?",
+    "expected_response_style": "psychoeducation",
+    "assertions": {
+      "require_question": true,
+      "max_sentences": 6
+    },
+    "notes": "Concrete reaction + understanding request should route to psychoeducation."
+  },
+  {
+    "id": "llm_guided_exercise_explicit_request",
+    "dispatch_tier": "llm",
+    "message": "Can you guide me through a grounding exercise right now?",
+    "expected_response_style": "guided_exercise",
+    "assertions": {
+      "must_include_any": [
+        "exercise",
+        "grounding",
+        "breathe",
+        "breathing"
+      ]
+    },
+    "notes": "Explicit intervention request should route to guided_exercise."
+  },
+  {
+    "id": "llm_technique_thought_work_request",
+    "dispatch_tier": "llm",
+    "message": "Can you help me examine this thought step by step? I want to look at evidence for and against it.",
+    "expected_response_style": "technique",
+    "assertions": {
+      "must_include_any": [
+        "thought",
+        "evidence"
+      ],
+      "max_question_marks": 1,
+      "first_sentence_must_include_any": [
+        "hard",
+        "heavy",
+        "painful",
+        "sounds",
+        "makes sense",
+        "understandable",
+        "a lot",
+        "carrying",
+        "tough"
+      ]
+    },
+    "notes": "Technique mode should lead with brief attunement before structured thought work."
+  },
+  {
+    "id": "llm_closing_explicit_wind_down",
+    "dispatch_tier": "llm",
+    "message": "Thanks, I need to head out now. Let's pause here.",
+    "expected_response_style": "closing",
+    "assertions": {
+      "max_sentences": 5
+    },
+    "notes": "Explicit wind-down should route to closing mode."
+  },
+  {
+    "id": "llm_supportive_memory_reference_discipline_recall_off",
+    "dispatch_tier": "llm",
+    "message": "Work was brutal today and I feel wiped out.",
+    "working_memory": [
+      {
+        "type": "episodic",
+        "summary": "Last session you talked about your sister Sarah going quiet after conflict and how guilty that leaves you.",
+        "primary_themes": [
+          "family",
+          "conflict"
+        ],
+        "is_catch_up": false,
+        "approach_used": "interpersonal_therapy"
+      },
+      {
+        "type": "semantic",
+        "category": "relationship",
+        "subject": "User",
+        "predicate": "HAS_SISTER",
+        "object": "Sarah",
+        "evidence_quote": "My sister Sarah stops replying when conflict comes up."
+      }
+    ],
+    "expected_response_style": "supportive",
+    "assertions": {
+      "must_not_include_any": [
+        "last session",
+        "earlier you said",
+        "you mentioned",
+        "previously",
+        "sarah"
+      ],
+      "max_sentences": 5
+    },
+    "notes": "With proactive recall off by default, retrieved memory may shape the response silently but should not be explicitly narrated."
+  },
+  {
+    "id": "llm_multiturn_readiness_gate_then_opt_in",
+    "dispatch_tier": "llm",
+    "turns": [
+      {
+        "message": "I'm spiraling and I can't think straight. Please don't give me techniques right now.",
+        "expected_response_style": "supportive",
+        "assertions": {
+          "must_not_include_any": [
+            "exercise",
+            "grounding",
+            "5-4-3-2-1",
+            "box breathing",
+            "breathe with me"
+          ],
+          "max_sentences": 5
+        }
+      },
+      {
+        "message": "Can you just stay with me for a minute instead?",
+        "expected_response_style": "supportive",
+        "assertions": {
+          "must_not_include_any": [
+            "exercise",
+            "grounding",
+            "5-4-3-2-1",
+            "box breathing"
+          ],
+          "max_sentences": 5
+        }
+      },
+      {
+        "message": "Okay, I think I could try one simple grounding step now.",
+        "expected_response_style": "guided_exercise",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          0
+        ],
+        "assertions": {
+          "must_include_any": [
+            "grounding",
+            "see around you",
+            "see right now",
+            "five things you can see"
+          ],
+          "max_sentences": 5
+        }
+      }
+    ],
+    "notes": "The agent should respect an initial 'not ready' boundary across turns, then move into an exercise once the user explicitly opts in."
+  },
+  {
+    "id": "llm_multiturn_clarifying_side_turn_during_exercise",
+    "dispatch_tier": "llm",
+    "turns": [
+      {
+        "message": "Can you guide me through a grounding exercise right now?",
+        "expected_response_style": "guided_exercise",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          0
+        ],
+        "assertions": {
+          "must_include_any": [
+            "grounding",
+            "see around you",
+            "see right now",
+            "five things you can see"
+          ]
+        }
+      },
+      {
+        "message": "Do you mean things I can see right now, or just around me in general?",
+        "expected_response_style": "clarifying",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          0
+        ],
+        "assertions": {
+          "require_question": true,
+          "max_sentences": 4
+        }
+      },
+      {
+        "message": "Right now. I can see my desk, lamp, and window.",
+        "expected_response_style": "guided_exercise",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          1
+        ],
+        "assertions": {
+          "must_include_any": [
+            "hear",
+            "things you can hear",
+            "loud or quiet",
+            "hearing"
+          ],
+          "max_sentences": 4
+        }
+      }
+    ],
+    "notes": "A clarifying side-turn during an active exercise should keep the exercise alive and resume the same sequence on the next turn."
+  },
+  {
+    "id": "llm_multiturn_psychoeducation_side_turn_during_exercise",
+    "dispatch_tier": "llm",
+    "turns": [
+      {
+        "message": "Can you guide me through a grounding exercise right now?",
+        "expected_response_style": "guided_exercise",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          0
+        ],
+        "assertions": {
+          "must_include_any": [
+            "grounding",
+            "see around you",
+            "see right now",
+            "five things you can see"
+          ]
+        }
+      },
+      {
+        "message": "Why does my chest tighten when I try to slow down like this?",
+        "expected_response_style": "psychoeducation",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          0
+        ],
+        "assertions": {
+          "require_question": true,
+          "max_sentences": 6,
+          "max_question_marks": 1
+        }
+      },
+      {
+        "message": "That makes sense. I can keep going.",
+        "expected_response_style": "guided_exercise",
+        "expected_exercise_active": true,
+        "expected_exercise_type": "grounding_5_4_3_2_1",
+        "expected_exercise_step_in": [
+          0
+        ],
+        "assertions": {
+          "must_include_any": [
+            "see around you",
+            "see right now",
+            "five things you can see"
+          ],
+          "max_sentences": 4
+        }
+      }
+    ],
+    "notes": "A psychoeducation side-turn during an active exercise should not silently kill the exercise; the next turn should return to the same step."
+  }
+]

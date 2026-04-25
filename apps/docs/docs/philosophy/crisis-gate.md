@@ -48,8 +48,6 @@ flowchart TD
 | **2. LLM classifier** | Primary path for all non-override messages | Structured output with full conversation context. Handles negation, sarcasm, quoted speech, ambiguity. |
 | **3. Regex ladder** | Only when LLM unavailable or call fails | Deterministic fallback using pattern categories below. Provides degraded but functional safety coverage. |
 
-The LLM path also runs a **shadow deterministic assessment** in parallel. Disagreements are logged for drift monitoring — if regex flags level 2+ but the LLM returns level 0, a warning is emitted.
-
 ---
 
 ## Pattern categories
@@ -111,7 +109,6 @@ window (exclusive boundary — cutoff date itself preserved).
 | `crisis_gate_ms` | Wall-clock time for the full assessment |
 | `crisis_classifier_path` | `override` / `llm_primary` / `deterministic` |
 | `crisis_level` | Normalized level (0–3) |
-| `crisis_shadow_deterministic_level` | What the regex ladder would have returned (shadow monitoring) |
 
 ---
 
@@ -122,7 +119,6 @@ window (exclusive boundary — cutoff date itself preserved).
 | Response pipeline waits for the gate | Safety sequencing > latency |
 | Overrides fire before any network call | Imminent risk cannot wait 1–2s for LLM |
 | LLM is primary, not regex | Handles negation, context, sarcasm, quoted speech |
-| Shadow monitoring logs disagreements | Detects LLM drift without blocking the response |
 | Normalization enforces truth table | Prevents miscalibrated LLM from wrong-flagging |
 | 42-case eval dataset | Covers imminent risk, clear self-harm, idiomatic-safe, boundary cases |
 

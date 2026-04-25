@@ -1,3 +1,5 @@
+"""Provider-neutral LLM client interface used by the agent runtime."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

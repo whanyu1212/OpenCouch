@@ -1,172 +1,58 @@
 """Interactive CLI for the OpenCouch agent runtime.
 
-Run from ``apps/backend/``. All commands below assume that as the
-current working directory because SQLite paths default to files
-(``.opencouch_threads.sqlite3``, ``.opencouch_memory.sqlite3``,
-``.opencouch_crisis.sqlite3``) in the CWD.
+Run from ``apps/backend/`` so default SQLite paths resolve to the
+backend working directory. The CLI supports deterministic smoke tests,
+hybrid LLM runs, persistent local memory, thread switching, and optional
+voice mode.
 
-════════════════════════════════════════════════════════════════════
-Common invocations (see notes/dogfood-checklist.md for the guided pass)
-════════════════════════════════════════════════════════════════════
+Common invocations:
 
-1. ── Fast deterministic smoke test ─────────────────────────────────
-   Zero LLM calls, in-memory only, useful for verifying panels render
-   and the graph spine runs end-to-end without burning tokens::
+``uv run python -m opencouch_cli --mode deterministic --memory-mode guest``
+    Zero LLM calls, in-memory only. Useful for checking rendering and
+    deterministic graph paths.
 
-       uv run python -m opencouch_cli \\
-           --mode deterministic \\
-           --memory-mode guest \\
-           --thread-id scratch
+``uv run python -m opencouch_cli --mode auto --memory-mode persistent``
+    Real model when configured, local SQLite persistence, and memory
+    writes enabled.
 
-   Good for: CLI rendering regressions, crisis gate keyword paths,
-   session context panel layout, /debug state JSON dump.
+``uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice``
+    Stable owner namespace for semantic, episodic, and procedural memory
+    across multiple threads.
 
-2. ── Hybrid mode with temporary persistence ────────────────────────
-   Real LLM, but a throwaway thread in persistent storage — lets you
-   test extraction + procedural writer + dedup without polluting a
-   stable thread history::
+Important slash commands:
 
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode persistent \\
-           --thread-id scratch-$(date +%s)
+``/memory status``
+    Show memory counts, owner id, crisis-log count, and recall toggle.
 
-   Good for: semantic fact writes, store Δ vs. writes in the Stage
-   Timings panel, procedural rule writes, dedup on paraphrase.
+``/memory list [facts|sessions|rules]``
+    Browse stored semantic facts, episodic arcs, or procedural rules.
 
-3. ── Stable "user" for multi-session memory continuity ─────────────
-   Decouples memory identity from thread_id via ``--user-id``. All
-   sessions sharing the same ``alice`` user_id see the same semantic,
-   episodic, and procedural memory regardless of which thread was
-   active when the fact/arc/rule was written::
+``/memory forget fact|session|rule <n>``
+    Delete one owner-scoped memory item by its displayed index.
 
-       # Session 1 — seed memory
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode persistent \\
-           --user-id alice \\
-           --thread-id alice-s1
+``/memory clear facts|sessions|rules|all``
+    Clear owner-scoped memory content after typed confirmation.
 
-       # Session 2 — same user, different thread
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode persistent \\
-           --user-id alice \\
-           --thread-id alice-s2
+``/memory purge-crisis [days]``
+    Retention-purge crisis audit records after typed confirmation.
 
-   Good for: first-turn episodic catch-up, cross-session semantic
-   recall, procedural rule persistence across restarts.
-
-4. ── Namespace isolation check ─────────────────────────────────────
-   Confirms that a different user sees a clean slate — no memory
-   bleed between users::
-
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode persistent \\
-           --user-id bob \\
-           --thread-id bob-s1
-
-   Expected: working_memory and procedural_rules are empty even
-   though alice's store has content. If Bob sees Alice's data this
-   is a catastrophic privacy bug.
-
-5. ── Resume an existing thread ─────────────────────────────────────
-   LangGraph checkpointer restores the transcript and state for a
-   thread that was previously active. Useful for picking up after a
-   crash or for multi-day iteration on the same scenario::
-
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode persistent \\
-           --user-id alice \\
-           --thread-id alice-s1
-
-   Then inside the CLI, ``/history`` should show prior turns with
-   their ``mode`` annotations, and ``/context`` should render the
-   last saved state.
-
-6. ── Guest / incognito mode ────────────────────────────────────────
-   No long-term memory writes. Semantic, episodic, and procedural
-   extractors all short-circuit. The crisis log is still always-on::
-
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode guest
-
-   Good for: verifying the privacy contract (no writes to the memory
-   store), testing crisis flow in isolation, one-off conversations.
-
-7. ── Custom SQLite paths (share memory with another tool) ──────────
-   Override the default ``.opencouch_*.sqlite3`` paths when the user
-   wants memory to live elsewhere (e.g., on an external drive, or
-   shared with the eval harness)::
-
-       uv run python -m opencouch_cli \\
-           --mode auto \\
-           --memory-mode persistent \\
-           --user-id alice \\
-           --thread-id alice-s1 \\
-           --sqlite-path /tmp/my_threads.sqlite3 \\
-           --memory-sqlite-path /tmp/my_memory.sqlite3 \\
-           --crisis-log-sqlite-path /tmp/my_crisis.sqlite3
-
-   Good for: keeping multiple parallel memory stores, running the
-   eval harness against the same state the CLI produced, backing up
-   a session to a specific path.
-
-════════════════════════════════════════════════════════════════════
-Slash commands inside the chat loop
-════════════════════════════════════════════════════════════════════
-
-   /help                                  List all commands
-   /status                                Thread id, mode, turn count
-   /history [n]                           Recent messages with mode (v0.8)
-   /context                               Full session context snapshot
-   /memory status                         Per-namespace counts + recall toggle
-   /memory list                           Semantic facts + episodic arcs
-   /memory list facts|sessions|rules      Filter to one namespace (v0.9)
-   /memory recall on|off                  Toggle proactive content recall
-   /memory forget fact|session|rule <n>   Delete one record by index (v0.9)
-   /memory clear facts|sessions|rules|all Wipe a namespace (v0.9, typed confirm)
-   /memory purge-crisis [days]            Retention-purge crisis log (v0.8.1)
-   /threads [n]                           List persisted thread ids
-   /resume <tid>                          Switch to a different thread
-   /new [tid]                             Start a fresh thread
-   /reset                                 Clear the active thread's state
-   /clear                                 Clear the terminal
-   /mode <det|hyb|auto>                   Switch LLM resolution mode
-   /response-tier <fast|quality>         Switch reply speed/quality tradeoff
-   /debug state                           Dump raw graph state as JSON (v0.8)
-   /end                                   Summarize session, save episodic arc
-   /exit                                  End session with save prompt
-
-════════════════════════════════════════════════════════════════════
-What to look for in the panels
-════════════════════════════════════════════════════════════════════
-
-The chat loop renders four panels after each turn:
-
-- **Assistant reply** (green for therapeutic, red for crisis)
-- **Turn Diagnostics** (mode routing + safety classification)
-- **Stage Timings & Writes** (per-node ms, write counts, store Δ)
-- **Session Context** (what the graph is carrying forward, including
-  v0.8 additions: procedural_rules, proactive_recall, exercise state)
-
-Use ``/debug state`` for the raw JSON dump when the panels aren't
-enough. See ``notes/dogfood-checklist.md`` for a guided walk-through
-that maps each shipped phase to specific prompts and expected panel
-contents.
+``/debug state``
+    Dump the raw persisted graph state when rendered panels are not
+    enough for diagnosis.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import subprocess
+import sys
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from agent.memory.models import FeedbackLabel, FeedbackSource, StoredSessionArc
@@ -180,8 +66,9 @@ from agent.persistence import (
     ThreadSummary,
 )
 from agent.memory.procedural import (
+    aclear_procedural_rules,
+    adelete_procedural_rule,
     aget_procedural_profile,
-    aput_procedural_profile,
     aset_proactive_recall,
 )
 from agent.models import (
@@ -192,7 +79,7 @@ from agent.models import (
     DoneEvent,
     Message,
     MessageRole,
-    ResponseKind,
+    ResponseCategory,
     ResponseReadyEvent,
     StatusEvent,
     friendly_stage,
@@ -218,23 +105,20 @@ from services.llm.base import BaseLLMClient
 
 CLI_THEME = Theme(
     {
-        "primary": "bold #e0a370",  # warm amber — titles, emphasis
-        "accent": "bold #c9a86c",  # muted gold — secondary highlights
-        "muted": "#7a7568",  # warm gray — subdued labels
-        "info": "#d4cfc6",  # soft cream — body text
-        "success": "bold #8fae8b",  # sage green — positive states
-        "warning": "bold #d4a054",  # deep amber — caution
-        "danger": "bold #c97b6b",  # terracotta — crisis/error
-        "panel": "#5c564e",  # dark warm gray — borders, rules
-        "brand": "bold #e0a370",  # amber — brand text
-        "hint": "dim #7a7568",  # faded warm gray — secondary hints
+        "primary": "bold #8FAE9D",  # soft sage — main emphasis
+        "accent": "bold #A7BFA3",  # pale moss — secondary highlights
+        "muted": "#7B817C",  # soft olive gray — subdued labels
+        "info": "#D8DDD8",  # warm mist — body text
+        "success": "bold #7FA08A",  # grounded green — positive states
+        "warning": "bold #C9A56D",  # muted honey — caution
+        "danger": "bold #C97B6B",  # soft terracotta — crisis/error
+        "panel": "#58615C",  # deep moss gray — borders, rules
+        "brand": "bold #9BB8C9",  # misty blue — brand text
+        "hint": "dim #7B817C",  # faded olive gray — secondary hints
     }
 )
 
 console = Console(theme=CLI_THEME)
-
-
-# v0.8 observability pass: map internal graph node names → CLI stage
 
 
 def _response_panel(
@@ -243,7 +127,16 @@ def _response_panel(
     thread_id: str | None = None,
     turn_count: int | None = None,
 ) -> Panel:
-    """Build the terminal assistant-response panel for one turn."""
+    """Build the terminal assistant-response panel for one turn.
+
+    Args:
+        output: Agent output to display.
+        thread_id: Optional thread id shown in the subtitle.
+        turn_count: Optional turn count shown in the subtitle.
+
+    Returns:
+        Rich panel for the assistant response.
+    """
 
     is_crisis = output.response_type.value == "crisis"
     title = (
@@ -276,7 +169,17 @@ def _response_panel(
 async def _drain_turn_stream_tail(
     stream,
 ) -> AgentOutput:
-    """Consume the rest of a partially-read turn stream to completion."""
+    """Consume the rest of a partially-read turn stream to completion.
+
+    Args:
+        stream: Async turn event stream after a response-ready event.
+
+    Returns:
+        Final agent output from the terminal done event.
+
+    Raises:
+        RuntimeError: If the stream ends without a done event.
+    """
 
     final_output: AgentOutput | None = None
     async for event in stream:
@@ -300,14 +203,7 @@ class RunnerSession:
     thread_id: str
     sqlite_path: str
     memory_mode: str
-    # v0.8 addition (pulled forward from v0.9 scope): optional stable
-    # owner identifier for long-term memory. When set via the
-    # ``--user-id`` flag, semantic / episodic / procedural memory
-    # writes are namespaced by this user_id rather than the
-    # thread_id, so switching threads preserves memory across
-    # sessions. When None (the default and the backward-compatible
-    # path), the CLI falls back to ``thread_id`` as the effective
-    # owner via :meth:`owner_id`.
+    # Optional stable owner for long-term memory. Falls back to thread_id.
     user_id: str | None = None
     history: list[Message] = field(default_factory=list)
     last_context: AgentState | None = None
@@ -317,29 +213,8 @@ class RunnerSession:
     def owner_id(self) -> str:
         """Return the effective owner identifier for memory operations.
 
-        Used as the ``user_id`` argument to procedural store helpers
-        (``aget_procedural_profile``, ``aset_proactive_recall``, etc.)
-        AND as the ``user_id`` passed into ``runtime.run_turn`` /
-        ``run_turn_stream`` so the graph's semantic and episodic
-        extraction nodes write under the same namespace.
-
-        Resolution precedence:
-        1. ``user_id`` if explicitly set (via ``--user-id`` flag)
-        2. ``thread_id`` as the backward-compatible fallback
-
-        Never returns None — every session has a thread_id, so the
-        fallback always produces a valid string. Callers don't need
-        to handle the null case.
-
-        Why this method exists at all: before v0.8, every CLI memory
-        call used ``session.thread_id`` directly, which meant each
-        thread was effectively its own user namespace. That made
-        cross-session memory persistence (the thing v0.4 episodic
-        and v0.8 SQLite were supposed to unlock) inaccessible to
-        CLI users unless they happened to reuse thread_ids. Adding
-        the indirection through ``owner_id()`` lets the ``--user-id``
-        flag decouple identity from thread without breaking any
-        existing call site's shape.
+        Returns:
+            Explicit ``user_id`` when set, otherwise the active thread id.
         """
 
         return self.user_id or self.thread_id
@@ -393,7 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_MEMORY_DB_PATH),
         help=(
             "SQLite path for the memory store (semantic facts + episodic "
-            "arcs). Only used in persistent mode. v0.8+."
+            "arcs). Only used in persistent mode."
         ),
     )
     parser.add_argument(
@@ -401,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_CRISIS_LOG_DB_PATH),
         help=(
             "SQLite path for the crisis log (safety audit trail). Only "
-            "used in persistent mode. v0.8+."
+            "used in persistent mode."
         ),
     )
     parser.add_argument(
@@ -425,10 +300,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "Start voice mode instead of the text CLI. Launches the "
-            "FastAPI server with the OpenAI Realtime voice endpoint "
-            "and opens the voice test page in your browser. Requires "
-            "OPENAI_API_KEY for Realtime and optionally GEMINI_API_KEY "
-            "for the therapeutic LLM and memory extraction."
+            "FastAPI server plus the LiveKit voice worker, then opens "
+            "the LiveKit browser test page. Requires LIVEKIT_URL, "
+            "LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and OPENAI_API_KEY."
         ),
     )
     parser.add_argument(
@@ -466,7 +340,16 @@ def resolve_response_llm_client(
     mode: str,
     tier: ResponseModelTier,
 ) -> BaseLLMClient | None:
-    """Resolve the response-writer LLM client for the selected mode and tier."""
+    """Resolve the response-writer LLM client for the selected mode and tier.
+
+    Args:
+        mode: Requested runtime mode from the CLI.
+        tier: Response model tier for user-facing prose.
+
+    Returns:
+        Configured response LLM client, or None in deterministic mode
+        or when client setup fails.
+    """
 
     if mode == "deterministic":
         return None
@@ -478,7 +361,14 @@ def resolve_response_llm_client(
 
 
 def resolve_memory_mode(memory_mode: str) -> str:
-    """Resolve memory mode from CLI arg, prompting when needed."""
+    """Resolve memory mode from CLI arg, prompting when needed.
+
+    Args:
+        memory_mode: Raw CLI memory mode argument.
+
+    Returns:
+        Resolved memory mode, either ``"guest"`` or ``"persistent"``.
+    """
 
     if memory_mode in {"guest", "persistent"}:
         return memory_mode
@@ -522,7 +412,8 @@ def render_header(
             ``--user-id``). When set, the header shows a ``user:``
             field so the operator can see at a glance which memory
             namespace the session is writing to. When None, the
-            field is omitted (backward-compatible display).
+            field is omitted for the thread-scoped display.
+        response_model_tier: Optional response tier label.
 
     Returns:
         None.
@@ -629,7 +520,9 @@ def render_response(
 
     output = AgentOutput(
         response_text=response_text,
-        response_type=ResponseKind.CRISIS if is_crisis else ResponseKind.THERAPEUTIC,
+        response_type=(
+            ResponseCategory.CRISIS if is_crisis else ResponseCategory.THERAPEUTIC
+        ),
         crisis=CrisisAssessment(),
         response_style="crisis" if is_crisis else "support",
         response_style_source="cli",
@@ -652,7 +545,25 @@ def render_meta(
     memory_deltas: dict | None = None,
     verbose: bool = False,
 ) -> None:
-    """Render classifier metadata as a compact diagnostics line."""
+    """Render classifier metadata as a compact diagnostics line.
+
+    Args:
+        response_style: Therapeutic response style selected for the turn.
+        response_style_source: Source of the response style decision.
+        response_style_type: Deprecated style-type label retained for
+            call-site compatibility.
+        response_type: High-level response category.
+        level: Crisis severity level.
+        needs_clarification: Whether safety clarification is needed.
+        needs_crisis_response: Whether a crisis response is required.
+        reason: One-line classifier reason.
+        diagnostics: Optional per-node timing and decision metadata.
+        memory_deltas: Optional before/after store count deltas.
+        verbose: Whether to render the detailed timings table.
+
+    Returns:
+        None.
+    """
 
     if needs_crisis_response:
         safety_status = "crisis"
@@ -714,7 +625,7 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
     """Render the per-turn stage timings + memory-write table.
 
     Extracted from ``render_meta`` for testability. Skips entirely when
-    both inputs are empty — that's the "tests constructed an AgentOutput
+    both inputs are empty; that is the "tests constructed an AgentOutput
     manually and didn't populate diagnostics" case and there's nothing
     useful to show.
 
@@ -730,17 +641,24 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
     A missing key renders as ``-`` so the table shape stays stable even
     when a skip path (incognito, no LLM) short-circuits a node before
     it wrote its timing. The "total" column is the outer ``run_turn``
-    clock — useful because the node-level sums don't include edge work,
+    clock. It is useful because the node-level sums don't include edge work,
     checkpoint I/O, or the Python-side overhead between nodes.
 
     Memory-write deltas come from the CLI's before/after store counts
-    (see the chat_loop bookkeeping), NOT from the diagnostics dict. The
+    (see the chat_loop bookkeeping), not from the diagnostics dict. The
     two paths carry different semantics: the diagnostics dict reports
     what the extractor nodes **tried to write** (``semantic_writes``,
     ``procedural_writes``), whereas the delta reports what actually
     **landed in the store** after any silent skip / dedup interactions.
     We render both when available to make "writer produced a candidate
     but dedup rejected it" visible at a glance.
+
+    Args:
+        diagnostics: Per-node timing and write-attempt metadata.
+        memory_deltas: Store count deltas observed by the CLI.
+
+    Returns:
+        None.
     """
 
     if not diagnostics and not memory_deltas:
@@ -752,8 +670,16 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
     timing_table.add_column("writes", style="accent", justify="right", no_wrap=True)
     timing_table.add_column("store Δ", style="success", justify="right", no_wrap=True)
 
-    # Helper: format a float ms value to 2 decimals or "-" when absent.
     def _fmt_ms(key: str) -> str:
+        """Format a millisecond diagnostic value.
+
+        Args:
+            key: Diagnostic key to read.
+
+        Returns:
+            Formatted value, or ``"-"`` when unavailable.
+        """
+
         val = diagnostics.get(key)
         if val is None:
             return "-"
@@ -762,8 +688,16 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
         except (TypeError, ValueError):
             return "-"
 
-    # Helper: format an int count or "-" when absent.
     def _fmt_count(key: str) -> str:
+        """Format an integer diagnostic count.
+
+        Args:
+            key: Diagnostic key to read.
+
+        Returns:
+            Formatted count, or ``"-"`` when unavailable.
+        """
+
         val = diagnostics.get(key)
         if val is None:
             return "-"
@@ -776,6 +710,18 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
         repeat_key: str | None = None,
         drop_key: str | None = None,
     ) -> str:
+        """Format write attempts with held/repeat/drop suffixes.
+
+        Args:
+            key: Base write-count diagnostic key.
+            held_key: Optional held-count diagnostic key.
+            repeat_key: Optional repeat-count diagnostic key.
+            drop_key: Optional drop-count diagnostic key.
+
+        Returns:
+            Formatted write summary.
+        """
+
         base = _fmt_count(key)
         if base == "-":
             return base
@@ -789,7 +735,7 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
             if extra_key is None:
                 continue
             val = diagnostics.get(extra_key)
-            if val in (None, 0):
+            if val is None or val == 0:
                 continue
             extras.append(f"{label}{int(val)}")
 
@@ -798,6 +744,15 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
         return f"{base} ({' '.join(extras)})"
 
     def _fmt_delta(key: str) -> str:
+        """Format a store-count delta.
+
+        Args:
+            key: Memory-delta key to read.
+
+        Returns:
+            Formatted signed delta, or ``"-"`` when unavailable.
+        """
+
         val = memory_deltas.get(key)
         if val is None:
             return "-"
@@ -845,12 +800,9 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
 def render_context(state: AgentState | None) -> None:
     """Render the current structured session context.
 
-    v0.8 observability pass: the panel now shows procedural rules,
-    proactive-recall toggle state, and guided-exercise tracking fields
-    alongside the pre-existing memory/progress surface. Working-memory
-    entries are rendered as newline-separated bullets (one per entry)
-    instead of pipe-joined, so long semantic/episodic snippets wrap
-    cleanly in the terminal rather than overflowing a single row.
+    The panel shows working memory, session continuity, procedural
+    rules, the proactive-recall toggle, and active guided-exercise
+    state.
 
     Args:
         state: Most recent graph input state snapshot.
@@ -871,20 +823,16 @@ def render_context(state: AgentState | None) -> None:
         console.print()
         return
 
-    progress = state.get("progress", {})
-    memory = state.get("memory", {})
-    response_state = state.get("response", {})
-    routing_state = state.get("routing", {})
-
+    session_progress = state.get("session_progress", {})
+    exercise_state = state.get("exercise_state", {})
+    session_memory = state.get("session_memory", {})
+    procedural_profile = state.get("procedural_profile", {})
     table = Table(show_header=False, box=box.SIMPLE)
     table.add_column(style="hint", no_wrap=True)
     table.add_column(style="info")
-    table.add_row("turn_count", str(progress.get("turn_count", 0)))
+    table.add_row("turn_count", str(session_progress.get("turn_count", 0)))
 
-    # v0.8: bullet-wrap the working-memory entries so each entry is
-    # on its own line. Rich will wrap each bullet's text within the
-    # cell width, keeping long entries readable. The state carries raw
-    # memory dicts; we format them here for display.
+    # Keep each memory entry on its own wrapped line for terminal readability.
     working_memory = format_working_memory_entries(state.get("working_memory") or [])
     if working_memory:
         table.add_row(
@@ -894,26 +842,20 @@ def render_context(state: AgentState | None) -> None:
     else:
         table.add_row("working_memory", "-")
 
-    table.add_row("current_goal", memory.get("current_goal") or "-")
-    table.add_row("response_guidance", response_state.get("guidance") or "-")
-    active_concerns = memory.get("active_concerns") or []
+    table.add_row("current_goal", session_memory.get("current_goal") or "-")
+    active_concerns = session_memory.get("active_concerns") or []
     table.add_row(
         "active_concerns",
         ", ".join(active_concerns) if active_concerns else "-",
     )
-    open_loops = memory.get("open_loops") or []
+    open_loops = session_memory.get("open_loops") or []
     table.add_row(
         "open_loops",
         "\n".join(f"• {loop}" for loop in open_loops) if open_loops else "-",
     )
 
-    # v0.8: procedural layer surface. ``procedural_rules`` is the raw
-    # rule-text list loaded by ``run_load_memory_node`` — the same
-    # strings the Stage D prompt builders inject. Showing them in the
-    # context panel lets a dogfood operator verify the writer+loader
-    # round-trip and spot stale rules at a glance. Long rules wrap
-    # inside the cell.
-    procedural_rules = memory.get("procedural_rules") or []
+    # Show the same procedural rule text injected into response prompts.
+    procedural_rules = procedural_profile.get("procedural_rules") or []
     if procedural_rules:
         table.add_row(
             "procedural_rules",
@@ -922,26 +864,19 @@ def render_context(state: AgentState | None) -> None:
     else:
         table.add_row("procedural_rules", "-")
 
-    # v0.8: proactive-recall toggle state. Procedural rules are always
-    # applied; the recall toggle governs whether the agent proactively
-    # references stored semantic/episodic content in replies. Surfacing
-    # it here saves a round-trip to ``/memory status``.
-    recall_enabled = bool(memory.get("proactive_recall_enabled", False))
+    # Procedural rules are always applied; this toggle only controls
+    # whether semantic/episodic memory is proactively referenced aloud.
+    recall_enabled = bool(procedural_profile.get("proactive_recall_enabled", False))
     table.add_row("proactive_recall", "on" if recall_enabled else "off")
 
-    # v0.8: guided-exercise tracking. The therapeutic subgraph writes
-    # ``exercise_type`` and ``exercise_step`` into ``routing`` when a
-    # guided mode is active (box breathing, grounding, etc.). Dogfood
-    # feedback flagged that exercise mid-run state was invisible —
-    # surface it here so the operator can see "we're on step 3 of box
-    # breathing" without inspecting the raw state.
-    exercise_type = routing_state.get("exercise_type")
-    exercise_step = routing_state.get("exercise_step")
+    # Surface mid-exercise state without requiring a raw state dump.
+    exercise_type = exercise_state.get("exercise_type")
+    exercise_step = exercise_state.get("exercise_step")
     if exercise_type:
         step_display = f" (step {exercise_step})" if exercise_step is not None else ""
         table.add_row("exercise", f"{exercise_type}{step_display}")
 
-    table.add_row("session_summary", memory.get("summary", ""))
+    table.add_row("session_summary", session_memory.get("summary", ""))
     console.print(
         Panel(
             table,
@@ -960,22 +895,27 @@ async def _render_debug_state(
 ) -> None:
     """Dump the raw graph state for the active thread as JSON.
 
-    v0.8 observability pass: backs ``/debug state``. This is the "I
-    want to see everything" view for when Session Context or Stage
-    Timings isn't enough to diagnose a specific turn. Fetches the
-    current checkpointed state for the active thread via
-    ``runtime.get_state`` and pretty-prints it inside a Panel.
+    Backs ``/debug state``. This is the full-state view for when the
+    rendered context and timing panels are not enough to diagnose a
+    turn.
 
     Pydantic models and other non-JSON types round-trip through
-    ``default=str`` in ``json.dumps`` rather than crashing — most
+    ``default=str`` in ``json.dumps`` rather than crashing. Most
     state fields are already plain dicts (we serialize to JSON at
     checkpoint write time via LangGraph's JsonPlusSerializer), so
     this fallback only kicks in for an odd CrisisAssessment instance
     that survived the round-trip as a typed model.
 
-    Degrades gracefully when no state exists yet (fresh thread, or
+    Degrades gracefully when no state exists yet (fresh thread or
     ``/reset`` was just called). Prints a warning panel instead of
     crashing on a None state.
+
+    Args:
+        runtime: Persistent runtime used to fetch checkpointed state.
+        session: Active CLI session.
+
+    Returns:
+        None.
     """
 
     import json
@@ -1018,19 +958,8 @@ async def render_memory_status(
     """Render the memory layer's current state.
 
     Shows the memory mode, owner-scoped user-facing memory counts,
-    the crisis log record count, and (v0.7) the proactive-recall
-    toggle state for the active thread.
-
-    Async as of v0.8 because the memory store's ``arecord_count`` and
-    ``anamespaces`` methods are async to support the SQLite
-    implementation's connection-sharing contract. The crisis log's
-    ``record_count`` is still sync — that's a different backend that
-    will get its own async refactor in v0.8 Stage C.
-
-    v0.7 Stage E: the proactive-recall row now shows the actual toggle
-    state for the active thread. Previously it was a ``(phase 2+)``
-    placeholder. The thread_id is used as the owner key because the
-    CLI does not expose a ``--user-id`` flag yet (tracked in v0.9).
+    crisis log record count, session feedback count, and proactive
+    recall state for the active owner.
 
     Args:
         runtime: Active persistent runtime. Reads the memory_store and
@@ -1055,40 +984,25 @@ async def render_memory_status(
     )
     total_store_records = await store.arecord_count()
 
-    # Crisis log record count — always-on backend, independent of mode.
-    # v0.8: the crisis log backend's record_count went async alongside
-    # the memory store's, so the defensive ``getattr`` pattern now
-    # looks for ``arecord_count`` and awaits it. Any backend that
-    # doesn't implement the protocol method (e.g. a mock or stub)
-    # falls through to the 0 default.
+    # Defensive getattr keeps old test doubles from breaking the status panel.
     crisis_log_count = 0
     arecord_count_fn = getattr(crisis_log, "arecord_count", None)
     if callable(arecord_count_fn):
         crisis_log_count = await arecord_count_fn()
 
-    # v0.10: session feedback record count — also always-on, same
-    # defensive-attr pattern as crisis_log so the panel keeps
-    # rendering if a caller passes a runtime without the feedback
-    # backend wired up (e.g., very old test fixtures).
+    # Feedback is best-effort, so missing test doubles report zero.
     session_feedback_count = 0
     feedback_arecord_count_fn = getattr(session_feedback, "arecord_count", None)
     if callable(feedback_arecord_count_fn):
         session_feedback_count = await feedback_arecord_count_fn()
 
-    # v0.7: read the procedural profile for the active thread so the
-    # recall toggle row shows the real state. Also used to show the
-    # per-thread rule count (which may differ from the store-wide
-    # total when multiple threads share a store backend).
     profile = await aget_procedural_profile(store, user_id=owner)
 
     table = Table(show_header=False, box=box.SIMPLE)
     table.add_column(style="hint", no_wrap=True)
     table.add_column(style="info")
     table.add_row("memory_mode", str(runtime.memory_mode))
-    # v0.8: surface the effective owner_id so the operator can see
-    # which namespace memory is being read from. When --user-id was
-    # set, the value comes from the flag. When not, it falls back
-    # to the thread_id (labeled as such for clarity).
+    # Surface the effective owner namespace to debug cross-thread memory.
     if session.user_id:
         table.add_row("owner_id", f"{owner} (from --user-id)")
     else:
@@ -1099,12 +1013,8 @@ async def render_memory_status(
     table.add_row("total store records", str(total_store_records))
     table.add_row("crisis log events", str(crisis_log_count))
     table.add_row("session feedback records", str(session_feedback_count))
-    # v0.7 Stage E: real proactive-recall state from the profile.
     recall_state = "on" if profile.proactive_recall_enabled else "off"
     table.add_row("proactive recall", recall_state)
-    # Placeholders for fields that land in later phases — shown so the
-    # command shape stays stable as features are added.
-    table.add_row("last consolidation", "(phase 4)")
     console.print(
         Panel(
             table,
@@ -1130,16 +1040,18 @@ async def _collect_records_by_kind(
     ``kind``. Used by the CLI renderers for both owner-scoped
     readouts and the full-store fallback paths.
 
-    v0.8 rewrite: previously reached into ``store._buckets`` directly,
-    which only worked for :class:`OpenCouchMemoryStore`. Now uses
-    ``asearch(ns, query=None, limit=<large>)`` which is part of the
-    :class:`MemoryStore` protocol and works for both the in-memory
-    and SQLite implementations. The ``query=None`` branch returns all
-    records in insertion order, which is exactly what the CLI wants
-    for a chronological listing.
+    Args:
+        runtime: Active persistent runtime.
+        kind: Memory namespace kind to collect.
+        owner_id: Optional owner namespace. When omitted, all namespaces
+            of the requested kind are scanned.
+
+    Returns:
+        ``(key, value)`` pairs in store insertion order.
     """
 
     store = runtime.memory_store
+    namespaces: list[tuple[str, ...]]
     if owner_id is not None:
         namespaces = [(owner_id, kind)]
     else:
@@ -1151,9 +1063,7 @@ async def _collect_records_by_kind(
 
     records: list[tuple[str, dict[str, object]]] = []
     for namespace in namespaces:
-        # limit=1000 is a defensive cap; for v0.8 we don't expect
-        # any single user to have more records than this, and if
-        # they do the CLI would need pagination anyway (v0.9 work).
+        # Defensive cap; larger stores need pagination before CLI listing.
         namespace_records = await store.asearch(namespace, query=None, limit=1000)
         if kind == "semantic":
             namespace_records = filter_active_semantic_records(namespace_records)
@@ -1170,8 +1080,6 @@ async def _collect_records_with_namespace(
 ) -> list[tuple[tuple[str, ...], str, dict[str, object]]]:
     """Collect ``(namespace, key, value)`` tuples for a kind + owner.
 
-    v0.9 helper for the destructive memory commands (``/memory forget
-    fact <n>``, ``/memory forget session <n>``, ``/memory clear``).
     Unlike :func:`_collect_records_by_kind` which returns just
     ``(key, value)`` for rendering, these handlers need the full
     namespace tuple so they can call ``store.adelete(namespace, key)``.
@@ -1180,23 +1088,23 @@ async def _collect_records_with_namespace(
     ``/memory list`` displays them, so the 1-indexed position the
     user types matches the position they see in the table. **If you
     change the sort order here, also change the corresponding table
-    renderer — the indexes must stay synchronized or users will
+    renderer; the indexes must stay synchronized or users will
     delete the wrong record.**
 
     Owner scoping: unlike the read-only ``_collect_records_by_kind``
     helper which iterates every namespace in the store (useful when
     rendering the full list), this helper filters to a single
     ``owner_id``. Destructive commands are always scoped to the
-    active session's owner — never cross-user — so restricting the
+    active session's owner, never cross-user, so restricting the
     fetch at the source prevents any accidental cross-user deletion
     path from even being reachable through the CLI.
 
     Args:
         runtime: Active persistent runtime. Reads the memory store.
-        kind: Namespace kind — ``"semantic"`` or ``"episodic"``.
+        kind: Namespace kind: ``"semantic"`` or ``"episodic"``.
             ``"procedural"`` is NOT supported here because procedural
             memory is stored as a single profile document per user,
-            not as individual records — see the procedural forget /
+            not as individual records; see the procedural forget /
             clear handlers which go through ``aget/aput_procedural_profile``
             instead.
         owner_id: The owner to scope the fetch to, typically
@@ -1228,6 +1136,12 @@ def _format_entity_identifier(entity: object) -> str:
     for table rendering, falling back to ``"?"`` when the shape is
     wrong or the identifier is missing. Defensive against schema
     drift and malformed records.
+
+    Args:
+        entity: Serialized entity-like value.
+
+    Returns:
+        Entity identifier, or ``"?"`` when unavailable.
     """
 
     if isinstance(entity, dict):
@@ -1245,18 +1159,14 @@ def _render_semantic_records_table(
     Extracted from ``render_memory_list`` so the episodic rendering can
     use the same compact table pattern.
 
-    v0.8 addition: the table now includes an ``object`` column
-    showing the identifier field of each record's ``object``
-    (the target of the predicate — e.g., the named person for a
-    ``KNOWS`` fact, the coping strategy for a ``USES`` fact). This
-    closes a rendering gap surfaced during v0.8 dogfood: when a
-    single turn produces two facts with identical evidence quotes
-    but different objects (e.g., "I take fluoxetine and vyvanse
-    daily" → one USES fact per medication), the old table showed
-    two rows that looked identical. Adding the object column makes
-    the distinction visible. The subject column is intentionally
-    omitted because in practice it's almost always the user; showing
-    it would add visual noise without distinguishing signal.
+    The object column shows the target of each predicate so two facts
+    with the same evidence quote remain distinguishable.
+
+    Args:
+        records: Semantic memory records as ``(key, value)`` pairs.
+
+    Returns:
+        None.
     """
 
     table = Table(
@@ -1319,11 +1229,15 @@ def _render_episodic_records_table(
 ) -> None:
     """Render the episodic session arcs as a table with a long-summary footer.
 
-    Shipped with v0.4 alongside the session summarizer. Each row shows
-    the session date, turn count, themes, mood arc (opened → closed),
-    crisis level (if any), and a truncated summary. Full summaries for
-    long arcs are rendered below the table, same pattern as the
-    semantic long-quote footer.
+    Each row shows the session date, turn count, themes, mood arc,
+    crisis level if present, and a truncated summary. Full summaries
+    for long arcs are rendered below the table.
+
+    Args:
+        records: Episodic memory records as ``(key, value)`` pairs.
+
+    Returns:
+        None.
     """
 
     table = Table(
@@ -1344,18 +1258,15 @@ def _render_episodic_records_table(
     long_summaries: list[tuple[int, str]] = []
 
     for idx, (_key, value) in enumerate(records, start=1):
-        # Date derived from ended_at — just the YYYY-MM-DD prefix.
         ended_at = str(value.get("ended_at", ""))
         date_display = ended_at[:10] if len(ended_at) >= 10 else "—"
 
         turn_count = str(value.get("turn_count", "?"))
 
-        themes_list = value.get("primary_themes") or []
-        themes_display = (
-            ", ".join(str(t) for t in themes_list)  # type: ignore[union-attr]
-            if themes_list
-            else "—"
-        )
+        themes_value = value.get("primary_themes")
+        themes_display = "—"
+        if isinstance(themes_value, list) and themes_value:
+            themes_display = ", ".join(str(t) for t in themes_value)
 
         mood_arc = value.get("mood_arc") or {}
         if isinstance(mood_arc, dict):
@@ -1410,8 +1321,8 @@ def _render_procedural_rules_table(
 ) -> None:
     """Render the procedural rule list as a browsable table.
 
-    v0.7 Stage E addition. Unlike semantic facts (one record per
-    fact) and episodic arcs (one record per session), procedural
+    Unlike semantic facts (one record per fact) and episodic arcs
+    (one record per session), procedural
     memory is stored as a single profile document per user with a
     ``rules`` list. This renderer takes that list (serialized as
     dicts from the store's JSON value column) and shows each rule
@@ -1429,6 +1340,12 @@ def _render_procedural_rules_table(
     Rules are shown in insertion order (the order the writer node
     wrote them), matching how semantic facts and episodic arcs are
     rendered.
+
+    Args:
+        rules: Serialized procedural rule dictionaries.
+
+    Returns:
+        None.
     """
 
     table = Table(
@@ -1456,7 +1373,7 @@ def _render_procedural_rules_table(
         added_at = str(rule_value.get("added_at", ""))
         added_display = added_at[:10] if len(added_at) >= 10 else "—"
 
-        # Evidence is a list[str] — join with " | " for display and
+        # Evidence is a list[str]; join with " | " for display and
         # truncate if it overflows. Keep the full value for the
         # long-evidence footer.
         evidence_list = rule_value.get("evidence") or []
@@ -1512,6 +1429,9 @@ def _render_procedural_rules_empty_state() -> None:
 
     Shown when the active thread has no procedural rules stored yet.
     Educational: explains what rules are and how to get one written.
+
+    Returns:
+        None.
     """
 
     console.print(
@@ -1539,9 +1459,11 @@ def _render_memory_list_empty_state() -> None:
 
     Shown when both semantic and episodic namespaces are empty. The
     message explains what each layer captures and when to expect
-    writes, so operators know this is expected behavior rather than
-    a bug — especially important when v0.3 conservative extraction
-    is rejecting most turns.
+    writes, so operators know this is expected behavior rather than a
+    bug.
+
+    Returns:
+        None.
     """
 
     console.print(
@@ -1571,15 +1493,9 @@ async def render_memory_list(
 ) -> None:
     """Render the active owner's memory records in browsable tables.
 
-    Shipped in v0.3.1 as a semantic-only dogfood-observability tool.
-    Extended in v0.4 to render episodic session arcs in a second table
-    alongside the semantic facts. Async as of v0.8 because record
-    collection now goes through the async ``MemoryStore`` protocol
-    methods so it works with the SQLite-backed implementation.
-
     Scope:
     - Read-only. Mutation commands (``/memory forget``, ``/memory clear``)
-      are scoped to v0.9 alongside the full CLI memory suite.
+      are handled by separate commands.
     - The listing is owner-scoped, matching the active session's
       ``owner_id()``. This keeps the tables aligned with ``/memory
       status``, the web/API views, and the delete-by-index commands.
@@ -1599,6 +1515,9 @@ async def render_memory_list(
         runtime: Active persistent runtime. Reads the memory_store via
             its public property.
         session: Active CLI session, for the effective owner id.
+
+    Returns:
+        None.
     """
 
     owner_id = session.owner_id()
@@ -1630,12 +1549,10 @@ async def render_memory_recall_toggle(
 ) -> None:
     """Handle the ``/memory recall on|off`` command.
 
-    v0.7 Stage E. Toggles the ``proactive_recall_enabled`` flag on
-    the active thread's procedural profile and shows a confirmation
-    message. When flipping from OFF to ON, also renders the
-    first-run explanation from ``schema.yaml §6 retrieval
-    proactive_recall.opt_in_confirmation_example`` so the user
-    understands what changes.
+    Toggles the ``proactive_recall_enabled`` flag on the active
+    owner's procedural profile and shows a confirmation message.
+    When flipping from off to on, it also renders a short explanation
+    so the user understands what changes.
 
     Behavior:
 
@@ -1646,14 +1563,13 @@ async def render_memory_recall_toggle(
     - ``enable=False`` + current OFF → show "already off" message,
       no write
 
-    The thread_id is used as the owner key because the CLI does not
-    expose a ``--user-id`` flag yet (tracked in v0.9). Every thread
-    has its own independent recall preference.
-
     Args:
         runtime: Active persistent runtime, for the memory store.
-        session: Active CLI session, for the thread_id.
+        session: Active CLI session, for the owner id.
         enable: Target state (True = on, False = off).
+
+    Returns:
+        None.
     """
 
     store = runtime.memory_store
@@ -1680,12 +1596,7 @@ async def render_memory_recall_toggle(
     await aset_proactive_recall(store, user_id=session.owner_id(), enabled=enable)
 
     if enable:
-        # Flipping OFF → ON. Show the first-run explanation per
-        # schema.yaml §6 retrieval proactive_recall.opt_in_confirmation_example.
-        # This fires every time the user goes off→on, not just the
-        # very first time — simpler than tracking a "has seen
-        # explanation" flag and arguably better UX because users who
-        # rarely touch the feature get a refresher.
+        # Show the explanation on every off-to-on transition as a refresher.
         console.print(
             Panel(
                 "[success]Proactive recall is now ON for this thread.[/success]\n\n"
@@ -1706,9 +1617,7 @@ async def render_memory_recall_toggle(
         console.print()
         return
 
-    # Flipping ON → OFF. Brief confirmation — no need for an
-    # explanation because "off" is the schema default, and users who
-    # flip off know why they're doing it.
+    # Off needs only a brief confirmation.
     console.print(
         Panel(
             "[success]Proactive recall is now OFF for this thread.[/success]\n\n"
@@ -1733,12 +1642,9 @@ async def render_memory_forget_rule(
 ) -> None:
     """Handle the ``/memory forget rule <n>`` command.
 
-    v0.7 Stage E. Deletes one procedural rule from the active
-    thread's profile by its 1-indexed position (the same index
-    that ``/memory list rules`` displays). Prompts for y/n
-    confirmation before deleting. The store write is atomic via the
-    profile-as-document shape — the rule is removed from the list
-    and the whole profile is written back.
+    Deletes one procedural rule from the active owner's profile by its
+    1-indexed position. Prompts for confirmation before deleting. The
+    store write is atomic at the profile-document level.
 
     Args:
         runtime: Active persistent runtime, for the memory store.
@@ -1747,6 +1653,9 @@ async def render_memory_forget_rule(
             ``/memory forget rule``. Parsed to an int here; invalid
             or out-of-range inputs produce a warning without
             touching the store.
+
+    Returns:
+        None.
     """
 
     # Parse the index. Accept 1-indexed input (matching the display
@@ -1786,8 +1695,7 @@ async def render_memory_forget_rule(
         )
         return
 
-    # Show the rule being deleted + y/n prompt. Rules are short
-    # enough (≤280 chars) to inline in the prompt text.
+    # Rules are short enough to inline in the confirmation prompt.
     target_rule = profile.rules[index_1based - 1]
     console.print()
     console.print(
@@ -1809,12 +1717,19 @@ async def render_memory_forget_rule(
         render_info("Cancelled — no rules deleted.", style="info")
         return
 
-    # Confirmed: remove the rule and write the profile back. This is
-    # a load → mutate → put round-trip against the profile, not an
-    # individual record delete, because procedural memory is stored
-    # as a single profile document.
-    profile.rules.pop(index_1based - 1)
-    await aput_procedural_profile(store, user_id=session.owner_id(), profile=profile)
+    # Procedural memory is stored as one profile document, not one record per rule.
+    deleted = await adelete_procedural_rule(
+        store,
+        user_id=session.owner_id(),
+        rule_id=target_rule.id,
+    )
+    if deleted is None:
+        render_info(
+            "The selected rule changed before deletion could be applied.",
+            style="warning",
+        )
+        return
+    profile, _removed_rule = deleted
     render_info(
         f"Deleted rule #{index_1based}. "
         f"{len(profile.rules)} rule(s) remaining for this thread.",
@@ -1822,7 +1737,7 @@ async def render_memory_forget_rule(
     )
 
 
-# ── v0.9 privacy controls: /memory forget fact|session + /memory clear ─────
+# Privacy controls: /memory forget fact|session and /memory clear
 
 
 def _parse_one_based_index(
@@ -1832,7 +1747,7 @@ def _parse_one_based_index(
 ) -> int | None:
     """Parse a 1-indexed CLI argument into an int, or render a warning.
 
-    Shared across the v0.9 forget handlers (``fact``, ``session``) so
+    Shared across forget handlers (``fact``, ``session``) so
     they produce identical error messages for the same failure modes
     (non-integer argument, zero, negative). Returns ``None`` when the
     parse fails or the value is out of the 1-indexed range; the caller
@@ -1844,9 +1759,15 @@ def _parse_one_based_index(
     negative), and keeping all three paths in one place makes it
     easy to keep the phrasing consistent across fact / session /
     rule handlers. The rule handler at
-    :func:`render_memory_forget_rule` shipped before this helper
-    existed and inlines the same logic — it's fine to leave that
-    one alone because the pattern is stable.
+    :func:`render_memory_forget_rule` inlines the same logic to avoid
+    changing its mature confirmation flow.
+
+    Args:
+        index_str: Raw index argument from the command.
+        kind_label: User-facing memory kind label.
+
+    Returns:
+        Parsed one-based index, or None after rendering a warning.
     """
 
     try:
@@ -1877,10 +1798,10 @@ def _render_forget_confirmation(
 ) -> bool:
     """Render a y/N confirmation panel for a single-record forget command.
 
-    Shared helper for the v0.9 forget handlers (fact, session) that
+    Shared helper for forget handlers (fact, session) that
     need to show a preview of the target before the user confirms.
-    The panel mirrors the rule-forget confirmation shipped in v0.7
-    Stage E so the UX stays consistent across kinds.
+    The panel mirrors rule-forget confirmation so the UX stays
+    consistent across kinds.
 
     Args:
         kind_label: The word shown in the panel title, e.g., ``"fact"``
@@ -1926,8 +1847,8 @@ async def render_memory_forget_fact(
 ) -> None:
     """Handle the ``/memory forget fact <n>`` command.
 
-    v0.9 privacy control. Deletes one semantic fact from the active
-    owner's semantic namespace by its 1-indexed position in
+    Deletes one semantic fact from the active owner's semantic namespace by its
+    1-indexed position in
     ``/memory list`` (or ``/memory list facts``). The index must
     match the number shown in the ``#`` column of the semantic
     records table — if you change the sort order in
@@ -1959,6 +1880,9 @@ async def render_memory_forget_fact(
         session: Active CLI session, for the owner id.
         index_str: The raw argument the user typed after
             ``/memory forget fact``. Parsed to an int here.
+
+    Returns:
+        None.
     """
 
     index_1based = _parse_one_based_index(index_str, kind_label="fact")
@@ -1986,10 +1910,7 @@ async def render_memory_forget_fact(
 
     namespace, key, value = facts[index_1based - 1]
 
-    # Preview lines mirror the semantic table columns (category,
-    # predicate, object, evidence quote) so the user sees the same
-    # record shape they saw in /memory list. Evidence quote is
-    # truncated at 120 chars to keep the panel compact.
+    # Preview mirrors the semantic table and truncates evidence for compactness.
     category = str(value.get("category", "?"))
     predicate = str(value.get("predicate", "?"))
     object_id = _format_entity_identifier(value.get("object"))
@@ -2039,8 +1960,8 @@ async def render_memory_forget_session(
 ) -> None:
     """Handle the ``/memory forget session <n>`` command.
 
-    v0.9 privacy control. Deletes one episodic session arc from the
-    active owner's episodic namespace by its 1-indexed position in
+    Deletes one episodic session arc from the active owner's episodic namespace by its
+    1-indexed position in
     ``/memory list`` (or ``/memory list sessions``). Parallels
     :func:`render_memory_forget_fact` — same index contract, same
     confirmation pattern, same single-record adelete path.
@@ -2055,6 +1976,9 @@ async def render_memory_forget_session(
         session: Active CLI session, for the owner id.
         index_str: The raw argument the user typed after
             ``/memory forget session``. Parsed to an int here.
+
+    Returns:
+        None.
     """
 
     index_1based = _parse_one_based_index(index_str, kind_label="session")
@@ -2085,12 +2009,10 @@ async def render_memory_forget_session(
     summary = str(value.get("summary", ""))
     if len(summary) > 240:
         summary = summary[:237].rstrip() + "…"
-    themes_list = value.get("primary_themes") or []
-    themes_display = (
-        ", ".join(str(t) for t in themes_list)  # type: ignore[union-attr]
-        if themes_list
-        else "—"
-    )
+    themes_value = value.get("primary_themes")
+    themes_display = "—"
+    if isinstance(themes_value, list) and themes_value:
+        themes_display = ", ".join(str(t) for t in themes_value)
     ended_at = str(value.get("ended_at", ""))
     date_display = ended_at[:10] if len(ended_at) >= 10 else "—"
     preview = [
@@ -2131,51 +2053,41 @@ async def render_memory_clear(
 ) -> None:
     """Handle the ``/memory clear <kind>`` command.
 
-    v0.9 privacy control — the nuclear option. Deletes every record
-    in a namespace (or all namespaces) for the active owner.
-    Unrecoverable.
+    Deletes every record in a namespace, or all namespaces, for the
+    active owner. Unrecoverable.
 
     Because this is destructive at scale, the confirmation is
     **stronger** than the single-record forget commands: instead of
     y/N, the user must type the literal word ``clear`` to proceed.
     This prevents muscle-memory confirmations from nuking a memory
-    store the user didn't mean to lose. Any other input — including
-    ``y``, ``yes``, ``CLEAR``, or an empty line — cancels.
+    store the user did not mean to lose. Any other input, including
+    ``y``, ``yes``, ``CLEAR``, or an empty line, cancels.
 
     Supported kinds:
 
-    - ``facts``     → clear the semantic namespace
-    - ``sessions``  → clear the episodic namespace
-    - ``rules``     → clear the procedural profile (rules only;
+    - ``facts`` clears the semantic namespace
+    - ``sessions`` clears the episodic namespace
+    - ``rules`` clears the procedural profile (rules only;
                      ``proactive_recall_enabled`` is preserved
                      because it's a user preference, not content)
-    - ``all``       → clear all three of the above in one operation
+    - ``all`` clears all three of the above in one operation
 
     Implementation notes:
 
-    - Semantic and episodic use per-record ``adelete`` in a loop
-      rather than a hypothetical ``aclear_namespace`` primitive,
-      because the existing ``MemoryStore`` protocol doesn't include
-      a bulk-clear method. Adding one would be a v0.8 protocol
-      extension; the per-record loop is O(n) but n is bounded by
-      the <1k records per user expected in the dogfood window.
-    - Procedural uses a profile round-trip (``aget`` → reset
-      ``rules`` list → ``aput``) because it's stored as a single
-      profile document per user, not per-record.
-    - The clear operation is NOT atomic across kinds when
-      ``all`` is used — if the semantic sweep completes but
-      the episodic sweep raises, the semantic records are gone.
-      This is acceptable for v0.9 because (a) it's CLI-local, not
-      multi-client, and (b) the user has no restore path anyway, so
-      partial-clear behaves the same as full-clear from the user's
-      perspective. A future v0.9.1 could wrap the sweep in a
-      transaction if it matters.
+    Semantic and episodic memory use per-record deletes because the
+    store protocol does not expose a namespace-clear primitive.
+    Procedural memory uses a profile round-trip because it is stored as
+    one profile document per owner. The ``all`` path is not atomic
+    across kinds.
 
     Args:
         runtime: Active persistent runtime, for the memory store.
         session: Active CLI session, for the owner id.
         kind: One of ``"facts"``, ``"sessions"``, ``"rules"``,
             ``"all"``. Unknown kinds render a usage warning.
+
+    Returns:
+        None.
     """
 
     valid_kinds = {"facts", "sessions", "rules", "all"}
@@ -2189,10 +2101,7 @@ async def render_memory_clear(
     owner_id = session.owner_id()
     store = runtime.memory_store
 
-    # Pre-count how many records will be destroyed so the warning
-    # panel can show concrete numbers. Users take a "permanently
-    # delete 47 facts" prompt more seriously than "permanently
-    # delete all facts".
+    # Show concrete counts before destructive confirmation.
     counts: dict[str, int] = {"facts": 0, "sessions": 0, "rules": 0}
     if kind in ("facts", "all"):
         counts["facts"] = await store.arecord_count((owner_id, "semantic"))
@@ -2202,8 +2111,7 @@ async def render_memory_clear(
         profile = await aget_procedural_profile(store, user_id=owner_id)
         counts["rules"] = len(profile.rules)
 
-    # If nothing would be destroyed, skip the confirmation entirely
-    # and tell the user. No point showing a scary panel for a no-op.
+    # Skip scary confirmation for no-op clears.
     if sum(counts.values()) == 0:
         render_info(
             f"Nothing to clear for {kind}. Store is already empty "
@@ -2212,9 +2120,7 @@ async def render_memory_clear(
         )
         return
 
-    # Build the warning panel body. Only shows counts for the kinds
-    # being touched, so the user isn't confused by zeros they don't
-    # care about.
+    # Only show counts for kinds being touched.
     affected_lines = []
     if kind in ("facts", "all") and counts["facts"] > 0:
         affected_lines.append(f"semantic facts:    {counts['facts']}")
@@ -2277,10 +2183,10 @@ async def render_memory_clear(
         # Procedural is a profile-document, not per-record. Reset
         # the rules list but preserve the recall toggle (it's a
         # user preference, not content) and re-put the profile.
-        profile = await aget_procedural_profile(store, user_id=owner_id)
-        deleted_counts["rules"] = len(profile.rules)
-        profile.rules = []
-        await aput_procedural_profile(store, user_id=owner_id, profile=profile)
+        _profile, deleted_counts["rules"] = await aclear_procedural_rules(
+            store,
+            user_id=owner_id,
+        )
 
     # Render a success summary listing every kind that was touched.
     # Zero-count lines are suppressed so the panel is compact when
@@ -2308,49 +2214,46 @@ async def render_memory_clear(
     )
 
 
-# v0.8.1: crisis log retention purge. See the design note in
-# ``agent/memory/crisis_log.py`` for the 90-day default rationale.
-#
 # Default cutoff window (in days) for ``/memory purge-crisis``. 90 days
-# matches the retention policy documented in schema.yaml §2 and the
-# legal-review caveat on the always-on crisis log. Operators can
-# override per-invocation (e.g., ``/memory purge-crisis 30`` for a
-# tighter sweep) but the default should match the documented policy.
+# matches the documented default retention policy and legal-review caveat
+# on the always-on crisis log. Operators can override per-invocation
+# (e.g., ``/memory purge-crisis 30`` for a tighter sweep) but the
+# default should match the documented policy.
 DEFAULT_CRISIS_RETENTION_DAYS = 90
 
 
 async def render_memory_purge_crisis(
     runtime: PersistentAgentRuntime,
-    session: RunnerSession,  # noqa: ARG001 — session unused but kept for symmetry
+    session: RunnerSession,  # noqa: ARG001 - kept for handler symmetry
     *,
     days: int,
 ) -> None:
     """Handle the ``/memory purge-crisis [days]`` command.
 
-    v0.8.1 retention operation. Deletes all crisis log records older
-    than ``days`` days from the active runtime's crisis log backend.
+    Deletes crisis log records older than ``days`` days from the active
+    runtime's crisis log backend.
     Calls :meth:`CrisisLogBackend.apurge_before` with ``today - days``
     as the exclusive cutoff, so records on the cutoff date itself are
     preserved (the semantics match the backend's docstring).
 
     Unlike ``/memory forget`` or ``/memory clear``, this command
     operates on the **crisis log**, which is always-on regardless of
-    memory mode — even incognito sessions have an in-memory crisis
+    memory mode; even incognito sessions have an in-memory crisis
     log that the gate writes to. The purge affects whichever backend
     is currently wired, so operators can run this against an
     incognito session's in-memory log too (though it's less useful
     because the in-memory log dies at CLI exit anyway).
 
     Confirmation pattern: same typed ``purge`` gate as ``/memory clear``
-    — the user must type the literal word ``purge`` to proceed, not
+    because the user must type the literal word ``purge`` to proceed, not
     ``y`` or ``purge-crisis`` or ``PURGE``. This is consistent with
-    the v0.9 destructive-command pattern and prevents muscle-memory
-    mistakes from wiping the audit trail.
+    the destructive-command pattern and prevents muscle-memory mistakes
+    from wiping the audit trail.
 
     Args:
         runtime: Active persistent runtime. Reads the crisis log
             backend via ``runtime.crisis_log_backend``.
-        session: Active CLI session. Not currently read — included
+        session: Active CLI session. Not currently read; included
             for signature symmetry with other destructive handlers
             and because a future enhancement might scope the purge
             to the session's owner_id (currently the crisis log is
@@ -2359,6 +2262,9 @@ async def render_memory_purge_crisis(
             older than ``today - days`` are deleted. Must be >= 1;
             zero or negative values produce a warning without
             touching the log.
+
+    Returns:
+        None.
     """
 
     if days < 1:
@@ -2386,11 +2292,7 @@ async def render_memory_purge_crisis(
         )
         return
 
-    # Warning panel: show the retention window, the cutoff date, and
-    # the total count the purge will scan against. We don't know the
-    # exact delete count yet (would require a pre-scan), but the
-    # total count gives the operator a sense of scale. Post-purge
-    # the success message reports the actual deleted count.
+    # Show scan size before confirmation; post-purge reports actual deletes.
     body = (
         f"[warning]Retention window:[/warning] {days} day(s)\n"
         f"[warning]Cutoff date:[/warning]       {cutoff.isoformat()} "
@@ -2448,11 +2350,9 @@ async def render_memory_list_rules(
 ) -> None:
     """Render the active thread's procedural rules in a browsable table.
 
-    v0.7 Stage E. Unlike ``render_memory_list`` which aggregates
-    semantic and episodic records across all threads stored in the
-    memory store, this function reads the procedural profile for the
-    CURRENT thread only. That's because rules are namespaced per
-    user, and in the CLI the thread_id is the effective user id.
+    Unlike ``render_memory_list``, this reads procedural rules from the
+    active owner's profile because procedural memory is stored as one
+    profile document per owner.
 
     Shows each rule with its index (usable with
     ``/memory forget rule <n>``), the rule text, the evidence quote
@@ -2465,6 +2365,9 @@ async def render_memory_list_rules(
             via its public property.
         session: Active CLI session. Used to identify the current
             thread for the per-user profile lookup.
+
+    Returns:
+        None.
     """
 
     profile = await aget_procedural_profile(
@@ -2487,24 +2390,27 @@ async def render_memory_list_rules(
 def render_session_summary(stored_arc: StoredSessionArc) -> None:
     """Render a session summary panel after the summarizer writes an arc.
 
-    Shipped with v0.4 as the closing farewell when ``/end`` triggers the
-    session summarizer. Shows the user the exact summary that was saved,
-    so they know what will be remembered — and can correct it later
-    (via /memory forget in v0.9 or by telling the agent directly).
+    Shows the user the exact summary that was saved so they know what
+    will be remembered and can correct it later.
 
     The summary display uses the structured fields from StoredSessionArc
     rather than just the prose summary, because the structure IS the
     signal: mood arc, themes, open loops, and crisis level all say
     something about what the session was about beyond what the summary
     paragraph captures.
+
+    Args:
+        stored_arc: Persisted session arc produced by the summarizer.
+
+    Returns:
+        None.
     """
 
     table = Table(show_header=False, box=box.SIMPLE)
     table.add_column(style="hint", no_wrap=True)
     table.add_column(style="info")
 
-    # Summary text goes at the top — it's the main thing the user
-    # wants to see and confirm.
+    # Summary text is the primary confirmation signal for the user.
     table.add_row("summary", stored_arc.summary)
     table.add_row(
         "themes",
@@ -2674,13 +2580,9 @@ def render_status(session: RunnerSession) -> None:
 def render_history(session: RunnerSession, limit: int = 6) -> None:
     """Render the most recent transcript entries.
 
-    v0.8 observability pass: the table now includes a ``mode`` column
-    populated from ``Message.response_style``, which ``run_finalize_turn_node``
-    stamps on assistant turns. User turns show ``-`` in the mode
-    column. When rendering a transcript from an older checkpoint
-    (where assistant turns predate the mode field), every assistant
-    cell falls back to ``-`` — gracefully hiding the fact that the
-    data wasn't captured at that time rather than raising.
+    Assistant turns show the response style recorded by the finalize
+    node. Missing style metadata falls back to ``-`` for older or
+    minimal checkpoints.
 
     Args:
         session: Mutable CLI session state.
@@ -2750,7 +2652,15 @@ def render_threads(
     *,
     active_thread_id: str,
 ) -> None:
-    """Render a compact table of persisted thread summaries."""
+    """Render a compact table of persisted thread summaries.
+
+    Args:
+        threads: Thread summaries returned by the runtime.
+        active_thread_id: Currently selected thread id.
+
+    Returns:
+        None.
+    """
 
     if not threads:
         render_info("No persisted threads found.", style="warning")
@@ -2805,7 +2715,15 @@ def set_response_model_tier(
     session: RunnerSession,
     response_model_tier: ResponseModelTier,
 ) -> None:
-    """Update the response-writer tier for subsequent turns."""
+    """Update the response-writer tier for subsequent turns.
+
+    Args:
+        session: Mutable CLI session state.
+        response_model_tier: Requested response model tier.
+
+    Returns:
+        None.
+    """
 
     session.response_model_tier = response_model_tier
     session.response_llm_client = (
@@ -2816,7 +2734,11 @@ def set_response_model_tier(
 
 
 def generate_thread_id() -> str:
-    """Generate a new local thread id for ad hoc CLI sessions."""
+    """Generate a new local thread id for ad hoc CLI sessions.
+
+    Returns:
+        New local thread id.
+    """
 
     return f"local-{uuid4().hex[:12]}"
 
@@ -2859,14 +2781,13 @@ async def switch_thread(
 def _prompt_for_session_feedback() -> FeedbackLabel | None:
     """Ask the user once for a thumbs rating at end-of-session.
 
-    v0.10 feedback capture — the first collection surface for the
-    session-feedback dataset. The prompt is opt-in by design:
+    The prompt is opt-in by design:
 
-    - Explicit ``y``, ``n``, ``s`` → ``"positive"``, ``"negative"``,
+    - Explicit ``y``, ``n``, ``s`` maps to ``"positive"``, ``"negative"``,
       ``"skip"``. All three produce a labeled record so analytics can
       distinguish "user actively skipped" from "user said nothing".
-    - Empty input (bare Enter) → ``None``. No record written.
-    - ``Ctrl-C`` / ``EOF`` (piped stdin, aborted prompt) → ``None``.
+    - Empty input (bare Enter) maps to ``None``. No record written.
+    - ``Ctrl-C`` / ``EOF`` maps to ``None``.
       No record written.
 
     No default value. Defaulting to ``"skip"`` would turn accidental
@@ -2874,6 +2795,9 @@ def _prompt_for_session_feedback() -> FeedbackLabel | None:
     rate in analytics; defaulting to anything else would bias toward
     that label. The explicit-no-default design means Enter is a
     no-op both for the user and for the dataset.
+
+    Returns:
+        Feedback label when explicitly selected, otherwise None.
     """
 
     try:
@@ -2895,7 +2819,7 @@ def _prompt_for_session_feedback() -> FeedbackLabel | None:
         return "negative"
     if response == "s":
         return "skip"
-    return None  # empty input → no record
+    return None  # Empty input means no feedback record.
 
 
 async def _summarize_and_render(
@@ -2914,25 +2838,25 @@ async def _summarize_and_render(
        record. ``source`` distinguishes which command triggered the
        flow (``"cli_end"`` or ``"cli_exit"``).
     2. Feedback persistence via ``runtime.record_session_feedback``.
-       The runtime never raises — a backend outage means no record
+       The runtime never raises; a backend outage means no record
        is written and the flow continues.
     3. Summarization via ``runtime.end_session``. If it returns a
        stored arc we render it; if it returns ``None`` (incognito,
        no LLM, thin session) we render a plain farewell.
 
-    v0.4 note (kept for reference): failures inside the summarizer
-    degrade silently — a silent ``None`` return is indistinguishable
-    from "ran but nothing to save", which is the right user-visible
-    behavior.
+    ``/exit`` save=n does not route through here because that branch
+    skips both the feedback prompt and session summary.
 
-    v0.10: this helper is no longer strictly summary-only. It owns
-    the full end-session sequence. ``/exit`` save=n does NOT route
-    through here (no feedback prompt, no summary) — see the
-    command handler for that branch's rationale.
+    Args:
+        session: Active CLI session.
+        runtime: Persistent runtime backing the active thread.
+        source: Feedback source label for any captured feedback.
+
+    Returns:
+        None.
     """
 
-    # Step 1 + 2: best-effort feedback capture. Silent input / aborted
-    # prompt → no record; explicit label → record written.
+    # Best-effort feedback capture. Silent input means no record.
     label = _prompt_for_session_feedback()
     if label is not None:
         await runtime.record_session_feedback(
@@ -2941,17 +2865,14 @@ async def _summarize_and_render(
             source=source,
         )
 
-    # Step 3: existing summarization flow, unchanged.
+    # Summarization degrades to a plain farewell when no arc is produced.
     try:
         stored_arc = await runtime.end_session(
             session.thread_id,
             llm_client=session.llm_client,
         )
     except Exception:
-        # Belt-and-suspenders: the summarizer itself catches its own
-        # errors, but if something unexpected escapes we still want
-        # the /end flow to exit cleanly. Log to stderr via render_info
-        # rather than crashing the CLI.
+        # Keep the end flow usable even if an unexpected summary error escapes.
         render_info(
             "Something went wrong while summarizing the session. Your "
             f"conversation is still saved in thread {session.thread_id}.",
@@ -2994,12 +2915,7 @@ async def handle_command(
     args = parts[1:]
 
     if command in {"/exit", "/quit"}:
-        # v0.4: offer to summarize the session before exiting. The user
-        # can decline (and then gets only the farewell); declining means
-        # the session's content is NOT saved to episodic memory. The
-        # prompt defaults to Y because saving a summary is the safer
-        # path — it's easier to /memory forget later than to reconstruct
-        # a lost summary.
+        # Default toward saving a summary; users can delete it later if needed.
         save = Prompt.ask(
             "[muted]Save a session summary before exiting?[/muted] [accent][Y/n][/accent]",
             choices=["y", "Y", "n", "N", ""],
@@ -3008,39 +2924,20 @@ async def handle_command(
             show_default=False,
         )
         if save.strip().lower() != "n":
-            # save=y branch → full end-session flow (feedback + summary).
             await _summarize_and_render(session, runtime, source="cli_exit")
-        # save=n branch intentionally skips both feedback prompt and
-        # summary. If the user declined to save, asking for a rating
-        # on that branch would be inconsistent — "don't save my
-        # conversation" covers rating data too.
+        # If the user declines saving, skip feedback capture as well.
         return False
 
     if command == "/end":
-        # v0.4: trigger the session summarizer before exiting. Unlike
-        # /exit this does NOT prompt for save consent — the user
-        # explicitly chose /end, which means they want to wrap up the
-        # session properly. The summarizer runs, the resulting arc is
-        # rendered as a farewell, and the loop exits.
-        # v0.10: _summarize_and_render now also captures optional
-        # feedback before summarization.
+        # Explicit end command means full closing flow without save confirmation.
         await _summarize_and_render(session, runtime, source="cli_end")
         return False
 
     if command == "/memory":
-        # v0.3.1 added /memory status and /memory list.
-        # v0.7 added /memory list rules, /memory recall on|off, and
-        # /memory forget rule <n>.
-        # v0.9 adds /memory list facts|sessions subcommands,
-        # /memory forget fact|session <n>, and /memory clear <kind>.
         if len(args) == 0 or args[0] == "status":
             await render_memory_status(runtime, session)
             return True
         if args[0] == "list":
-            # /memory list                   — semantic + episodic (current)
-            # /memory list facts             — semantic only (v0.9)
-            # /memory list sessions          — episodic only (v0.9)
-            # /memory list rules             — procedural rules (v0.7)
             if len(args) >= 2 and args[1] == "rules":
                 await render_memory_list_rules(runtime, session)
                 return True
@@ -3058,7 +2955,6 @@ async def handle_command(
                 console.print()
                 return True
             if len(args) >= 2 and args[1] == "sessions":
-                # Render just the episodic table.
                 episodic_records = await _collect_records_by_kind(
                     runtime, kind="episodic", owner_id=session.owner_id()
                 )
@@ -3071,9 +2967,6 @@ async def handle_command(
             await render_memory_list(runtime, session)
             return True
         if args[0] == "recall":
-            # /memory recall on|off — toggle proactive recall for the
-            # active thread. When flipping off→on, the handler shows
-            # the first-run explanation from schema.yaml.
             if len(args) < 2 or args[1] not in ("on", "off"):
                 render_info(
                     "Usage: /memory recall on  |  /memory recall off",
@@ -3085,9 +2978,6 @@ async def handle_command(
             )
             return True
         if args[0] == "forget":
-            # /memory forget rule <n>    — delete one procedural rule (v0.7)
-            # /memory forget fact <n>    — delete one semantic fact (v0.9)
-            # /memory forget session <n> — delete one episodic arc (v0.9)
             if len(args) >= 2 and args[1] == "rule":
                 if len(args) < 3:
                     render_info(
@@ -3121,10 +3011,6 @@ async def handle_command(
             )
             return True
         if args[0] == "clear":
-            # /memory clear <facts|sessions|rules|all> — v0.9 nuclear option.
-            # Stronger confirmation than forget: user must type the
-            # literal word ``clear`` to proceed. See render_memory_clear
-            # for the full contract.
             if len(args) < 2:
                 render_info(
                     "Usage: /memory clear <facts|sessions|rules|all>",
@@ -3134,13 +3020,6 @@ async def handle_command(
             await render_memory_clear(runtime, session, kind=args[1])
             return True
         if args[0] == "purge-crisis":
-            # /memory purge-crisis [days] — v0.8.1 retention operation.
-            # Deletes crisis log records older than the retention
-            # window. Default is 90 days (DEFAULT_CRISIS_RETENTION_DAYS)
-            # to match the policy in schema.yaml §2. Operators can
-            # override per-call, e.g., ``/memory purge-crisis 30`` for
-            # a tighter sweep. Requires typed ``purge`` confirmation,
-            # same UX pattern as /memory clear.
             days = DEFAULT_CRISIS_RETENTION_DAYS
             if len(args) >= 2:
                 try:
@@ -3155,7 +3034,7 @@ async def handle_command(
             await render_memory_purge_crisis(runtime, session, days=days)
             return True
         render_info(
-            "Unknown /memory subcommand. Available in v0.9: "
+            "Unknown /memory subcommand. Available: "
             "status, list [facts|sessions|rules], recall on|off, "
             "forget <fact|session|rule> <n>, clear <facts|sessions|rules|all>, "
             "purge-crisis [days]",
@@ -3306,13 +3185,6 @@ async def handle_command(
         return True
 
     if command == "/debug":
-        # v0.8 observability pass: ``/debug state`` dumps the raw
-        # state dict for the active thread. This is intentionally
-        # verbose — it's the "everything the graph is carrying
-        # forward" view for when the Session Context panel isn't
-        # enough (e.g., when inspecting raw ``routing.semantic_signals``
-        # or ``diagnostics`` contents). Future subcommands (e.g.,
-        # ``/debug history``, ``/debug raw crisis``) can chain here.
         if len(args) == 0 or args[0] != "state":
             render_info(
                 "Usage: /debug state  (dumps raw graph state for the active thread)",
@@ -3347,13 +3219,13 @@ async def chat_loop(
             rather than the thread_id. See
             :meth:`RunnerSession.owner_id` for the full resolution
             rationale. When None, the CLI uses ``thread_id`` as the
-            effective owner (backward-compatible default).
+            effective owner.
+        response_model_tier: Response tier for user-facing prose.
         sqlite_path: SQLite file used for persisted thread checkpoints.
         memory_mode: Local memory mode ("guest" or "persistent").
-        memory_sqlite_path: v0.8 SQLite path for the memory store
-            (semantic + episodic records). Only used in persistent
-            mode; incognito ignores it and uses in-memory backing.
-        crisis_log_sqlite_path: v0.8 SQLite path for the crisis log.
+        memory_sqlite_path: SQLite path for the memory store. Only
+            used in persistent mode; incognito uses in-memory backing.
+        crisis_log_sqlite_path: SQLite path for the crisis log.
             Same persistence semantics as the memory path.
 
     Returns:
@@ -3410,7 +3282,11 @@ async def chat_loop(
         pending_tail_task: asyncio.Task[AgentOutput] | None = None
 
         async def _finalize_pending_turn() -> None:
-            """Wait for any background tail work, then render diagnostics."""
+            """Wait for any background tail work and refresh session state.
+
+            Returns:
+                None.
+            """
 
             nonlocal pending_tail_task
             if pending_tail_task is None:
@@ -3490,6 +3366,15 @@ async def chat_loop(
                     )
 
                     def _stream_group(body) -> Group:
+                        """Combine the spinner and response body for live rendering.
+
+                        Args:
+                            body: Rich renderable shown under the spinner.
+
+                        Returns:
+                            Rich group for the live display.
+                        """
+
                         return Group(status_renderable, body)
 
                     live.update(_stream_group(Text("", style="muted")))
@@ -3594,8 +3479,8 @@ async def chat_loop(
 def main() -> int:
     """Run the OpenCouch CLI.
 
-    With ``--voice``, starts the FastAPI server with the OpenAI
-    Realtime voice endpoint and opens the test page in the browser.
+    With ``--voice``, starts the FastAPI server plus the LiveKit
+    voice worker and opens the browser test page.
     Without ``--voice``, runs the interactive text CLI as usual.
 
     Returns:
@@ -3630,33 +3515,89 @@ def main() -> int:
 def _run_voice_mode(args) -> int:
     """Start the voice mode server and open the browser.
 
-    Launches uvicorn serving the FastAPI app (which includes the
-    ``/api/voice/session`` WebSocket endpoint and the
-    ``/api/voice/test`` test page). Then opens the test page in the
-    default browser.
+    Launches uvicorn serving the FastAPI app plus a background
+    ``voice.livekit.agent`` worker, then opens the LiveKit test page
+    in the default browser.
 
-    The server runs in the foreground — Ctrl+C to stop.
+    The server runs in the foreground; Ctrl+C stops it.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Returns:
+        Process exit code for voice mode startup and shutdown.
     """
 
     import webbrowser
 
     import uvicorn
 
+    required_env = (
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "OPENAI_API_KEY",
+    )
+    missing = [name for name in required_env if not os.getenv(name)]
+    if missing:
+        console.print(
+            Panel(
+                "[accent]Voice mode requires LiveKit configuration.[/accent]\n\n"
+                f"Missing env vars: [info]{', '.join(missing)}[/info]",
+                title="Voice Mode Unavailable",
+                style="warning",
+            )
+        )
+        return 1
+
     port = args.port
-    url = f"http://localhost:{port}/api/voice/test"
+    query = {"dispatch": "1"}
+    if args.user_id:
+        query["user"] = args.user_id
+    if args.thread_id:
+        query["thread"] = args.thread_id
+    url = f"http://localhost:{port}/api/voice/livekit/test?{urlencode(query)}"
+    worker_env = os.environ.copy()
+    worker_env["OPENCOUCH_MEMORY_MODE"] = (
+        "guest" if args.memory_mode == "guest" else "persistent"
+    )
+    worker_cmd = [sys.executable, "-m", "voice.livekit.agent", "start"]
 
     console.print(Rule("[primary]OpenCouch Voice Mode[/primary]", style="panel"))
     console.print(
         f"[muted]Starting voice server on port[/muted] [info]{port}[/info]\n"
+        f"[muted]Starting LiveKit worker:[/muted] [info]{' '.join(worker_cmd)}[/info]\n"
         f"[muted]Opening[/muted] [info]{url}[/info] [muted]in your browser...[/muted]\n"
         f"[muted]Press[/muted] [accent]Ctrl+C[/accent] [muted]to stop.[/muted]\n"
     )
+
+    worker = subprocess.Popen(worker_cmd, env=worker_env)
+    try:
+        worker.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        pass
+    else:
+        console.print(
+            Panel(
+                "[accent]The LiveKit worker exited before the browser test page opened.[/accent]\n"
+                "Check the worker logs above for the failure reason.",
+                title="Voice Worker Failed",
+                style="warning",
+            )
+        )
+        return worker.returncode or 1
 
     # Open the browser after a short delay so the server has time
     # to start. We use a thread because uvicorn.run blocks.
     import threading
 
-    def open_browser():
+    def open_browser() -> None:
+        """Open the voice test page after a short startup delay.
+
+        Returns:
+            None.
+        """
+
         import time
 
         time.sleep(1.5)
@@ -3668,5 +3609,13 @@ def _run_voice_mode(args) -> int:
         uvicorn.run("main:app", host="127.0.0.1", port=port, log_level="info")
     except KeyboardInterrupt:
         console.print("\n[muted]Voice server stopped.[/muted]")
+    finally:
+        if worker.poll() is None:
+            worker.terminate()
+            try:
+                worker.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait(timeout=5)
 
     return 0

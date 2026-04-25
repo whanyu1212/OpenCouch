@@ -20,7 +20,7 @@ from agent.nodes.crisis_gate import (
     assess_crisis_risk_deterministically,
     assess_crisis_risk_with_llm,
     detect_crisis_override,
-    normalize_crisis_assessment,
+    enforce_crisis_truth_table,
 )
 from core.config import create_configured_llm_client
 from services.llm.base import BaseLLMClient
@@ -78,31 +78,47 @@ async def _evaluate_case(
     override = detect_crisis_override(state)
     if override is not None:
         _, override_assessment = override
-        assessment = normalize_crisis_assessment(override_assessment)
+        assessment = enforce_crisis_truth_table(override_assessment)
     else:
-        deterministic = assess_crisis_risk_deterministically(state)
-        if deterministic.level >= 2 or llm_client is None:
-            assessment = normalize_crisis_assessment(deterministic)
+        if llm_client is None:
+            deterministic = assess_crisis_risk_deterministically(state)
+            assessment = enforce_crisis_truth_table(deterministic)
         else:
             try:
                 llm_assessment = await assess_crisis_risk_with_llm(
                     state, llm_client=llm_client
                 )
-                assessment = normalize_crisis_assessment(llm_assessment)
+                assessment = enforce_crisis_truth_table(llm_assessment)
             except Exception:
-                assessment = normalize_crisis_assessment(deterministic)
+                deterministic = assess_crisis_risk_deterministically(state)
+                assessment = enforce_crisis_truth_table(deterministic)
 
-    matched = (
-        assessment.level == case["expected_level"]
-        and assessment.needs_crisis_response == case["expected_needs_crisis_response"]
-        and assessment.needs_clarification == case["expected_needs_clarification"]
-    )
+    if "expected_level_in" in case:
+        level_matched = assessment.level in case["expected_level_in"]
+        expected_level_detail = f"level_in={case['expected_level_in']!r}"
+    else:
+        level_matched = assessment.level == case["expected_level"]
+        expected_level_detail = f"level={case['expected_level']!r}"
+
+    crisis_response_matched = True
+    if "expected_needs_crisis_response" in case:
+        crisis_response_matched = (
+            assessment.needs_crisis_response == case["expected_needs_crisis_response"]
+        )
+
+    clarification_matched = True
+    if "expected_needs_clarification" in case:
+        clarification_matched = (
+            assessment.needs_clarification == case["expected_needs_clarification"]
+        )
+
+    matched = level_matched and crisis_response_matched and clarification_matched
 
     if matched:
         return True, None
 
     detail = (
-        f"FAIL {case['id']}: got level={assessment.level}, "
+        f"FAIL {case['id']}: expected {expected_level_detail}, got level={assessment.level}, "
         f"needs_crisis_response={assessment.needs_crisis_response}, "
         f"needs_clarification={assessment.needs_clarification}"
     )

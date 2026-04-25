@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-from typing import cast
+from typing import Any, cast
 
 from google import genai
 from google.genai import types
@@ -28,6 +28,9 @@ class GeminiLLMClient(BaseLLMClient):
         Args:
             api_key: Optional explicit API key override.
             model: Model identifier to use for requests.
+
+        Returns:
+            None.
 
         Raises:
             ValueError: If no Gemini API key can be resolved.
@@ -64,7 +67,9 @@ class GeminiLLMClient(BaseLLMClient):
         Raises:
             ValueError: If Gemini returns an empty text payload.
         """
-        tools = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+        tools: list[Any] | None = (
+            [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+        )
         response = await self.client.aio.models.generate_content(
             model=self.model,
             contents=prompt,

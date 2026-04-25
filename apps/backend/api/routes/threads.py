@@ -1,9 +1,9 @@
 """Thread management endpoints.
 
-GET  /api/threads — list persisted threads
-GET  /api/threads/{id}/state — raw state dump
-GET  /api/threads/{id}/history — transcript messages
-POST /api/threads/{id}/end — end session and summarize
+GET  /api/threads: list persisted threads.
+GET  /api/threads/{id}/state: raw state dump.
+GET  /api/threads/{id}/history: transcript messages.
+POST /api/threads/{id}/end: end session and summarize.
 """
 
 from __future__ import annotations
@@ -29,7 +29,15 @@ async def list_threads(
     limit: int = 20,
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> list[ThreadSummaryResponse]:
-    """List persisted threads, most recent first."""
+    """List persisted threads, most recent first.
+
+    Args:
+        limit: Maximum number of threads to return.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Persisted thread summaries.
+    """
 
     summaries = await runtime.list_threads(limit=limit)
     return [
@@ -55,13 +63,20 @@ async def get_thread_state(
     routing, memory, crisis assessment, and transcript.
 
     Returns 404 if the thread has no persisted state.
+
+    Args:
+        thread_id: Thread identifier to inspect.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        JSON-serializable graph state.
     """
 
     state = await runtime.get_state(thread_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"No state for thread {thread_id}")
 
-    # The state may contain pydantic models (e.g., CrisisAssessment)
+    # The state may contain pydantic models (for example, CrisisAssessment)
     # that don't serialize to JSON directly. Convert via str fallback
     # for any non-serializable values — same approach as the CLI's
     # /debug state which uses json.dumps(state, default=str).
@@ -82,6 +97,13 @@ async def get_thread_history(
     mode shaped that reply).
 
     Returns an empty list if the thread has no history.
+
+    Args:
+        thread_id: Thread identifier to inspect.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Transcript messages for the thread.
     """
 
     messages = await runtime.get_history(thread_id)
@@ -100,7 +122,15 @@ async def get_thread_session_status(
     thread_id: str,
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> ThreadSessionStatusResponse:
-    """Return whether this thread currently has an active session."""
+    """Return whether this thread currently has an active session.
+
+    Args:
+        thread_id: Thread identifier to inspect.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Active-session status for the thread.
+    """
 
     return ThreadSessionStatusResponse(
         has_active_session=await runtime.has_active_session(thread_id)
@@ -127,16 +157,25 @@ async def end_session(
     :meth:`PersistentAgentRuntime.record_session_feedback` BEFORE
     summarization runs, with ``source="api_end"``. Clients POSTing
     with no body or ``{"feedback": null}`` skip the feedback step
-    — summarization runs unchanged. Feedback write failures are
+    and summarization runs unchanged. Feedback write failures are
     best-effort and never block summarization.
 
-    The response shape is unchanged from prior versions — feedback
+    The response shape is unchanged from prior versions: feedback
     write status is not surfaced. Feedback persistence is orthogonal
     to summarization.
+
+    Args:
+        thread_id: Thread identifier to end.
+        body: Optional session-ending request body.
+        runtime: Shared persistent agent runtime.
+        llm_client: Optional control-plane LLM client.
+
+    Returns:
+        Session summary response, or an explanatory detail payload when
+        no summary was produced.
     """
 
-    # Step 1: optional best-effort feedback capture. Runtime never
-    # raises — a backend outage returns None, we continue.
+    # Optional best-effort feedback capture. Runtime outages do not block summary.
     if body.feedback is not None:
         await runtime.record_session_feedback(
             thread_id,
@@ -144,7 +183,7 @@ async def end_session(
             source="api_end",
         )
 
-    # Step 2: existing summarization flow, unchanged.
+    # Existing summarization flow.
     arc = await runtime.end_session(thread_id, llm_client=llm_client)
 
     if arc is None:

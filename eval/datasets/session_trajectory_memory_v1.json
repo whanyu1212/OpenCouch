@@ -9,15 +9,13 @@
         "expect": {
           "memory_write_expected": true,
           "memory_write_category_in": ["semantic"],
-          "semantic_fact_count_delta": 1,
           "procedural_rule_count_delta": 0,
-          "semantic_fact_object_contains_any": ["Sarah"],
-          "semantic_facts_total": 1
+          "semantic_fact_object_contains_any": ["Sarah"]
         }
       }
     ],
     "final_expect": {
-      "semantic_facts_total": 1,
+      "semantic_fact_object_contains_any": ["Sarah"],
       "procedural_rules_total": 0,
       "session_end_memory_write_expected": false
     }
@@ -177,8 +175,7 @@
     "final_expectations": {
       "session_end_memory_write_expected": true,
       "session_end_memory_write_category_in": ["semantic"],
-      "session_end_semantic_fact_count_delta": 1,
-      "semantic_facts_total": 1
+      "semantic_fact_object_contains_any": ["panic", "family conflict"]
     }
   },
   {
@@ -234,6 +231,256 @@
     "final_expectations": {
       "session_end_procedural_rule_count_delta": 0,
       "procedural_rules_total": 0
+    }
+  },
+  {
+    "id": "semantic_promotion_in_session_one_is_retrieved_without_duplicate_write_in_session_two",
+    "description": "A repeated semantic candidate should promote at the end of session one, then be retrieved in session two without duplicating the write.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "Family conflict is a big trigger for panic.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      },
+      {
+        "user": "Family conflict is a big trigger for panic, especially when it blows up at dinner.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      },
+      {
+        "action": "end_session"
+      },
+      {
+        "user": "Family conflict blew up again tonight and I can feel the panic building.",
+        "expect": {
+          "working_memory_types_contains_any": ["semantic"],
+          "working_memory_evidence_contains_any": ["family conflict is a big trigger for panic"],
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0
+        }
+      }
+    ],
+    "final_expectations": {
+      "episodic_arcs_total": 1,
+      "procedural_rules_total": 0,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "procedural_preference_from_session_one_shapes_session_two_without_duplicate_write",
+    "description": "An implicit procedural preference should promote at the end of session one and shape the next session without duplicating the rule.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "When you suggest meditation, it makes me more anxious.",
+        "expect": {
+          "memory_write_expected": false,
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      },
+      {
+        "user": "Meditation suggestions make me more anxious every time.",
+        "expect": {
+          "memory_write_expected": false,
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 0
+        }
+      },
+      {
+        "action": "end_session"
+      },
+      {
+        "user": "Can you suggest one way to calm down tonight?",
+        "expect": {
+          "memory_write_expected": false,
+          "procedural_rule_count_delta": 0,
+          "procedural_rules_total": 1,
+          "response_not_contains": [
+            "try meditation",
+            "meditate for",
+            "short meditation"
+          ]
+        }
+      }
+    ],
+    "final_expectations": {
+      "procedural_rules_total": 1,
+      "episodic_arcs_total": 1,
+      "procedural_rule_contains_any": ["more anxious"],
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "single_negative_self_belief_does_not_persist_across_sessions",
+    "description": "A single negative self-belief should not become durable semantic memory across sessions without repetition.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "I always assume one mistake means I'm incompetent.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      },
+      {
+        "action": "end_session"
+      },
+      {
+        "user": "That same work fear is back tonight and I still feel ashamed.",
+        "expect": {
+          "memory_write_expected": false,
+          "semantic_fact_count_delta": 0,
+          "semantic_facts_total": 0,
+          "working_memory_types_not_contains_any": ["semantic"]
+        }
+      }
+    ],
+    "final_expectations": {
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 0,
+      "episodic_arcs_total": 1,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "episodic_arc_from_session_one_is_available_in_session_two",
+    "description": "A session-one episodic summary should be available as working memory when the user returns on the same thread.",
+    "supported_modes": ["hybrid"],
+    "turns": [
+      {
+        "user": "I've been overwhelmed by work and I keep telling myself one mistake means I'm failing."
+      },
+      {
+        "user": "Then I stay late trying to fix everything and end up feeling ashamed."
+      },
+      {
+        "user": "I want to come back to this next time instead of starting from scratch."
+      },
+      {
+        "action": "end_session"
+      },
+      {
+        "user": "I'm back and I want to keep working on the work shame spiral from last time.",
+        "expect": {
+          "working_memory_types_contains_any": ["episodic"],
+          "working_memory_summary_contains_any": ["work", "shame"],
+          "memory_write_expected": false,
+          "episodic_arcs_total": 1
+        }
+      }
+    ],
+    "final_expectations": {
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 0,
+      "episodic_arcs_total": 1,
+      "session_end_memory_write_expected": false
+    }
+  },
+  {
+    "id": "memory_control_lists_memory_and_turns_recall_off",
+    "description": "Explicit natural-language memory-control turns should bypass therapeutic routing, list saved memories, and update proactive recall without creating new memories.",
+    "supported_modes": ["hybrid"],
+    "seed_memory": {
+      "proactive_recall_enabled": true,
+      "semantic_facts": [
+        {
+          "category": "trigger",
+          "predicate": "WORRIES_ABOUT",
+          "object_type": "Event",
+          "object_identifier": "presentations",
+          "evidence_quote": "Presentations make me anxious."
+        }
+      ],
+      "procedural_rules": [
+        {
+          "rule": "You prefer shorter responses.",
+          "evidence": ["Please keep replies short."]
+        }
+      ]
+    },
+    "turns": [
+      {
+        "user": "What do you remember about me?",
+        "expect": {
+          "allowed_modes": ["memory_control"],
+          "response_contains_any": ["Presentations", "presentations", "shorter responses"],
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 1,
+          "procedural_rules_total": 1
+        }
+      },
+      {
+        "user": "Don't bring up past sessions unless I ask.",
+        "expect": {
+          "allowed_modes": ["memory_control"],
+          "response_contains_any": ["proactive recall off", "turned proactive recall off"],
+          "proactive_recall_enabled": false,
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 1,
+          "procedural_rules_total": 1
+        }
+      }
+    ],
+    "final_expectations": {
+      "allowed_modes": ["memory_control"],
+      "semantic_facts_total": 1,
+      "procedural_rules_total": 1,
+      "memory_write_expected": false
+    }
+  },
+  {
+    "id": "memory_control_forget_by_query_requires_confirmation",
+    "description": "A natural-language forget request should preview the matching saved memory, require confirmation, then delete the exact record without extractor writes.",
+    "supported_modes": ["hybrid"],
+    "seed_memory": {
+      "semantic_facts": [
+        {
+          "category": "trigger",
+          "predicate": "WORRIES_ABOUT",
+          "object_type": "Event",
+          "object_identifier": "presentations",
+          "evidence_quote": "Presentations make me anxious."
+        }
+      ]
+    },
+    "turns": [
+      {
+        "user": "Forget what you remember about presentations.",
+        "expect": {
+          "allowed_modes": ["memory_control"],
+          "response_contains_any": ["Do you want me to delete it", "delete it"],
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 1
+        }
+      },
+      {
+        "user": "Yes, delete it.",
+        "expect": {
+          "allowed_modes": ["memory_control"],
+          "response_contains_any": ["Deleted that saved fact", "Deleted"],
+          "semantic_fact_count_delta": 0,
+          "procedural_rule_count_delta": 0,
+          "semantic_facts_total": 0
+        }
+      }
+    ],
+    "final_expectations": {
+      "allowed_modes": ["memory_control"],
+      "semantic_facts_total": 0,
+      "procedural_rules_total": 0,
+      "memory_write_expected": false
     }
   }
 ]

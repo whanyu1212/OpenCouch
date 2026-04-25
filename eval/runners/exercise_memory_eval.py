@@ -21,7 +21,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -73,13 +73,11 @@ async def _evaluate_case(case: dict[str, Any]) -> tuple[bool, str | None]:
         "history": [],
         "user_id": "eval-user",
         "session_id": "eval-session",
-        "progress": {
+        "session_progress": {"turn_count": 5},
+        "exercise_state": {
             "exercise_type": case["exercise_type"],
             "exercise_step": case["exercise_step"],
-            "turn_count": 5,
         },
-        "response": {},
-        "routing": {},
     }
 
     await run_guided_exercise_response_node(

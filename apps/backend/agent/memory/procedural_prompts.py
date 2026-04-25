@@ -27,27 +27,23 @@ The system prompt enforces three orthogonal constraints:
    there is NO curation pass between storage and display. The
    grounding-in-evidence framing IS the softening mechanism; it
    presents the rule as an observation about a pattern rather than a
-   verdict about the user. See schema.yaml §6 write_policies.procedural
-   for the full rationale.
+   verdict about the user.
 
 3. **Evidence is always a verbatim user quote.** Each rule must carry
    the specific user utterance that triggered the write as its
-   evidence field. This is the auditability hook for the future
-   ``/memory list rules`` UX: users need to be able to answer "why
+   evidence field. This supports the ``/memory list rules`` UX:
+   users need to be able to answer "why
    does the agent think I said that?" by reading the evidence.
 
-Phase scope:
-
-Phase C produces rules from:
+This writer produces rules from:
 
 - **explicit user requests** about how the agent should respond, and
 - **clear implicit agent-facing preferences** that may need repetition
   before persistence, such as "Meditation makes me more anxious."
 
-The phase-4 nightly consolidation pass that infers rules from
-accumulated facts is still a separate code path with different
-constraints. This writer should stay conservative and grounded in the
-current user message only.
+Any later consolidation path that infers rules from accumulated facts
+should remain separate from this writer. This writer stays conservative
+and grounded in the current user message only.
 """
 
 from __future__ import annotations
@@ -56,16 +52,10 @@ from agent.state import AgentState
 
 
 def build_procedural_writer_system_prompt() -> str:
-    """Build the system prompt for the procedural rule writer LLM call.
-
-    Kept inline (not loaded from a knowledge markdown file) because the
-    prompt is tightly coupled to the ``ProceduralRuleDraft``/
-    ``ProceduralExtractionResult`` schemas. Any schema change requires
-    a corresponding prompt change; cohesion beats duplication.
+    """Build the procedural-writer system prompt.
 
     Returns:
-        The full system prompt as a single string, ready to pass to
-        ``generate_structured(system_instruction=...)``.
+        str: Full system prompt for ``generate_structured``.
     """
 
     return (
@@ -214,13 +204,13 @@ def build_procedural_writer_system_prompt() -> str:
 
 
 def build_procedural_writer_user_prompt(state: AgentState) -> str:
-    """Build the user/task prompt for a single procedural-writer call.
+    """Build the procedural-writer user prompt.
 
-    Injects the current user message and a short window of recent
-    history for context. The writer should only write rules from the
-    CURRENT message, not from the history — the history exists to help
-    the LLM disambiguate tone and context, not as a source of
-    extractable content.
+    Args:
+        state (AgentState): Current graph state with message and recent history.
+
+    Returns:
+        str: User prompt for a single procedural-rule write call.
     """
 
     history = state.get("history", [])[-6:]

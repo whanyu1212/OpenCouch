@@ -1,10 +1,9 @@
-"""Pre-extractor small-talk gate (v0.8.2).
+"""Pre-extractor small-talk gate.
 
 Both ``extract_facts_node`` and ``extract_procedural_rules_node`` make
 full LLM structured-output calls on every turn. For small-talk turns
 ("hi", "thanks", "ok got it") these calls burn ~3-5s of LLM round-trip
-time and return zero writes 100% of the time. The Stage Timings panel
-made this visible in v0.8.1-polish dogfood.
+time and reliably return zero writes.
 
 This module provides a single function :func:`is_small_talk` that the
 two extractor nodes call **before** their LLM structured-output call.
@@ -46,16 +45,12 @@ purpose. The heuristic is sub-millisecond and deterministic.
 
 When to extend this gate:
 
-- **Add a word to SMALL_TALK_VOCABULARY** when dogfood surfaces a
-  common small-talk token that's currently passing through. Use the
-  retrieval eval harness to verify the word isn't also a topical
-  signal for any stored fact. If it is (e.g., "ok" is small talk
-  but "OK" is also the name of a state), leave it out.
-- **Raise MAX_SMALL_TALK_LENGTH** if dogfood shows small-talk messages
-  consistently longer than 40 chars (e.g., "thank you so much for
-  everything, that really helped" is 53 chars and would pass through
-  today). Raising to 60 is safe; above that you start risking
-  false positives on short declarative statements.
+- **Add a word to SMALL_TALK_VOCABULARY** when product usage surfaces
+  a common small-talk token that's currently passing through. Verify
+  the word is not also a topical signal for stored facts.
+- **Raise MAX_SMALL_TALK_LENGTH** if common small-talk messages are
+  consistently longer than 40 chars. Raising modestly is safe; large
+  increases risk false positives on short declarative statements.
 - **Do NOT add topic detection** (e.g., "if the message mentions
   a known entity, let it through"). That couples the gate to the
   memory store's content, which makes it non-deterministic and
@@ -70,7 +65,7 @@ from agent.memory.text_tokens import tokenize_meaningful
 # considered a small-talk candidate. Messages longer than this
 # always pass through to the LLM extractor regardless of vocabulary.
 #
-# 40 chars is calibrated against real dogfood messages:
+# 40 chars is calibrated against common short acknowledgments:
 # - "hi" (2), "hello" (5), "thanks" (6), "ok got it" (9),
 #   "yeah that makes sense" (22), "appreciate it" (13) → all under 40
 # - "my sister Sarah visited this weekend" (37) → under 40 but would
@@ -170,20 +165,13 @@ SMALL_TALK_VOCABULARY: frozenset[str] = frozenset(
 
 
 def is_small_talk(message: str) -> bool:
-    """Return True if the message is unambiguously small talk.
+    """Return whether the message is unambiguously small talk.
 
-    Both conditions must hold:
-    1. The stripped message is under :data:`MAX_SMALL_TALK_LENGTH` chars.
-    2. Every meaningful token (after stopword filtering) is in
-       :data:`SMALL_TALK_VOCABULARY`.
+    Args:
+        message (str): User message to evaluate.
 
-    Returns False (= let the message through to the LLM extractor) when
-    either condition fails, or when the message is empty (empty messages
-    are handled upstream by the node's "no message" guard and shouldn't
-    reach the gate, but returning False is the safe default).
-
-    The function is deterministic and sub-millisecond — it does string
-    length + set membership checks, no model inference, no network.
+    Returns:
+        bool: ``True`` when the message is short and all meaningful tokens are small-talk vocabulary.
     """
 
     stripped = message.strip()

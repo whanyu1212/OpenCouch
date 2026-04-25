@@ -1,7 +1,6 @@
-"""Memory layer for the OpenCouch agent.
+"""Prompt-memory layer for the OpenCouch agent.
 
-Phase 1 starting point: holds the graph/profile store stubs that will be
-replaced with real backends during the memory-layer rebuild. The schema
-spec lives in ``schema.yaml`` and the phase-1 node signature sketch lives
-in ``nodes_sketch.py``.
+Holds the runtime models, storage backends, retrieval helpers, and
+write-policy utilities used by the agent's long-term memory features.
+Always-on audit persistence lives under ``agent.audit``.
 """

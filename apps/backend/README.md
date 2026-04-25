@@ -28,3 +28,15 @@ Resume a persisted local thread:
 ```bash
 uv run python -m opencouch_cli --mode auto --thread-id local-demo
 ```
+
+Run backend tests:
+
+```bash
+uv run pytest
+```
+
+Run backend tests with coverage:
+
+```bash
+uv run pytest --cov --cov-report=term-missing
+```

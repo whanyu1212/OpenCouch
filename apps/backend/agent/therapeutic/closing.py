@@ -1,9 +1,9 @@
-"""Closing response mode — tonal wind-down, not a structural session end.
+"""Closing response mode - tonal wind-down, not a structural session end.
 
 Closing is a **tonal** mode: it generates a warm farewell response that
 acknowledges the arc of the conversation, leaves an open door, and
 respects unresolved threads. It does NOT end the session, trigger
-summarization, or modify ``progress.stage``.
+summarization, or modify ``session_progress.stage``.
 
 Session termination and summarization are owned by the runtime layer:
 
@@ -13,7 +13,7 @@ Session termination and summarization are owned by the runtime layer:
 
 This separation is deliberate. The LLM-detected "the user seems to be
 winding down" signal is useful for picking a response register, but
-it should never auto-terminate the session — if the user keeps
+it should never auto-terminate the session. If the user keeps
 talking after the closing turn, the next dispatcher turn will route
 to whatever mode fits. The runtime owns session structure; this
 node only owns response tone.
@@ -27,7 +27,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import (
@@ -60,6 +60,13 @@ async def run_closing_response_node(
     works regardless of what the session contained — because the
     failure mode we care about most is "never say 'it was nice
     talking to you'", and the fallback string avoids that trap.
+
+    Args:
+        state: Current graph state for the turn.
+        runtime: LangGraph runtime carrying configured dependencies.
+
+    Returns:
+        Response delta for the parent graph.
     """
 
     llm_client = runtime.context.response_llm or runtime.context.llm_client
@@ -83,15 +90,9 @@ async def run_closing_response_node(
             )
 
     return {
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "closing",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "closing",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }

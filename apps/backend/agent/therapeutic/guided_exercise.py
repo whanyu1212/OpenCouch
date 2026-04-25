@@ -1,65 +1,52 @@
-"""Guided exercise response mode — multi-turn structured walkthroughs.
+"""Guided exercise response mode - multi-turn structured walkthroughs.
 
-Guided exercise is the FIRST multi-turn response mode in the
-codebase. Unlike supportive/reflective/clarifying/psychoeducation/
-closing which all return a single response delta per turn and leave
-no state behind, guided exercise tracks which exercise is running
-and which step the user is on across multiple turns.
+Guided exercise tracks which exercise is running and which step the user is
+on across multiple turns. The node owns exercise-state transitions; the LLM
+only writes user-facing prose for the next step.
 
 Architecture overview:
 
-1. **State lives on ``progress``.** Two new fields on
-   :class:`SessionProgressState`:
+1. **State lives on ``exercise_state``.** Two new fields on
+   :class:`agent.state.ExerciseState`:
    - ``exercise_type`` — the exercise identifier, e.g.,
      "grounding_5_4_3_2_1"
    - ``exercise_step`` — the current 0-indexed step number
 
    When an exercise is not running, both fields are either ``None``
-   or absent from the progress dict.
+   or absent from the exercise-state dict.
 
-2. **Dispatcher fast-path.** The therapeutic dispatcher checks
-   ``progress.exercise_type`` on every turn. If an exercise is
-   active, it short-circuits to ``guided_exercise_response_node``
-   without running the LLM classifier — otherwise the LLM classifier
-   would re-route the user's step response ("I see my lamp") to
-   supportive or clarifying, breaking the multi-turn flow. See
-   ``agent/therapeutic/dispatcher.py`` for the fast-path rule.
+2. **Dispatcher routing.** The therapeutic dispatcher checks
+   ``exercise_state.exercise_type`` on every turn. Active exercise turns
+   usually continue to ``guided_exercise_response_node``; clear exits,
+   side-turns, and wrap-ups can route elsewhere while preserving or clearing
+   exercise state as appropriate.
 
 3. **Deterministic step-state classifier.** The node inspects the
    user's message and classifies it as ``complete`` / ``hold`` /
-   ``stuck`` / ``exit``. This is done with regex + simple heuristics
-   rather than an inner LLM call, deliberately — the state machine
-   should be explicit and testable, and when it gets things wrong
-   during dogfood the fix is obvious (tweak the regex) rather than
-   "tune the sub-prompt and hope."
+   ``stuck`` / ``exit``. This is done with regex and simple heuristics
+   rather than an inner LLM call so the state machine stays explicit and
+   testable.
 
 4. **LLM generates response text; node owns state.** The node
    decides which step to advance to (via the classifier + the
    exercise registry), then calls the LLM to generate the
    response prose for that step. The LLM never decides the state
-   transition — that's the node's job. This keeps the state machine
+   transition. That's the node's job. This keeps the state machine
    auditable and the LLM call single-purpose (write the response,
    don't classify).
 
-5. **One exercise in v0.6 Stage C.** The registry currently
-   supports 5-4-3-2-1 grounding as the only exercise. Adding more
-   exercises (box breathing, thought records, acceptance/defusion)
-   is a future-stage concern; the registry is designed to grow
-   without schema changes.
+5. **Exercise registry.** Supported exercises are stored as
+   ``ExerciseStep`` tuples in ``_EXERCISE_REGISTRY``. Adding a new exercise
+   means adding a step tuple and selector entry without changing graph state
+   schema.
 
 Design decisions and non-decisions:
 
-- **Non-decision**: How to resume an exercise after CLI restart.
-  The v0.8 SQLite checkpointer persists ``state["progress"]``
-  across runtime restarts automatically, so resume works "for
-  free" via existing infrastructure. This mode doesn't need to
-  do anything special.
 - **Decision**: Exit is ALWAYS cleaner than skip-to-next-step.
   Skipping mid-exercise only makes sense for exercises whose steps
   are independent (like 5-4-3-2-1, where the five senses are
   parallel), not for sequential exercises (thought records). The
-  current implementation uses exit as the universal off-ramp; a
-  future "skip" path can be added per-exercise later.
+  current implementation uses exit as the universal off-ramp.
 - **Decision**: Patience is a feature. Single turns of tentative
   engagement ("um, a plant?") trigger HOLD, not an escalation
   ladder step. Three+ turns of tentative engagement or an explicit
@@ -81,7 +68,7 @@ from langgraph.runtime import Runtime
 
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 from agent.therapeutic.prompts import (
@@ -92,7 +79,7 @@ from agent.therapeutic.prompts import (
 logger = logging.getLogger(__name__)
 
 # The exercise_type value for the 5-4-3-2-1 grounding exercise. Kept as
-# a module-level constant so the dispatcher fast-path and the node's
+# a module-level constant so the dispatcher and the node's
 # internal branching both reference the same string.
 EXERCISE_5_4_3_2_1 = "grounding_5_4_3_2_1"
 
@@ -137,13 +124,10 @@ class ExerciseStep:
 
 # 5-4-3-2-1 grounding: a sensory exercise that anchors the user in the
 # present moment by asking them to identify items across five senses.
-# The steps are INDEPENDENT — the order doesn't strictly matter, but
-# the standard order is see → hear → feel → smell → taste.
-#
-# For Stage C, we use the standard 5-4-3-2-1 count pattern. Each step
-# has a min_count_for_completion that's deliberately less strict than
-# the expected_count — if a user names 4 things when asked for 5, they
-# still advance.
+# The steps are independent: the order does not strictly matter, but
+# the standard order is see -> hear -> feel -> smell -> taste. Each step
+# uses a lenient completion threshold so the user can advance without
+# matching the requested count perfectly.
 _GROUNDING_5_4_3_2_1_STEPS: tuple[ExerciseStep, ...] = (
     ExerciseStep(
         prompt_fallback=(
@@ -904,7 +888,15 @@ _CONFIRMATION_PATTERNS: tuple[str, ...] = (
 
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
-    """Return whether the text matches any of the patterns."""
+    """Return whether the text matches any of the patterns.
+
+    Args:
+        text: Text to search.
+        patterns: Regex patterns to test.
+
+    Returns:
+        Whether any pattern matches.
+    """
 
     return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
 
@@ -927,6 +919,12 @@ def _count_listed_items(message: str) -> int:
     ways, and being too strict about the counting pattern means missing
     valid completions. The classifier uses this count + the step's
     ``min_count_for_completion`` to decide COMPLETE vs HOLD.
+
+    Args:
+        message: Current user message.
+
+    Returns:
+        Heuristic count of listed items in the message.
     """
 
     if not message.strip():
@@ -980,6 +978,13 @@ def _classify_step_state(
     rushes the user through a step they didn't finish; exiting
     incorrectly abandons an exercise they were engaging with. Holding
     wastes at most one turn of prompting.
+
+    Args:
+        message: Current user message.
+        current_step: Exercise step the user is responding to.
+
+    Returns:
+        Step-state classification for the current exercise turn.
     """
 
     if _matches_any(message, _EXIT_PATTERNS):
@@ -1007,45 +1012,69 @@ def _start_exercise_delta(
     *,
     exercise_type: str,
 ) -> dict[str, Any]:
-    """Return the progress delta that starts a new exercise at step 0."""
+    """Return the exercise-state delta that starts a new exercise at step 0.
 
-    progress = state.get("progress", {})
+    Captures the current ``therapeutic_approach`` as
+    ``exercise_modality`` so the prompt builder can use a stable
+    modality for the entire exercise lifetime, immune to mid-exercise
+    side-turn drift.
+
+    Args:
+        state: Current graph state.
+        exercise_type: Exercise identifier to start.
+
+    Returns:
+        State delta that starts the exercise at step 0.
+    """
+
+    modality = state.get("therapeutic_approach")
     return {
-        "progress": {
-            **progress,
+        "exercise_state": {
             "exercise_type": exercise_type,
             "exercise_step": 0,
+            "exercise_modality": modality,
         },
     }
 
 
 def _advance_step_delta(state: AgentState) -> dict[str, Any]:
-    """Return the progress delta that bumps the exercise step index."""
+    """Return the exercise-state delta that bumps the exercise step index.
 
-    progress = state.get("progress", {})
-    current = progress.get("exercise_step") or 0
+    Args:
+        state: Current graph state.
+
+    Returns:
+        State delta that advances the exercise step by one.
+    """
+
+    exercise_state = state.get("exercise_state", {})
+    current = exercise_state.get("exercise_step") or 0
     return {
-        "progress": {
-            **progress,
+        "exercise_state": {
             "exercise_step": current + 1,
         },
     }
 
 
 def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
-    """Return the progress delta that clears exercise state.
+    """Return the exercise-state delta that clears exercise state.
 
-    Used on both exit and natural completion. Setting both fields to
-    ``None`` is the marker for "no exercise running" that the
-    dispatcher fast-path checks for.
+    Used on both exit and natural completion. Setting all three fields
+    to ``None`` is the marker for "no exercise running" that the
+    dispatcher checks for.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        State delta that clears active exercise fields.
     """
 
-    progress = state.get("progress", {})
     return {
-        "progress": {
-            **progress,
+        "exercise_state": {
             "exercise_type": None,
             "exercise_step": None,
+            "exercise_modality": None,
         },
     }
 
@@ -1099,7 +1128,7 @@ _EXERCISE_SELECTORS: tuple[tuple[tuple[str, ...], str], ...] = (
             "continuum",
             "all.or.nothing",
             "black.and.white",
-            r"i'?m (?:a )?(?:terrible|horrible|worst|complete|total)",
+            r"i'?m (?:a )?(?:terrible|horrible|worst|complete|total)\b",
             r"i (?:always|never) (?:fail|mess|ruin|screw|disappoint|let)",
             r"100\s*%",
         ),
@@ -1199,6 +1228,13 @@ def _select_exercise(
     Returns the exercise_type constant. Falls back to 5-4-3-2-1
     grounding when no keyword matches — the most established
     exercise and the safest default.
+
+    Args:
+        message: Current user message.
+        history: Recent conversation history used for short acceptance turns.
+
+    Returns:
+        Selected exercise type.
     """
 
     lowered = message.lower()
@@ -1245,7 +1281,15 @@ def _get_current_step(
     exercise_type: str | None,
     step_index: int | None,
 ) -> ExerciseStep | None:
-    """Return the current ExerciseStep, or None if out of range / invalid."""
+    """Return the current exercise step.
+
+    Args:
+        exercise_type: Active exercise identifier.
+        step_index: Current step index.
+
+    Returns:
+        Current ``ExerciseStep``, or ``None`` if the state is invalid.
+    """
 
     if exercise_type is None or step_index is None:
         return None
@@ -1258,7 +1302,15 @@ def _get_current_step(
 
 
 def _is_last_step(exercise_type: str, step_index: int) -> bool:
-    """Return whether the given step is the last one in the exercise."""
+    """Return whether the given step is the last one in the exercise.
+
+    Args:
+        exercise_type: Active exercise identifier.
+        step_index: Current step index.
+
+    Returns:
+        Whether ``step_index`` points at the final step.
+    """
 
     steps = _EXERCISE_REGISTRY.get(exercise_type)
     if steps is None:
@@ -1274,31 +1326,38 @@ async def run_guided_exercise_response_node(
 
     Two entry conditions:
 
-    1. **Starting an exercise** — ``progress.exercise_type`` is None
+    1. **Starting an exercise** — ``exercise_state.exercise_type`` is None
        (no exercise running). The dispatcher's LLM classifier picked
        this mode based on the user's current message. The node starts
        the default exercise (5-4-3-2-1 grounding) at step 0.
 
-    2. **Continuing an exercise** — ``progress.exercise_type`` is set
-       from a prior turn. The dispatcher's active-exercise fast-path
-       routed here without re-classifying. The node classifies the
-       user's message as complete/hold/stuck/exit and acts accordingly.
+    2. **Continuing an exercise** — ``exercise_state.exercise_type`` is set
+       from a prior turn. The dispatcher routed here with active exercise
+       context. The node classifies the user's message as
+       complete/hold/stuck/exit and acts accordingly.
 
     The node ALWAYS returns a response + routing delta, and may also
-    return a progress delta when the exercise state changes (start,
+    return an exercise-state delta when the exercise state changes (start,
     advance, clear).
 
     Falls back to deterministic templates when no LLM client is
     available. The fallbacks are comprehensive enough to drive the
     full 5-4-3-2-1 exercise end-to-end with no LLM — not just start.
+
+    Args:
+        state: Current graph state.
+        runtime: LangGraph runtime carrying configured dependencies.
+
+    Returns:
+        Response and state delta for the exercise turn.
     """
 
     llm_client = runtime.context.response_llm or runtime.context.llm_client
     memory_store = runtime.context.memory_store
     memory_mode = runtime.context.memory_mode
-    progress = state.get("progress", {})
-    exercise_type = progress.get("exercise_type")
-    step_index = progress.get("exercise_step")
+    exercise_state = state.get("exercise_state", {})
+    exercise_type = exercise_state.get("exercise_type")
+    step_index = exercise_state.get("exercise_step")
 
     # ── Entry condition 1: starting a new exercise ─────────────────
     if exercise_type is None or step_index is None:
@@ -1319,7 +1378,7 @@ async def run_guided_exercise_response_node(
         )
         cleared = _clear_exercise_delta(state)
         start_delta = _handle_start(state, llm_client)
-        # Merge: the start delta's progress update wins over the clear
+        # Merge: the start delta's exercise-state update wins over the clear
         return {**cleared, **start_delta}
 
     return await _handle_continue(
@@ -1341,6 +1400,13 @@ def _handle_start(
 
     Selects the exercise based on keywords in the user's message.
     Falls back to 5-4-3-2-1 grounding when no keyword matches.
+
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, currently unused for start turns.
+
+    Returns:
+        Response and exercise-state delta for the first step.
     """
 
     message = state.get("message", "")
@@ -1351,22 +1417,16 @@ def _handle_start(
     # variation doesn't add much for instructions. The LLM is
     # used on subsequent turns (hold/complete/exit) where wording
     # variation helps more.
-    _ = llm_client  # unused for the start step; flagged for future use
+    _ = llm_client
 
-    start_progress_delta = _start_exercise_delta(state, exercise_type=selected)
+    start_exercise_delta = _start_exercise_delta(state, exercise_type=selected)
     return {
-        **start_progress_delta,
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "guided_exercise",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        **start_exercise_delta,
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }
 
 
@@ -1383,10 +1443,22 @@ async def _handle_continue(
     """Continue an exercise based on the user's current message.
 
     Classifies the message as complete/hold/stuck/exit, builds the
-    appropriate progress + response delta, and returns it. The LLM
+    appropriate exercise-state + response delta, and returns it. The LLM
     (if available) generates the response text for the new state;
     the deterministic fallback is used when the LLM is unavailable
     or errors.
+
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, if configured.
+        memory_store: Memory store used for completion facts, if configured.
+        memory_mode: Current memory mode.
+        exercise_type: Active exercise identifier.
+        step_index: Current exercise step index.
+        current_step: Exercise step the user is responding to.
+
+    Returns:
+        Response and state delta for the continuation turn.
     """
 
     message = state.get("message", "")
@@ -1430,7 +1502,15 @@ def _build_exit_delta(
     *,
     llm_client: Any,
 ) -> dict[str, Any]:
-    """Build the delta for an exit — clear state, warm landing."""
+    """Build the delta for an exit.
+
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, currently unused for exits.
+
+    Returns:
+        Response and state delta that clears the active exercise.
+    """
 
     # Exit responses are short and specific enough that the
     # deterministic fallback is good enough. The LLM path would
@@ -1438,22 +1518,16 @@ def _build_exit_delta(
     # priority here is that the exercise state gets cleared
     # reliably. We still return the response text from the fallback
     # string to keep exit behavior deterministic.
-    _ = llm_client  # unused for exit; flagged for future use
+    _ = llm_client
 
     cleared = _clear_exercise_delta(state)
     return {
         **cleared,
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": _FALLBACK_EXIT,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "guided_exercise",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": _FALLBACK_EXIT,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }
 
 
@@ -1462,11 +1536,19 @@ async def _build_stuck_delta(
     *,
     llm_client: Any,
 ) -> dict[str, Any]:
-    """Build the delta for a stuck classification — offer to simplify."""
+    """Build the delta for a stuck classification.
 
-    progress = state.get("progress", {})
-    step_index = progress.get("exercise_step", 0)
-    exercise_type = progress.get("exercise_type", EXERCISE_5_4_3_2_1)
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, if configured.
+
+    Returns:
+        Response delta that keeps the user on the current step.
+    """
+
+    exercise_state = state.get("exercise_state", {})
+    step_index = exercise_state.get("exercise_step", 0)
+    exercise_type = exercise_state.get("exercise_type") or EXERCISE_5_4_3_2_1
     current_step = _get_current_step(exercise_type, step_index)
     step_ref = current_step.prompt_fallback if current_step else ""
 
@@ -1502,17 +1584,11 @@ async def _build_stuck_delta(
             )
 
     return {
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "guided_exercise",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }
 
 
@@ -1521,19 +1597,29 @@ async def _build_hold_delta(
     *,
     llm_client: Any,
 ) -> dict[str, Any]:
-    """Build the delta for a hold classification — space, no advancement."""
+    """Build the delta for a hold classification.
 
-    progress = state.get("progress", {})
-    step_index = progress.get("exercise_step", 0)
-    exercise_type = progress.get("exercise_type", EXERCISE_5_4_3_2_1)
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, if configured.
+
+    Returns:
+        Response delta that preserves the current exercise step.
+    """
+
+    exercise_state = state.get("exercise_state", {})
+    step_index = exercise_state.get("exercise_step", 0)
+    exercise_type = exercise_state.get("exercise_type") or EXERCISE_5_4_3_2_1
     current_step = _get_current_step(exercise_type, step_index)
     step_ref = current_step.prompt_fallback if current_step else ""
 
     directive = (
         f"The user gave a tentative or partial response to step {step_index}. "
         f'The step asked: "{step_ref}"\n'
-        f"Give brief encouragement to continue this same step. Do NOT "
-        f"advance to the next step or re-explain the full instruction."
+        f"Give brief encouragement, then restate this same step in short, "
+        f"concrete language so the user knows exactly what to do next. "
+        f"Preserve the core task wording from the step instead of drifting "
+        f"into generic encouragement. Do NOT advance to the next step."
     )
 
     response_text = _FALLBACK_HOLD
@@ -1560,17 +1646,11 @@ async def _build_hold_delta(
             )
 
     return {
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "guided_exercise",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }
 
 
@@ -1583,8 +1663,17 @@ async def _build_advance_delta(
 ) -> dict[str, Any]:
     """Build the delta for advancing to the next step.
 
-    Updates ``progress.exercise_step`` and returns the next step's
+    Updates ``exercise_state.exercise_step`` and returns the next step's
     prompt as the response text (via LLM or fallback).
+
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, if configured.
+        exercise_type: Active exercise identifier.
+        next_step_index: Step index to advance to.
+
+    Returns:
+        Response and state delta for the next exercise step.
     """
 
     steps = _EXERCISE_REGISTRY[exercise_type]
@@ -1623,20 +1712,14 @@ async def _build_advance_delta(
                 exc_info=True,
             )
 
-    advance_progress = _advance_step_delta(state)
+    advance_exercise_state = _advance_step_delta(state)
     return {
-        **advance_progress,
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "guided_exercise",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        **advance_exercise_state,
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }
 
 
@@ -1651,22 +1734,37 @@ async def _build_complete_delta(
 
     Clears exercise state, writes a coping_strategy semantic fact
     (if memory is enabled), and returns a brief "you did it" response.
+
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, if configured.
+        memory_store: Memory store used for completion facts, if configured.
+        memory_mode: Current memory mode.
+
+    Returns:
+        Response and state delta for natural exercise completion.
     """
 
-    progress = state.get("progress", {})
-    exercise_type = progress.get("exercise_type", EXERCISE_5_4_3_2_1)
+    exercise_state = state.get("exercise_state", {})
+    raw_exercise_type = exercise_state.get("exercise_type")
+    exercise_type: str = (
+        raw_exercise_type if raw_exercise_type is not None else EXERCISE_5_4_3_2_1
+    )
     display_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, "that exercise")
 
     directive = (
         f"The user just finished the LAST step of the exercise. "
         f"Briefly acknowledge what they shared, name what they just did "
         f"({display_name}), and invite them to notice how their body "
-        f"feels now. Do NOT start a new exercise or ask a new question."
+        f"feels now. End with a gentle, open check-in question about "
+        f"how the exercise felt for them (e.g. 'How was that for you?'). "
+        f"Do NOT start a new exercise."
     )
 
     fallback_complete = (
         f"You just walked yourself through {display_name}. "
-        f"Notice how your body feels now compared to when we started."
+        f"Notice how your body feels now compared to when we started. "
+        f"How was that for you?"
     )
     response_text = fallback_complete
     if llm_client is not None:
@@ -1706,18 +1804,12 @@ async def _build_complete_delta(
     cleared = _clear_exercise_delta(state)
     return {
         **cleared,
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-            "should_persist_memory": True,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "guided_exercise",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "should_persist_memory": True,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }
 
 
@@ -1740,6 +1832,16 @@ async def _write_exercise_completion_fact(
     - memory_store is None (no store configured)
     - memory_mode is INCOGNITO (no persistent writes allowed)
     - any error occurs (logged, never raised)
+
+    Args:
+        state: Current graph state.
+        exercise_type: Completed exercise identifier.
+        display_name: Human-readable exercise name.
+        memory_store: Memory store used for the write, if configured.
+        memory_mode: Current memory mode.
+
+    Returns:
+        None.
     """
 
     if memory_store is None or memory_mode == MemoryMode.INCOGNITO:
@@ -1747,7 +1849,7 @@ async def _write_exercise_completion_fact(
 
     owner_id = resolve_owner_id(state)
     session_id = state.get("session_id") or owner_id
-    turn_count = state.get("progress", {}).get("turn_count", 0)
+    turn_count = state.get("session_progress", {}).get("turn_count", 0)
 
     now = datetime.now(timezone.utc).isoformat()
     fact = SemanticFact(

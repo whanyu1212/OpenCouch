@@ -37,9 +37,6 @@ import re
 # Token extraction regex: Unicode word characters, ignoring punctuation.
 # "I'm anxious!" and "im anxious" produce the same token set. Apostrophes
 # split contractions ("I'm" → ["i", "m"]) which is imperfect but stable.
-# NOTE: this is intentionally the same regex the dedup helper used
-# internally — moved here so both paths share a canonical definition.
-#
 # Uses \w+ (Unicode-aware by default in Python 3) so accented Latin,
 # Cyrillic, and CJK characters produce tokens instead of empty sets.
 # CJK characters are post-processed into per-character tokens by
@@ -71,13 +68,13 @@ _CJK_RE = re.compile(
 
 
 def _split_cjk(token: str) -> list[str]:
-    """Split a token containing CJK characters into per-character tokens.
+    """Split a token containing CJK characters into indexable pieces.
 
-    Alphabetic/numeric runs within the token are kept as-is; CJK
-    characters are emitted individually. This is the standard approach
-    for CJK information retrieval without a word segmenter.
+    Args:
+        token (str): Raw token to split.
 
-    Returns [token] unchanged if it contains no CJK characters.
+    Returns:
+        list[str]: Per-character CJK tokens plus any preserved non-CJK runs.
     """
 
     if not _CJK_RE.search(token):
@@ -180,17 +177,13 @@ _STOPWORDS: frozenset[str] = frozenset(
 
 
 def tokenize(text: str) -> frozenset[str]:
-    """Return a case-insensitive word-token set for the given text.
+    """Return the full case-insensitive token set for text.
 
-    The returned set is deduplicated by construction (so "work work work"
-    becomes ``{"work"}``) and lowercased. Punctuation, whitespace, and
-    contraction apostrophes are all treated as token boundaries.
+    Args:
+        text (str): Input text to tokenize.
 
-    This is the full token set — no stopword filtering, no length filter.
-    Use :func:`tokenize_meaningful` if you want those applied.
-
-    Returns an empty frozenset for empty or punctuation-only input so
-    callers can safely compute set operations without a ``None`` guard.
+    Returns:
+        frozenset[str]: Deduplicated lowercase tokens with no stopword filtering.
     """
 
     tokens: list[str] = []
@@ -200,34 +193,13 @@ def tokenize(text: str) -> frozenset[str]:
 
 
 def tokenize_meaningful(text: str) -> frozenset[str]:
-    """Return a stopword- and length-filtered token set for retrieval scoring.
+    """Return the retrieval-oriented token set for text.
 
-    Same as :func:`tokenize`, but additionally drops:
+    Args:
+        text (str): Input text to tokenize.
 
-    - Any token in :data:`_STOPWORDS` (the tiny high-frequency function
-      word list).
-    - Single-character tokens (``"i"``, ``"a"``, ``"m"`` from contracted
-      forms, etc.). Anything shorter than 2 characters is almost always
-      noise for retrieval scoring. CJK single-character tokens are kept
-      because each character carries meaningful semantic content.
-
-    This is the right tokenizer for the **query side** of a search: we
-    want retrieval scores to reflect topical overlap, not connective-
-    word coincidence. A query like "I worry about Sarah" should have
-    meaningful tokens ``{"worry", "sarah"}`` and score against only
-    those — otherwise overlap on "i", "about" would make it match any
-    record with an "I worry about <anything>" quote.
-
-    For the **document side** (the haystack), you typically want the
-    full :func:`tokenize` output: strip nothing, so any query token has
-    a chance to land. The query filter is what matters; the document
-    filter is a footgun.
-
-    If ALL of the text's tokens get filtered out (e.g. the user typed
-    "I am so"), returns an empty frozenset. Callers should treat an
-    empty query-token set as "no meaningful query" and decide how to
-    degrade — typically by falling back to "return everything" or
-    "return nothing."
+    Returns:
+        frozenset[str]: Lowercase tokens after stopword and short-token filtering.
     """
 
     tokens: list[str] = []

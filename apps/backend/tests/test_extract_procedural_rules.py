@@ -25,7 +25,7 @@ from typing import Any, cast
 import pytest
 
 from agent.memory.candidates import SessionMemoryBuffer
-from agent.memory.crisis_log import InMemoryCrisisLogBackend
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.models import (
     ProceduralExtractionResult,
     ProceduralRuleDraft,
@@ -62,7 +62,7 @@ def _partial_state(
         "history": history or [],
         "user_id": user_id,
         "session_id": session_id,
-        "progress": {"turn_count": 1},
+        "session_progress": {"turn_count": 1},
     }
     return cast(AgentState, state)
 

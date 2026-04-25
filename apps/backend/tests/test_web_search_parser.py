@@ -232,6 +232,19 @@ class TestParseResourceLines:
         assert len(resources) == 1
         assert resources[0]["name"] == "Samaritans"
 
+    def test_skips_non_actionable_contact_placeholders(self) -> None:
+        """Rows with placeholders should not become dialable resources."""
+
+        raw = """\
+| Samaritans | 116 123 | https://samaritans.org |
+| Website Only | See website | https://example.org |
+| Emergency Advice | Call local emergency services | https://example.org |
+| Unknown Hotline | N/A | https://example.org |
+"""
+        resources = _parse_resource_lines(raw, location="UK")
+        assert len(resources) == 1
+        assert resources[0]["name"] == "Samaritans"
+
     def test_respects_max_resources_cap(self) -> None:
         """At most ``_MAX_RESOURCES`` (5) rows are returned."""
         lines = "\n".join(

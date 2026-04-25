@@ -1,35 +1,33 @@
-"""LangGraph workflow and entrypoints for the OpenCouch agent.
+"""Build the top-level LangGraph workflow for the OpenCouch agent.
 
-This module owns the entire agent execution surface in three layers:
+This module owns graph assembly, state conversion, and the one-shot execution
+path. Thread persistence, runtime-owned stores, and active-session recovery live
+in ``agent.persistence``.
 
-* **State plumbing** — :func:`build_initial_state` and :func:`state_to_output`
-  convert between the public ``AgentInput`` / ``AgentOutput`` contract and the
-  internal grouped :class:`AgentState` shape used by the graph nodes.
-* **Graph assembly** — :func:`build_agent_workflow` constructs and compiles the
-  LangGraph ``StateGraph`` that wires the full topology: crisis_gate →
-  (crisis_response + crisis_log | load_memory → therapeutic_subgraph) →
-  extract_semantic_facts → extract_procedural_rules → finalize_turn → END.
-  v0.9 safety reorder: crisis gate runs FIRST so safety-critical routing is
-  never blocked by optional memory retrieval. Crisis-gate routing is encoded
-  directly in the node via :class:`langgraph.types.Command`, not via a
-  conditional edge. The terminal ``finalize_turn`` node appends the assistant
-  response to the transcript so the next turn's ``get_history`` call sees both
-  sides of each exchange.
-* **Public entrypoints** — :func:`run_agent` is a one-shot convenience wrapper
-  that compiles a fresh workflow, invokes it with sensible defaults, and
-  returns a normalized ``AgentOutput``. For thread-persistent execution see
-  :class:`agent.persistence.PersistentAgentRuntime`.
+Responsibilities:
+    State plumbing converts between ``AgentInput`` / ``AgentOutput`` and the
+    split LangGraph schemas: ``AgentGraphInputState``, ``AgentState``, and
+    ``AgentGraphOutputState``.
+
+    Graph assembly compiles a safety-first ``StateGraph``. ``crisis_gate_node``
+    routes with ``Command`` to either the crisis branch or the therapeutic
+    branch. Both branches converge at ``finalize_turn_node`` before the semantic
+    and procedural extractors run as terminal side-effect nodes.
+
+    The public entrypoint, ``run_agent``, compiles a fresh workflow with
+    in-memory defaults for callers that do not need thread-persistent behavior.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
@@ -38,17 +36,22 @@ from agent.models import (
     CrisisAssessment,
     MessageRole,
     ModeType,
-    ResponseKind,
+    ResponseCategory,
 )
 from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
+from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
+from agent.nodes.grounded_answer import run_grounded_answer_node
+from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.nodes.load_memory import run_load_memory_node
+from agent.nodes.memory_control import run_memory_control_node
+from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from agent.therapeutic.graph import build_therapeutic_subgraph
 from services.llm.base import BaseLLMClient
 
@@ -61,36 +64,20 @@ def build_initial_state(
     *,
     prior_turn_count: int | None = None,
     include_input_history: bool = False,
-) -> AgentState:
-    """Convert external input into the internal state dictionary.
+) -> AgentGraphInputState:
+    """Convert public input into the internal graph state.
 
-    Transcript handling defaults to reducer-backed persistence mode:
-    only the **current user message** is emitted into ``history`` and
-    ``transcript``. Both fields use an ``operator.add`` reducer, so
-    when a checkpointer is active the prior turns are restored from the
-    checkpoint and the reducer appends the new user turn automatically.
-    The assistant side is appended later by
-    :func:`agent.nodes.finalize_turn.run_finalize_turn_node` once the
-    response is ready.
+    Args:
+        agent_input: The external turn input to seed into graph state.
+        prior_turn_count: Optional persisted user-turn count from the prior
+            checkpoint. When omitted, the function derives the count from
+            ``agent_input.history``.
+        include_input_history: Whether to inline ``agent_input.history`` into
+            ``history`` and ``transcript`` for one-shot callers without a
+            checkpointer.
 
-    One-shot callers can opt into ``include_input_history=True`` to
-    seed ``agent_input.history`` directly into state for classifiers
-    and prompt builders that need prior-turn context without a
-    checkpointer.
-
-    ``prior_turn_count`` is optional: persistent runtimes can pass the
-    previous checkpoint's ``progress.turn_count`` directly and avoid
-    reloading the transcript just to count user turns. When omitted,
-    the function falls back to counting prior user turns from
-    ``agent_input.history``.
-
-    Routing and response scaffolds are left as empty/placeholder values
-    that the dispatcher and response nodes overwrite. For persistent
-    sessions (``PersistentAgentRuntime``), the checkpointer restores
-    prior values of ``progress``, ``routing``, ``response``, etc.
-    from the previous turn's checkpoint — those fields are omitted
-    from the input on subsequent turns so the checkpoint's values
-    are preserved rather than overwritten.
+    Returns:
+        An ``AgentGraphInputState`` seeded for the current turn.
     """
 
     current_user_turn = {
@@ -106,10 +93,6 @@ def build_initial_state(
         else [current_user_turn]
     )
 
-    # Compute turn_count from the previous checkpoint when the caller
-    # already has it. Falling back to ``agent_input.history`` keeps the
-    # one-shot API stable and preserves older tests that still pass
-    # prior messages directly.
     if prior_turn_count is None:
         prior_user_turns = sum(
             1
@@ -123,32 +106,21 @@ def build_initial_state(
     else:
         turn_count = prior_turn_count + 1
 
-    state = AgentState(
+    state = AgentGraphInputState(
         message=agent_input.message,
         channel=agent_input.channel,
         user_id=agent_input.user_id,
         session_id=agent_input.session_id,
         installed_skills=list(agent_input.installed_skills),
-        # Persistent reducer path emits only the current user turn.
-        # One-shot callers can opt into seeding the provided input
-        # history directly via ``include_input_history=True``.
         history=visible_history,
         transcript=visible_history,
         working_memory=list(agent_input.working_memory),
-        memory={
-            "summary": "",
-            "active_concerns": [],
-            "open_loops": [],
-            "current_goal": None,
-            # v0.7 Stage C: procedural fields default to empty / recall off.
-            # load_memory_node overwrites these with the stored profile on
-            # every turn; the empty defaults here exist so that any code
-            # reading state["memory"] before load_memory_node has run sees
-            # a consistent shape rather than missing keys.
+        session_memory={"summary": ""},
+        procedural_profile={
             "procedural_rules": [],
             "proactive_recall_enabled": False,
         },
-        progress={
+        session_progress={
             "intent": None,
             "intent_source": None,
             "stage": "opening",
@@ -157,53 +129,48 @@ def build_initial_state(
             "turn_count": turn_count,
             "is_guest": False,
         },
+        exercise_state={},
+        memory_control={},
         crisis=CrisisAssessment(),
-        routing={
-            "route": "pending",
-            "response_style": "pending",
-            "response_style_source": "graph_bootstrap",
-            "response_style_type": ModeType.OPERATIONAL,
-            # modality is intentionally NOT reset here. With the
-            # _merge_dicts reducer on routing, the checkpoint preserves
-            # the dispatcher's modality selection across turns. This is
-            # critical for multi-turn exercise modality continuity —
-            # the exercise continuation fast path reads modality from
-            # routing state and carries it forward.
-        },
-        response={
-            "guidance": "pending",
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": "",
-            "should_persist_memory": False,
-        },
-        # v0.8 observability: start each turn with a fresh, empty
-        # diagnostics dict that nodes can write timings and write-
-        # counts into. Uses a merge reducer so multiple nodes can
-        # write independently.
+        therapeutic_approach=None,
+        response_style="pending",
+        response_style_source=None,
+        response_style_type=ModeType.THERAPEUTIC,
+        response_kind=ResponseCategory.THERAPEUTIC,
+        response_text="",
+        should_persist_memory=False,
         diagnostics={},
+        route="",
+        crisis_audit={},
+        memory_control_action={},
+        grounded_lookup_query="",
+        grounded_lookup_status="not_attempted",
+        inferred_location="",
+        found_resources=[],
+        resource_lookup_status="not_attempted",
     )
     return state
 
 
-def state_to_output(state: AgentState) -> AgentOutput:
-    """Normalize graph state into the public agent output contract."""
+def state_to_output(state: Mapping[str, Any]) -> AgentOutput:
+    """Normalize graph state into the public output contract.
 
-    response_state = state.get("response", {})
-    routing_state = state.get("routing", {})
+    Args:
+        state: The final graph state or graph output payload for the turn.
+
+    Returns:
+        An ``AgentOutput`` built from the relevant response and routing fields.
+    """
 
     return AgentOutput(
-        response_text=response_state.get("text", ""),
-        response_type=response_state.get("kind", ResponseKind.THERAPEUTIC),
+        response_text=state.get("response_text", ""),
+        response_type=state.get("response_kind", ResponseCategory.THERAPEUTIC),
         crisis=state.get("crisis", CrisisAssessment()),
-        response_style=routing_state.get("response_style"),
-        response_style_type=routing_state.get("response_style_type"),
-        response_style_source=routing_state.get("response_style_source"),
-        therapeutic_approach=routing_state.get("therapeutic_approach"),
-        should_persist_memory=response_state.get("should_persist_memory", False),
-        # v0.8 observability: pass the per-turn diagnostics dict
-        # through to the CLI / API caller. Empty dict when no node
-        # wrote anything (e.g., pre-observability-instrumentation
-        # tests that construct state manually).
+        response_style=state.get("response_style"),
+        response_style_type=state.get("response_style_type"),
+        response_style_source=state.get("response_style_source"),
+        therapeutic_approach=state.get("therapeutic_approach"),
+        should_persist_memory=state.get("should_persist_memory", False),
         diagnostics=dict(state.get("diagnostics", {})),
     )
 
@@ -214,39 +181,30 @@ def state_to_output(state: AgentState) -> AgentOutput:
 def build_agent_workflow(
     *,
     checkpointer: Any | None = None,
-) -> CompiledStateGraph:
-    """Compile the LangGraph workflow.
+) -> CompiledStateGraph[
+    AgentState,
+    WorkflowContext,
+    AgentGraphInputState,
+    AgentGraphOutputState,
+]:
+    """Compile the top-level LangGraph workflow.
 
-    Topology (v0.9 — crisis gate runs before memory load)::
+    Topology::
 
         START
           → crisis_gate_node  (Command routes to one of the branches)
-          ├─ crisis_response_node → crisis_log_node → finalize_turn_node
-          │                                             → extract_semantic_facts_node
-          │                                             → extract_procedural_rules_node → END
-          └─ load_memory_node → therapeutic_subgraph → finalize_turn_node
-                                                         → extract_semantic_facts_node
-                                                         → extract_procedural_rules_node → END
+             ├─ crisis_resource_lookup_node → crisis_response_node
+             │  → crisis_log_node → finalize_turn_node
+             └─ memory_control_gate_node
+                ├─ memory_control_node → finalize_turn_node
+                └─ grounded_lookup_gate_node
+                   ├─ grounded_answer_node → finalize_turn_node
+                   └─ load_memory_node → therapeutic_subgraph
+                      → finalize_turn_node
 
-    v0.9 safety reorder: the crisis gate runs FIRST (directly after
-    START), before any memory retrieval. This ensures that a user in
-    crisis is never blocked by an optional memory feature.
-
-    v0.9 latency reorder: ``finalize_turn_node`` runs BEFORE extractors.
-    This checkpoints the response to transcript/history immediately,
-    allowing ``run_turn_stream`` to emit a ``ResponseEvent`` to the
-    user while the extractor LLM calls (~6.7s) run in the background.
-
-    The therapeutic subgraph is embedded as a single node compiled by
-    :func:`agent.therapeutic.graph.build_therapeutic_subgraph`. Its
-    internal structure (dispatcher + mode nodes) is hidden from the
-    parent topology, keeping the top-level graph small and inspectable
-    in LangSmith.
-
-    ``finalize_turn_node`` appends the assistant response to the
-    transcript. It runs on both branches and pairs with
-    :func:`build_initial_state` (which appends the user message) to
-    keep transcript ownership explicit and out of the response nodes.
+        finalize_turn_node
+          → extract_semantic_facts_node → END
+          → extract_procedural_rules_node → END
 
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
@@ -255,29 +213,45 @@ def build_agent_workflow(
         A compiled LangGraph workflow ready to invoke.
     """
 
-    workflow = StateGraph(AgentState, context_schema=WorkflowContext)
+    workflow = StateGraph(
+        AgentState,
+        context_schema=WorkflowContext,
+        input_schema=AgentGraphInputState,
+        output_schema=AgentGraphOutputState,
+    )
 
-    # Build the therapeutic subgraph once per workflow compile. The
-    # subgraph shares AgentState with the parent, so no wrapper function
-    # is needed — LangGraph propagates state and runtime context
-    # automatically.
     therapeutic_subgraph = build_therapeutic_subgraph()
 
-    # Retry policy for nodes that perform I/O (LLM calls, store access,
-    # embedding API, web search). Acts as defense-in-depth: most nodes
-    # already catch expected exceptions internally and fall back to
-    # deterministic behavior, so retries fire only for *unexpected*
-    # transient failures outside the node's own error handling (e.g.,
-    # framework-level deserialization errors, store connection resets,
-    # or exceptions raised before the node reaches its try/except).
-    # finalize_turn_node is excluded (pure state, no I/O).
-    # therapeutic_subgraph is excluded (compiled graph — its child
-    # nodes have their own retry policies).
+    # Shared retry policy for the top-level I/O nodes.
     _io_retry = RetryPolicy(max_attempts=2)
 
-    # Register all top-level nodes.
     workflow.add_node("load_memory_node", run_load_memory_node, retry_policy=_io_retry)
     workflow.add_node("crisis_gate_node", run_crisis_gate_node, retry_policy=_io_retry)
+    workflow.add_node(
+        "memory_control_gate_node",
+        run_memory_control_gate_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        "memory_control_node",
+        run_memory_control_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        "grounded_lookup_gate_node",
+        run_grounded_lookup_gate_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        "grounded_answer_node",
+        run_grounded_answer_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        "crisis_resource_lookup_node",
+        run_crisis_resource_lookup_node,
+        retry_policy=_io_retry,
+    )
     workflow.add_node(
         "crisis_response_node", run_crisis_response_node, retry_policy=_io_retry
     )
@@ -295,26 +269,20 @@ def build_agent_workflow(
     )
     workflow.add_node("finalize_turn_node", run_finalize_turn_node)
 
-    # Spine: entry → crisis gate (safety first, Command-routes).
+    # Safety-first entry.
     workflow.add_edge(START, "crisis_gate_node")
 
-    # Crisis branch: crisis_response → crisis_log → finalize → extractors → END.
-    # Memory load is SKIPPED — crisis nodes use zero memory state.
+    # Crisis branch skips memory load.
+    workflow.add_edge("crisis_resource_lookup_node", "crisis_response_node")
     workflow.add_edge("crisis_response_node", "crisis_log_node")
     workflow.add_edge("crisis_log_node", "finalize_turn_node")
 
-    # Therapeutic branch: memory load → subgraph → finalize → extractors → END.
+    workflow.add_edge("memory_control_node", "finalize_turn_node")
+    workflow.add_edge("grounded_answer_node", "finalize_turn_node")
     workflow.add_edge("load_memory_node", "therapeutic_subgraph")
     workflow.add_edge("therapeutic_subgraph", "finalize_turn_node")
 
-    # Shared terminal: finalize FIRST (checkpoints the response to
-    # transcript/history), THEN extractors (side-effect LLM calls that
-    # don't affect user-visible output). v0.9 reorder: finalize runs
-    # before extractors so the response is persisted and can be emitted
-    # to the user immediately via ResponseEvent while extractors run in
-    # the background. Both extractors fan out in parallel from finalize
-    # — the diagnostics dict uses a merge reducer so they can write
-    # independently without racing.
+    # Checkpoint the reply before kicking off extractor side effects.
     workflow.add_edge("finalize_turn_node", "extract_semantic_facts_node")
     workflow.add_edge("finalize_turn_node", "extract_procedural_rules_node")
     workflow.add_edge("extract_semantic_facts_node", END)
@@ -334,18 +302,7 @@ async def run_agent(
     crisis_log_backend: CrisisLogBackend | None = None,
     memory_mode: MemoryMode = MemoryMode.INCOGNITO,
 ) -> AgentOutput:
-    """Run the full compiled agent workflow end-to-end for one turn.
-
-    Convenience entrypoint for callers (CLI scripts, tests, evals) that just
-    want a one-shot ``AgentInput -> AgentOutput`` invocation. The compiled
-    workflow handles routing through ``load_memory -> crisis_gate ->
-    (crisis_response + crisis_log | therapeutic_subgraph) ->
-    extract_semantic_facts -> extract_procedural_rules -> finalize_turn
-    -> END``.
-
-    For thread-persistent execution with checkpointed state and a long-lived
-    compiled graph, use :class:`agent.persistence.PersistentAgentRuntime`
-    instead — that path reuses one workflow across many turns.
+    """Run one turn through a fresh compiled workflow.
 
     Args:
         agent_input: The user message and conversation context for this turn.
@@ -360,6 +317,9 @@ async def run_agent(
         memory_mode: Persistence tier for this turn. Defaults to
             :attr:`MemoryMode.INCOGNITO` so one-shot calls do not accidentally
             pollute persistent stores.
+
+    Returns:
+        The normalized ``AgentOutput`` for the completed turn.
     """
 
     workflow = build_agent_workflow()

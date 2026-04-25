@@ -1,8 +1,7 @@
 """Conservative reconciliation helpers for durable memory writes.
 
-Phase D adds a small amount of post-extraction cleanup without turning
-the hot path into a full consolidation system. The helpers here answer
-two narrow questions:
+These helpers add post-extraction cleanup without turning the hot path
+into a full consolidation system. They answer two narrow questions:
 
 1. Should a new semantic fact bump, supersede, or coexist with active
    semantic records that already exist?
@@ -19,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from agent.memory.models import ProceduralRule, SemanticFact
+from agent.memory.models import MemoryWrite, ProceduralRule, SemanticFact
 from agent.memory.store import StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
 
@@ -64,7 +63,14 @@ class ProceduralReconciliationPlan:
 
 
 def is_active_semantic_record_value(value: dict[str, Any]) -> bool:
-    """Return whether a stored semantic fact is still active."""
+    """Return whether a stored semantic fact is still active.
+
+    Args:
+        value (dict[str, Any]): Serialized semantic fact payload.
+
+    Returns:
+        bool: ``True`` when the record is visible and not dormant or superseded.
+    """
 
     if not value.get("user_visible", True):
         return False
@@ -76,36 +82,101 @@ def is_active_semantic_record_value(value: dict[str, Any]) -> bool:
 
 
 def filter_active_semantic_records(records: list[StoreRecord]) -> list[StoreRecord]:
-    """Return only semantic records that are still active."""
+    """Return only semantic records that are still active.
+
+    Args:
+        records (list[StoreRecord]): Candidate records to filter.
+
+    Returns:
+        list[StoreRecord]: Active semantic records only.
+    """
 
     return [
         record for record in records if is_active_semantic_record_value(record.value)
     ]
 
 
-def _semantic_slot_matches(fact: SemanticFact, record: StoreRecord) -> bool:
-    """Return whether two semantic records occupy the same conceptual slot."""
+def _semantic_slot_matches(
+    candidate: MemoryWrite | SemanticFact,
+    record: StoreRecord,
+) -> bool:
+    """Return whether two semantic records occupy the same conceptual slot.
+
+    Args:
+        candidate (MemoryWrite | SemanticFact): New semantic candidate.
+        record (StoreRecord): Existing stored semantic record.
+
+    Returns:
+        bool: ``True`` when the records share the same conceptual slot.
+    """
 
     value = record.value
     return (
-        fact.category == value.get("category")
-        and fact.subject.type == value.get("subject", {}).get("type")
-        and fact.subject.identifier == value.get("subject", {}).get("identifier")
-        and fact.predicate == value.get("predicate")
-        and fact.object.type == value.get("object", {}).get("type")
+        candidate.category == value.get("category")
+        and candidate.subject.type == value.get("subject", {}).get("type")
+        and candidate.subject.identifier == value.get("subject", {}).get("identifier")
+        and candidate.predicate == value.get("predicate")
+        and candidate.object.type == value.get("object", {}).get("type")
     )
 
 
+def filter_semantic_collision_candidates(
+    candidate: MemoryWrite | SemanticFact,
+    existing_records: list[StoreRecord],
+) -> list[StoreRecord]:
+    """Return active semantic records that could collide with the candidate.
+
+    Args:
+        candidate (MemoryWrite | SemanticFact): New semantic candidate.
+        existing_records (list[StoreRecord]): Existing semantic records.
+
+    Returns:
+        list[StoreRecord]: Active records in the same conceptual slot.
+    """
+
+    return [
+        record
+        for record in filter_active_semantic_records(existing_records)
+        if _semantic_slot_matches(candidate, record)
+    ]
+
+
 def _normalized_identifier(identifier: str) -> str:
+    """Normalize an identifier for exact string comparison.
+
+    Args:
+        identifier (str): Raw identifier text.
+
+    Returns:
+        str: Lowercase identifier with normalized whitespace.
+    """
+
     return " ".join(identifier.lower().split())
 
 
 def _identifier_tokens(identifier: str) -> frozenset[str]:
+    """Tokenize an identifier for overlap checks.
+
+    Args:
+        identifier (str): Raw identifier text.
+
+    Returns:
+        frozenset[str]: Meaningful identifier tokens.
+    """
+
     return tokenize_meaningful(identifier)
 
 
 def _identifier_subset_overlap(left: str, right: str) -> bool:
-    """Return whether one identifier is a token-subset of the other."""
+    """Return whether one identifier is a token-subset of the other.
+
+    Args:
+        left (str): First identifier.
+        right (str): Second identifier.
+
+    Returns:
+        bool: ``True`` when either token set is a subset of the other.
+    """
 
     left_tokens = _identifier_tokens(left)
     right_tokens = _identifier_tokens(right)
@@ -115,7 +186,15 @@ def _identifier_subset_overlap(left: str, right: str) -> bool:
 
 
 def _prefer_new_identifier(new_identifier: str, existing_identifier: str) -> bool:
-    """Return whether the new identifier is more specific than the existing one."""
+    """Return whether the new identifier is more specific than the existing one.
+
+    Args:
+        new_identifier (str): Candidate replacement identifier.
+        existing_identifier (str): Existing stored identifier.
+
+    Returns:
+        bool: ``True`` when the new identifier is more specific.
+    """
 
     new_tokens = _identifier_tokens(new_identifier)
     existing_tokens = _identifier_tokens(existing_identifier)
@@ -125,12 +204,29 @@ def _prefer_new_identifier(new_identifier: str, existing_identifier: str) -> boo
 
 
 def _has_explicit_correction(text: str) -> bool:
+    """Return whether text contains a semantic correction marker.
+
+    Args:
+        text (str): Text to inspect.
+
+    Returns:
+        bool: ``True`` when the text contains a correction marker.
+    """
+
     lowered = text.lower()
     return any(marker in lowered for marker in _SEMANTIC_CORRECTION_MARKERS)
 
 
 def _semantic_topic_overlap(fact: SemanticFact, record: StoreRecord) -> int:
-    """Return rough topical overlap between two semantic facts."""
+    """Return rough topical overlap between two semantic facts.
+
+    Args:
+        fact (SemanticFact): New semantic fact.
+        record (StoreRecord): Existing stored semantic record.
+
+    Returns:
+        int: Count of overlapping topical tokens.
+    """
 
     candidate_tokens = tokenize_meaningful(
         f"{fact.object.identifier} {fact.evidence_quote}"
@@ -150,15 +246,20 @@ def plan_semantic_write(
     fact: SemanticFact,
     existing_records: list[StoreRecord],
 ) -> SemanticReconciliationPlan:
-    """Return whether a semantic fact should bump, supersede, or coexist."""
+    """Return whether a semantic fact should bump, supersede, or coexist.
+
+    Args:
+        fact (SemanticFact): New semantic fact to reconcile.
+        existing_records (list[StoreRecord]): Existing semantic records.
+
+    Returns:
+        SemanticReconciliationPlan: Reconciliation action for the semantic fact.
+    """
 
     plan = SemanticReconciliationPlan()
     correction_records: list[StoreRecord] = []
 
-    for record in filter_active_semantic_records(existing_records):
-        if not _semantic_slot_matches(fact, record):
-            continue
-
+    for record in filter_semantic_collision_candidates(fact, existing_records):
         existing_identifier = str(
             record.value.get("object", {}).get("identifier") or ""
         )
@@ -195,6 +296,16 @@ def plan_semantic_write(
 
 
 def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
+    """Return the coarse polarity of a procedural preference.
+
+    Args:
+        text (str): Procedural rule/evidence text.
+
+    Returns:
+        Literal["negative", "positive"]: ``"negative"`` for stop/avoid style
+        requests, otherwise ``"positive"``.
+    """
+
     lowered = text.lower()
     if any(marker in lowered for marker in _PROCEDURAL_NEGATION_MARKERS):
         return "negative"
@@ -202,12 +313,29 @@ def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
 
 
 def _procedural_rule_signature(rule: ProceduralRule) -> str:
-    """Return one text blob for conflict/dedup checks."""
+    """Return one text blob for conflict and dedup checks.
+
+    Args:
+        rule (ProceduralRule): Procedural rule to serialize.
+
+    Returns:
+        str: Combined procedural rule text and evidence.
+    """
 
     return " ".join([rule.rule, *rule.evidence]).strip()
 
 
 def _prefer_new_rule(new_rule: str, existing_rule: str) -> bool:
+    """Return whether a new rule is more specific than an existing one.
+
+    Args:
+        new_rule (str): Candidate replacement rule text.
+        existing_rule (str): Existing stored rule text.
+
+    Returns:
+        bool: ``True`` when the new rule has more specificity.
+    """
+
     new_tokens = tokenize_meaningful(new_rule)
     existing_tokens = tokenize_meaningful(existing_rule)
     new_specificity = (len(new_tokens), len(new_rule.strip()))
@@ -219,7 +347,15 @@ def plan_procedural_rule_write(
     new_rule: ProceduralRule,
     existing_rules: list[ProceduralRule],
 ) -> ProceduralReconciliationPlan:
-    """Return whether a procedural rule should append, replace, or skip."""
+    """Return whether a procedural rule should append, replace, or skip.
+
+    Args:
+        new_rule (ProceduralRule): New procedural rule to reconcile.
+        existing_rules (list[ProceduralRule]): Existing procedural rules.
+
+    Returns:
+        ProceduralReconciliationPlan: Reconciliation action for the new rule.
+    """
 
     new_signature = _procedural_rule_signature(new_rule)
     new_text = new_signature.lower().strip()

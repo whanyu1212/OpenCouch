@@ -219,6 +219,42 @@ class TestChat:
         assert resp.status_code == 200
         assert resp.json()["response_text"] == "quality-tier reply"
 
+    @pytest.mark.asyncio
+    async def test_chat_defaults_to_fast_response_tier(self, runtime) -> None:
+        """Omitted response tier should use the fast response client."""
+
+        from fastapi import FastAPI
+
+        from api.dependencies import (
+            get_llm_client,
+            get_response_llm_clients,
+            get_runtime,
+        )
+        from api.router import api_router
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_runtime] = lambda: runtime
+        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_response_llm_clients] = lambda: {
+            "fast": _FakeResponseTierLLM("fast-tier reply"),
+        }
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "message": "hello",
+                    "thread_id": "tier-default-test",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["response_text"] == "fast-tier reply"
+
 
 # ── Threads ─────────────────────────────────────────────────────────
 

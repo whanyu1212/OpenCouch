@@ -83,7 +83,7 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: false,
     description:
-      'Always-on audit log. Appends a CrisisLogRecord regardless of memory mode — the privacy asymmetry is deliberate per schema.yaml §2. Never skipped, never rate-limited.',
+      'Always-on audit log. Appends a CrisisLogRecord regardless of memory mode — the privacy asymmetry is deliberate. Never skipped, never rate-limited.',
     file: 'agent/nodes/crisis_log.py',
     fn: 'run_crisis_log_node',
   },

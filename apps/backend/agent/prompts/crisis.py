@@ -1,12 +1,12 @@
 """Crisis-mode prompt builders.
 
-Uses shared helpers from ``agent.prompts`` for source loading,
+Uses shared helpers from ``agent.prompts.shared`` for source loading,
 composition, and history formatting.
 """
 
 from __future__ import annotations
 
-from agent.prompts import (
+from agent.prompts.shared import (
     CORE_SOURCES,
     compose_sources as _compose,
     format_recent_history as _format_recent_history,
@@ -28,7 +28,14 @@ _CRISIS_CLASSIFIER_KNOWLEDGE = (
 
 
 def _format_found_resources(resources: list[dict[str, str]]) -> str:
-    """Format a list of crisis resource dicts as a readable bullet list."""
+    """Format crisis resource dicts as a readable bullet list.
+
+    Args:
+        resources: Verified crisis-resource records.
+
+    Returns:
+        Markdown bullet list, or an empty string when no resources exist.
+    """
 
     if not resources:
         return ""
@@ -49,10 +56,9 @@ def _format_found_resources(resources: list[dict[str, str]]) -> str:
 def build_crisis_response_system_prompt() -> str:
     """Build the system prompt for crisis replies.
 
-    **v0.7 Stage D deliberate exception**: unlike the therapeutic-mode
-    system prompts, the crisis response prompt does NOT inject
-    procedural rules or the recall-toggle constraint. This is a
-    safety call:
+    Unlike the therapeutic-mode system prompts, the crisis response
+    prompt does not inject procedural rules or the recall-toggle
+    constraint. This is a safety call:
 
     1. Crisis responses have strict structural requirements (acknowledge
        directly, name local resources, ask at most one safety question,
@@ -61,7 +67,7 @@ def build_crisis_response_system_prompt() -> str:
        questions" could actively undermine those requirements. The
        procedural writer is supposed to refuse safety-undermining
        rule requests, but the crisis path should be belt-and-suspenders
-       immune to the writer's enforcement — a regression in writer
+       immune to the writer's enforcement; a regression in writer
        behavior must not degrade crisis handling.
     2. The recall-toggle constraint governs whether the agent may
        reference past sessions or past statements. Crisis mode should
@@ -73,8 +79,11 @@ def build_crisis_response_system_prompt() -> str:
 
     If a rule is safe and universal enough that it SHOULD apply to
     crisis responses (e.g., "use shorter sentences"), it can be
-    baked into ``knowledge/response_modes/crisis_response.md`` rather
+    baked into ``prompts/sources/response_modes/crisis_response.md`` rather
     than threaded through user-writable procedural memory.
+
+    Returns:
+        Crisis response system prompt.
     """
 
     return _compose(*_CRISIS_RESPONSE_KNOWLEDGE)
@@ -84,9 +93,15 @@ def build_crisis_response_prompt(state: AgentState) -> str:
     """Build the user prompt for crisis replies.
 
     When search-derived resources are present in state
-    (``response.found_resources``), they are injected into the prompt so the
+    (``found_resources``), they are injected into the prompt so the
     model can reference verified local hotlines. The model is explicitly
     instructed not to invent phone numbers.
+
+    Args:
+        state: Current graph state for a crisis turn.
+
+    Returns:
+        User prompt for the crisis response model call.
     """
 
     crisis = state["crisis"]
@@ -99,18 +114,47 @@ def build_crisis_response_prompt(state: AgentState) -> str:
         )
     )
 
-    response_state = state.get("response", {})
-    found_resources: list[dict[str, str]] = response_state.get("found_resources", [])
-    inferred_location: str = response_state.get("inferred_location", "")
+    found_resources: list[dict[str, str]] = state.get("found_resources", [])
+    inferred_location: str = state.get("inferred_location", "")
+    resource_lookup_status = state.get("resource_lookup_status", "not_attempted")
 
     if found_resources:
         resource_list = _format_found_resources(found_resources)
+        location_label = inferred_location or "the user's region"
         resource_block = (
             f"\nVerified local crisis resources for "
-            f"{inferred_location or 'the user\u2019s region'}:\n"
+            f"{location_label}:\n"
             f"{resource_list}\n"
             "Include at least one of these specific resources in your response. "
             "Do not modify phone numbers.\n"
+        )
+    elif resource_lookup_status == "no_location":
+        resource_block = (
+            "\nThe user has not stated their location. Give immediate safety "
+            "guidance that does not require location: local emergency services, "
+            "the nearest emergency department, moving away from means, and "
+            "contacting a trusted person nearby. Ask once, optionally, for their "
+            "country or region only if they are comfortable sharing it so local "
+            "resources can be looked up. Do not pressure them for location. "
+            "Do not invent phone numbers.\n"
+        )
+    elif resource_lookup_status == "search_failed":
+        resource_block = (
+            "\nA local crisis-resource lookup was attempted but could not be "
+            "verified right now. Give immediate safety guidance that does not "
+            "depend on a hotline lookup: local emergency services, the nearest "
+            "emergency department, moving away from means, and contacting a "
+            "trusted person nearby. You may briefly say you cannot verify local "
+            "lines right now. Do not invent phone numbers.\n"
+        )
+    elif resource_lookup_status == "no_verified_results":
+        location_label = inferred_location or "the user's stated region"
+        resource_block = (
+            f"\nThe user gave this location: {location_label}. No verified, "
+            "actionable local crisis line was found. Give immediate safety "
+            "guidance using local emergency services, the nearest emergency "
+            "department, moving away from means, and contacting a trusted person "
+            "nearby. Do not invent phone numbers.\n"
         )
     else:
         resource_block = (
@@ -152,7 +196,11 @@ def build_crisis_response_prompt(state: AgentState) -> str:
 
 
 def build_crisis_classifier_system_prompt() -> str:
-    """Build the system prompt for the crisis classifier."""
+    """Build the system prompt for the crisis classifier.
+
+    Returns:
+        Crisis classifier system prompt.
+    """
 
     return _compose(*_CRISIS_CLASSIFIER_KNOWLEDGE)
 
@@ -167,6 +215,12 @@ def build_crisis_classifier_prompt(state: AgentState) -> str:
     because it treats real ideation as venting. This prompt is tuned to
     hold the line at level 2 — requiring EXPLICIT self-harm vocabulary —
     while still catching ambiguous warning signs at level 1.
+
+    Args:
+        state: Current graph state for the turn being classified.
+
+    Returns:
+        User prompt for structured crisis classification.
     """
 
     return (

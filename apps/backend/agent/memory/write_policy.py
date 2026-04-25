@@ -15,75 +15,40 @@ from agent.memory.candidates import (
     SemanticCandidate,
 )
 from agent.memory.constants import (
-    PROCEDURAL_EXPLICIT_REQUEST_MARKERS as _PROCEDURAL_EXPLICIT_REQUEST_MARKERS,
-    PROCEDURAL_SAFETY_CONFLICT_MARKERS as _PROCEDURAL_SAFETY_CONFLICT_MARKERS,
-    PROCEDURAL_TURN_SCOPED_MARKERS as _PROCEDURAL_TURN_SCOPED_MARKERS,
-    contains_any as _contains_any,
+    classify_procedural_request,
 )
-
-_SEMANTIC_STABLE_CATEGORIES = {
-    "relationship",
-    "preference",
-    "coping_strategy",
-    "goal",
-}
-
-_SEMANTIC_SESSION_ONLY_CATEGORIES = {
-    "loss",
-    "trigger",
-}
-
-_SEMANTIC_ONE_OFF_MARKERS = (
-    "today",
-    "tonight",
-    "right now",
-    "this week",
-    "this month",
-    "this morning",
-    "last night",
-    "yesterday",
-    "lately",
-    "recently",
-)
-
-_NEGATIVE_SELF_BELIEF_MARKERS = (
-    "i always assume",
-    "everyone will see i'm",
-    "everyone will see im",
-    "everyone will think i'm",
-    "everyone will think im",
-    "one mistake means",
-    "i'm incompetent",
-    "im incompetent",
-    "i'm a failure",
-    "im a failure",
-    "i always fail",
-    "i never get it right",
-)
-
-_EMERGING_PATTERN_MARKERS = (
-    "it keeps happening",
-    "every new task makes me feel like",
-    "every task makes me feel like",
-    "i'm about to fail",
-    "im about to fail",
-    "every relationship ends",
-    "this always happens",
+from agent.memory.semantic_policy import (
+    SEMANTIC_SESSION_ONLY_CATEGORIES,
+    SEMANTIC_STABLE_CATEGORIES,
+    contains_emerging_pattern,
+    contains_negative_self_belief,
+    looks_transient_context,
 )
 
 
 def _lowered_texts(*values: str) -> str:
+    """Join non-empty values into one lowercase text blob.
+
+    Args:
+        values: Text fragments to normalize.
+
+    Returns:
+        Lowercase text joined with spaces.
+    """
+
     return " ".join(v.lower() for v in values if v).strip()
 
 
-def should_drop_candidate(action: str) -> bool:
-    """Return whether a policy action means "do not persist in phase 1"."""
-
-    return action != "commit_now"
-
-
 def should_commit_pattern(candidate: SemanticCandidate, evidence_count: int) -> bool:
-    """Return whether a repetition-gated semantic candidate can promote."""
+    """Return whether a repetition-gated semantic candidate can promote.
+
+    Args:
+        candidate (SemanticCandidate): Candidate being evaluated.
+        evidence_count (int): Number of reinforcing occurrences seen so far.
+
+    Returns:
+        bool: ``True`` when the candidate is repetition-gated and has enough evidence.
+    """
 
     if candidate.policy_recommendation != "require_repetition":
         return False
@@ -94,7 +59,15 @@ def should_commit_implicit_procedural_preference(
     candidate: ProceduralCandidate,
     evidence_count: int,
 ) -> bool:
-    """Return whether a buffered implicit procedural preference can promote."""
+    """Return whether a buffered implicit procedural preference can promote.
+
+    Args:
+        candidate (ProceduralCandidate): Candidate being evaluated.
+        evidence_count (int): Number of reinforcing occurrences seen so far.
+
+    Returns:
+        bool: ``True`` when the implicit preference has enough evidence to promote.
+    """
 
     if candidate.policy_recommendation != "commit_at_session_end":
         return False
@@ -104,7 +77,14 @@ def should_commit_implicit_procedural_preference(
 
 
 def decide_semantic_candidate(candidate: SemanticCandidate) -> PolicyDecision:
-    """Return the deterministic write decision for a semantic candidate."""
+    """Return the deterministic write decision for a semantic candidate.
+
+    Args:
+        candidate (SemanticCandidate): Semantic candidate to evaluate.
+
+    Returns:
+        PolicyDecision: Deterministic commit, hold, repetition, or drop decision.
+    """
 
     category = candidate.payload.category
     predicate = candidate.payload.predicate
@@ -115,15 +95,13 @@ def decide_semantic_candidate(candidate: SemanticCandidate) -> PolicyDecision:
         candidate.payload.object.identifier,
     )
 
-    if _contains_any(text, _NEGATIVE_SELF_BELIEF_MARKERS) or _contains_any(
-        text, _EMERGING_PATTERN_MARKERS
-    ):
+    if contains_negative_self_belief(text) or contains_emerging_pattern(text):
         return PolicyDecision(
             action="require_repetition",
             reason="negative self-belief or emerging pattern requires repetition",
         )
 
-    if candidate.sensitivity == "high" or category in _SEMANTIC_SESSION_ONLY_CATEGORIES:
+    if candidate.sensitivity == "high" or category in SEMANTIC_SESSION_ONLY_CATEGORIES:
         return PolicyDecision(
             action="commit_at_session_end",
             reason="high-sensitivity semantic candidate should not commit immediately",
@@ -141,13 +119,13 @@ def decide_semantic_candidate(candidate: SemanticCandidate) -> PolicyDecision:
             reason="provenance predicates should not become durable semantic memory",
         )
 
-    if category in _SEMANTIC_STABLE_CATEGORIES:
+    if category in SEMANTIC_STABLE_CATEGORIES:
         return PolicyDecision(
             action="commit_now",
             reason="explicit stable semantic fact is safe for immediate commit",
         )
 
-    if category == "context" and not _contains_any(text, _SEMANTIC_ONE_OFF_MARKERS):
+    if category == "context" and not looks_transient_context(text):
         return PolicyDecision(
             action="commit_now",
             reason="stable context fact is safe for immediate commit",
@@ -160,31 +138,35 @@ def decide_semantic_candidate(candidate: SemanticCandidate) -> PolicyDecision:
 
 
 def decide_procedural_candidate(candidate: ProceduralCandidate) -> PolicyDecision:
-    """Return the deterministic write decision for a procedural candidate."""
+    """Return the deterministic write decision for a procedural candidate.
+
+    Args:
+        candidate (ProceduralCandidate): Procedural candidate to evaluate.
+
+    Returns:
+        PolicyDecision: Deterministic commit, hold, or drop decision.
+    """
 
     text = _lowered_texts(
         candidate.reason,
         candidate.payload.rule,
         *candidate.payload.evidence,
     )
+    classification = classify_procedural_request(text)
 
-    if _contains_any(text, _PROCEDURAL_SAFETY_CONFLICT_MARKERS):
+    if classification.safety_conflict:
         return PolicyDecision(
             action="drop",
             reason="safety-conflicting procedural request cannot be persisted",
         )
 
-    if candidate.scope == "turn" or _contains_any(
-        text, _PROCEDURAL_TURN_SCOPED_MARKERS
-    ):
+    if candidate.scope == "turn" or classification.turn_scoped:
         return PolicyDecision(
             action="drop",
             reason="turn-scoped procedural request should not become long-term memory",
         )
 
-    if candidate.explicitness != "explicit" and not _contains_any(
-        text, _PROCEDURAL_EXPLICIT_REQUEST_MARKERS
-    ):
+    if candidate.explicitness != "explicit" and not classification.explicit:
         return PolicyDecision(
             action="commit_at_session_end",
             reason="implicit procedural preference should wait for stronger evidence",

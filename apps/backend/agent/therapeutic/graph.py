@@ -15,26 +15,15 @@ Internal topology:
          | clarifying_response_node
          | psychoeducation_response_node
          | closing_response_node
-         | guided_exercise_response_node]
+         | guided_exercise_response_node
+         | technique_response_node]
       → END(subgraph)
 
 The dispatcher returns ``Command(goto=...)`` rather than using a
 conditional edge — the same pattern as the top-level ``crisis_gate_node``.
 Each mode node terminates at the subgraph's END; LangGraph propagates
 state and the runtime context into and out of the subgraph
-automatically because both the parent and subgraph share ``AgentState``.
-
-Mode rollout history:
-- v0.1: supportive, reflective, clarifying (the MVP three)
-- v0.5: LLM-backed dispatcher added with tuned prompts
-- v0.6 Stage A: psychoeducation mode node wired up
-- v0.6 Stage B: closing mode node wired up (tonal only — session
-  termination and summarization remain runtime concerns)
-- v0.6 Stage C: guided_exercise mode node wired up. First
-  multi-turn mode in the codebase; tracks exercise state via
-  ``progress.exercise_type`` + ``progress.exercise_step``, and
-  the dispatcher gained an "active-exercise fast-path" that
-  keeps the mode engaged across turns without re-classifying.
+automatically.
 """
 
 from __future__ import annotations
@@ -45,8 +34,15 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState, ResponseState, RoutingState, SessionProgressState
+from agent.state import (
+    AgentState,
+    ExerciseState,
+    ProceduralProfileState,
+    SessionMemoryState,
+    SessionProgressState,
+)
 from agent.therapeutic.clarifying import run_clarifying_response_node
 from agent.therapeutic.closing import run_closing_response_node
 from agent.therapeutic.dispatcher import (
@@ -64,6 +60,7 @@ from agent.therapeutic.psychoeducation import run_psychoeducation_response_node
 from agent.therapeutic.reflective import run_reflective_response_node
 from agent.therapeutic.supportive import run_supportive_response_node
 from agent.therapeutic.technique import run_technique_response_node
+from agent.working_memory import WorkingMemoryEntry
 
 # Dispatcher node name exported so the parent graph (or tests) can
 # reference it without importing from dispatcher.py directly.
@@ -85,12 +82,37 @@ class TherapeuticSubgraphOutput(TypedDict):
     input state inside the subgraph itself.
     """
 
-    routing: NotRequired[RoutingState]
-    response: NotRequired[ResponseState]
-    progress: NotRequired[SessionProgressState]
+    exercise_state: NotRequired[ExerciseState]
+    therapeutic_approach: NotRequired[str | None]
+    response_style: NotRequired[str]
+    response_style_source: NotRequired[str | None]
+    response_style_type: NotRequired[ModeType]
+    response_kind: NotRequired[ResponseCategory]
+    response_text: NotRequired[str]
+    should_persist_memory: NotRequired[bool]
 
 
-def build_therapeutic_subgraph() -> CompiledStateGraph:
+class TherapeuticSubgraphInput(TypedDict):
+    """Subset of parent state consumed by the therapeutic subgraph."""
+
+    message: str
+    user_id: str | None
+    session_id: str | None
+    history: list[dict[str, str]]
+    working_memory: list[WorkingMemoryEntry]
+    session_memory: SessionMemoryState
+    procedural_profile: ProceduralProfileState
+    session_progress: SessionProgressState
+    exercise_state: ExerciseState
+    therapeutic_approach: NotRequired[str | None]
+
+
+def build_therapeutic_subgraph() -> CompiledStateGraph[
+    AgentState,
+    WorkflowContext,
+    TherapeuticSubgraphInput,
+    TherapeuticSubgraphOutput,
+]:
     """Build and compile the therapeutic response subgraph.
 
     Returns a compiled ``StateGraph`` that can be registered as a single
@@ -98,13 +120,14 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
 
         parent.add_node("therapeutic_subgraph", build_therapeutic_subgraph())
 
-    The subgraph shares the parent's ``AgentState`` schema, so no
-    wrapper function is needed — LangGraph propagates state into and
-    out of the subgraph automatically.
+    The subgraph keeps ``AgentState`` as its internal schema, but its
+    parent-facing contract is narrowed with explicit input and output
+    schemas so only the channels it actually reads and writes cross the
+    subgraph boundary.
 
-    The subgraph does NOT do memory writes. Those live at the top level
-    (``extract_semantic_facts_node`` and similar, Stage E+) and run
-    AFTER the subgraph returns. This keeps memory concerns out of the
+    The subgraph does not own general memory writes. Those live at the
+    top level (``extract_semantic_facts_node`` and similar) and run after
+    the subgraph returns, which keeps memory concerns out of the
     therapeutic package.
 
     Returns:
@@ -115,6 +138,7 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
     subgraph = StateGraph(
         AgentState,
         context_schema=WorkflowContext,
+        input_schema=TherapeuticSubgraphInput,
         output_schema=TherapeuticSubgraphOutput,
     )
 

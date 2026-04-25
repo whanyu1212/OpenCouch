@@ -15,7 +15,7 @@ What these tests assert:
 - Incognito mode ALWAYS scrubs ``user_id_or_null`` to ``None``,
   even if state carries a user_id. This mirrors the crisis_log
   privacy contract.
-- ``turn_count_at_end`` is read from state.progress; zero-state
+- ``turn_count_at_end`` is read from ``state.session_progress``; zero-state
   threads produce records with ``turn_count_at_end=0``.
 - Backend write failures return ``None`` from the method and log a
   WARNING — the caller continues to summarization regardless.
@@ -30,7 +30,7 @@ import pytest
 
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
-from agent.memory.session_feedback import SessionFeedbackBackend
+from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.persistence import PersistentAgentRuntime
 
 

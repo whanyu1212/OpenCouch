@@ -1,4 +1,4 @@
-"""Reflective response mode — pattern naming and gentle probing."""
+"""Reflective response mode - pattern naming and gentle probing."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import (
@@ -23,6 +23,29 @@ _DEFAULT_REFLECTIVE_REPLY = (
     "pattern here that's worth looking at together. "
     "What do you think connects these moments for you?"
 )
+_REFLECTIVE_FALLBACK_QUESTION = (
+    "What do you think keeps connecting these moments for you?"
+)
+
+
+def _ensure_reflective_question(response_text: str) -> str:
+    """Ensure reflective replies end with one gentle question.
+
+    Args:
+        response_text: The generated reflective reply text.
+
+    Returns:
+        The original text when it already includes a question, otherwise the
+        text with a short reflective question appended.
+    """
+
+    stripped = response_text.strip()
+    if not stripped:
+        return _DEFAULT_REFLECTIVE_REPLY
+    if "?" in stripped:
+        return stripped
+    suffix = "" if stripped.endswith((".", "!", "?")) else "."
+    return f"{stripped}{suffix} {_REFLECTIVE_FALLBACK_QUESTION}"
 
 
 async def run_reflective_response_node(
@@ -36,6 +59,13 @@ async def run_reflective_response_node(
     agent gently names the pattern and invites reflection.
 
     Falls back to a deterministic template when no LLM client is available.
+
+    Args:
+        state: Current graph state for the turn.
+        runtime: LangGraph runtime carrying configured dependencies.
+
+    Returns:
+        Response delta for the parent graph.
     """
 
     llm_client = runtime.context.response_llm or runtime.context.llm_client
@@ -58,16 +88,12 @@ async def run_reflective_response_node(
                 exc_info=True,
             )
 
+    response_text = _ensure_reflective_question(response_text)
+
     return {
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "reflective",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "reflective",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }

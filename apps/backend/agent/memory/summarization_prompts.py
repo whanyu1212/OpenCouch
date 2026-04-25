@@ -82,17 +82,10 @@ _MODALITY_CONTEXT_HINTS: dict[str, str] = {
 
 
 def build_summarization_system_prompt() -> str:
-    """Build the system prompt for the session summarizer LLM call.
-
-    The prompt emphasizes:
-    - Narrative over transcript
-    - Conservative None-return when the session lacks emotional content
-    - Allowlisted mood descriptors and crisis-level honesty
-    - Strict length caps (summary ≤ 600 chars; ~3-4 sentences)
+    """Build the session-summarizer system prompt.
 
     Returns:
-        The full system prompt as a single string, ready to pass to
-        ``generate_structured(system_instruction=...)``.
+        str: Full system prompt for ``generate_structured``.
     """
 
     return (
@@ -211,7 +204,7 @@ def build_summarization_system_prompt() -> str:
         "as the user's messages in the transcript. Do NOT introduce a\n"
         "second language, code-switch mid-string, or drop foreign-language\n"
         "words into a summary rendered in another language — the CLI and\n"
-        "future catch-up retrieval display these fields verbatim, and\n"
+        "catch-up and retrieval surfaces display these fields verbatim, and\n"
         "mixed-language strings look like a glitch to the user reading\n"
         "them days later. If the transcript itself mixes languages, pick\n"
         "the dominant one and stay in it for all fields.\n"
@@ -252,36 +245,19 @@ def build_summarization_user_prompt(
     turn_count: int,
     approach_hint: str | None = None,
 ) -> str:
-    """Build the user/task prompt for a single session-summarization call.
-
-    Injects the full session transcript plus the provenance metadata the
-    summarizer needs to populate :class:`SessionArc` fields that aren't
-    inferred from the conversation itself (session_id, timestamps,
-    turn_count, duration).
-
-    Unlike ``build_extraction_user_prompt`` which uses only the last 6
-    history turns, this prompt injects the ENTIRE transcript. That's
-    deliberate: the summarizer needs to see the arc of the whole session
-    to produce an opened/closed mood pair and a narrative that captures
-    the actual trajectory. For very long sessions (50+ turns) the prompt
-    will be large, but summarization runs once per session so the cost
-    is bounded. When long sessions become common, a future refinement
-    could truncate the middle of the transcript.
+    """Build the session-summarizer user prompt.
 
     Args:
-        state: Current graph state. Reads ``transcript`` (the full
-            session history, including both user and assistant turns).
-        session_id: The session identifier, copied verbatim into the
-            SessionArc's ``session_id`` field.
-        started_at: ISO-8601 timestamp when the session started.
-        ended_at: ISO-8601 timestamp when the session is ending (now).
-        duration_seconds: Duration of the session in seconds.
-        turn_count: Total number of user turns in the session.
-        approach_hint: The dominant therapeutic modality used during the
-            session (e.g., "cbt", "act"). When provided, the prompt
-            instructs the LLM to extract modality-specific structured
-            context. When None, approach_used and approach_context
-            should be left null.
+        state (AgentState): Current graph state with the full transcript.
+        session_id (str): Session identifier copied into the summary payload.
+        started_at (str): ISO-8601 session start timestamp.
+        ended_at (str): ISO-8601 session end timestamp.
+        duration_seconds (int): Session duration in seconds.
+        turn_count (int): Total number of user turns in the session.
+        approach_hint (str | None): Dominant modality hint for approach-context extraction.
+
+    Returns:
+        str: User prompt for a single session-summarization call.
     """
 
     transcript = state.get("transcript", [])

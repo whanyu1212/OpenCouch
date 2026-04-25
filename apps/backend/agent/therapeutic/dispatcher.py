@@ -23,18 +23,17 @@ This mirrors the LLM-primary pattern in ``agent/nodes/crisis_gate.py``:
 deterministic overrides for critical boundary cases, LLM as primary
 classifier, regex as graceful degradation.
 
-The dispatcher returns ``Command(goto=<node_name>)`` with a routing
-update that includes the selected therapeutic approach. The individual
-response style nodes set ``routing.response_style``,
-``routing.response_style_source``, and ``routing.response_style_type``
-in their own deltas.
+The dispatcher returns ``Command(goto=<node_name>)`` with a
+``therapeutic_approach`` update. The individual response style nodes
+set ``response_style``, ``response_style_source``, and
+``response_style_type`` in their own deltas.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from langgraph.runtime import Runtime
 from langgraph.types import Command
@@ -47,25 +46,32 @@ from agent.working_memory import format_working_memory_entries
 logger = logging.getLogger(__name__)
 
 
-# ─── Node names (must match agent/therapeutic/graph.py registration) ───────
+TherapeuticNodeName: TypeAlias = Literal[
+    "supportive_response_node",
+    "reflective_response_node",
+    "clarifying_response_node",
+    "psychoeducation_response_node",
+    "closing_response_node",
+    "guided_exercise_response_node",
+    "technique_response_node",
+]
 
-SUPPORTIVE_NODE = "supportive_response_node"
-REFLECTIVE_NODE = "reflective_response_node"
-CLARIFYING_NODE = "clarifying_response_node"
-PSYCHOEDUCATION_NODE = "psychoeducation_response_node"
-CLOSING_NODE = "closing_response_node"
-GUIDED_EXERCISE_NODE = "guided_exercise_response_node"
-TECHNIQUE_NODE = "technique_response_node"
+SUPPORTIVE_NODE: TherapeuticNodeName = "supportive_response_node"
+REFLECTIVE_NODE: TherapeuticNodeName = "reflective_response_node"
+CLARIFYING_NODE: TherapeuticNodeName = "clarifying_response_node"
+PSYCHOEDUCATION_NODE: TherapeuticNodeName = "psychoeducation_response_node"
+CLOSING_NODE: TherapeuticNodeName = "closing_response_node"
+GUIDED_EXERCISE_NODE: TherapeuticNodeName = "guided_exercise_response_node"
+TECHNIQUE_NODE: TherapeuticNodeName = "technique_response_node"
 
 
-# ─── Dispatch patterns ─────────────────────────────────────────────────────
-
-# Reflective fast-path patterns — ONLY for forms where the user is
+# Reflective fallback patterns — ONLY for forms where the user is
 # explicitly naming their OWN recurring behavioral pattern with
 # first-person framing + repetition marker. Broader patterns like
-# "every time I", "same thing", "is there a pattern" are demoted to
-# the LLM classifier because they produce harmful false positives
-# on non-pattern contexts:
+# "same thing" and "is there a pattern" are demoted to the LLM
+# classifier because they produce harmful false positives on
+# non-pattern contexts. "Every time I" is kept only when followed by a
+# second first-person consequence marker:
 #   - "Every time I try your grounding exercise it helps" → NOT reflective
 #   - "Is there a pattern to panic attacks?" → psychoeducation, not reflective
 #   - "Same thing my therapist said" → NOT reflective
@@ -76,12 +82,10 @@ TECHNIQUE_NODE = "technique_response_node"
 REFLECTIVE_PATTERNS: tuple[str, ...] = (
     r"\bwhy do(?:es)? (?:i|this|it) keep\b",
     r"\bwhy does (?:this|it) (?:keep|always) happen\b",
+    r"\bevery time i\b.{0,80}\bi (?:end up|start|keep|always)\b",
     # "I always ... doing/saying/feeling/ending up/end up" — accepts
     # both the present participle ("ending up apologizing") and the
-    # bare infinitive ("end up apologizing"). v0.5 eval surfaced that
-    # "I always end up apologizing first" wasn't matching because the
-    # original alternation only listed "ending up". Regression pin:
-    # the reflective_i_always test case in therapeutic_routing_v0.json.
+    # bare infinitive ("end up apologizing").
     r"\bi (?:always|keep)\b.{0,20}\b(?:doing|saying|feeling|ending up|end up)\b",
     r"\bthis (?:keeps|always) happen(?:ing|s)\b",
     r"\bi('m| am) stuck in (?:this|the same|a) (?:pattern|cycle|loop)\b",
@@ -90,9 +94,9 @@ REFLECTIVE_PATTERNS: tuple[str, ...] = (
 
 # Explicit confusion markers — ONLY ultra-short, unambiguous,
 # assistant-directed signals. Broader patterns like "can you explain",
-# "I don't understand", "I'm confused" are demoted to the LLM
-# classifier because they produce harmful false positives on
-# psychoeducation requests:
+# broad "I don't understand" and "I'm confused" forms are demoted to
+# the LLM classifier because they produce harmful false positives on
+# psychoeducation requests. Assistant-directed variants stay here:
 #   - "Can you explain why my body does this?" → psychoeducation, not clarifying
 #   - "I don't understand what's happening in my body" → psychoeducation
 #   - "I'm confused about why my chest gets tight" → psychoeducation
@@ -104,6 +108,7 @@ CONFUSION_PATTERNS: tuple[str, ...] = (
     r"^\s*huh\??\s*$",
     r"^\s*what\??\s*$",
     r"^\s*what do you mean\b",
+    r"^\s*i don'?t understand what (?:you'?re|you are) getting at\b",
 )
 
 # Explicit exit signals for mid-exercise turns. These fire ONLY when
@@ -134,14 +139,6 @@ EXERCISE_EXIT_PATTERNS: tuple[str, ...] = (
     # feel this way anymore" which is distress, not an exit request.
 )
 
-# CLOSING_PATTERNS removed — closing detection is fully LLM-classified.
-# With LLM-primary dispatch, mid-exercise closing signals (e.g., "Before
-# we wrap up, what's the main point?") are handled by the LLM, which
-# picks the closing mode and triggers exercise state cleanup via the
-# non-guided_exercise exit path above. Regex-based closing patterns had
-# substring false-positive problems ("before I go deeper", "before we
-# close that loop") that the LLM avoids by reading full message context.
-
 # A short message routes to clarifying in the FALLBACK path only (when
 # no LLM is available) ONLY IF it's not a complete self-report. A
 # self-report has a first-person subject + a feeling or state verb —
@@ -164,91 +161,100 @@ SELF_REPORT_PATTERNS: tuple[str, ...] = (
 )
 
 
-# ─── Regex helpers ─────────────────────────────────────────────────────────
-
-
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
-    """Return whether the text matches any of the patterns."""
+    """Return whether the text matches any regex pattern.
+
+    Args:
+        text: The text to test.
+        patterns: The regex patterns to evaluate.
+
+    Returns:
+        ``True`` when any pattern matches ``text``.
+    """
 
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def _word_count(text: str) -> int:
-    """Count words in text, ignoring punctuation-only tokens."""
+    """Count words in a message.
+
+    Args:
+        text: The input text to tokenize.
+
+    Returns:
+        The number of word-like tokens in ``text``.
+    """
 
     return len([w for w in re.findall(r"\w+", text) if w])
 
 
 def _has_active_exercise(state: AgentState) -> bool:
-    """Return whether a guided exercise is currently in progress.
+    """Return whether an exercise is active in exercise state.
 
-    Checks ``state["progress"]["exercise_type"]`` and
-    ``state["progress"]["exercise_step"]``. Both must be non-None for
-    the exercise to count as active. The fields are cleared (set to
-    None) by the guided_exercise node on both natural completion and
-    user-initiated exit, so this check correctly returns False in
-    both cases.
+    Args:
+        state: The current agent state.
 
-    This is the mechanism that keeps the dispatcher routing to
-    guided_exercise across multiple turns without needing the LLM
-    classifier to read history and infer "we're mid-exercise." See
-    ``agent/therapeutic/guided_exercise.py`` for the state lifecycle.
+    Returns:
+        ``True`` when both ``exercise_type`` and ``exercise_step`` are set.
     """
 
-    progress = state.get("progress", {}) or {}
+    exercise_state = state.get("exercise_state", {}) or {}
     return (
-        progress.get("exercise_type") is not None
-        and progress.get("exercise_step") is not None
+        exercise_state.get("exercise_type") is not None
+        and exercise_state.get("exercise_step") is not None
     )
+
+
+def _active_exercise_modality(state: AgentState) -> str | None:
+    """Return the pinned modality for an active exercise.
+
+    Args:
+        state: The current agent state.
+
+    Returns:
+        The exercise modality when present, otherwise the current
+        turn's top-level ``therapeutic_approach``.
+    """
+
+    exercise_state = state.get("exercise_state", {}) or {}
+    modality = exercise_state.get("exercise_modality")
+    if modality:
+        return modality
+    return state.get("therapeutic_approach")
 
 
 def pick_therapeutic_mode(
     message: str,
 ) -> Literal["supportive", "reflective", "clarifying"]:
-    """Return the therapeutic mode name for a given user message (regex-only).
+    """Pick a fallback therapeutic mode from regex heuristics.
 
-    Pure function — takes only the message, returns the mode name.
-    Exposed as a module-level function so it can be unit-tested in
-    isolation from the LangGraph runtime.
+    Args:
+        message: The current user message.
 
-    This is the **regex-only** fallback path used when no LLM client is
-    available, or when the LLM call fails. It uses only the narrowest,
-    highest-precision patterns. Broader classification (psychoeducation,
-    closing, guided_exercise, and ambiguous reflective/clarifying cases)
-    is handled by the LLM classifier in the primary path.
+    Returns:
+        The fallback mode name for regex-only dispatch.
     """
 
     lowered = message.lower()
 
-    # Reflective: only the narrowest self-referential pattern forms.
     if _matches_any(lowered, REFLECTIVE_PATTERNS):
         return "reflective"
 
-    # Clarifying: only exact-message confusion cues (huh?, what?).
     if _matches_any(lowered, CONFUSION_PATTERNS):
         return "clarifying"
 
-    # Short message without a self-report → clarifying. A self-report
-    # like "I feel overwhelmed" is a complete statement even when brief,
-    # so it falls through to supportive.
     is_short = _word_count(message) <= CLARIFYING_MAX_WORD_COUNT
     if is_short and not _matches_any(lowered, SELF_REPORT_PATTERNS):
         return "clarifying"
 
-    # Default: supportive
     return "supportive"
 
 
-# ─── LLM classifier path ───────────────────────────────────────────────────
-
-
 def build_therapeutic_dispatch_system_prompt() -> str:
-    """System prompt for the LLM-backed therapeutic dispatcher.
+    """Build the system prompt for the LLM dispatcher.
 
-    Kept inline (not in ``agent/therapeutic/prompts.py``) because it is
-    specific to the dispatcher's classification role and doesn't benefit
-    from the knowledge-file composition that the mode prompts use.
-    Dispatching is a classification task, not a response-generation task.
+    Returns:
+        The full system prompt string for mode and modality classification.
     """
 
     return (
@@ -305,33 +311,54 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "they want REFLECTION — that's reflective. The tell is whether "
         "the user is asking for understanding ('why am I doing this?') "
         "or inviting pattern exploration ('here's what I keep doing').\n"
-        "- technique: the user is actively doing structured therapeutic "
-        "work — examining evidence for a thought, looking at a belief from "
-        "different angles, identifying values, testing predictions, or "
-        "working through a therapeutic process step by step. Use when the "
-        "conversation has moved beyond reflection into active engagement "
-        "with a therapeutic technique. The therapeutic_approach knowledge "
-        "drives the response shape in this style. "
+        "- technique: the user wants structured therapeutic work, but is "
+        "NOT asking to start a named exercise track. Use when the user wants "
+        "to examine a thought, belief, or dilemma in a collaborative "
+        "step-by-step way without launching a formal exercise like a thought "
+        "record, behavioral experiment, or values clarification flow. The "
+        "therapeutic_approach knowledge drives the response shape in this "
+        "style. "
         "Signals that technique is right: the user has identified a "
-        "specific thought and is ready to examine it, the user is "
-        "evaluating evidence for and against a belief, the user is "
-        "testing a prediction or planning a behavioral experiment, "
-        "the user is exploring values or working through acceptance. "
+        "specific thought and is ready to examine it, the user wants to "
+        "look at evidence for and against a belief, the user wants help "
+        "thinking through a belief from different angles, or the user "
+        "wants collaborative therapeutic structure without asking to "
+        "start a named tool. "
         "Signals that technique is wrong: the user is venting or "
         "expressing emotion (use supportive), the user is noticing a "
         "pattern but not ready to work on it (use reflective), the user "
-        "is asking 'why does this happen?' (use psychoeducation). "
+        "is asking 'why does this happen?' (use psychoeducation), OR the "
+        "user is explicitly asking to START a specific exercise track like "
+        "'let's do a thought record', 'can we figure out a way to test it', "
+        "or 'can we look at what actually matters to me?' — those are "
+        "guided_exercise turns because the agent should begin the matching "
+        "stepwise exercise. Also do NOT use technique just because the user "
+        "wants to 'talk it through' or remember what went better. If they "
+        "are consolidating progress, naming strengths, or asking what they "
+        "did differently in a hard moment, prefer supportive or reflective "
+        "unless they explicitly ask for structured step-by-step thought work. "
+        "Likewise, an opening disclosure like 'I keep avoiding work tasks "
+        "because I get anxious and start spiraling before I even begin' is "
+        "supportive or reflective, not technique. The agent can choose ACT "
+        "as the therapeutic_approach for that turn without switching the "
+        "response_style to technique. "
         "Technique requires an active therapeutic_approach — if no "
         "approach fits, do not use technique.\n"
         "- closing: short, warm farewell. Use ONLY when the user is "
         "explicitly signaling they're winding down or want to stop — "
-        "'I should go', 'thanks, this helped', 'I need to step away', "
-        "'I'm going to head out', 'I have to run'. The trigger is an "
-        "explicit wind-down signal, not just a polite acknowledgment "
-        "mid-conversation. A turn that says 'thanks, that helps' in the "
-        "middle of a flowing conversation is NOT closing — it's a "
-        "natural acknowledgment and the session continues, so route to "
-        "supportive. Use closing only when the user is clearly leaving. "
+        "'I should go', 'thanks, I need to head out', "
+        "'I need to step away', 'I'm going to head out', "
+        "'I have to run'. Also use closing "
+        "when the user pairs wrap-up language with a takeaway request, "
+        "such as 'before we wrap up, what's the main takeaway?', "
+        "'what should I remember from this?', or 'put the main thing "
+        "in one sentence'. The trigger is an explicit wind-down signal, "
+        "not just a polite acknowledgment mid-conversation. Do NOT infer "
+        "closing from thanks/helped language alone. A turn that says "
+        "'thanks, that helps' in the middle of a flowing conversation is "
+        "NOT closing — it's a natural acknowledgment and the session "
+        "continues, so route to supportive. Use closing only when the user "
+        "is clearly leaving, stopping, pausing, or wrapping up. "
         "False-positive closings ('oh, I thought you were done') are "
         "user-trust-damaging in a way that other false-positive mode "
         "choices aren't, so err toward supportive when uncertain.\n"
@@ -341,22 +368,32 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "experiments, behavioral activation, acceptance/defusion, values "
         "work, self-compassion, emotion regulation, or gratitude. "
         "Trigger phrases include: 'ground me', 'breathing exercise', "
-        "'help me calm down', 'relax my body', 'release tension', "
-        "'let's do a thought record', 'examine this belief', 'test "
-        "this thought', 'I can't start anything', 'I need to let go "
-        "of this', 'leaves exercise', 'STOP technique', 'values "
-        "compass', 'what matters to me', 'self-compassion', 'I'm so "
-        "hard on myself', 'IMPROVE the moment', 'help me cope', "
-        "'gratitude exercise', 'something I'm thankful for'. The "
+        "'guide me through a grounding exercise', "
+        "'let's do a thought record', 'can we figure out a way to test it', "
+        "'behavioral experiment', 'can we look at what actually matters to me', "
+        "'is there something we can do about that?' after the user says "
+        "they are being hard on themselves, "
+        "'values compass', 'leaves exercise', 'STOP technique', "
+        "'IMPROVE the moment', "
+        "'gratitude exercise'. The "
         "trigger is a REQUEST for a structured intervention, not a "
         "general description of distress. "
+        "If the user is explicitly asking to START one of the supported "
+        "exercise tracks, choose guided_exercise even if the content "
+        "involves thought work, testing a belief, or values exploration. "
+        "Those explicit starts belong here, not in technique. "
         "Counter-examples that should route to supportive: "
+        "'I can't start anything' or a bare 'I'm so hard on myself' "
+        "(expressing pain, not requesting an exercise), "
         "'I can't calm down' (expressing distress, not asking for an "
         "exercise), 'I'm so anxious right now' (expressing, not "
         "requesting), 'nothing is helping me feel better' (expressing "
         "frustration). The distinction is: is the user asking the "
         "agent to DO something structured with them, or sharing how "
         "they feel? Only the former is guided_exercise. "
+        "If the user names self-criticism AND explicitly asks to do "
+        "something about it together, that is a self-compassion exercise "
+        "request and should route to guided_exercise. "
         "Counter-examples that should route to psychoeducation: "
         "'why does grounding even work?' (asking about the mechanism, "
         "not asking to do it). "
@@ -410,11 +447,14 @@ def build_therapeutic_dispatch_system_prompt() -> str:
 
 
 def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
-    """User/task prompt for the LLM-backed therapeutic dispatcher.
+    """Build the user prompt for the LLM dispatcher.
 
-    Injects the current message, the last ~6 turns of history, and a
-    compact summary of working memory (if any) so the classifier has
-    enough context to pick the right mode.
+    Args:
+        state: The current agent state.
+
+    Returns:
+        The user/task prompt containing recent history, memory, and the
+        current message.
     """
 
     history = state.get("history", [])[-6:]
@@ -438,14 +478,12 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
     else:
         memory_block = "(no working memory for this turn)"
 
-    # Signal active exercise context so the LLM can decide whether the
-    # user is continuing the exercise or exiting.
-    progress = state.get("progress", {}) or {}
-    exercise_type = progress.get("exercise_type")
+    exercise_state = state.get("exercise_state", {}) or {}
+    exercise_type = exercise_state.get("exercise_type")
     if exercise_type:
         exercise_block = (
             f"\nActive exercise: {exercise_type} "
-            f"(step {progress.get('exercise_step', '?')}). "
+            f"(step {exercise_state.get('exercise_step', '?')}). "
             "If the user is responding to the exercise, pick guided_exercise. "
             "If the user is exiting, wrapping up, or changing topic, pick the "
             "appropriate non-exercise mode.\n"
@@ -466,10 +504,17 @@ async def _pick_mode_and_modality_with_llm(
     state: AgentState,
     llm_client,
 ) -> tuple[str, str]:
-    """Call the structured-output LLM classifier to pick mode + modality.
+    """Call the structured-output classifier for mode and modality.
 
-    Returns ``(mode, modality)`` as strings. On any error, raises;
-    callers are responsible for falling back to the regex pathway.
+    Args:
+        state: The current agent state.
+        llm_client: The configured control-plane LLM client.
+
+    Returns:
+        A ``(mode, modality)`` tuple from the structured classifier response.
+
+    Raises:
+        Exception: Propagates any classifier error to the caller.
     """
 
     raw: DispatchDecision = await llm_client.generate_structured(
@@ -481,12 +526,10 @@ async def _pick_mode_and_modality_with_llm(
     return raw.response_style, raw.therapeutic_approach  # type: ignore[return-value]
 
 
-# ─── Node-name mapping ─────────────────────────────────────────────────────
-
 # Mapping from mode name → subgraph node name. Kept as a dict so the
 # dispatcher's logic stays pure (pick_therapeutic_mode returns a name)
 # and the routing layer does the name-to-node translation.
-_MODE_NODE_MAP: dict[str, str] = {
+_MODE_NODE_MAP: dict[str, TherapeuticNodeName] = {
     "supportive": SUPPORTIVE_NODE,
     "reflective": REFLECTIVE_NODE,
     "clarifying": CLARIFYING_NODE,
@@ -497,73 +540,59 @@ _MODE_NODE_MAP: dict[str, str] = {
 }
 
 
-# ─── Dispatch node ─────────────────────────────────────────────────────────
-
-
 async def run_therapeutic_dispatch_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
-) -> Command[
-    Literal[
-        "supportive_response_node",
-        "reflective_response_node",
-        "clarifying_response_node",
-        "psychoeducation_response_node",
-        "closing_response_node",
-        "guided_exercise_response_node",
-    ]
-]:
-    """Dispatch the turn to the right therapeutic mode node.
+) -> Command[TherapeuticNodeName]:
+    """Route the current turn to the correct therapeutic response node.
 
-    Hybrid dispatch with an active-exercise override layered on top:
+    Args:
+        state: The current agent state.
+        runtime: The LangGraph runtime carrying injected dependencies.
 
-    LLM-primary dispatch with deterministic fallback:
-
-    1. **Active-exercise exit overrides** (deterministic) — high-precision
-       regex for unambiguous exit/closing signals during exercises. These
-       fire instantly to honor clear opt-out intent without waiting for
-       an LLM round-trip.
-    2. **LLM classifier** (primary) — for ALL other messages, including
-       mid-exercise turns. The LLM picks mode + modality with full
-       conversation context, handling nuance that regex cannot parse
-       (psychoeducation vs reflective, exercise continuation vs exit,
-       closing vs continuation, negation, sarcasm).
-    3. **Regex fallback** (degraded) — only when no LLM client is
-       available or the LLM call fails. Uses narrow, high-precision
-       patterns for basic routing.
-
-    For mid-exercise turns where the LLM picks a non-exercise mode,
-    the dispatcher interprets this as an exit signal and clears exercise
-    state before routing to the LLM's chosen mode.
+    Returns:
+        A ``Command`` pointing at the next therapeutic mode node, with any
+        required routing or exercise-state updates.
     """
 
     message = state.get("message", "")
     lowered = message.lower()
     llm_client = runtime.context.llm_client
 
-    # Helper to build routing update with modality.
     def _routing_update(modality: str) -> dict:
-        return {
-            "routing": {**state.get("routing", {}), "therapeutic_approach": modality}
-        }
+        """Build the routing metadata update for the selected modality.
+
+        Args:
+            modality: Therapeutic approach chosen for this turn.
+
+        Returns:
+            State delta containing the top-level therapeutic approach.
+        """
+
+        return {"therapeutic_approach": modality}
 
     def _clear_active_exercise_update(modality: str) -> dict:
-        progress = state.get("progress", {}) or {}
+        """Build a routing update that also clears active exercise state.
+
+        Args:
+            modality: Therapeutic approach chosen for the non-exercise turn.
+
+        Returns:
+            State delta containing routing metadata and a cleared exercise state.
+        """
+
         return {
             **_routing_update(modality),
-            "progress": {
-                **progress,
+            "exercise_state": {
                 "exercise_type": None,
                 "exercise_step": None,
+                "exercise_modality": None,
             },
         }
 
     exercise_active = _has_active_exercise(state)
 
-    # ── Deterministic exit overrides (active exercise only) ──────────
-    # These fire before the LLM for unambiguous opt-out signals.
-    # Kept deterministic because honoring "quit" / "cancel" instantly
-    # is the right UX — the user shouldn't wait 1-2s to exit.
+    # Honor explicit exercise opt-outs without waiting for the LLM.
     if exercise_active and _matches_any(lowered, EXERCISE_EXIT_PATTERNS):
         logger.debug("therapeutic_dispatch: active-exercise exit override")
         return Command(
@@ -571,7 +600,6 @@ async def run_therapeutic_dispatch_node(
             goto=SUPPORTIVE_NODE,
         )
 
-    # ── LLM classifier (primary path) ────────────────────────────────
     if llm_client is not None:
         try:
             mode, modality = await _pick_mode_and_modality_with_llm(state, llm_client)
@@ -583,36 +611,37 @@ async def run_therapeutic_dispatch_node(
 
             if exercise_active:
                 if mode == "guided_exercise":
-                    # LLM says continue — preserve the entry modality.
-                    existing_modality = (
-                        state.get("routing", {}).get("therapeutic_approach") or modality
-                    )
+                    existing_modality = _active_exercise_modality(state) or modality
                     return Command(
                         update=_routing_update(existing_modality),
                         goto=GUIDED_EXERCISE_NODE,
                     )
 
-                if mode in ("clarifying", "psychoeducation"):
-                    # Mid-exercise side-turn: the user asked a question
-                    # ("what do you mean by notice?" → clarifying) or
-                    # wants a brief explanation ("how does grounding
-                    # work?" → psychoeducation). Keep exercise state
-                    # alive so the user can resume afterward. Route to
-                    # the requested style WITHOUT clearing exercise state.
+                if mode == "clarifying":
+                    existing_modality = _active_exercise_modality(state) or modality
                     logger.debug(
-                        "therapeutic_dispatch: mid-exercise %s "
-                        "(exercise state preserved)",
-                        mode,
+                        "therapeutic_dispatch: mid-exercise clarifying "
+                        "(exercise state preserved, modality=%s)",
+                        existing_modality,
+                    )
+                    return Command(
+                        update=_routing_update(existing_modality),
+                        goto=_MODE_NODE_MAP["clarifying"],
+                    )
+
+                if mode == "psychoeducation":
+                    logger.debug(
+                        "therapeutic_dispatch: mid-exercise psychoeducation "
+                        "(exercise state preserved, modality=%s)",
+                        modality,
                     )
                     return Command(
                         update=_routing_update(modality),
-                        goto=_MODE_NODE_MAP[mode],
+                        goto=_MODE_NODE_MAP["psychoeducation"],
                     )
 
-                # Any other non-exercise mode is an exit signal —
-                # clear exercise state and route to the chosen mode.
                 logger.debug(
-                    "therapeutic_dispatch: LLM exit from active exercise → %s",
+                    "therapeutic_dispatch: LLM exit from active exercise -> %s",
                     mode,
                 )
                 return Command(
@@ -630,15 +659,10 @@ async def run_therapeutic_dispatch_node(
                 exc_info=True,
             )
 
-    # ── Regex fallback (no LLM available or LLM failed) ──────────────
-    # For active exercises without LLM, default to continuing the
-    # exercise — the regex can't reliably detect exit intent beyond
-    # the explicit patterns already checked above.
+    # Without an LLM, active exercises continue unless a deterministic exit fired.
     if exercise_active:
-        logger.debug("therapeutic_dispatch: regex fallback — continuing exercise")
-        existing_modality = (
-            state.get("routing", {}).get("therapeutic_approach") or "none"
-        )
+        logger.debug("therapeutic_dispatch: regex fallback - continuing exercise")
+        existing_modality = _active_exercise_modality(state) or "none"
         return Command(
             update=_routing_update(existing_modality), goto=GUIDED_EXERCISE_NODE
         )

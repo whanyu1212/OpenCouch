@@ -1,4 +1,4 @@
-"""Psychoeducation response mode — short, normalizing framing of a reaction."""
+"""Psychoeducation response mode - short, normalizing framing of a reaction."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseKind
+from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import (
@@ -45,6 +45,13 @@ async def run_psychoeducation_response_node(
     across all four topic branches (anxiety/stress/grief/general) and
     all possible user states. Offering a gentle check-in is a safe
     default when the LLM can't produce a context-aware framing.
+
+    Args:
+        state: Current graph state for the turn.
+        runtime: LangGraph runtime carrying configured dependencies.
+
+    Returns:
+        Response delta for the parent graph.
     """
 
     llm_client = runtime.context.response_llm or runtime.context.llm_client
@@ -69,15 +76,9 @@ async def run_psychoeducation_response_node(
             )
 
     return {
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "psychoeducation",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "psychoeducation",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }

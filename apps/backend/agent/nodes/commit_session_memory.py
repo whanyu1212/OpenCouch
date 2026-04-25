@@ -1,9 +1,8 @@
 """Session-end promotion pass for buffered memory candidates.
 
-Phase C keeps the per-turn graph topology unchanged. Turn nodes buffer
-semantic/procedural candidates that should not commit immediately, and
-this module decides which buffered items have enough support to become
-durable memory at session end.
+Turn nodes buffer semantic/procedural candidates that should not commit
+immediately, and this module decides which buffered items have enough
+support to become durable memory at session end.
 
 The promotion policy is intentionally conservative:
 
@@ -32,7 +31,10 @@ from agent.memory.procedural import (
     aupsert_procedural_rule,
     build_procedural_rule,
 )
-from agent.memory.reconciliation import plan_semantic_write
+from agent.memory.reconciliation import (
+    filter_semantic_collision_candidates,
+    plan_semantic_write,
+)
 from agent.memory.store import MemoryStore, StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.memory.write_policy import (
@@ -67,7 +69,14 @@ class SessionMemoryCommitResult:
 
 
 def _semantic_group_key(candidate: SemanticCandidate) -> tuple[str, ...]:
-    """Return the grouping key for repeated semantic candidates."""
+    """Return the grouping key for repeated semantic candidates.
+
+    Args:
+        candidate: Semantic candidate to group.
+
+    Returns:
+        Tuple identity for semantic repetition checks.
+    """
 
     payload = candidate.payload
     return (
@@ -81,13 +90,27 @@ def _semantic_group_key(candidate: SemanticCandidate) -> tuple[str, ...]:
 
 
 def _candidate_tokens(*parts: str) -> frozenset[str]:
-    """Return one meaningful-token signature for a candidate/support text."""
+    """Return one meaningful-token signature for candidate/support text.
+
+    Args:
+        parts: Text fragments to combine before tokenization.
+
+    Returns:
+        Meaningful-token signature.
+    """
 
     return tokenize_meaningful(" ".join(part for part in parts if part))
 
 
 def _user_turn_texts(state: AgentState) -> list[str]:
-    """Return the user-turn transcript texts for session-end scoring."""
+    """Return the user-turn transcript texts for session-end scoring.
+
+    Args:
+        state: Current graph state containing the session transcript.
+
+    Returns:
+        Non-empty user turn texts.
+    """
 
     transcript = state.get("transcript", [])
     return [
@@ -103,7 +126,16 @@ def _count_supported_user_turns(
     *,
     exact_terms: tuple[str, ...] = (),
 ) -> int:
-    """Count how many user turns materially support this candidate."""
+    """Count how many user turns materially support this candidate.
+
+    Args:
+        candidate_tokens: Candidate token signature.
+        user_turn_texts: User transcript turns to scan.
+        exact_terms: Terms that count as direct support when present.
+
+    Returns:
+        Number of user turns with material support.
+    """
 
     if not candidate_tokens and not exact_terms:
         return 0
@@ -127,7 +159,16 @@ def _count_supporting_session_texts(
     *,
     exact_terms: tuple[str, ...] = (),
 ) -> int:
-    """Count how many session-level texts materially support this candidate."""
+    """Count how many session-level texts materially support this candidate.
+
+    Args:
+        candidate_tokens: Candidate token signature.
+        support_texts: Session-level support texts to scan.
+        exact_terms: Terms that count as direct support when present.
+
+    Returns:
+        Number of session-level texts with material support.
+    """
 
     if not candidate_tokens and not exact_terms:
         return 0
@@ -146,7 +187,14 @@ def _count_supporting_session_texts(
 
 
 def _session_support_text(stored_arc: "StoredSessionArc | None") -> str:
-    """Flatten the stored session arc into one support text blob."""
+    """Flatten the stored session arc into one support text blob.
+
+    Args:
+        stored_arc: Optional stored session arc from the completed session.
+
+    Returns:
+        Combined summary/theme/open-loop text.
+    """
 
     if stored_arc is None:
         return ""
@@ -164,7 +212,16 @@ def _arc_support_score(
     stored_arc: "StoredSessionArc | None",
     exact_terms: tuple[str, ...] = (),
 ) -> int:
-    """Return a small support score from the episodic summary fields."""
+    """Return a small support score from the episodic summary fields.
+
+    Args:
+        candidate_tokens: Candidate token signature.
+        stored_arc: Optional stored session arc from the completed session.
+        exact_terms: Terms that count as direct support when present.
+
+    Returns:
+        Small integer support score.
+    """
 
     support_text = _session_support_text(stored_arc)
     if not support_text:
@@ -189,7 +246,16 @@ async def _load_prior_session_support_texts(
     owner_id: str,
     current_session_id: str | None,
 ) -> list[str]:
-    """Return support texts from prior episodic arcs for this owner."""
+    """Return support texts from prior episodic arcs for this owner.
+
+    Args:
+        memory_store: Store containing episodic memory records.
+        owner_id: Owner whose prior sessions should be loaded.
+        current_session_id: Session id to exclude from prior support.
+
+    Returns:
+        Prior session support text blobs.
+    """
 
     records = await memory_store.asearch((owner_id, "episodic"), query=None, limit=100)
     prior_texts: list[str] = []
@@ -209,13 +275,28 @@ async def _load_prior_session_support_texts(
 
 
 def _procedural_signature_tokens(candidate: ProceduralCandidate) -> frozenset[str]:
-    """Return the similarity signature for a procedural candidate."""
+    """Return the similarity signature for a procedural candidate.
+
+    Args:
+        candidate: Procedural candidate to fingerprint.
+
+    Returns:
+        Meaningful-token signature for grouping/dedup.
+    """
 
     return _candidate_tokens(candidate.payload.rule, *candidate.evidence_quotes)
 
 
 def _token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
-    """Return token-set similarity for lightweight grouping/dedup."""
+    """Return token-set similarity for lightweight grouping/dedup.
+
+    Args:
+        left: First token set.
+        right: Second token set.
+
+    Returns:
+        Jaccard-style token similarity.
+    """
 
     if not left or not right:
         return 0.0
@@ -228,7 +309,14 @@ def _token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
 def _cluster_procedural_candidates(
     buffered_candidates: list[ProceduralCandidate],
 ) -> list[list[ProceduralCandidate]]:
-    """Cluster procedural candidates with similar repeated preferences."""
+    """Cluster procedural candidates with similar repeated preferences.
+
+    Args:
+        buffered_candidates: Procedural candidates buffered during the session.
+
+    Returns:
+        Groups of similar procedural candidates.
+    """
 
     groups: list[list[ProceduralCandidate]] = []
     group_tokens: list[frozenset[str]] = []
@@ -258,7 +346,17 @@ def _select_semantic_candidates_to_commit(
     user_turn_texts: list[str],
     prior_session_support_texts: list[str],
 ) -> tuple[list[SemanticCandidate], int]:
-    """Choose which buffered semantic candidates are durable enough to commit."""
+    """Choose which buffered semantic candidates are durable enough to commit.
+
+    Args:
+        buffered_candidates: Semantic candidates buffered during the session.
+        stored_arc: Optional session arc produced at session end.
+        user_turn_texts: User transcript turns for repetition checks.
+        prior_session_support_texts: Prior episodic support texts.
+
+    Returns:
+        Selected candidates plus skipped group count.
+    """
 
     grouped: dict[tuple[str, ...], list[SemanticCandidate]] = defaultdict(list)
     for candidate in buffered_candidates:
@@ -325,7 +423,15 @@ def _select_procedural_candidates_to_commit(
     *,
     user_turn_texts: list[str],
 ) -> tuple[list[tuple[ProceduralCandidate, list[str], int]], int]:
-    """Choose which buffered implicit procedural candidates can promote."""
+    """Choose which buffered implicit procedural candidates can promote.
+
+    Args:
+        buffered_candidates: Procedural candidates buffered during the session.
+        user_turn_texts: User transcript turns for repetition checks.
+
+    Returns:
+        Selected candidates with evidence/support counts plus skipped group count.
+    """
 
     selected: list[tuple[ProceduralCandidate, list[str], int]] = []
     skipped = 0
@@ -366,7 +472,18 @@ async def run_commit_session_memory(
     stored_arc: "StoredSessionArc | None",
     embedding_provider: "EmbeddingProvider | None" = None,
 ) -> SessionMemoryCommitResult | None:
-    """Commit buffered semantic/procedural candidates that survived review."""
+    """Commit buffered semantic/procedural candidates that survived review.
+
+    Args:
+        state: Current graph state at session end.
+        memory_store: Store used for semantic/procedural writes.
+        session_buffer: Runtime buffer containing held memory candidates.
+        stored_arc: Optional episodic arc generated for the completed session.
+        embedding_provider: Optional provider for semantic fact embeddings.
+
+    Returns:
+        Commit result when work was attempted, otherwise ``None``.
+    """
 
     if (
         session_buffer is None
@@ -397,7 +514,6 @@ async def run_commit_session_memory(
         )
         prior_session_support_texts = []
 
-    # ── Semantic promotion ─────────────────────────────────────────────
     semantic_candidates_to_commit, result.semantic_skips = (
         _select_semantic_candidates_to_commit(
             session_buffer.semantic_candidates,
@@ -450,8 +566,12 @@ async def run_commit_session_memory(
 
         for candidate_index, candidate in enumerate(semantic_candidates_to_commit):
             write = candidate.payload
+            collision_records = filter_semantic_collision_candidates(
+                write,
+                existing_records,
+            )
             try:
-                matched = find_near_duplicate(write, existing_records)
+                matched = find_near_duplicate(write, collision_records)
             except Exception:
                 logger.warning(
                     "commit_session_memory: dedup check failed for buffered semantic "
@@ -495,7 +615,7 @@ async def run_commit_session_memory(
                     write_reason=write_reason,
                     policy_version="phase3_v1",
                 )
-                reconciliation = plan_semantic_write(fact, existing_records)
+                reconciliation = plan_semantic_write(fact, collision_records)
                 if reconciliation.bump_record is not None:
                     await _bump_last_referenced_at(
                         memory_store,
@@ -549,7 +669,6 @@ async def run_commit_session_memory(
                 )
                 result.semantic_skips += 1
 
-    # ── Procedural promotion ───────────────────────────────────────────
     procedural_candidates_to_commit, result.procedural_skips = (
         _select_procedural_candidates_to_commit(
             session_buffer.procedural_candidates,
@@ -557,10 +676,14 @@ async def run_commit_session_memory(
         )
     )
     if procedural_candidates_to_commit:
-        for candidate, evidence, effective_support in procedural_candidates_to_commit:
+        for (
+            procedural_candidate,
+            evidence,
+            effective_support,
+        ) in procedural_candidates_to_commit:
             try:
                 rule = build_procedural_rule(
-                    rule_text=candidate.payload.rule,
+                    rule_text=procedural_candidate.payload.rule,
                     evidence=evidence,
                     confidence="high" if effective_support >= 3 else "medium",
                     source="consolidation",
@@ -580,7 +703,7 @@ async def run_commit_session_memory(
             except Exception:
                 logger.warning(
                     "commit_session_memory: failed to promote buffered procedural rule %r.",
-                    candidate.payload.rule[:60],
+                    procedural_candidate.payload.rule[:60],
                     exc_info=True,
                 )
                 result.procedural_skips += 1

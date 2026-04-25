@@ -11,11 +11,11 @@ stamps the outer ``turn_total_ms`` into diagnostics, and yields a
 These tests cover the new contract:
 
 1. **Per-node StatusEvents.** The stream emits one StatusEvent for
-   each node that runs (crisis_gate, load_memory, therapeutic,
-   finalize, extract_facts, extract_procedural) in execution order.
-   v0.9: finalize runs BEFORE extractors. A ResponseReadyEvent is
-   emitted after finalize so the user sees the response while
-   extractors run.
+   each node that runs (crisis_gate, memory_control_gate,
+   grounded_lookup_gate, load_memory, therapeutic, finalize,
+   extract_facts, extract_procedural) in execution order. v0.9:
+   finalize runs BEFORE extractors. A ResponseReadyEvent is emitted
+   after finalize so the user sees the response while extractors run.
 
 2. **DoneEvent carries diagnostics.** The ``DoneEvent.output.diagnostics``
    dict contains both the per-node timings (stamped by each node) and
@@ -91,8 +91,9 @@ class TestRunTurnStreamStages:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
         Expected stage order (v0.9 latency reorder):
-            crisis_gate → load_memory → therapeutic →
-            finalize → extract_facts → extract_procedural
+            crisis_gate → memory_control_gate → grounded_lookup_gate →
+            load_memory → therapeutic → finalize → extract_facts →
+            extract_procedural
 
         A ResponseReadyEvent is emitted after finalize, before extractors.
         """
@@ -109,20 +110,22 @@ class TestRunTurnStreamStages:
         assert ready is not None
         assert done is not None
         # The stages should appear in the order the graph executes them.
-        # The first four stages are sequential and must appear in order.
+        # The first five stages are sequential and must appear in order.
         # The extractors run in parallel after finalize, so their order
         # relative to each other is non-deterministic.
         stage_names = [event.stage for event in statuses]
-        assert stage_names[:4] == [
+        assert stage_names[:6] == [
             "crisis_gate",
+            "memory_control_gate",
+            "grounded_lookup_gate",
             "load_memory",
             "therapeutic",
             "finalize",
         ]
-        assert len(stage_names) == 6, (
-            f"Expected exactly 6 stages, got {len(stage_names)}: {stage_names}"
+        assert len(stage_names) == 8, (
+            f"Expected exactly 8 stages, got {len(stage_names)}: {stage_names}"
         )
-        assert set(stage_names[4:]) == {"extract_facts", "extract_procedural"}
+        assert set(stage_names[6:]) == {"extract_facts", "extract_procedural"}
         # In deterministic mode (no LLM client), no chunks are emitted —
         # the response comes from the fallback template via DoneEvent only.
         # When an LLM client is present, chunks stream during the

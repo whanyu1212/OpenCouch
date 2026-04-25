@@ -73,7 +73,7 @@ const GROUPS: GroupDef[] = [
     id: 'response', label: 'Response', icon: '\u2190',
     fields: [
       { name: 'response.text', type: 'str', setBy: 'mode node / crisis_response', lifecycle: 'turn', desc: 'Generated reply from whichever node wins the route' },
-      { name: 'response.kind', type: 'ResponseKind', setBy: 'mode node', lifecycle: 'turn', desc: 'THERAPEUTIC or CRISIS' },
+      { name: 'response.kind', type: 'ResponseCategory', setBy: 'mode node', lifecycle: 'turn', desc: 'THERAPEUTIC or CRISIS' },
       { name: 'response.guidance', type: 'str', setBy: 'mode node', lifecycle: 'turn', desc: 'Turn-specific prompt shaping hint' },
     ],
   },
