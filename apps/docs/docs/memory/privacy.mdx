@@ -14,12 +14,31 @@ Three escalating tiers — each with stronger confirmation gates.
 
 ---
 
+## Memory control runs in the graph
+
+Explicit memory commands are now first-class graph traffic.
+`memory_control_gate_node` detects natural-language commands like:
+
+- `"what do you remember about me?"` / `"show my memories"`
+- `"forget #3"` / `"forget that I mentioned my therapist"`
+- `"turn proactive recall off"` / `"enable recall"`
+- `"remember that I prefer shorter replies"`
+
+When the gate fires, the turn skips memory retrieval and the
+therapeutic subgraph entirely and routes to `memory_control_node`,
+which executes the operation deterministically (no LLM call) and
+returns a user-facing confirmation. Destructive single-record
+deletes write a `pending_action` to `memory_control` state so the
+**next turn** can confirm or cancel it without LLM ambiguity.
+
+---
+
 ## Confirmation design
 
 | Tier | Gate | Why |
 |---|---|---|
 | **Inspect** | None | Read-only, no side effects |
-| **Delete** | Preview panel + `y/N` (default N) | Single-record deletion is recoverable only from backup |
+| **Delete** | Preview panel + next-turn `y/N` (default N) | Pending action carried in `memory_control.pending_action` until the user confirms or cancels |
 | **Wipe** | Must type the literal word `clear` or `purge` | Muscle-memory `y` confirmation would be dangerous for namespace-wide deletion. `y`, `yes`, and `CLEAR` all cancel — only the exact lowercase word proceeds. |
 
 :::note `/memory clear rules` preserves settings
@@ -37,11 +56,14 @@ asymmetry for safety and product quality:
 
 | Subsystem | Incognito behavior | Retention |
 |---|---|---|
-| **Crisis log** | In-memory (dies at exit), `user_id = None` | 90 days, purge via `/memory purge-crisis` |
-| **Session feedback** | In-memory (dies at exit), `user_id = None` | 180 days (no CLI purge in Phase 1) |
+| **Crisis log** | In-memory (dies at exit), `user_id = None`, opaque `session_id` (SHA-256) | 90 days, purge via `/memory purge-crisis` |
+| **Session feedback** | In-memory (dies at exit), `user_id = None`, opaque `session_id` | 180 days |
 
 No user text is stored in either subsystem — only classification
-labels and structural metadata.
+labels, classifier provenance, and structural metadata. Both
+subsystems live under [`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit),
+not `agent/memory/`, so they're explicitly excluded from prompt
+memory and from user-facing memory recall toggles.
 
 ---
 

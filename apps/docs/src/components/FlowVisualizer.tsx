@@ -12,12 +12,21 @@ const preGate: FlowNode[] = [
   {id: 'gate', label: 'Crisis Gate', variant: 'danger'},
 ];
 
+// Therapeutic branch — three operational gates run before memory loads.
+// Most turns end up at the therapeutic subgraph; memory commands
+// ("forget #3", "recall off") and factual lookups ("look up the
+// crisis line for X") short-circuit to dedicated reply nodes.
 const safePath: FlowNode[] = [
+  {id: 'mem_gate', label: 'Memory Control Gate', variant: 'default'},
+  {id: 'lookup_gate', label: 'Grounded Lookup Gate', variant: 'default'},
   {id: 'load', label: 'Load Memory', variant: 'warm'},
   {id: 'therapy', label: 'Therapeutic Subgraph', variant: 'safe'},
 ];
 
+// Crisis branch — region-aware hotline lookup runs before the reply
+// so any verified resources land in the same crisis turn.
 const crisisPath: FlowNode[] = [
+  {id: 'resources', label: 'Crisis Resource Lookup', variant: 'danger'},
   {id: 'crisis', label: 'Crisis Response', variant: 'danger'},
   {id: 'log', label: 'Crisis Log', variant: 'danger'},
 ];
@@ -65,7 +74,7 @@ export default function FlowVisualizer(): JSX.Element {
 
       <div className={styles.branches}>
         <div className={styles.branchColumn}>
-          <div className={styles.branchLabelSafe}>safe path</div>
+          <div className={styles.branchLabelSafe}>therapeutic path</div>
           {safePath.map((node, index) => (
             <React.Fragment key={node.id}>
               <Node label={node.label} variant={node.variant} />

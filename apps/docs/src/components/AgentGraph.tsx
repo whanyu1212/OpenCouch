@@ -81,9 +81,9 @@ const STEPS: StepDef[] = [
       { label: 'all nodes retry', retry: true },
     ],
     detail: {
-      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and progress flow back to the parent — preventing reducer double-counting on history/transcript.',
-      how: 'Dispatcher uses hybrid classification: regex fast paths for obvious cases, LLM classifier for the ambiguous middle, regex fallback when no LLM available. Active-exercise fast path bypasses classification when an exercise is in progress.',
-      emits: 'state.routing.response_style + state.response.text + state.progress (via merge reducer)',
+      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and exercise state flow back to the parent — preventing reducer double-counting on history/transcript.',
+      how: 'Dispatcher is LLM-primary: deterministic regex only fires for explicit exercise opt-out, the LLM picks mode + therapeutic_approach for everything else, regex fallback runs when no LLM is configured. Mid-exercise side-turns (clarifying / psychoeducation) preserve the pinned exercise_modality.',
+      emits: 'response_style + response_style_source + response_style_type + response_kind + response_text + therapeutic_approach + exercise_state',
     },
   },
   {
@@ -164,19 +164,27 @@ const THERAPEUTIC_MODES: ModeDef[] = [
     },
   },
   {
+    id: 'technique', label: 'technique',
+    detail: {
+      what: 'User wants structured therapeutic work without launching a named exercise — examining a thought, weighing evidence for a belief, working through a dilemma. The therapeutic_approach knowledge drives the response shape.',
+      how: 'Picked by the LLM dispatcher when the user asks for structure but not a specific exercise. Requires an active therapeutic_approach.',
+      emits: 'response_kind = THERAPEUTIC + therapeutic_approach',
+    },
+  },
+  {
     id: 'guided_exercise', label: 'guided_exercise',
     detail: {
-      what: 'Multi-turn structured technique. Exercise state (type + step) persists across turns via the progress merge reducer.',
-      how: 'Active-exercise fast path bypasses classification when progress.exercise_type is set. 12 exercises across grounding, behavioral activation, thought work, and acceptance.',
-      emits: 'response.kind = THERAPEUTIC + progress.exercise_type/step',
+      what: 'Multi-turn structured technique. exercise_state (type + step + pinned modality) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns (clarifying, psychoeducation) preserve the modality so it does not drift.',
+      how: 'Active-exercise context is passed to the LLM dispatcher; explicit exit phrases fire deterministically. 12 exercises across grounding, breathing, thought work, behavioral activation, acceptance, and self-compassion.',
+      emits: 'response_kind = THERAPEUTIC + exercise_state.{exercise_type, exercise_step, exercise_modality}',
     },
   },
   {
     id: 'closing', label: 'closing',
     detail: {
-      what: 'User signals wind-down ("I should go", "thanks, this helped"). Graceful session close.',
-      how: 'Regex fast path fires on closing language.',
-      emits: 'response.kind = THERAPEUTIC',
+      what: 'User signals wind-down ("I should go", "thanks, this helped"). Graceful session close. May set should_persist_memory=True.',
+      how: 'LLM dispatcher distinguishes a real wind-down ("I have to head out") from mid-conversation thanks ("thanks, that helps").',
+      emits: 'response_kind = THERAPEUTIC',
     },
   },
 ];

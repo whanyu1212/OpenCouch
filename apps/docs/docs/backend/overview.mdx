@@ -17,8 +17,10 @@ layers backed by SQLite. CLI-first development.
 
 :::tip Safety-first ordering
 The crisis gate is the **first node** in the graph. Memory only
-loads on the therapeutic branch — if a message triggers a crisis
-response, memory retrieval is skipped entirely.
+loads on the therapeutic branch — and only after two operational
+gates (memory commands, factual lookups) have had a chance to
+short-circuit the turn. If a message triggers a crisis response,
+memory retrieval and all operational gates are skipped entirely.
 :::
 
 <TurnPipeline />
@@ -29,17 +31,18 @@ response, memory retrieval is skipped entirely.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Execution | LangGraph `StateGraph` | Explicit branches, deterministic ordering, checkpoint persistence |
-| LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface |
-| Embedding | `EmbeddingProvider` protocol | Gemini `text-embedding-004` default; null provider for offline |
-| Storage | SQLite via `aiosqlite` | Single-file, no server, survives restart |
+| Execution | LangGraph `StateGraph` with split input/internal/output schemas | Explicit branches, deterministic ordering, checkpoint persistence; narrow output schema avoids reducer double-counting on subgraph completion |
+| LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface; `WorkflowContext` exposes both control LLM and optional response LLM |
+| Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` first, Gemini `gemini-embedding-001` fallback; null provider when no API key |
+| Storage | SQLite via `aiosqlite` | Single-file, no server, survives restart; four separate DBs to keep audit/feedback isolated from prompt memory |
 | Memory | `MemoryStore` protocol | In-memory for incognito/tests; SQLite for persistent |
-| Retrieval | Hybrid RRF | Embedding cosine + token-recall fused via Reciprocal Rank Fusion |
-| Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime |
-| Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn |
-| Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics |
+| Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
+| Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime via `compose_sources()` |
+| Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
+| Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics + per-channel session-state merging (exercise, progress, procedural profile) |
+| Audit separation | `agent/audit/` package | Crisis log + session feedback live outside prompt memory; cannot be disabled by user recall toggles |
 | Observability | LangSmith + local diagnostics | LangSmith for trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
-| Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records |
+| Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records, opaque (SHA-256) session id |
 
 ---
 
@@ -73,17 +76,20 @@ composition logic.
 
 | Package | Owns |
 |---|---|
-| `agent/` | Graph entrypoint, state schema, models, runtime context |
-| `agent/nodes/` | One file per graph node (8 nodes) |
-| `agent/memory/` | Store protocol, embeddings, retrieval, dedup, hashing |
-| `agent/therapeutic/` | Subgraph: dispatcher, seven response style nodes, prompts |
-| `agent/tools/` | Web search for crisis resources |
+| `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
+| `agent/nodes/` | One file per graph node — crisis_gate, crisis_resource_lookup, crisis_response, crisis_log, memory_control_gate, memory_control, grounded_lookup_gate, grounded_answer, load_memory, finalize_turn, extract_facts, extract_procedural_rules, summarize_session, commit_session_memory |
+| `agent/therapeutic/` | Subgraph: dispatcher, 7 response-style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing), prompts |
+| `agent/memory/` | Store protocol, embeddings, retrieval, dedup, write policy, reconciliation, procedural profile |
+| `agent/audit/` | Always-on safety records — crisis log, session feedback (in-memory + SQLite backends, models) |
+| `agent/safety/` | Crisis pattern tuples + `detect_crisis_override` (the deterministic safety override layer) |
+| `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
+| `agent/tools/` | `find_local_crisis_resources` (web search for hotlines), `answer_grounded_lookup` (factual search grounding) |
 | `services/llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |
-| `voice/` | OpenAI Realtime voice sessions |
-| `api/` | FastAPI routes (chat, threads, memory) |
-| `tests/` | 630+ pytest tests |
-| `eval/` | 5 eval harnesses with curated datasets |
+| `voice/` | LiveKit-Agents voice runtime (`voice/livekit/agent.py`) — worker process, agent handoffs, bounded tasks, room transport |
+| `api/` | FastAPI routes (chat, threads, memory, voice token) |
+| `tests/` | Pytest suites for nodes, memory, retrieval, dispatcher, persistence |
+| `eval/` | Eval harnesses with curated datasets (crisis gate, retrieval, dispatcher, exercises, session trajectory) |
 
 ---
 

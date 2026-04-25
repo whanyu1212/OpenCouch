@@ -20,11 +20,11 @@ clinical authority.
 | Capability | How it works |
 |---|---|
 | Reflective listening | At any hour, for any duration |
-| Structured exercises | 12 exercises: grounding, thought work, activation, ACT, self-compassion, regulation |
+| Structured exercises | 12 exercises across grounding, breathing, thought work, behavioral activation, ACT, self-compassion, and emotion regulation |
 | Attuned acknowledgment | Reflects the user's specific situation — no generic empathy |
-| Psychoeducation | Brief normalizing explanations of anxiety, stress, grief |
-| Pattern reflection | Connects themes across a conversation |
-| Crisis routing | Web-searched local hotlines surfaced automatically |
+| Psychoeducation | Brief normalizing explanations of anxiety, stress, grief, and somatic reactions |
+| Pattern reflection | Connects themes across a conversation, never inventing patterns the user hasn't named |
+| Crisis routing | Region-aware hotline lookup overlaid onto the crisis reply via a dedicated graph node |
 
 ## What AI should not attempt
 
@@ -39,48 +39,70 @@ clinical authority.
 
 ## Response styles vs. therapeutic approaches
 
-Two axes, selected independently per turn:
+Two axes, selected independently per turn by the LLM dispatcher:
 
 | Axis | What it is | How many | Selected by |
 |---|---|---|---|
-| **Response style** | Turn shape (supportive, reflective, technique, clarifying, psychoeducation, guided_exercise, closing) | 7 | LLM structured-output classifier (regex fallback only when LLM unavailable) |
-| **Therapeutic approach** | Framework overlay (MI, PFA, CBT, grief, IPT, ACT, DBT) | 7 | LLM dispatcher, alongside the response style |
+| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | LLM structured-output classifier; deterministic regex only for explicit exercise opt-out and as a no-LLM fallback |
+| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | LLM dispatcher, alongside the response style |
 
-**Response styles** shape *what* the agent does this turn. **Therapeutic approaches** shape *how* — which knowledge file loads into the system prompt. In `technique` style, the approach drives the response shape directly (e.g., CBT Socratic questioning rhythm).
+**Response styles** shape *what* the agent does this turn.
+**Therapeutic approaches** shape *how* — which knowledge file
+loads into the system prompt. In `technique` style, the approach
+drives the response shape directly (e.g., CBT Socratic questioning
+rhythm or ACT defusion language).
 
-Three styles have hard structural contracts: `guided_exercise` (must
-produce a step), `closing` (must wrap up), `crisis` (must follow
-safety protocol). The others form a soft continuum where label
-fuzziness at the edges is by design.
+Two style families have hard structural contracts: `guided_exercise`
+must produce a step (and pin its modality so it can't drift on
+mid-exercise side-turns), `closing` must wrap up. Crisis reply has
+its own contract handled outside this subgraph by the crisis gate.
+The remaining styles form a soft continuum where label fuzziness at
+the edges is by design — the dispatcher prompt teaches the LLM how
+to distinguish them, and ambiguous cases default to `supportive`.
 
 ---
 
 ## Safety contract
 
 The crisis gate is the **first node in the graph** — it runs before
-memory loading, before routing, before any therapeutic response.
+memory loading, before any operational gate, before any therapeutic
+response.
 
 ```mermaid
 flowchart LR
     classDef gate fill:#EF44441A,stroke:#EF4444,stroke-width:2px
     classDef safe fill:#10B9811A,stroke:#10B981,stroke-width:2px
     classDef action fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
+    classDef warn  fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
 
     IN["User message"] --> CG{"Crisis gate"}:::gate
-    CG -->|No risk| TH["Therapeutic pipeline"]:::safe
-    CG -->|Risk detected| ACK["Acknowledge calmly"]:::action
-    ACK --> RES["Surface resources"]:::action
-    RES --> FU["One safety question (max)"]:::action
-    FU --> STOP(("End turn")):::gate
+    CG -->|Level 0| TH["Therapeutic pipeline"]:::safe
+    CG -->|Level 1 — ambiguous| SC["safety_check overlay<br/>inside therapeutic"]:::warn
+    CG -->|Level ≥ 2| RES["Crisis Resource Lookup"]:::action
+    RES --> ACK["Crisis reply<br/>(acknowledge + resources)"]:::action
+    ACK --> LOG["Crisis log (always-on)"]:::action
+    LOG --> STOP(("End turn")):::gate
 ```
 
-**When the gate fires, the agent:**
+**When the gate raises level ≥ 2 (clear ideation or imminent risk),
+the agent:**
 
-1. **Stops** normal conversation immediately — no therapeutic response is generated
-2. **Acknowledges** the distress directly and calmly, without evasion or minimizing
-3. **Surfaces resources** — emergency services and web-searched local crisis hotlines
-4. **Asks at most one** follow-up safety question (e.g., "Are you safe right now?")
-5. **Does not** attempt therapeutic intervention, advice, or de-escalation techniques
+1. **Skips** memory retrieval and the therapeutic subgraph entirely
+   — no operational gates, no mode dispatch.
+2. **Looks up** verified hotlines for the user's inferred region
+   first, so resources land in the same reply.
+3. **Acknowledges** the distress directly and calmly, without
+   evasion or minimizing.
+4. **Asks at most one** safety question (e.g., "Are you safe right
+   now?").
+5. **Logs** the event to the always-on audit store — even in
+   incognito, with `user_id` scrubbed and `session_id` opaqued.
+
+**At level 1 (ambiguous distress with `needs_clarification = true`),
+the agent stays inside the therapeutic branch** but uses the
+`safety_check` response shape to ask one focused safety probe
+before any therapeutic work. Memory retrieval still runs.
 
 See [Crisis Gate](/docs/philosophy/crisis-gate) for the full
-detection architecture (LLM classifier + regex fallback + audit log).
+detection architecture (LLM classifier + deterministic overrides +
+regex fallback + audit log).

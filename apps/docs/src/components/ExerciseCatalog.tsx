@@ -81,6 +81,17 @@ const EXERCISES: Exercise[] = [
     stepSummary: ['State the belief', 'Plan a small test', 'Predict what will happen', 'Reflect on what actually happened'],
   },
   {
+    id: 'thought_work_continuum',
+    name: 'Continuum (All-or-Nothing)',
+    subtype: 'thought_work',
+    subtypeLabel: 'Thought Work (CBT)',
+    steps: 5,
+    completionMode: 'Item count',
+    triggers: ['"continuum"', '"all-or-nothing"', '"black and white"', '"I\'m a terrible…"', '"I always fail"'],
+    description: 'Targets rigid all-or-nothing self-labels by converting an absolute ("I\'m a terrible parent") into a 0-100 dimension. The user defines both endpoints, then places themselves honestly. Most discover they\'re mid-range, not at zero — which is already a shift from the absolute framing.',
+    stepSummary: ['State the absolute belief', 'Define what 0 (worst-case) looks like', 'Define what 100 (impossibly perfect) looks like', 'Place yourself honestly on the scale', 'Identify a small move +5 points up'],
+  },
+  {
     id: 'behavioral_activation_tiny_action',
     name: 'Tiny Action Experiment',
     subtype: 'behavioral_activation',

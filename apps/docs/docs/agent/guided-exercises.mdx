@@ -7,15 +7,38 @@ import ExerciseCatalog from '@site/src/components/ExerciseCatalog';
 
 # Guided Exercises
 
-OpenCouch includes 12 structured exercises spanning 6 therapeutic subtypes. Each exercise is a multi-turn state machine: the node owns the step transitions, the LLM generates response prose, and deterministic fallbacks keep exercises running even without an LLM.
+OpenCouch includes 13 structured exercises spanning 6 therapeutic
+subtypes. Each exercise is a multi-turn state machine: the node
+owns the step transitions, the LLM generates response prose, and
+deterministic fallbacks keep exercises running even without an
+LLM.
 
 ## How it works
 
-1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured technique
-2. **Keyword selector** picks the exercise based on the user's message (e.g., "breathing" → box breathing, "stuck" → tiny action). Defaults to 5-4-3-2-1 grounding when no keyword matches
-3. **Step-state classifier** (regex, not LLM) evaluates each user response as `complete` / `hold` / `stuck` / `exit`
-4. **Node advances or holds** based on the classifier — the LLM never decides state transitions
-5. **Exercise clears** on natural completion or user-initiated exit
+1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured technique.
+2. **Keyword selector** picks the exercise based on the user's message (e.g., "breathing" → box breathing, "stuck" → tiny action). Defaults to 5-4-3-2-1 grounding when no keyword matches. Selectors run in priority order — overlapping triggers like "improve" (IMPROVE the moment) come before "behavioral experiment" because the latter contains "prove".
+3. **Step-state classifier** (regex, not LLM) evaluates each user response as `complete` / `hold` / `stuck` / `exit`.
+4. **Node advances or holds** based on the classifier — the LLM never decides state transitions.
+5. **Exercise clears** on natural completion or user-initiated exit.
+
+### Modality continuity
+
+The therapeutic modality picked at exercise start (e.g., `act` for a
+values-clarification exercise) is pinned on `exercise_state.exercise_modality`.
+If the user pauses mid-exercise to ask a clarifying or
+psychoeducation question, the dispatcher preserves the pinned
+modality instead of letting the LLM pick a fresh one. Without this
+pin, mid-exercise side-turns produced "modality drift" where a
+grounding exercise could silently re-route through `cbt` or
+`motivational_interviewing` framing.
+
+### Post-exercise check-in
+
+When an exercise reaches its terminal step, the completion node
+enriches the prompt with a "How was that for you?" check-in so the
+session can reflect on the experience rather than ending abruptly.
+The completion turn also sets `should_persist_memory=True` to hint
+the persistence layer to summarize the session.
 
 ### Completion modes
 

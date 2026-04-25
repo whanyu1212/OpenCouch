@@ -1,5 +1,5 @@
 ---
-title: Voice (Experimental)
+title: Voice (LiveKit)
 sidebar_position: 1
 slug: /voice
 ---
@@ -7,145 +7,321 @@ slug: /voice
 import VoiceArchitecture from '@site/src/components/VoiceArchitecture';
 import TerminalWindow from '@site/src/components/TerminalWindow';
 
-# Voice (Experimental)
+# Voice (LiveKit)
 
-:::warning Experimental speech preview
-The current voice path is an experimental OpenAI Realtime integration.
-It is intentionally narrower than the main text agent.
+OpenCouch's voice runtime is a **LiveKit-native agent worker** that
+runs alongside the FastAPI backend. The browser joins a LiveKit
+room over WebRTC; LiveKit handles audio transport and dispatches
+the `opencouch-voice` agent into the room when the participant
+joins. The worker owns session setup, agent handoffs, tasks, and
+shutdown persistence.
 
-- It is speech-only and non-agentic.
-- It does not expose tool calling, web search, or autonomous actions.
-- It does not currently run the full LangGraph therapeutic stack.
-- It now writes semantic, procedural, and episodic memory on disconnect via the shared session-end seam, but it still does not run the full text graph live on every spoken turn.
+:::warning Voice is a separate runtime
+The voice path is its own surface — it does **not** run the
+LangGraph text agent live on every spoken turn. Memory is loaded
+into the prompt at session start, refreshed selectively
+mid-session via semantic retrieval, and persisted via the shared
+session-end seam on disconnect. The LangGraph crisis gate is not
+in the voice hot path; voice has its own deterministic crisis
+safety net plus an LLM-driven `crisis_check` tool.
 :::
-
-OpenCouch currently ships two voice clients that share the same
-FastAPI websocket bridge:
-
-- a standalone test harness at `/api/voice/test`
-- the Next.js `/voice` page in the web app
 
 <VoiceArchitecture />
 
 ---
 
-## Current architecture
+## Two lifetimes
 
-| Layer | Current implementation |
-|---|---|
-| **Browser** | Streams PCM16 microphone audio over WebSocket and plays assistant PCM audio locally |
-| **Backend bridge** | FastAPI websocket at `/api/voice/session` forwards audio and interruption events |
-| **Realtime model** | `gpt-realtime` for speech-to-speech output |
-| **Input transcription** | `gpt-4o-mini-transcribe` as an asynchronous input transcript stream |
-| **Default voice** | `cedar` |
-| **Audio format** | 24 kHz mono PCM16 for both input and output |
-| **Turn detection** | `server_vad` with `threshold: 0.3`, `prefix_padding_ms: 300`, `silence_duration_ms: 300`, `interrupt_response: true`, `create_response: true` |
-| **Noise reduction** | `near_field` |
+There are two distinct lifetimes inside this package — keeping
+them separate is the key to understanding what's reusable across
+sessions and what isn't.
+
+| Lifetime | Lives in | What it owns |
+|---|---|---|
+| **Worker process** | `voice/livekit/agent.py` | One shared `PersistentAgentRuntime` (lazy-init), the SQLite-backed memory store, the optional control LLM client. Survives across LiveKit jobs. |
+| **Session (one room)** | `AgentSession[SessionData]` | One room conversation. The typed `SessionData` carries `user_id`, `thread_id`, `memory_mode`, `crisis_level` / `max_crisis_level`, `proactive_recall_enabled`, `pending_memory_delete`, `therapeutic_instructions`, `injected_semantic_memory_keys`, `recent_exercise_types`. Lives in memory; anything that must persist goes through the runtime. |
 
 ---
 
-## Prompt assembly
+## Room routing
 
-The voice session builds one bounded system prompt at connection time.
-It does **not** rebuild the prompt every turn.
+There are two ways to get the agent into a room.
 
-| Source | What it provides |
-|---|---|
-| Base spoken policy | Short spoken replies, plain language, no markdown, no clinician framing, explicit crisis redirection |
-| Procedural rules | User preferences and style rules |
-| Semantic facts | Previously noted user facts |
-| Episodic arcs | Short summaries from prior sessions |
+### Token-dispatch flow (production / browser path)
 
-The current voice prompt is deliberately small:
+1. Client calls `POST /api/voice/livekit/token`.
+2. `voice/livekit/api.py` mints a participant JWT for a room
+   and embeds `RoomAgentDispatch(agent_name="opencouch-voice")`
+   when `dispatch_agent=True`.
+3. The browser joins the room with that token. LiveKit dispatches
+   the named agent automatically.
+4. `@server.rtc_session(agent_name="opencouch-voice")` in
+   `agent.py` fires; `opencouch_voice()` connects, reads
+   `user_id` / `thread_id` from job or participant metadata,
+   loads memory, and starts the session.
 
-- whitespace is normalized
-- each memory item is trimmed to 220 characters
-- up to 6 procedural rules are included
-- up to 6 semantic facts are included
-- up to 3 episodic arcs are included
-- the final prompt is capped at 12,000 characters
+This is the mode for `uv run python -m voice.livekit.agent start`.
 
-This prompt shape is implemented in `apps/backend/voice/realtime.py`
-via `build_voice_system_prompt()`.
+### Direct-connect flow (manual testing)
 
----
+1. Run `uv run python -m voice.livekit.agent connect --room <name>`.
+2. The agent joins the named room directly as a participant.
+3. A browser or other client joins the same room separately.
 
-## What the browser does
-
-Both the standalone test page and the Next.js `/voice` page follow the
-same transport pattern:
-
-- microphone audio is sent in 512-sample chunks
-- assistant playback is tracked by Realtime `item_id` and `content_index`
-- on interruption, the client stops playback and reports a
-  `conversation.item.truncate` position back to the backend
-- local ducking lowers assistant playback immediately when the browser
-  detects the user has started speaking, before the server-side
-  interruption arrives
-
-The Next.js voice page intentionally keeps transcript rendering
-disabled for now while the audio path is being stabilized. The
-standalone test harness still shows transcript events.
+Use `dispatch=0` on the test page when running this way — otherwise
+the room ends up with both a directly-connected agent **and** a
+token-dispatched one. The local test page exposes a dispatch toggle.
 
 ---
 
-## WebSocket contract
+## In-session routing
 
-### Client → backend
+There is no separate router graph at session time. Routing is
+done with **LiveKit agent handoffs** and **bounded tasks**.
 
-| Message | Purpose |
-|---|---|
-| `start` | Open a voice session for a `user_id`, `thread_id`, and optional `voice` |
-| `audio` | Send base64-encoded PCM16 microphone bytes |
-| `truncate` | Tell the backend how much of the assistant audio was actually played |
+```text
+TherapeuticAgent  (default session agent)
+  → GroundingTask     when start_grounding_exercise() is called
+  → CrisisAgent       when crisis_check() escalates
+                      OR the deterministic safety net fires
 
-### Backend → client
+CrisisAgent
+  → TherapeuticAgent  when de_escalate() is called
+                      (instructions restored from
+                       SessionData.therapeutic_instructions)
+```
 
-| Message | Purpose |
-|---|---|
-| `ready` | Session is configured and ready for audio |
-| `audio` | Assistant PCM audio chunk |
-| `transcript` | Optional user or assistant transcript event |
-| `interrupted` | Server detected user speech while assistant audio was active |
-| `truncated` | Server acknowledged truncation |
-| `error` | Surfaced Realtime or bridge error |
+### TherapeuticAgent
+
+The default session agent. Responsibilities:
+
+- greet the user on session start (`on_enter()` adds a brief opening nudge)
+- hold the main therapeutic conversation
+- run `on_user_turn_completed()` after each user turn — this hook does **two deterministic things**:
+  - **crisis safety net**: `matches_crisis_keywords()` can force an immediate `session.update_agent(CrisisAgent(...))` without waiting for the model
+  - **mid-session semantic retrieval**: when `proactive_recall_enabled` is on, the latest user turn drives a small semantic search; new facts (deduped via `injected_semantic_memory_keys`) are pushed into chat context with `update_chat_ctx()`
+- expose memory-control tools (show / status / toggle recall / two-turn deletion confirm)
+- expose `save_insight()` for durable semantic writes
+- expose `answer_grounded_factual_lookup()` for explicit factual lookups
+- expose `start_grounding_exercise()` to enter a `GroundingTask`
+
+### GroundingTask
+
+A bounded `AgentTask` for voice-friendly exercises. It is **not** an
+alternate full agent — it owns the interaction only until the user
+completes or exits one exercise.
+
+Properties:
+
+- built from the existing exercise registry in `agent/therapeutic/guided_exercise.py`
+- inherits conversational context, but **not** prior instructions or tool-call traces (handoffs intentionally drop those to avoid leakage)
+- `complete_step()` advances; `exit_exercise()` stops early
+- completion returns an `ExerciseResult` to the parent agent
+
+**Voice allowlist.** The text-mode exercise registry has 13
+exercises; voice exposes 10 of them — visually-loaded imagery
+exercises (`defusion_leaves_on_stream`,
+`thought_work_simple_record`,
+`thought_work_behavioral_experiment`) are excluded so spoken users
+don't have to read or hold detailed visual scenes.
+
+| Voice-allowlisted exercise types |
+|---|
+| `grounding_5_4_3_2_1`, `grounding_box_breathing`, `grounding_stop_technique`, `grounding_muscle_relaxation` |
+| `behavioral_activation_tiny_action`, `self_compassion_break` |
+| `emotion_regulation_improve`, `emotion_regulation_gratitude` |
+| `defusion_values_compass`, `thought_work_continuum` |
+
+Generic requests ("help me calm down") rotate away from
+`recent_exercise_types` so the same exercise doesn't repeat;
+explicit requests ("do box breathing again") are honored as-is.
+
+**Spoken vs. typed turns.** The session tracks whether the latest
+turn was spoken or typed in the room — typed turns can pick from
+the broader registry, spoken turns stay on the voice-safe subset.
+
+### CrisisAgent
+
+Narrow handoff target. Entered from either the LLM-driven
+`crisis_check()` tool or the deterministic keyword safety net. Its
+priorities are intentionally tighter than the main agent:
+
+- acknowledge risk
+- expose `provide_crisis_resources()` — same verified-hotline
+  lookup the LangGraph text agent uses, with two extra rules: only
+  trusts a user-stated location, never infers from IP / timezone /
+  accent / someone else's location
+- stay present; avoid normal therapeutic exploration
+- `de_escalate()` returns control to a fresh `TherapeuticAgent`
+  using the original instructions captured in
+  `SessionData.therapeutic_instructions`
+
+`crisis_level` can drop back to 0 after de-escalation, but
+`max_crisis_level` is preserved through the session for shutdown
+persistence and downstream analysis.
 
 ---
 
-## Current limitations
+## Prompting
 
-| Limitation | Current state |
-|---|---|
-| **Agentic capability** | No tool calling, no web search, no autonomous actions |
-| **LangGraph integration** | Voice does not currently route through the main text agent graph |
-| **Crisis handling** | The prompt contains spoken crisis guidance, but the experimental voice path does not currently run the full graph-level crisis gate used by text mode |
-| **Memory writes** | Voice reads memory at connect time, then on disconnect replays the transcript through semantic/procedural extraction and the shared session-end summarizer |
-| **Prompt refresh** | The system prompt is not refreshed mid-session |
-| **Transcript UX** | Transcript display is disabled in the Next.js voice page while the audio transport is being stabilized |
-| **Interruption heuristics** | VAD and local ducking are intentionally aggressive and can false-trigger in noisy environments or with speaker bleed |
+Three layers, in order of stability:
+
+| Layer | Source | When it loads |
+|---|---|---|
+| **Base therapeutic prompt** | `voice.realtime.build_voice_system_prompt()` | Session start. Captured in `SessionData.therapeutic_instructions` so it can be restored after crisis de-escalation. Compact by design — Realtime sessions have a tighter instruction budget than the LangGraph stack. |
+| **Situational nudge** | `Agent.on_enter()` per agent | Each handoff. `TherapeuticAgent` adds a brief opening greeting; `CrisisAgent` adds a brief crisis-response instruction. |
+| **Task-scoped exercise prompt** | `GroundingTask` | When entering an exercise. Includes the full step plan, pacing rules, completion criteria, and exit behavior. Tells the model to deliver exactly one step at a time. |
+
+The base prompt assembles short, voice-shaped versions of:
+
+- core identity and response style
+- safety boundaries
+- procedural memory ("User preferences")
+- semantic memory ("Known context about the user")
+- episodic memory ("Relevant prior sessions")
 
 ---
 
-## Running locally
+## Memory in three phases
 
-<TerminalWindow title="bash — voice mode">
-{`# Start voice server and open browser
-uv run python -m opencouch_cli --voice --port 8000
+| Phase | When | What runs |
+|---|---|---|
+| **Startup load** | `opencouch_voice()` boots the session | Compact memory load when `memory_mode` is persistent — semantic facts, episodic arcs, procedural rules, the recall toggle — all flow into `build_voice_system_prompt()` |
+| **Mid-session retrieval** | `TherapeuticAgent.on_user_turn_completed()` | When `proactive_recall_enabled`, a small semantic search keyed off the latest user text. Already-injected facts are skipped via `SessionData.injected_semantic_memory_keys`. New facts are pushed in as a system message via `update_chat_ctx()`. Handoffs carry **only conversational context**, not prior instructions or tool-call artifacts. |
+| **Session-end persistence** | Shutdown hook | `session.history` is serialized into a transcript of user/assistant messages and handed to `runtime.end_transcript_session(...)`. Both `crisis_level` and `max_crisis_level` are passed through so downstream extraction sees peak severity. |
 
-# Custom port
-uv run python -m opencouch_cli --voice --port 9000`}
+---
+
+## Tools
+
+All tools are LiveKit `@function_tool()` declarations. They share
+`SessionData` via the `RunContext`.
+
+| Tool | Owner | Purpose |
+|---|---|---|
+| `save_insight` | TherapeuticAgent | Writes a concise semantic fact under the session `user_id` namespace. Tagged with `thread_id` + `created_at`. Calls `disallow_interruptions()` first so a barge-in can't hide a durable mutation. |
+| `show_saved_memory` | TherapeuticAgent | Lists saved facts, session summaries, and style preferences. |
+| `show_memory_status` | TherapeuticAgent | Reports counts and the proactive-recall state. |
+| `set_proactive_memory_recall` | TherapeuticAgent | Toggles proactive recall. |
+| `prepare_memory_deletion` / `prepare_indexed_memory_deletion` / `select_memory_deletion_candidate` | TherapeuticAgent | Selects a saved memory but does not delete it. |
+| `confirm_memory_deletion` | TherapeuticAgent | Deletes the selected memory only after explicit confirmation; `disallow_interruptions()` is called first. |
+| `cancel_memory_deletion` | TherapeuticAgent | Clears the pending deletion. |
+| `start_grounding_exercise` | TherapeuticAgent | Enters `GroundingTask` for a voice-allowlisted exercise. |
+| `answer_grounded_factual_lookup` | TherapeuticAgent | Explicit factual lookup using the shared search-grounded backend helper. Says "I can't verify that" when no search-capable LLM is configured rather than guessing. |
+| `crisis_check` | TherapeuticAgent | Deterministic rules-based escalation check. Level 3 → `CrisisAgent`; level 2 → `CrisisAgent`; level 1 → ask to clarify; level 0 → continue. |
+| `provide_crisis_resources` | CrisisAgent | Verified local hotlines via the same lookup the text agent uses. Asks for location if not stated; never infers from IP / timezone / accent. Falls back to emergency / 988 guidance when search fails. |
+| `de_escalate` | CrisisAgent | Hands control back to a fresh `TherapeuticAgent` with `therapeutic_instructions` restored. |
+
+---
+
+## Startup modes
+
+`agent.py` ends with `agents.cli.run_app(server)`, so the standard
+LiveKit Agents CLI is available:
+
+| Command | What it does |
+|---|---|
+| `uv run python -m voice.livekit.agent dev` | Local development mode — works with the LiveKit Agent Console |
+| `uv run python -m voice.livekit.agent start` | Long-running worker for token-dispatch flows |
+| `uv run python -m voice.livekit.agent connect --room <name>` | Direct room join for manual testing |
+| `uv run python -m voice.livekit.agent console` | Local console session — no LiveKit room |
+| `uv run python -m voice.livekit.agent console --text` | Text-only console for prompt / tool smoke tests |
+| `uv run python -m voice.livekit.agent download-files` | Pre-download model assets (use before first `start` if cold-starts time out) |
+
+---
+
+## Local testing
+
+### Browser room test
+
+<TerminalWindow title="bash — browser test">
+{`# 1. Backend
+uv run python run_server.py
+
+# 2. Agent worker (token-dispatch)
+uv run python -m voice.livekit.agent start
+
+# 3. Open the test page
+# token-dispatch path
+open "http://127.0.0.1:8080/api/voice/livekit/test?room=my-room&dispatch=1"
+
+# direct-connect path (run agent with: connect --room my-room)
+open "http://127.0.0.1:8080/api/voice/livekit/test?room=my-room&dispatch=0"`}
 </TerminalWindow>
 
-Or start the server directly:
+### Console test
 
-<TerminalWindow title="bash — direct server">
-{`uv run uvicorn main:app --port 8000
-# Open http://localhost:8000/api/voice/test`}
+<TerminalWindow title="bash — console smoke test">
+{`# Spoken (real audio I/O via your mic)
+uv run python -m voice.livekit.agent console
+
+# Text-only (fastest for prompt / tool smoke tests)
+uv run python -m voice.livekit.agent console --text`}
 </TerminalWindow>
 
-The standalone harness is the fastest way to debug transport,
-playback, interruption, and truncation behavior. The Next.js `/voice`
-page uses the same backend API but adds application UI around it.
+### Behavior evals
+
+LiveKit-specific behavior evals use `AgentSession.run(...)` (text-only,
+no real LiveKit room or audio pipeline):
+
+<TerminalWindow title="bash — evals">
+{`# From apps/backend
+uv run pytest tests/test_voice_livekit_behavior.py -q
+
+# Deterministic tool-contract evals for grounded lookup
+uv run python ../../eval/runners/voice_lookup_tools_eval.py`}
+</TerminalWindow>
+
+Current eval coverage:
+
+- memory-control tool calls and outputs
+- proactive-recall toggle persistence
+- two-turn saved-memory deletion confirmation
+- grounded factual lookup tool calls and outputs
+- no unsolicited grounding tool call for generic anxiety
+- crisis tool handoff into `CrisisAgent`
+- `CrisisAgent` local resource lookup tool calls and outputs
+
+These tests don't cover STT, VAD, TTS quality, barge-in timing, or
+deployed room connectivity — only the agent-level behavior surface.
+
+---
+
+## Environment
+
+<TerminalWindow title=".env.local">
+{`# LiveKit room transport
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+
+# OpenAI Realtime model
+OPENAI_API_KEY=...
+
+# Default session memory mode — "persistent" (default) or "guest"
+# Per-session overrides come from token metadata or
+# participant metadata.
+OPENCOUCH_MEMORY_MODE=persistent`}
+</TerminalWindow>
+
+A `503` from `/api/voice/livekit/token` usually means the LiveKit
+env vars weren't loaded — verify the backend env before debugging
+room behavior.
+
+---
+
+## Common failure modes
+
+| Symptom | What to check |
+|---|---|
+| Agent joins a room but nothing happens | The session waits for a non-agent participant before starting. Verify the browser actually joined the same room name. Watch for `livekit session: starting user=…` in the logs. |
+| Two agents in one room | You combined `connect --room` with `dispatch=1`. Use `dispatch=0` on the test page when direct-connecting. |
+| First worker subprocess times out on cold start | Run `download-files` first, then prefer `start` for long-running worker testing. |
+| Browser loads but token creation fails | Missing `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET`. The token endpoint returns 503. |
+| Console works, browser doesn't | `console` mode skips LiveKit entirely. Use `start` + token-dispatch (or `connect --room`) to validate room dispatch and media flow. |
+| Same grounding exercise keeps repeating | Generic requests rotate away from `recent_exercise_types`; explicit repeat requests are honored. If repetition still feels excessive, the likely problem is overuse of `start_grounding_exercise()` for cases that should have stayed conversational. |
+| Crisis routing feels abrupt or sticky | The deterministic safety net can force a handoff without the model's input. `crisis_level` returns to 0 after `de_escalate()`, but `max_crisis_level` is preserved by design. Look for `safety net: crisis keywords detected` and `CrisisAgent: de-escalating back to TherapeuticAgent`. |
+| Memory missing or inconsistent | Startup load vs. mid-session retrieval are separate paths. Check `OPENCOUCH_MEMORY_MODE`, the per-session override sources (token / participant metadata), and the `memory loaded facts=…` / `injected semantic memory facts=…` log lines. |
 
 ---
 
@@ -153,18 +329,19 @@ page uses the same backend API but adds application UI around it.
 
 | Concern | Text mode | Voice mode |
 |---|---|---|
-| **Response path** | LangGraph therapeutic graph | Direct Realtime websocket adapter |
-| **Prompting** | Full layered prompt assembly per turn | One bounded spoken prompt at connect time |
-| **Tools** | Provider-backed tools supported | None exposed currently |
-| **Safety** | Full graph-level crisis gate | Lightweight spoken crisis guidance only |
-| **Memory** | Read + write during normal chat lifecycle | Prompt preload at connect time, then transcript replay on disconnect for semantic/procedural extraction + episodic summary |
-| **Interruption** | N/A | Server VAD + client truncation + local ducking |
-| **UI maturity** | Primary, stable interface | Experimental speech preview |
+| **Runtime** | LangGraph `StateGraph` per turn | LiveKit `AgentSession` per room |
+| **Routing** | crisis_gate → operational gates → therapeutic subgraph | Agent handoffs (`TherapeuticAgent` ↔ `CrisisAgent`) + bounded tasks (`GroundingTask`) |
+| **Prompt** | Full layered assembly per turn | One bounded base prompt at session start + per-handoff nudges + per-task instructions |
+| **Tools** | `find_local_crisis_resources`, `answer_grounded_lookup` (node-invoked) | `@function_tool` declarations on each agent — model decides when to call |
+| **Crisis** | Graph-level `crisis_gate_node` first, before anything | `crisis_check()` tool + deterministic keyword safety net + `CrisisAgent` handoff |
+| **Memory** | Read + write through normal chat lifecycle | 3-phase: startup load → mid-session selective retrieval → shutdown transcript replay |
+| **Exercises** | All 13 in the registry | Voice allowlist of 10 (excludes visually-loaded ones) |
+| **UI maturity** | Primary, stable | Active development, narrower than text |
 
 ---
 
-## Environment variables
+## Further reading
 
-<TerminalWindow title=".env.local">
-{`OPENAI_API_KEY=...`}
-</TerminalWindow>
+- `apps/backend/voice/livekit/README.md` — design notes, debugging, and current constraints
+- [Crisis gate](/docs/philosophy/crisis-gate) — the text-side classifier (voice has its own narrower path)
+- [Memory layers](/docs/memory/overview) — what the startup-load and shutdown-replay phases actually persist

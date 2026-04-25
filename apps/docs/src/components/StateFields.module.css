@@ -6,15 +6,26 @@
 /* ── Legend ──────────────────────────────────────────────────────────────────── */
 
 .legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 14px;
+  margin-bottom: 22px;
+  padding: 12px 14px;
+  border: 1px solid var(--oc-border);
+  border-radius: 8px;
+  background: var(--oc-surface-3);
 }
 
 .legendItem {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.legendHint {
+  font-size: 0.7rem;
+  color: var(--oc-text-secondary);
+  line-height: 1.35;
 }
 
 /* ── Lifecycle pills ────────────────────────────────────────────────────────── */
@@ -30,6 +41,7 @@
   border-radius: 4px;
   line-height: 1.3;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .pillSmall {
@@ -44,15 +56,6 @@
 [data-theme='dark'] .lcInput {
   background: rgba(120,184,175,0.18);
   color: #78b8af;
-}
-
-.lcPersisted {
-  background: #215f5a;
-  color: #e0f0ed;
-}
-[data-theme='dark'] .lcPersisted {
-  background: rgba(120,184,175,0.28);
-  color: #b8e0da;
 }
 
 .lcReducer {
@@ -89,7 +92,7 @@
 .groups {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .section {
@@ -105,9 +108,9 @@
 .sectionHeader {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  padding: 10px 16px;
+  padding: 12px 16px;
   border: none;
   background: var(--oc-surface-3);
   cursor: pointer;
@@ -124,20 +127,26 @@
   background: var(--oc-accent-subtle);
 }
 
-.sectionIcon {
-  font-size: 0.8rem;
-  color: var(--oc-accent);
-  width: 18px;
-  text-align: center;
-  flex-shrink: 0;
+.sectionHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .sectionLabel {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 0.76rem;
-  font-weight: 700;
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.92rem;
+  font-weight: 600;
   color: var(--oc-text-primary);
-  flex: 1;
+  letter-spacing: 0;
+}
+
+.sectionBlurb {
+  font-size: 0.75rem;
+  color: var(--oc-text-secondary);
+  line-height: 1.35;
 }
 
 .sectionCount {
@@ -148,9 +157,10 @@
   background: var(--oc-accent-subtle);
   border: 1px solid var(--oc-border);
   border-radius: 4px;
-  padding: 1px 6px;
-  min-width: 18px;
+  padding: 2px 7px;
+  min-width: 22px;
   text-align: center;
+  flex-shrink: 0;
 }
 [data-theme='dark'] .sectionCount {
   color: var(--oc-text-secondary);
@@ -173,12 +183,13 @@
 }
 
 .fieldRow {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 9px 16px;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 18px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--oc-border);
   transition: background var(--oc-duration-fast) var(--oc-ease-out);
+  align-items: start;
 }
 .fieldRow:last-child {
   border-bottom: none;
@@ -191,13 +202,12 @@
   background: var(--oc-accent-subtle);
 }
 
-/* Left side: name + type + pill */
+/* Left side: name + type stacked */
 .fieldLeft {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  min-width: 280px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .fieldName {
@@ -208,65 +218,71 @@
   background: none !important;
   border: none !important;
   padding: 0 !important;
-  white-space: nowrap;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 .fieldType {
   font-family: var(--ifm-font-family-monospace);
-  font-size: 0.64rem;
+  font-size: 0.66rem;
   color: var(--oc-text-muted);
-  white-space: nowrap;
+  word-break: break-word;
+  line-height: 1.3;
 }
 [data-theme='dark'] .fieldType { color: var(--oc-text-secondary); }
 
-/* Right side: description + set-by */
+/* Right side: description on top, meta row beneath */
 .fieldRight {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex: 1;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
 }
 
 .fieldDesc {
-  font-size: 0.78rem;
-  line-height: 1.45;
+  font-size: 0.82rem;
+  line-height: 1.5;
   color: var(--oc-text-secondary);
-  flex: 1;
+  margin: 0;
 }
 [data-theme='dark'] .fieldDesc { color: var(--oc-text-secondary); }
 
-.fieldSetBy {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 0.6rem;
-  color: var(--oc-accent);
-  white-space: nowrap;
-  opacity: 0.7;
-  flex-shrink: 0;
-  animation: fadeIn var(--oc-duration-fast) var(--oc-ease-out);
+.fieldMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 0.7; }
+.fieldSetBy {
+  font-size: 0.68rem;
+  color: var(--oc-text-muted);
+  font-family: var(--ifm-font-family-base);
+}
+.fieldSetBy code {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.68rem;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--oc-accent);
 }
 
 /* ── Responsive ─────────────────────────────────────────────────────────────── */
 
 @media (max-width: 720px) {
+  .legend {
+    grid-template-columns: 1fr;
+  }
   .fieldRow {
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 14px;
-  }
-  .fieldLeft {
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-  .fieldRight {
-    padding-left: 0;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 12px 14px;
   }
   .fieldDesc {
-    font-size: 0.74rem;
+    font-size: 0.78rem;
+  }
+  .sectionLabel {
+    font-size: 0.86rem;
   }
 }

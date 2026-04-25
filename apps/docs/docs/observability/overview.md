@@ -120,18 +120,28 @@ just no longer prints those panels automatically after every turn.
 
 ## Live streaming
 
-Stage labels are mapped from internal node names:
+Stage labels are defined in `agent/models.py` as `STAGE_LABELS` and
+shared between the CLI and WebSocket API so all clients display
+consistent text:
 
-| Node name | CLI label |
+| Internal stage | Friendly label |
 |---|---|
-| `crisis_gate_node` | `crisis_gate` |
-| `load_memory_node` | `load_memory` |
-| `therapeutic_subgraph` | `therapeutic` |
-| `finalize_turn_node` | `finalize` |
-| `extract_semantic_facts_node` | `extract_facts` |
-| `extract_procedural_rules_node` | `extract_procedural` |
+| `crisis_gate` | safety check |
+| `memory_control_gate` | checking memory command |
+| `memory_control` | updating memory |
+| `grounded_lookup_gate` | checking factual lookup |
+| `grounded_lookup` | looking up factual answer |
+| `crisis_resource_lookup` | looking up crisis resources |
+| `crisis_response` | generating crisis reply |
+| `crisis_log` | writing crisis log |
+| `load_memory` | loading memory |
+| `therapeutic` | generating therapeutic reply |
+| `extract_facts` | extracting facts |
+| `extract_procedural` | extracting style rules |
+| `finalize` | finalizing turn |
+| `response_generation` | generating |
 
-Unknown nodes fall through to their raw name so future additions
+Unknown stages fall through to their raw name so future additions
 render without a mapping update.
 
 ---
@@ -141,8 +151,14 @@ render without a mapping update.
 | Key | Node | Value |
 |---|---|---|
 | `crisis_gate_ms` | crisis_gate | Assessment wall-clock time |
-| `crisis_classifier_path` | crisis_gate | Which branch decided the result (`override`, deterministic path, or LLM review/fallback) |
+| `crisis_classifier_path` | crisis_gate | `override` / `llm_primary` / `llm_fallback` / `deterministic` |
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
+| `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
+| `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `search_failed` / `no_verified_results` / `not_attempted` |
+| `memory_control_gate_ms` | memory_control_gate | Gate evaluation wall-clock time |
+| `memory_control_action` | memory_control_gate | Detected command kind (or empty when none) |
+| `grounded_lookup_gate_ms` | grounded_lookup_gate | Gate evaluation wall-clock time |
+| `grounded_lookup_status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |
@@ -153,6 +169,8 @@ render without a mapping update.
 | `retrieval_path` | load_memory | `hybrid_rrf` / `token_recall` / `token_recall_after_embed_error` |
 | `extract_facts_ms` | extract_facts | Extraction wall-clock time |
 | `semantic_writes` | extract_facts | Immediate semantic writes that actually committed on this turn |
+| `semantic_candidates` | extract_facts | Total candidates returned by the LLM |
+| `semantic_commit_now_candidates` | extract_facts | Candidates the policy classified as commit-now |
 | `semantic_session_end_holds` | extract_facts | Semantic candidates held for session-end review |
 | `semantic_repeat_required` | extract_facts | Semantic candidates blocked pending stronger repetition evidence |
 | `semantic_policy_drops` | extract_facts | Semantic candidates dropped by deterministic write policy |
@@ -160,6 +178,8 @@ render without a mapping update.
 | `extract_facts_reason` | extract_facts | Skip reason or extraction outcome |
 | `extract_procedural_ms` | extract_procedural | Extraction wall-clock time |
 | `procedural_writes` | extract_procedural | Immediate procedural rules written |
+| `procedural_candidates` | extract_procedural | Total candidates returned by the LLM |
+| `procedural_commit_now_candidates` | extract_procedural | Candidates the policy classified as commit-now |
 | `procedural_session_end_holds` | extract_procedural | Procedural candidates buffered for session-end promotion |
 | `procedural_policy_drops` | extract_procedural | Procedural candidates dropped by deterministic write policy |
 | `extract_procedural_reason` | extract_procedural | Skip reason or extraction outcome |

@@ -94,7 +94,8 @@ const MODES: Mode[] = [
   { id: 'reflective', label: 'Reflective', when: 'User is describing a recurring pattern they\'ve already named', goal: 'Name 1–2 patterns carefully. Tentative, testable. Preserve user\'s framing.' },
   { id: 'clarifying', label: 'Clarifying', when: 'Ambiguous message — agent doesn\'t know what "it" refers to', goal: 'One context-gathering question. About context, not content. No assumptions.' },
   { id: 'psychoeducation', label: 'Psychoeducation', when: 'User describes a reaction AND seeks understanding ("why am I crying?")', goal: 'One short normalizing explanation. Pivot back to user\'s experience. No clinical jargon.' },
-  { id: 'guided_exercise', label: 'Guided exercise', when: 'User requests a structured technique (12 exercises available)', goal: 'One exercise at a time. Multi-turn step tracking. Check pace between steps.' },
+  { id: 'technique', label: 'Technique', when: 'User wants structured therapeutic work without launching a named exercise (examine a thought, weigh evidence, work through a dilemma)', goal: 'Collaborative step-by-step shaped by the active therapeutic_approach. No free-form lecturing.' },
+  { id: 'guided_exercise', label: 'Guided exercise', when: 'User explicitly requests a structured technique (12 exercises available)', goal: 'One exercise at a time. Multi-turn step tracking with pinned modality. Check pace between steps.' },
   { id: 'closing', label: 'Closing', when: 'User signals wind-down ("I should go", "thanks, this helped")', goal: 'Warm wrap-up. Don\'t ask a new question or pivot to a new topic.' },
 ];
 
@@ -180,7 +181,7 @@ export default function TherapyApproach() {
       <section className={styles.modesSection}>
         <h3 className={styles.sectionTitle}>Therapeutic response modes</h3>
         <p className={styles.sectionSub}>
-          Six modes dispatched per turn by the therapeutic subgraph. Selected by hybrid regex + LLM classification — not free-form model choice. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <a href="/docs/philosophy/crisis-gate">Crisis Gate</a>).
+          Seven modes dispatched per turn by the therapeutic subgraph. The LLM classifier is the primary path; deterministic regex fires only for explicit exercise opt-out and as a fallback when no LLM is configured. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <a href="/docs/philosophy/crisis-gate">Crisis Gate</a>).
         </p>
         <div className={styles.modeTable}>
           {MODES.map(m => (

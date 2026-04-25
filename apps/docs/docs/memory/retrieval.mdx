@@ -73,8 +73,29 @@ visited in months.
 | `embedding_dim` | INTEGER | Dimensionality validation |
 | `embedding_model` | TEXT | Model migration detection |
 
-Default provider: Gemini `gemini-embedding-001` (3072 dims). Falls back
-to `NullEmbeddingProvider` when no API key is set.
+The provider factory (`create_configured_embedding_provider` in
+`agent/memory/embeddings.py`) picks:
+
+1. **OpenAI** `text-embedding-3-large` (3072 dims) when
+   `OPENAI_API_KEY` is set.
+2. **Gemini** `gemini-embedding-001` (3072 dims) when
+   `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
+3. **`NullEmbeddingProvider`** otherwise — retrieval degrades to
+   token-recall only.
+
+Mismatched-dimension records are skipped during dense rank, so
+swapping the embedding model never produces silently-wrong results;
+records re-embed lazily on the next write.
+
+---
+
+## load_memory cleanup
+
+`load_memory_node` was refactored down from ~500 LoC to ~370 while
+keeping behavior identical. A `test_memory_retrieval_parity.py` suite
+verifies that the in-memory and SQLite stores produce the same
+ranked results for the same input — so the retrieval algorithm is
+backend-agnostic by contract, not by accident.
 
 ---
 

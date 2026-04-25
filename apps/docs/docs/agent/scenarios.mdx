@@ -12,6 +12,20 @@ adapts turn by turn. Each turn shows the actual chat, the graph
 routing path, and why the dispatcher made its decision.
 
 All mode names match the shipped graph nodes. Routing traces show
-the actual node sequence the turn would follow through the pipeline. For the full catalog of 12 guided exercises with steps and trigger keywords, see [Guided Exercises](/docs/agent/guided-exercises).
+the actual node sequence the turn would follow through the
+pipeline. For the full catalog of 13 guided exercises with steps
+and trigger keywords, see [Guided Exercises](/docs/agent/guided-exercises).
+
+:::note Routing traces are illustrative
+The routing traces below are written for clarity, not strict
+parity with what the LLM dispatcher chooses on a given turn. The
+crisis gate, the exercise step-state classifier, and the active-exercise
+fast path are all deterministic — those traces are accurate. The
+specific style picks (`supportive` vs. `reflective` vs.
+`psychoeducation`) are LLM-primary, so the live agent could land
+on a slightly different style for the same input. The annotations
+explain the dispatcher's decision rule, not a guarantee of which
+mode fires every time.
+:::
 
 <ScenarioReplay />

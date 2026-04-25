@@ -9,12 +9,23 @@ import ToolRegistry from '@site/src/components/ToolRegistry';
 
 OpenCouch treats tools narrowly: a **tool** is an agent-invokable
 capability that reaches outside the graph's own state — today that
-means provider-native web search for crisis resources. Tools are
-deliberately scarce because every external call is a safety surface.
+means provider-native web search, used in two distinct places:
+
+- `find_local_crisis_resources` — runs from `crisis_resource_lookup_node`
+  on the crisis branch to surface verified local hotlines before the
+  crisis response is generated.
+- `answer_grounded_lookup` — runs from `grounded_answer_node` when the
+  user explicitly asks for a factual lookup ("verify…", "look up…",
+  "search for the latest guidelines on…").
+
+Tools are deliberately scarce because every external call is a safety
+surface and adds tail latency. New capabilities go behind a dedicated
+node + gate rather than being wired into the LLM as a generic
+function-calling tool.
 
 Unlike most LangGraph tutorials, tools here are **not registered
 with the graph as `@tool`-decorated functions**. Instead, a node
-calls the tool directly when its condition is met. Benefits:
+calls the tool function directly when its condition is met. Benefits:
 
 - **Explicit call sites.** You always know which node will invoke
   which tool — no LLM-driven tool-selection layer to debug.
@@ -22,50 +33,59 @@ calls the tool directly when its condition is met. Benefits:
   (Gemini) or `web_search` (OpenAI) via `use_search=True` on
   `generate_text()`, not a custom tool attachment.
 - **Graceful degradation by construction.** A tool failure returns
-  empty results; the caller decides whether to continue without them.
+  empty results plus a status code; the caller decides whether to
+  continue without them.
 
 <ToolRegistry />
 
 ---
 
-## When does a capability become a tool?
+## Tool vs gate vs dependency
 
-Not every external call is a tool. The memory store, the crisis
-log, the embedding provider — these are all **injected
-dependencies** on `WorkflowContext`, not tools. The distinction:
+Three things often look like "tools" but should be modeled differently
+in OpenCouch:
 
 | Type | Example | Lives on |
 |---|---|---|
-| **Injected dependency** | `memory_store`, `crisis_log_backend`, `embedding_provider` | `WorkflowContext` (dataclass) |
-| **Tool** | `find_local_crisis_resources` | `agent/tools/*.py` module |
+| **Injected dependency** | `memory_store`, `crisis_log_backend`, `embedding_provider`, `llm_client` | `WorkflowContext` (frozen dataclass) |
+| **Routing gate** | `memory_control_gate_node`, `grounded_lookup_gate_node` | `agent/nodes/*_gate.py` — returns `Command(goto=...)` |
+| **Tool** | `find_local_crisis_resources`, `answer_grounded_lookup` | `agent/tools/*.py` module, called from a node |
 
 A capability qualifies as a **tool** when:
 
-1. It reaches **outside local infrastructure** (public web, third-party API, model-provider search grounding)
-2. It can **fail and must degrade gracefully** without blocking the turn
-3. It has **conditional invocation** — a node decides at runtime whether to call it
+1. It reaches **outside local infrastructure** (public web,
+   third-party API, model-provider search grounding).
+2. It can **fail and must degrade gracefully** without blocking the
+   turn.
+3. It has **conditional invocation** — a node decides at runtime
+   whether to call it (often guarded by a regex gate one node
+   upstream).
 
 If a capability is used on every turn (like the memory store) or
 fails hard when unavailable (like the database), it's a dependency,
-not a tool.
+not a tool. If it only decides where to route the turn without
+producing user-facing content, it's a gate, not a tool.
 
 ## Adding a new tool
 
 1. Create `agent/tools/your_tool.py` with the tool function.
-   Accept `AgentState` and the injected deps it needs; return
-   structured data. Never raise — return empty/default values on
-   any failure and log a warning.
+   Accept the state and the injected deps it needs; return
+   structured data plus a status literal. Never raise — return
+   empty/default values on any failure and log a warning.
 2. Export it from `agent/tools/__init__.py`.
-3. Import and call it from the node that needs it — typically
-   guarded by a condition like `if llm_client is not None`.
-4. Add unit tests for any parsing helpers. LLM-calling code paths
+3. Add a routing gate (`agent/nodes/<feature>_gate_node.py`) that
+   detects when to invoke the tool, plus a worker node
+   (`agent/nodes/<feature>_node.py`) that calls the tool and writes
+   `response_text`. Register both in `build_agent_workflow()`.
+4. Extend `AgentPrivateState` with any new turn-scoped fields the
+   node owns (query string, status code, found-data list).
+5. Add a `STAGE_LABELS` entry in `agent/models.py` so streaming
+   surfaces show a friendly stage name.
+6. Add unit tests for the parsing helpers. LLM-calling code paths
    belong in dogfood scripts, not the unit test suite.
-5. If the tool writes state, add the fields to `ResponseState` (or
-   wherever they belong in `AgentState`) and update the relevant
-   prompt builders to consume them.
 
 ## Related
 
 - [Agent Graph](/docs/agent/graph) — where tools fire from
-- [Nodes](/docs/agent/nodes) — `crisis_response_node` is the only node that invokes a tool today
+- [Nodes](/docs/agent/nodes) — `crisis_resource_lookup_node` and `grounded_answer_node` are the two tool-invoking nodes today
 - [Crisis Gate philosophy](/docs/philosophy/crisis-gate) — why crisis-resource surfacing is worth an external call
