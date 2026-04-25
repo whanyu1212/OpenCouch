@@ -2,6 +2,9 @@
 ._*
 .DS_Store
 
+# Local UX notes
+UX_TOOLING_ENHANCEMENTS.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
