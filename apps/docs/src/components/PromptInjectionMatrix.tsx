@@ -12,16 +12,17 @@ interface ModeRow {
 }
 
 const MODES: ModeRow[] = [
-  { mode: 'supportive_conversation', responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true },
-  { mode: 'pattern_reflection',      responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true },
-  { mode: 'guided_exercise',         responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true },
-  { mode: 'psychoeducation',         responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true },
-  { mode: 'realignment',             responseGuidance: true,  stageGuidance: false, sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Gets session context and history to re-attune, but no stage guidance' },
-  { mode: 'crisis_response',         responseGuidance: false, stageGuidance: false, sessionContext: false, recentHistory: true,  currentMessage: true, note: 'Safety-focused — skip context to stay narrow' },
-  { mode: 'crisis_classifier',       responseGuidance: false, stageGuidance: false, sessionContext: false, recentHistory: true,  currentMessage: true, note: 'Classification only — minimal context' },
-  { mode: 'safety_check',            responseGuidance: false, stageGuidance: false, sessionContext: false, recentHistory: false, currentMessage: false, note: 'Deterministic template — no LLM prompt assembled' },
-  { mode: 'orientation',             responseGuidance: true,  stageGuidance: false, sessionContext: false, recentHistory: false, currentMessage: true, note: 'New user — response guidance + message only' },
-  { mode: 'out_of_scope',            responseGuidance: true,  stageGuidance: false, sessionContext: false, recentHistory: false, currentMessage: true, note: 'Boundary response — response guidance + request only' },
+  { mode: 'supportive',         responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Default mode — full context for warm validation' },
+  { mode: 'reflective',         responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Pattern-naming needs cross-turn context' },
+  { mode: 'clarifying',         responseGuidance: true,  stageGuidance: false, sessionContext: false, recentHistory: true,  currentMessage: true, note: 'One focused question — narrow context only' },
+  { mode: 'psychoeducation',    responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Educational explanation needs the framing context' },
+  { mode: 'technique',          responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Structured therapeutic work — full context plus modality' },
+  { mode: 'guided_exercise',    responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Exercise state and pinned modality preserved across turns' },
+  { mode: 'closing',            responseGuidance: true,  stageGuidance: true,  sessionContext: true,  recentHistory: true,  currentMessage: true, note: 'Wrap-up — context lets the farewell summarize the arc' },
+  { mode: 'safety_check',       responseGuidance: true,  stageGuidance: false, sessionContext: false, recentHistory: true,  currentMessage: true, note: 'Crisis level 1 — narrow safety probe inside the therapeutic branch' },
+  { mode: 'crisis_response',    responseGuidance: true,  stageGuidance: false, sessionContext: false, recentHistory: true,  currentMessage: true, note: 'Safety-focused — skip memory context, include any found_resources' },
+  { mode: 'memory_control',     responseGuidance: false, stageGuidance: false, sessionContext: false, recentHistory: false, currentMessage: true, note: 'Deterministic — no LLM prompt assembled' },
+  { mode: 'grounded_lookup',    responseGuidance: false, stageGuidance: false, sessionContext: false, recentHistory: true,  currentMessage: true, note: 'Search-grounded factual reply — minimal context' },
 ];
 
 const LAYERS = ['responseGuidance', 'stageGuidance', 'sessionContext', 'recentHistory', 'currentMessage'] as const;

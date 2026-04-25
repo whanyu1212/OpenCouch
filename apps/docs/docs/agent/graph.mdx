@@ -9,10 +9,11 @@ import GraphTopology from '@site/src/components/GraphTopology';
 
 # Agent Graph
 
-Every message follows the same pipeline: safety check first,
-then memory retrieval, then routing, then response, then post-response
-memory evaluation. Some memory commits happen immediately; others wait
-for the shared session-end seam.
+Every message follows the same pipeline: safety check first, then a
+sequence of routing gates (memory commands, factual lookups), then
+memory retrieval, response generation, and post-response memory
+evaluation. Some memory commits happen immediately; others wait for
+the shared session-end seam.
 Click any step below to see what it does.
 
 <AgentGraph />
@@ -21,14 +22,36 @@ Click any step below to see what it does.
 
 ## Topology
 
-The parent graph has 8 nodes. The therapeutic subgraph (compiled as
-a single parent-level node) hides 7 internal nodes (dispatcher + 6
-mode nodes). The crisis gate routes between branches via
-`Command(goto=...)`. The two extractors fan out in parallel after
-finalize, but they now feed deterministic write policy instead of
-blindly writing every candidate to long-term memory.
+The parent graph has **12 named nodes** plus the therapeutic subgraph
+(compiled as a single parent-level node) which hides 8 internal nodes
+(dispatcher + 7 mode nodes). The crisis gate routes between branches
+via `Command(goto=...)`. Three additional gates branch downstream:
+`memory_control_gate_node`, `grounded_lookup_gate_node`, and the
+crisis-side `crisis_resource_lookup_node`. The two extractors fan out
+in parallel after `finalize_turn_node`, feeding deterministic write
+policy instead of blindly writing every candidate to long-term memory.
 
 <GraphTopology />
+
+The full execution graph (from `build_agent_workflow()` in
+`agent/graph.py`):
+
+```text
+START
+  → crisis_gate_node  (Command routes to one of the branches)
+     ├─ crisis_resource_lookup_node → crisis_response_node
+     │  → crisis_log_node → finalize_turn_node
+     └─ memory_control_gate_node
+        ├─ memory_control_node → finalize_turn_node
+        └─ grounded_lookup_gate_node
+           ├─ grounded_answer_node → finalize_turn_node
+           └─ load_memory_node → therapeutic_subgraph
+              → finalize_turn_node
+
+finalize_turn_node
+  → extract_semantic_facts_node → END
+  → extract_procedural_rules_node → END
+```
 
 ## Node responsibilities
 
@@ -47,13 +70,16 @@ The dispatcher picks exactly one mode per turn:
 | `reflective` | User describing a recurring pattern they've already named |
 | `clarifying` | Ambiguous message — agent needs context before responding |
 | `psychoeducation` | User describes a reaction AND seeks understanding |
+| `technique` | User wants structured therapeutic work without launching a named exercise |
 | `guided_exercise` | User requests a structured technique ([12 exercises](/docs/agent/guided-exercises)) |
 | `closing` | User signals wind-down ("I should go", "thanks, this helped") |
 
-The dispatcher uses hybrid classification: high-precision regex fast
-paths for obvious cases (confusion markers -> clarifying, active
-exercise re-entry -> guided_exercise), LLM classifier for the
-ambiguous middle, regex fallback when no LLM is available.
+The dispatcher is **LLM-primary** with deterministic regex overrides
+for unambiguous exercise opt-out (`"never mind"`, `"quit the
+exercise"`) and a regex fallback for the no-LLM path. When a guided
+exercise is active, the dispatcher preserves the pinned
+`exercise_modality` across mid-exercise clarifying or psychoeducation
+turns so the modality doesn't drift.
 
 ## Design principles
 
@@ -61,8 +87,19 @@ ambiguous middle, regex fallback when no LLM is available.
 retrieval or response generation. There is no path through the graph
 that loads context without first passing the safety check.
 
-**Routing is deterministic-first.** Regex patterns fire before the
-LLM. Most turns never need an LLM classification call.
+**Operational gates run before memory loading.** After the crisis
+gate, the therapeutic branch passes through `memory_control_gate_node`
+(intercepts `/list`, `/forget`, `/remember`, recall-toggle commands)
+and `grounded_lookup_gate_node` (intercepts explicit factual lookup
+requests). Both gates short-circuit to dedicated response nodes when
+they fire, skipping memory retrieval and the therapeutic subgraph.
+
+**Routing is LLM-primary, deterministic-bounded.** The dispatcher
+calls the LLM classifier first; deterministic regex only fires for
+high-precision overrides (clear exercise exit) or as a no-LLM
+fallback. The crisis gate uses the same shape: deterministic override
+for imminent-risk and idiomatic-safe patterns, LLM as primary for
+everything else, regex ladder as fallback.
 
 **Parallel post-response memory evaluation.** The two extractor nodes
 fan out in parallel from `finalize_turn_node`. Each lane does LLM
@@ -101,29 +138,38 @@ Keys include `load_memory_ms`, `crisis_gate_ms`, `extract_facts_ms`,
 Dependencies are injected via `WorkflowContext`, a frozen dataclass
 with attribute access (`runtime.context.llm_client`, not dict access).
 Fields: `llm_client`, `memory_store`, `crisis_log_backend`,
-`memory_mode`, `embedding_provider`.
+`memory_mode`, `response_llm`, `embedding_provider`,
+`session_memory_buffer`. See [Runtime](/docs/backend/runtime#workflowcontext)
+for the full breakdown.
 
 ## Key files
 
 | File | What it does |
 |---|---|
-| `agent/graph.py` | `build_agent_workflow()`, `build_initial_state()`, `state_to_output()` |
-| `agent/state.py` | `AgentState` TypedDict with reducer annotations |
+| `agent/graph.py` | `build_agent_workflow()`, `build_initial_state()`, `state_to_output()`, `run_agent()` |
+| `agent/state.py` | `AgentState` TypedDict with reducer annotations and split input/output schemas |
 | `agent/working_memory.py` | `WorkingMemoryEntry` types, factory functions, formatters |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` with `TherapeuticSubgraphOutput` |
-| `agent/therapeutic/dispatcher.py` | Hybrid regex + LLM mode classification |
+| `agent/therapeutic/dispatcher.py` | LLM-primary mode + modality classification with regex overrides |
 | `agent/therapeutic/prompts.py` | Knowledge composition + on-demand working memory formatting |
-| `agent/nodes/load_memory.py` | Memory retrieval + query embedding |
-| `agent/nodes/crisis_gate.py` | Crisis classification + routing |
+| `agent/nodes/load_memory.py` | Hybrid retrieval + query embedding |
+| `agent/nodes/crisis_gate.py` | LLM-primary crisis classification + branch routing |
+| `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup before crisis response |
 | `agent/nodes/crisis_response.py` | Crisis response generation |
-| `agent/nodes/crisis_log.py` | Audit log writer |
-| `agent/nodes/extract_facts.py` | Semantic fact extraction |
-| `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction |
+| `agent/nodes/crisis_log.py` | Always-on audit log writer |
+| `agent/nodes/memory_control_gate.py` | Detects explicit memory commands |
+| `agent/nodes/memory_control.py` | Executes memory commands (list, forget, recall toggle, save preference) |
+| `agent/nodes/grounded_lookup_gate.py` | Detects explicit factual lookup requests |
+| `agent/nodes/grounded_answer.py` | Search-grounded factual replies |
+| `agent/nodes/extract_facts.py` | Semantic fact extraction with policy + dedup |
+| `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction with policy |
 | `agent/nodes/commit_session_memory.py` | Session-end promotion for held semantic / procedural candidates |
 | `agent/nodes/summarize_session.py` | Session-end episodic summarization |
 | `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
 | `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
+| `agent/audit/crisis_log.py` | Audit-log backend protocol + in-memory implementations |
+| `agent/audit/sqlite_crisis_log.py` | SQLite-backed crisis log with retention purge |
 | `agent/persistence.py` | `PersistentAgentRuntime` — SQLite-backed thread state |
 
 ## Adding a new therapeutic mode
@@ -136,8 +182,10 @@ Fields: `llm_client`, `memory_store`, `crisis_log_backend`,
    `agent/therapeutic/prompts.py`
 4. Register the node in `agent/therapeutic/graph.py`
    (`subgraph.add_node(...)`)
-5. Add dispatch patterns in `agent/therapeutic/dispatcher.py`
-   (regex fast paths + LLM prompt update)
+5. Update the LLM dispatcher prompt in
+   `agent/therapeutic/dispatcher.py` to teach the classifier when to
+   pick the new mode, and add a deterministic regex fallback if the
+   mode has unambiguous trigger phrases
 6. Add cases to `eval/datasets/therapeutic_routing_v0.json`
-7. Add a `_STAGE_LABELS` entry in `opencouch_cli/app.py` if the
-   node name differs from the CLI's stage label vocabulary
+7. Add a `STAGE_LABELS` entry in `agent/models.py` if the
+   node name differs from the stage label vocabulary

@@ -23,7 +23,7 @@ A single `SessionFeedbackRecord` per end-session event, containing:
 | `user_id_or_null` | `state.user_id` (LOCAL/SYNCED) or `None` (incognito) | Server-derived, scrubbed in incognito |
 | `recorded_at` | ISO-8601 with `Z` suffix | `iso_now()` at write time |
 | `label` | `"positive"` / `"negative"` / `"skip"` | User's explicit choice |
-| `turn_count_at_end` | `state.progress.turn_count` | Read from checkpoint |
+| `turn_count_at_end` | `session_progress.turn_count` from the latest checkpoint | Read from checkpoint |
 | `source` | `"cli_end"` / `"cli_exit"` / `"api_end"` | Which end-session surface captured it |
 | `schema_version` | `1` | Fixed for Phase 1 |
 
@@ -98,10 +98,12 @@ unaffected by the feedback write (no status surfaced).
   termination. If we later want in-conversation feedback hints, the
   same `record_session_feedback()` method works — the closing node
   would call the runtime directly.
-- **Voice disconnect** — `voice/realtime.py` bypasses
-  `PersistentAgentRuntime.end_session()` entirely and calls
-  `run_summarize_session()` directly. Adding voice feedback requires
-  moving voice onto the `end_session()` seam first.
+- **Voice disconnect** — the LiveKit voice runtime
+  (`voice/livekit/`) bypasses `PersistentAgentRuntime.end_session()`
+  and uses its own `runtime.end_transcript_session(...)` seam to
+  replay the room transcript. Voice feedback would need to be
+  collected through that seam (or a dedicated voice-side prompt)
+  rather than the text-mode `record_session_feedback()` flow.
 
 ## Inspection
 
@@ -160,9 +162,9 @@ constraint on the opaque `id`.
 
 | File | What it does |
 |---|---|
-| `agent/memory/models.py` (§9) | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord` |
-| `agent/memory/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null |
-| `agent/memory/sqlite_session_feedback.py` | SQLite backend with CHECK constraints |
+| `agent/audit/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord`, plus crisis-log models |
+| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
+| `agent/audit/sqlite_session_feedback.py` | SQLite backend with CHECK constraints and retention purge |
 | `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /threads/{id}/end` body handling |

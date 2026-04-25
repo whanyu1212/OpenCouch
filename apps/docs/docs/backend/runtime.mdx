@@ -10,7 +10,8 @@ import RuntimeLayers from '@site/src/components/RuntimeLayers';
 
 Two entry points, one pipeline. The stateless layer is for
 single-turn requests. The persistent layer adds thread-aware
-checkpointing.
+checkpointing, candidate buffering, an inactivity sweeper, and the
+shared session-end seam (`/end`, timeout, shutdown, API end-session).
 
 ---
 
@@ -22,6 +23,20 @@ checkpointing.
 Both layers run identical graph nodes in identical order. The
 persistent layer saves state to SQLite after each turn and restores
 it via reducers on the next.
+:::
+
+:::note Voice has its own seam
+The LiveKit voice runtime (`voice/livekit/agent.py`) lazy-creates
+**one shared `PersistentAgentRuntime` per worker process**, so it
+shares the SQLite-backed memory store, crisis log, and embedding
+provider with text mode. But voice does **not** drive turns
+through `run_turn` / `run_turn_stream`. On disconnect it
+serializes the room transcript and hands it to
+`runtime.end_transcript_session(...)` — a separate seam from
+text-mode `/end`. The 20-min inactivity sweeper and session-end
+candidate buffering described below are therefore text-only;
+voice has its own shutdown persistence path.
+See [Voice (LiveKit)](/docs/voice) for the full picture.
 :::
 
 ---
@@ -38,13 +53,18 @@ persistent turn.
 | Field | Reducer | Behavior |
 |---|---|---|
 | `history` | `operator.add` | Each turn appends new entries; checkpointer accumulates |
-| `transcript` | `operator.add` | finalize_turn appends a 1-element delta |
-| `progress` | `_merge_dicts` | Per-turn fields merge with cross-turn fields (exercise state) |
-| `diagnostics` | `_merge_dicts` | Parallel extractors write independently |
+| `transcript` | `operator.add` | `finalize_turn_node` appends a 1-element delta |
+| `session_progress` | `_merge_dicts` | `turn_count` increments, `stage` persists, dispatcher intent merges in |
+| `session_memory` | `_merge_dicts` | Summary / active concerns / open loops merge across turns |
+| `procedural_profile` | `_merge_dicts` | Procedural rules + recall toggle merge |
+| `exercise_state` | `_merge_dicts` | `exercise_modality` pinned at start; preserved across mid-exercise side-turns |
+| `memory_control` | `_merge_dicts` | `pending_action` carries destructive deletes across turns |
+| `diagnostics` | `_merge_dicts` | Parallel extractors write independently; gate timings, retrieval path, and write counts merge |
 
-**Non-reducer fields** (`response`, `crisis`) are overwritten fresh
-each turn. `routing` uses `_merge_dicts` to preserve cross-turn
-approach while resetting per-turn response_style/route decisions.
+**Non-reducer fields** (`crisis`, `crisis_audit`, `route`,
+`response_text`, `response_style*`, `therapeutic_approach`, the
+turn-scoped lookup fields) are overwritten fresh each turn — they
+describe a single turn's decisions and replies.
 
 ---
 
@@ -66,11 +86,13 @@ $ opencouch --thread-id alice-s2 --user-id alice
 
 | Event | What happens |
 |---|---|
-| **First turn** | Checkpoint created. `build_initial_state()` provides defaults. |
-| **Subsequent turns** | Checkpointer restores accumulated state. Only the new user turn is emitted. |
-| **`/end`** | Optional feedback prompt → `record_session_feedback()` → `end_session()` → episodic arc written. Session metadata cleared. |
-| **Resume after `/end`** | Same thread_id works. Transcript persists. Next turn starts a fresh session. |
-| **Incognito** | All four backends in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). |
+| **First turn** | Checkpoint created. `build_initial_state()` provides defaults; `opencouch_active_sessions` row registers the active session. |
+| **Subsequent turns** | Checkpointer restores accumulated state. Only the new user turn is emitted. The session row's `last_active_at` updates. |
+| **`/end`** | Optional feedback prompt → `record_session_feedback()` → `end_session()` → `summarize_session` writes the episodic arc → `commit_session_memory` promotes held candidates → active-session row deleted. |
+| **20-min inactivity** | Background sweeper finds expired session rows and runs the same `end_session()` flow with the runtime's default LLM client. Held candidates and episodic arcs are written even if the user never typed `/end`. |
+| **Process shutdown** | `__aexit__` best-effort finalizes anything still open (when `finalize_active_sessions_on_close=True`, the default). |
+| **Resume after `/end`** | Same thread_id works. Transcript persists. Next turn starts a fresh session and a fresh candidate buffer. |
+| **Incognito** | All four backends in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). The active-session table is skipped. |
 
 ---
 
@@ -96,14 +118,18 @@ access via `runtime.context.llm_client` — not dict access.
 ```python
 @dataclass(slots=True, frozen=True)
 class WorkflowContext:
-    llm_client: BaseLLMClient | None          # control-plane LLM (safety, routing, memory)
-    memory_store: MemoryStore                  # unified read/write across 3 namespaces
+    llm_client: BaseLLMClient | None          # control-plane LLM (safety, routing, memory extraction)
+    memory_store: MemoryStore                  # unified read/write across semantic / episodic / procedural
     crisis_log_backend: CrisisLogBackend       # always-on audit trail
-    memory_mode: MemoryMode                    # persistent | guest | incognito
-    response_llm: BaseLLMClient | None = None  # selectable response-writer (fast/quality)
-    embedding_provider: EmbeddingProvider | None = None
+    memory_mode: MemoryMode                    # INCOGNITO / LOCAL / SYNCED
+    response_llm: BaseLLMClient | None = None  # optional response-writing LLM; falls back to llm_client
+    embedding_provider: EmbeddingProvider | None = None  # for hybrid retrieval and write-time indexing
     session_memory_buffer: SessionMemoryBuffer | None = None  # held candidates until session end
 ```
+
+A convenience property `control_llm` returns `llm_client` for
+nodes that just want "the safety / routing / memory model"
+without caring whether a separate response model is configured.
 
 :::note Why frozen?
 Immutability guarantees that no node can accidentally modify a
@@ -113,11 +139,32 @@ memory overhead. Both are free correctness wins.
 
 ---
 
+## Active session recovery
+
+`PersistentAgentRuntime` keeps an `opencouch_active_sessions` table
+in the same SQLite checkpoint database. Each row carries the
+thread's `session_buffer` (held semantic / procedural candidates),
+`max_crisis_level`, and `transcript_start_index` for the current
+session. A 20-minute inactivity sweeper auto-finalizes expired
+sessions, and `__aexit__` best-effort finalizes anything still open
+on shutdown — so held candidates and session-end summarization
+trigger reliably even if the user never types `/end`.
+
+In `INCOGNITO` mode the same flow runs entirely in memory: the
+checkpoint goes to `:memory:` and the active-session table is
+skipped.
+
+---
+
 ## Key files
 
 | File | Purpose |
 |---|---|
-| `agent/persistence.py` | `PersistentAgentRuntime` — run_turn, run_turn_stream, end_session, record_session_feedback |
-| `agent/graph.py` | build_agent_workflow, build_initial_state, state_to_output, run_agent |
-| `agent/state.py` | `AgentState` TypedDict with reducer annotations |
+| `agent/persistence.py` | `PersistentAgentRuntime` — `run_turn`, `run_turn_stream`, `end_session`, `record_session_feedback`, sweeper, active-session recovery |
+| `agent/graph.py` | `build_agent_workflow`, `build_initial_state`, `state_to_output`, `run_agent` |
+| `agent/state.py` | All state fragments + `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
+| `agent/audit/sqlite_crisis_log.py` | SQLite crisis log with retention purge |
+| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/audit/sqlite_session_feedback.py` | SQLite feedback store |

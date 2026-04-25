@@ -7,118 +7,105 @@ import StateFields from '@site/src/components/StateFields';
 
 # Agent State
 
-One `AgentState` TypedDict flows through the entire graph. Every
-node reads from it and writes back partial updates (deltas).
+One `AgentState` dict flows through every node. Nodes read from it
+and return **partial deltas**; LangGraph merges those deltas back
+in — using a reducer when one is declared, or last-write-wins
+otherwise.
 
-Fields with **reducers** (`operator.add`, `_merge_dicts`) are
-merged automatically by LangGraph — nodes return only their own
-keys and the reducer handles accumulation across the graph and
-across turns via the checkpointer.
+## Mental model
 
-Fields without reducers use **last-write-wins** — the most recent
-delta replaces the previous value.
+| Lifecycle | What it means | Examples |
+|---|---|---|
+| **input** | Set once by the caller at turn start | `message`, `user_id`, `channel` |
+| **reducer** | Annotated with a reducer; survives the turn and accumulates across turns via the checkpointer | `history`, `session_progress`, `exercise_state`, `diagnostics` |
+| **loaded** | Re-fetched each turn from the memory store | `working_memory`, `procedural_profile.*` |
+| **turn-scoped** | Fresh each turn, last-write-wins | `crisis`, `route`, `response_text` |
 
-Click any field below to see what it does, who sets it, and its
-type.
+That's the whole story. The interactive table below splits the
+schema into nine groups and tags every field with one of these
+four labels — click a section to expand it.
+
+## Field reference
 
 <StateFields />
 
 ---
 
-## Lifecycle
+## Working memory
 
-Not all fields survive between turns. Understanding which persist
-and which are re-derived matters for debugging and eval design.
+`working_memory` is a list of structured dicts, not pre-formatted
+strings. Two entry types:
 
-**Input** — set by `build_initial_state()` from `AgentInput`. Only
-the current user turn is emitted into `history` and `transcript` —
-the `operator.add` reducer appends it to the checkpoint's
-accumulated list.
-
-**Reducer-backed** — fields with `Annotated[..., reducer]` that
-accumulate across the graph and across turns:
-
-- `history` / `transcript` — `operator.add` appends new turns.
-  `build_initial_state` emits `[user_turn]`; `finalize_turn_node`
-  emits `[assistant_turn]`. The checkpointer restores prior turns.
-- `progress` — `_merge_dicts` merges per-turn fields (`turn_count`,
-  `stage`) with cross-turn fields (`exercise_type`, `exercise_step`)
-  from the checkpoint. This is how exercise state persists without
-  a manual carry-forward hack.
-- `diagnostics` — `_merge_dicts` lets all I/O nodes write their own
-  timing/write-count keys independently. Parallel extractors write
-  simultaneously without racing.
-
-**Loaded per turn** — `load_memory_node` populates `working_memory`
-with structured `WorkingMemoryEntry` dicts (semantic facts + episodic
-arcs via hybrid RRF retrieval), `memory.procedural_rules` (full rule
-set from the user's procedural profile), and
-`memory.proactive_recall_enabled` (the recall toggle). These are raw
-structured data — formatting happens on demand at prompt-build time.
-
-**Turn-scoped** — reset at the start of each turn, then filled by
-nodes as the graph executes:
-
-- `crisis` — safety assessment (level, confidence, reason, flags)
-  from `crisis_gate_node`
-- `routing.route` — `"therapeutic"` or `"crisis"` from the gate
-- `routing.response_style` — which response style was selected (supportive,
-  reflective, technique, clarifying, psychoeducation, guided_exercise, closing)
-- `routing.response_style_source` — how the style was selected (keyword, llm,
-  default)
-- `routing.response_style_type` — category (therapeutic, operational, crisis)
-- `routing.therapeutic_approach` — therapeutic approach for this turn (MI, CBT,
-  ACT, DBT, grief, IPT, PFA, or none)
-- `response` — the generated reply (text, kind, guidance)
-
-## Working memory structure
-
-`working_memory` carries structured `WorkingMemoryEntry` dicts,
-not pre-formatted strings. Two entry types:
-
-| Type | Fields | Example formatted output |
+| Type | Key fields | Renders as |
 |---|---|---|
-| `SemanticWorkingMemoryEntry` | `type="semantic"`, `evidence_quote` | "Previously noted: I have a sister named Sarah." |
-| `EpisodicWorkingMemoryEntry` | `type="episodic"`, `summary`, `primary_themes`, `is_catch_up` | "Last session (grief): talked about loss after my dog died." |
+| `SemanticWorkingMemoryEntry` | `evidence_quote`, `category`, `subject`, `predicate`, `object` | `[relationship] User WORRIES_ABOUT work — "my boss is terrible"` |
+| `EpisodicWorkingMemoryEntry` | `summary`, `primary_themes`, `is_catch_up`, `approach_used`, `approach_context` | `Last session (grief): talked about loss after my dog died.` |
 
-Formatting happens via `format_working_memory_entries()` at three
-surfaces: the therapeutic prompt builder, the dispatcher prompt, and
-the CLI's context panel. Legacy `str` entries from older checkpoints
-pass through unchanged.
+Formatting via `format_working_memory_entries()` happens at three
+surfaces only: the therapeutic prompt builder, the dispatcher
+prompt, and the CLI's context panel. Legacy `str` entries from
+older checkpoints pass through unchanged.
 
 ## Public contract
 
-The external API sees `AgentInput` and `AgentOutput` — not
-`AgentState`. The state is internal to the graph.
+The external API only sees `AgentInput` and `AgentOutput` — the
+state itself is internal to the graph.
 
-| Model | Key fields |
+| Model | Public fields |
 |---|---|
-| `AgentInput` | message, channel, user_id, session_id, history, working_memory, installed_skills |
-| `AgentOutput` | response_text, response_type, crisis, response_style, response_style_type, response_style_source, therapeutic_approach, should_persist_memory, diagnostics |
-| `CrisisAssessment` | level (0-3), confidence, reason, needs_crisis_response, needs_clarification |
-| `Message` | role, content, **response_style** (`str | None`) — optional per-turn annotation stamped onto assistant transcript entries by `finalize_turn_node` |
+| `AgentInput` | `message`, `channel`, `user_id`, `session_id`, `history`, `working_memory`, `installed_skills` |
+| `AgentOutput` | `response_text`, `response_type`, `crisis`, `response_style`, `response_style_type`, `response_style_source`, `therapeutic_approach`, `should_persist_memory`, `diagnostics` |
+| `CrisisAssessment` | `level` (0–3), `confidence`, `reason`, `needs_crisis_response`, `needs_clarification` |
+| `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by `finalize_turn_node`) |
 
 ## Runtime context
 
-`WorkflowContext` is a frozen dataclass (`@dataclass(slots=True,
-frozen=True)`) injected via `runtime.context`. All nodes access it
-via attribute access (`runtime.context.llm_client`), not dict
-access.
+Runtime dependencies live on `WorkflowContext`, **not** on the
+state. It's a frozen dataclass injected via `runtime.context` —
+attribute access only.
 
 | Field | Type | Default |
 |---|---|---|
-| `llm_client` | `BaseLLMClient | None` | required |
+| `llm_client` | `BaseLLMClient \| None` | required |
 | `memory_store` | `MemoryStore` | required |
 | `crisis_log_backend` | `CrisisLogBackend` | required |
 | `memory_mode` | `MemoryMode` | required |
-| `embedding_provider` | `EmbeddingProvider | None` | `None` |
+| `response_llm` | `BaseLLMClient \| None` | `None` |
+| `embedding_provider` | `EmbeddingProvider \| None` | `None` |
+| `session_memory_buffer` | `SessionMemoryBuffer \| None` | `None` |
+
+`session_memory_buffer` is set by `PersistentAgentRuntime` so that
+the extractor nodes can park session-end candidates in a per-thread
+buffer that persists across restarts.
+
+<details>
+<summary>Schema implementation detail</summary>
+
+The schema is built from six TypedDict fragments — `AgentIdentityState`,
+`AgentConversationState`, `AgentPersistentState`, `AgentCrisisState`,
+`AgentGraphOutputState`, and `AgentPrivateState`. The parent graph
+declares three views over them:
+
+| Schema | Used as |
+|---|---|
+| `AgentGraphInputState` | Input — what `build_initial_state()` emits |
+| `AgentState` | Internal — the full union, used by every node |
+| `AgentGraphOutputState` | Output — what `state_to_output()` reads back |
+
+You don't need to think about the fragments to use the agent —
+they exist so the parent graph can give LangGraph distinct input
+and output schemas, which prevents reducer double-counting when the
+therapeutic subgraph completes.
+
+</details>
 
 ## Key files
 
-| File | What it defines |
+| File | Defines |
 |---|---|
-| `agent/state.py` | `AgentState` TypedDict with reducer annotations (`operator.add`, `_merge_dicts`) |
-| `agent/working_memory.py` | `WorkingMemoryEntry` types, factory functions, `format_working_memory_entry/entries` |
-| `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, stream event types |
-| `agent/graph.py` | `build_initial_state()` (input -> state), `state_to_output()` (state -> output) |
+| `agent/state.py` | All TypedDict fragments and the `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` schemas |
+| `agent/working_memory.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
+| `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ModeType`, stream events, `STAGE_LABELS` |
+| `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |
+| `agent/graph.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |

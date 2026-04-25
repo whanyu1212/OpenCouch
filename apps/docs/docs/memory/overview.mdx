@@ -13,10 +13,10 @@ layer to see how it writes, reads, and stores.
 
 <MemoryArchitecture />
 
-:::tip Post-response extraction is now policy-based
-Both extractors (semantic + procedural) still fan out simultaneously
-from `finalize_turn_node`, but they no longer write everything they
-extract directly into long-term memory. They now:
+:::tip Post-response extraction is policy-based
+Both extractors (semantic + procedural) fan out simultaneously
+from `finalize_turn_node`, but they don't write everything they
+extract directly into long-term memory. They:
 
 1. extract candidates with structured LLM output
 2. run deterministic write policy
@@ -35,35 +35,54 @@ instead of raw quotes. Formatting happens on demand at prompt-build
 time via `format_working_memory_entries()`.
 :::
 
+:::note Audit and memory are separate packages
+Crisis logs and session feedback live in
+[`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit) —
+not under `agent/memory/`. The split is enforced because audit
+records are operationally always-on, never feed the prompt, and never
+participate in the user-facing memory-recall toggle.
+`agent/memory/types/audit.py` only keeps compatibility re-exports of
+the audit record schemas.
+:::
+
 ---
 
 ## Current write model
 
 | Layer | Turn-time behavior | Session-end behavior |
 |---|---|---|
-| **Semantic** | Extracts candidates after the reply. Low-risk stable facts may commit immediately. Sensitive or interpretive content is held or repetition-gated. | Held candidates can promote after transcript support, episodic-summary support, or repetition. |
+| **Semantic** | Extracts candidates after the reply. Stable categories (`relationship`, `preference`, `coping_strategy`, `goal`) commit immediately. Sensitive or interpretive content is held; negative self-beliefs and emerging patterns are repetition-gated. | Held candidates can promote after transcript support, episodic-summary support, or repetition. |
 | **Episodic** | No per-turn writes. | One session summary arc is written at session end if the session is substantive enough. |
-| **Procedural** | Explicit durable instructions can commit immediately. Implicit agent-facing preferences are usually held. | Held implicit preferences can promote if they repeat strongly enough during the session. |
+| **Procedural** | Explicit durable instructions can commit immediately. Implicit agent-facing preferences are usually held; safety-conflict requests ("skip the safety check") are dropped. | Held implicit preferences can promote if they repeat strongly enough during the session. |
 
-Session end is now a shared seam, not just `/end`. The same commit path
-can run on explicit end, inactivity timeout, graceful shutdown, web end
-session, and voice disconnect.
+Session end is a shared seam, not just `/end`. The same commit path
+runs on explicit end, inactivity timeout (20 min), graceful shutdown,
+web end-session, and voice disconnect.
 
-Held semantic and procedural candidates live in a persisted active-session
-buffer until that seam runs, so delayed promotion survives restart rather
-than disappearing with the process.
+Held semantic and procedural candidates live in a `SessionMemoryBuffer`
+that is persisted in SQLite (`opencouch_active_sessions`) so delayed
+promotion survives restart rather than disappearing with the process.
 
 ---
 
 ## Memory modes
 
+Three persistence tiers are defined in `agent/memory/modes.py`:
+
 | Mode | Writes to disk | Embeddings | Crisis log | Feedback |
 |---|---|---|---|---|
-| **Incognito** | No | No | In-memory (ephemeral) | In-memory (ephemeral) |
-| **Persistent** | Yes (SQLite) | Yes | SQLite (90-day) | SQLite (180-day) |
+| **Incognito** | No (in-memory `:memory:` SQLite) | `NullEmbeddingProvider` | In-memory (ephemeral) | In-memory (ephemeral) |
+| **Local** | Yes (SQLite under `.store/`) | Configured provider | SQLite (90-day retention) | SQLite (180-day retention) |
+| **Synced** | Yes (treated like Local today) | Configured provider | SQLite | SQLite |
+
+`SYNCED` is reserved for a future remote persistence tier; runtime
+code currently treats it like `LOCAL` while the backend sync layer
+remains unimplemented. The CLI's `--memory-mode guest` is a friendly
+alias for `INCOGNITO`.
 
 The `--user-id` flag decouples memory identity from thread identity
-— switching threads preserves memory across sessions.
+— switching threads preserves memory across sessions. Without
+`--user-id`, the thread id is used as the memory owner.
 
 ---
 
@@ -71,29 +90,56 @@ The `--user-id` flag decouples memory identity from thread identity
 
 | Guardrail | What it prevents |
 |---|---|
-| **Unicode-aware tokenizer** | Non-English text (CJK, Cyrillic, accented Latin) now produces meaningful token sets for dedup and retrieval instead of empty sets. CJK characters are split into per-character tokens for search. |
-| **Procedural rule cap** | Active rules are capped at 20. When exceeded, the oldest rule is archived — not deleted — preventing unbounded system prompt inflation. |
+| **Unicode-aware tokenizer** | Non-English text (CJK, Cyrillic, accented Latin) produces meaningful token sets for dedup and retrieval instead of empty sets. CJK characters are split into per-character tokens for search. |
+| **Procedural rule cap with archival** | Active rules are capped; older or superseded rules are archived (not deleted) to prevent unbounded system prompt inflation. |
 | **Atomic batch writes** | The `aput_batch` store method wraps multi-record writes in a single SQLite transaction. A crash mid-batch cannot leave ghost active records. |
 | **Episodic date filter** | Query-based episodic retrieval excludes arcs older than 30 days. The first-turn catch-up (`alatest`) is not date-filtered — the most recent session summary always appears regardless of age. |
-| **Owner identity validation** | All memory nodes require either `user_id` or `session_id` in state. Missing both raises `ValueError` immediately instead of silently writing to a shared `"local-default"` namespace. |
-| **Safety marker consolidation** | Crisis-bypass detection markers (e.g., "skip the safety check") are defined once in `constants.py` and imported by both the candidate promoter and write policy — no drift risk between the two checks. |
+| **Owner identity validation** | `resolve_owner_id` requires either `user_id` or `session_id` in state. Missing both raises `ValueError` immediately instead of silently writing to a shared `"local-default"` namespace. |
+| **Safety marker consolidation** | Crisis-bypass detection markers (e.g., "skip the safety check") are defined once in `memory/constants.py` and imported by both the candidate promoter and write policy — no drift risk between the two checks. |
+| **Reconciliation as safety valve** | New facts that match an existing record's identifier slot can bump or supersede it; explicit correction markers ("actually", "not anymore", "no longer") trigger supersession with a strong evidence requirement. |
 
 ---
 
 ## Key files
 
+### Memory package (`agent/memory/`)
+
 | File | Purpose |
 |---|---|
-| `agent/memory/store.py` | `MemoryStore` protocol — `asearch_similar`, `aput`, `aput_batch`, `alatest` |
+| `agent/memory/store.py` | `MemoryStore` protocol — `aput`, `aput_batch`, `asearch_similar`, `alatest`, plus the in-memory `OpenCouchMemoryStore` |
 | `agent/memory/sqlite_store.py` | SQLite backend with embedding BLOB storage and transactional batch writes |
-| `agent/memory/retrieval.py` | RRF fusion helper |
-| `agent/memory/constants.py` | Shared safety markers and helpers (single source of truth) |
-| `agent/memory/candidates.py` | Candidate models + session buffer |
+| `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
+| `agent/memory/retrieval.py` | RRF fusion (`k=60`), lexical/dense rank, cosine similarity |
+| `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + Gemini / OpenAI / Null providers |
 | `agent/memory/text_tokens.py` | Unicode-aware tokenizer with CJK character splitting |
+| `agent/memory/constants.py` | Shared safety markers and procedural-request classification |
+| `agent/memory/candidates.py` | Candidate models + `SessionMemoryBuffer` |
 | `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
-| `agent/memory/write_policy.py` | Deterministic immediate-write / hold / drop policy |
-| `agent/memory/reconciliation.py` | Supersession and overlap handling |
-| `agent/memory/procedural.py` | `ProceduralProfile` load/save helpers with rule cap eviction |
+| `agent/memory/write_policy.py` | Deterministic immediate-write / hold / drop / require-repetition policy |
+| `agent/memory/semantic_policy.py` | Stable vs session-only categories, negative-self-belief and emerging-pattern markers |
+| `agent/memory/reconciliation.py` | Supersession and overlap handling for semantic + procedural writes |
+| `agent/memory/procedural.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
+| `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic (length + vocabulary) |
+| `agent/memory/extraction_prompts.py` | Semantic extraction prompts |
+| `agent/memory/procedural_prompts.py` | Procedural extraction prompts |
+| `agent/memory/summarization_prompts.py` | Session summarization prompts |
+| `agent/memory/hashing.py` | `hash_session_id()`, `iso_now()` |
+| `agent/memory/types/` | Pydantic models grouped by concern (semantic, episodic, procedural, therapeutic, primitives) |
+
+### Audit package (`agent/audit/`)
+
+| File | Purpose |
+|---|---|
+| `agent/audit/models.py` | `CrisisLogRecord`, `SessionFeedbackRecord`, classifier-path enums |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
+| `agent/audit/sqlite_crisis_log.py` | Durable SQLite crisis log with retention purge |
+| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/audit/sqlite_session_feedback.py` | Durable SQLite session feedback store |
+
+### Graph integration
+
+| File | Purpose |
+|---|---|
 | `agent/working_memory.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
 | `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
 | `agent/nodes/load_memory.py` | Per-turn retrieval with 30-day episodic date filter |

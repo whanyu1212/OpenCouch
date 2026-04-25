@@ -102,24 +102,37 @@ automatically.
 
 ### Voice mode
 
-Experimental speech preview via the OpenAI Realtime API. Requires
-`OPENAI_API_KEY`.
+LiveKit-native voice runtime. Requires LiveKit credentials
+(`LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`) plus
+`OPENAI_API_KEY` for the realtime model.
 
-<TerminalWindow title="bash — voice mode">
-{`uv run python -m opencouch_cli --voice`}
+<TerminalWindow title="bash — voice (browser room)">
+{`# Terminal 1: backend
+uv run python run_server.py
+
+# Terminal 2: agent worker
+uv run python -m voice.livekit.agent start
+
+# Open the test page (token-dispatch flow)
+open "http://127.0.0.1:8080/api/voice/livekit/test?room=my-room&dispatch=1"`}
 </TerminalWindow>
 
-This starts the FastAPI server and opens the voice test page in your
-browser. Speak into your microphone to have a voice conversation.
-This path currently supports low-latency speech, interruption,
-truncation, and a memory-backed prompt preload, but it does **not**
-yet expose the full agentic stack: no tool calling, no autonomous
-actions, and no full live text-graph orchestration during speech.
-On disconnect, however, the transcript is still routed through the
-shared session-end memory path, so voice sessions can write semantic,
-procedural, and episodic memory.
-See the [Voice (Experimental)](/docs/voice) page for
-details.
+For prompt / tool smoke tests without a LiveKit room:
+
+<TerminalWindow title="bash — voice (console)">
+{`# Spoken (uses your mic)
+uv run python -m voice.livekit.agent console
+
+# Text-only (fastest)
+uv run python -m voice.livekit.agent console --text`}
+</TerminalWindow>
+
+The voice runtime uses agent handoffs (`TherapeuticAgent` ↔
+`CrisisAgent`) and bounded `GroundingTask`s for exercises rather
+than running the full LangGraph text agent on every spoken turn.
+Memory loads at session start, refreshes selectively mid-session,
+and persists via a transcript replay on disconnect. See the
+[Voice (LiveKit)](/docs/voice) page for the full architecture.
 
 ## Slash commands
 
