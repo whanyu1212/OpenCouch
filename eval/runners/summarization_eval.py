@@ -155,7 +155,7 @@ def _build_state(case: dict[str, Any]) -> AgentState:
         "history": [],
         "user_id": case.get("user_id") or "eval-user",
         "session_id": case.get("session_id") or "eval-thread",
-        "progress": {"turn_count": len(case.get("transcript", []))},
+        "session_progress": {"turn_count": len(case.get("transcript", []))},
         "transcript": case.get("transcript", []),
     }
     return cast(AgentState, state)

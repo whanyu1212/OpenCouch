@@ -1,22 +1,13 @@
 """Pydantic request/response schemas for the HTTP API.
 
-These models are the API's public contract — they define what
-callers send and receive. They intentionally do NOT re-export the
-internal ``AgentState``, ``AgentInput``, or ``AgentOutput`` types
-directly, because those carry implementation detail (field names,
-optional fields, internal enums) that shouldn't leak to HTTP
-callers.
+These models are the API's public contract: they define what callers
+send and receive. They intentionally do not re-export the internal
+``AgentState``, ``AgentInput``, or ``AgentOutput`` types because those
+carry implementation details that should not leak to HTTP callers.
 
-Instead, the API models are thin wrappers that map to/from the
-internal types in the route handlers. This keeps the API surface
-stable even if the internal state schema evolves.
-
-Narrow exception: :data:`agent.memory.models.FeedbackLabel` is
-re-exported directly into ``EndSessionRequest.feedback``. It is a
-three-choice string literal (``"positive"`` / ``"negative"`` /
-``"skip"``) that IS the public contract for session feedback —
-there's no internal detail to hide, so a thin wrapper would be
-pure duplication.
+The route handlers own the mapping between these public schemas and the
+internal agent models, keeping the API surface stable as the graph state
+evolves.
 """
 
 from __future__ import annotations
@@ -27,7 +18,7 @@ from agent.memory.models import FeedbackLabel
 from core.config import ResponseModelTier
 
 
-# ── Request models ──────────────────────────────────────────────────
+# Request models
 
 
 class ChatRequest(BaseModel):
@@ -46,7 +37,7 @@ class ChatRequest(BaseModel):
         "than thread_id.",
     )
     response_model_tier: ResponseModelTier | None = Field(
-        default=None,
+        default="fast",
         description=(
             "Optional text-response tier. 'fast' favors lower latency; "
             "'quality' favors richer prose. Safety, routing, memory, "
@@ -58,9 +49,8 @@ class ChatRequest(BaseModel):
 class EndSessionRequest(BaseModel):
     """POST /api/threads/{thread_id}/end request body.
 
-    All fields optional — the body exists so we can add per-request
-    hints without changing the endpoint shape. Requests posting an
-    empty body (``{}`` or no body at all) still work.
+    All fields are optional so clients can post an empty body while the
+    endpoint remains extensible for future per-request hints.
     """
 
     feedback: FeedbackLabel | None = Field(
@@ -69,13 +59,13 @@ class EndSessionRequest(BaseModel):
             "Optional end-of-session rating: 'positive', 'negative', "
             "or 'skip'. When set, written to the session_feedback "
             "store before summarization runs. When null or omitted, "
-            "no feedback record is created — summarization proceeds "
+            "no feedback record is created and summarization proceeds "
             "as usual."
         ),
     )
 
 
-# ── Response models ─────────────────────────────────────────────────
+# Response models
 
 
 class CrisisInfo(BaseModel):
@@ -110,7 +100,7 @@ class ChatResponse(BaseModel):
         "grief_support, interpersonal_therapy, pfa, or none).",
     )
     crisis: CrisisInfo
-    diagnostics: dict = Field(
+    diagnostics: dict[str, object] = Field(
         default_factory=dict,
         description="Per-turn timing and decision metadata from the graph nodes.",
     )
@@ -170,7 +160,7 @@ class MemoryStatusResponse(BaseModel):
         description=(
             "Total number of session-feedback records across all "
             "sessions. Surfaced for observability dashboards and the "
-            "CLI's ``/memory status`` panel."
+            "CLI's /memory status panel."
         ),
     )
     proactive_recall_enabled: bool
@@ -183,7 +173,7 @@ class DeleteResponse(BaseModel):
     detail: str
 
 
-# ─��� WebSocket message models ────────────────────────────────────────
+# WebSocket message models
 
 
 class StreamStatusMessage(BaseModel):

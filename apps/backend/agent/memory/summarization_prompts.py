@@ -204,7 +204,7 @@ def build_summarization_system_prompt() -> str:
         "as the user's messages in the transcript. Do NOT introduce a\n"
         "second language, code-switch mid-string, or drop foreign-language\n"
         "words into a summary rendered in another language — the CLI and\n"
-        "future catch-up retrieval display these fields verbatim, and\n"
+        "catch-up and retrieval surfaces display these fields verbatim, and\n"
         "mixed-language strings look like a glitch to the user reading\n"
         "them days later. If the transcript itself mixes languages, pick\n"
         "the dominant one and stay in it for all fields.\n"

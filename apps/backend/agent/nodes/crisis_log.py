@@ -1,4 +1,4 @@
-"""Crisis log node — always-on safety audit trail.
+"""Crisis log node for the always-on safety audit trail.
 
 Writes a :class:`CrisisLogRecord` to the crisis log backend whenever a
 crisis event is detected and the crisis response has run. Always-on
@@ -6,10 +6,9 @@ regardless of memory mode: in incognito mode, ``user_id_or_null`` is
 null and ``session_id_opaque`` is a SHA-256 hash of the session id with
 no reverse mapping.
 
-Phase 1 v0.1 scope:
 - Writes one record per crisis event, keyed off ``state["crisis"]``.
 - Runs on the crisis branch only, after ``crisis_response_node``.
-- ``response_node_completed = True`` unconditionally in v0.1 (if we're
+- ``response_node_completed = True`` unconditionally (if we're
   executing, the response node finished — failures are handled by the
   response node's own try/except, not by this node).
 - Failures in this node are logged LOUDLY via ``exc_info=True`` but do
@@ -27,16 +26,12 @@ from langgraph.runtime import Runtime
 
 from agent.memory.hashing import hash_session_id as _hash_session_id
 from agent.memory.hashing import iso_now
-from agent.memory.models import CrisisLogRecord
+from agent.audit.models import CrisisLogRecord
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
-# Backward-compat: ``_hash_session_id`` used to live in this module.
-# It's now shared across memory subsystems (see agent/memory/hashing.py),
-# but existing imports like ``from agent.nodes.crisis_log import
-# _hash_session_id`` keep working via the alias above. The semantics
-# are identical — None/empty -> ``"__no_session_id__"`` placeholder,
-# otherwise SHA-256 of the UTF-8 bytes.
+# Keep ``_hash_session_id`` re-exported for existing imports; the canonical
+# implementation lives in ``agent.memory.hashing``.
 __all__ = ["_hash_session_id", "run_crisis_log_node"]
 
 logger = logging.getLogger(__name__)
@@ -48,47 +43,35 @@ async def run_crisis_log_node(
 ) -> dict[str, Any]:
     """Write a crisis event record to the crisis log backend.
 
-    Always-on: writes regardless of memory_mode. The record contains
-    classifier metadata and outcome flags but does NOT contain the
-    user's message text or any conversation history.
+    Args:
+        state: Current graph state for the turn being processed.
+        runtime: LangGraph runtime carrying the crisis log backend.
 
-    Returns an empty state delta — the write is a side effect. The
-    node is placed after ``crisis_response_node`` on the crisis branch
-    in the parent graph.
+    Returns:
+        An empty state delta. The node only performs the audit-log side effect.
     """
 
     crisis = state.get("crisis")
     if crisis is None or not crisis.needs_crisis_response:
-        # Defensive: if something wired this node onto a non-crisis turn,
-        # do nothing rather than writing a spurious record. The parent
-        # graph topology shouldn't let this happen, but the guard is
-        # cheap.
+        # Defensive guard: the parent graph should only route crisis turns here,
+        # but writing no record is safer than writing a spurious audit event.
         logger.debug("crisis_log_node called on non-crisis turn; skipping write")
         return {}
 
     backend = runtime.context.crisis_log_backend
 
-    # Read the crisis debug metadata from routing state. The crisis gate
-    # writes these three fields in its delta for every crisis-path turn
-    # (see ``agent/nodes/crisis_gate.py`` — the five dispatch paths each
-    # set all three before falling through to ``_build_crisis_delta``).
+    # Read the crisis debug metadata from the dedicated audit channel.
     #
-    # Missing-field defaults exist as a backward-compat safety net for
-    # partial-state test fixtures. If a field is missing in production,
-    # it means the crisis gate regressed and a new path was added
-    # without setting the metadata. We log a debug breadcrumb so the
-    # regression leaves a trace in the audit log.
-    routing = state.get("routing", {})
-    override_kind = routing.get("crisis_override_kind", "none")
-    classifier_path = routing.get("crisis_classifier_path", "deterministic")
-    llm_failure_occurred = routing.get("crisis_llm_failure_occurred", False)
+    # Missing-field defaults keep partial-state fixtures working. In production,
+    # a missing field means the crisis gate added a path without audit metadata.
+    crisis_audit = state.get("crisis_audit", {})
+    override_kind = crisis_audit.get("crisis_override_kind", "none")
+    classifier_path = crisis_audit.get("crisis_classifier_path", "deterministic")
+    llm_failure_occurred = crisis_audit.get("crisis_llm_failure_occurred", False)
 
-    if "crisis_classifier_path" not in routing:
-        # Breadcrumb for regressions: if a production crisis turn ever
-        # hits this debug line, the crisis gate is missing metadata for
-        # one of its dispatch paths.
+    if "crisis_classifier_path" not in crisis_audit:
         logger.debug(
-            "crisis_log_node: no classifier_path in routing state; "
+            "crisis_log_node: no classifier_path in crisis_audit state; "
             "using backward-compat default 'deterministic'"
         )
 

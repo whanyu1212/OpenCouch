@@ -15,13 +15,19 @@ from agent.prompts import (
 )
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.tools.web_search import find_local_crisis_resources
 
 logger = logging.getLogger(__name__)
 
 
 def _default_crisis_reply(state: AgentState) -> str:
-    """Return a deterministic fallback crisis reply."""
+    """Return a deterministic fallback crisis reply.
+
+    Args:
+        state: Current graph state containing optional crisis metadata.
+
+    Returns:
+        User-facing crisis fallback response.
+    """
 
     crisis = state.get("crisis")
     level = crisis.level if crisis is not None else 0
@@ -45,48 +51,24 @@ async def run_crisis_response_node(
 ) -> dict[str, Any]:
     """Generate a crisis-mode response and return the resulting state delta.
 
-    When an LLM client is available, attempts to extract the user's location
-    and look up verified regional crisis resources before generating the
-    reply. Both the location and resources are persisted in state for
-    observability. Falls back to a deterministic template on any error.
+    Args:
+        state: Current graph state after crisis classification and optional
+            resource lookup.
+        runtime: LangGraph runtime carrying the workflow context.
+
+    Returns:
+        A partial state update containing the crisis response fields.
     """
 
     llm_client = runtime.context.llm_client
 
-    # ── Step 1: Attempt location-aware resource lookup (silent on failure) ─
-    inferred_location = ""
-    found_resources: list[dict[str, str]] = []
-
-    if llm_client is not None:
-        try:
-            inferred_location, found_resources = await find_local_crisis_resources(
-                state, llm_client=llm_client
-            )
-        except Exception:
-            logger.warning(
-                "Crisis resource lookup failed; continuing without resources.",
-                exc_info=True,
-            )
-
-    # ── Step 2: Build an enriched view of state for the LLM prompt builder ─
-    # The prompt builder reads response.found_resources / response.inferred_location
-    # to inject verified hotlines into the system prompt. We construct an in-memory
-    # view that includes them without mutating the input state.
-    response_with_resources: dict[str, Any] = {
-        **state.get("response", {}),
-        "inferred_location": inferred_location,
-        "found_resources": found_resources,
-    }
-    enriched_state: AgentState = {**state, "response": response_with_resources}
-
-    # ── Step 3: Generate the empathetic reply, falling back deterministically ─
-    response_text = _default_crisis_reply(enriched_state)
+    response_text = _default_crisis_reply(state)
     if llm_client is not None:
         try:
             writer = get_stream_writer()
             chunks: list[str] = []
             async for chunk in llm_client.generate_text_stream(
-                prompt=build_crisis_response_prompt(enriched_state),
+                prompt=build_crisis_response_prompt(state),
                 system_instruction=build_crisis_response_system_prompt(),
             ):
                 chunks.append(chunk)
@@ -97,20 +79,13 @@ async def run_crisis_response_node(
                 "Crisis LLM response generation failed; using deterministic reply.",
                 exc_info=True,
             )
-            response_text = _default_crisis_reply(enriched_state)
+            response_text = _default_crisis_reply(state)
 
-    # ── Step 4: Return only the keys this node updated ────────────────────
     return {
-        "response": {
-            **response_with_resources,
-            "kind": ResponseCategory.CRISIS,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "route": "crisis",
-            "response_style": "crisis_response",
-            "response_style_source": "crisis_gate",
-            "response_style_type": ModeType.CRISIS,
-        },
+        "route": "crisis",
+        "response_style": "crisis_response",
+        "response_style_source": "crisis_gate",
+        "response_style_type": ModeType.CRISIS,
+        "response_kind": ResponseCategory.CRISIS,
+        "response_text": response_text,
     }

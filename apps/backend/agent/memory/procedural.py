@@ -33,7 +33,7 @@ Module layout:
 - :func:`aput_procedural_profile` — write; serializes the pydantic
   model to a dict so the store layer stays model-agnostic.
 - :func:`aupsert_procedural_rule` — load → reconcile → put convenience
-  for phase-D duplicate/conflict handling.
+  for duplicate and conflict handling.
 - :func:`aadd_procedural_rule` — compatibility wrapper that routes
   through the upsert helper and returns only the updated profile.
 - :func:`aset_proactive_recall` — load → toggle → put convenience.
@@ -43,10 +43,9 @@ Module layout:
   builders at response time to decide whether to emit the "do not
   proactively reference memory" constraint.
 
-All helpers are async because the underlying store is async. Callers
-that need sync access are doing something wrong — agent nodes and CLI
-command handlers are both async, so there's no call site that would
-need a sync variant.
+All helpers are async because the underlying store is async. Agent
+nodes and CLI command handlers are already async, so there is no sync
+variant.
 
 Concurrency note: additive procedural mutations are serialized with a
 per-user async lock inside this module, so concurrent writes in the
@@ -188,6 +187,9 @@ async def aput_procedural_profile(
         store (MemoryStore): Memory store to write to.
         user_id (str): User identifier.
         profile (ProceduralProfile): Procedural profile to persist.
+
+    Returns:
+        None: Writes the serialized profile to the procedural namespace.
     """
 
     await store.aput(
@@ -223,6 +225,9 @@ def _evict_oldest_rules(profile: ProceduralProfile) -> None:
 
     Args:
         profile (ProceduralProfile): Profile to mutate in place.
+
+    Returns:
+        None: Moves oldest active rules into the archive until under the cap.
     """
 
     while len(profile.rules) > MAX_ACTIVE_RULES:

@@ -137,7 +137,6 @@
     "expected_outcome": "extract",
     "expected_facts": [
       {
-        "category": "context",
         "object_type": "Person",
         "object_identifier_contains": "mother"
       }
@@ -165,7 +164,6 @@
     "expected_outcome": "extract",
     "expected_facts": [
       {
-        "category": "trigger",
         "predicate": "WORRIES_ABOUT",
         "object_type": "Concern",
         "object_identifier_contains": "perfect"
@@ -297,16 +295,8 @@
     "id": "extract_name_in_short_thanks",
     "message": "Thanks Sarah",
     "history": [],
-    "expected_outcome": "extract",
-    "expected_facts": [
-      {
-        "category": "relationship",
-        "predicate": "KNOWS",
-        "object_type": "Person",
-        "object_identifier_contains": "sarah"
-      }
-    ],
-    "notes": "Minimal name-only boundary case: isolates that a proper noun alone is enough to bypass the small-talk vocab gate. 'thanks' is in SMALL_TALK_VOCABULARY but 'sarah' is not."
+    "expected_outcome": "skip",
+    "notes": "Name-only acknowledgment. A bare proper noun is too ambiguous to persist as a relationship without role or support context."
   },
   {
     "id": "extract_therapist_mention_in_acknowledgment",
@@ -325,16 +315,8 @@
     "id": "extract_single_content_token_bypasses_gate",
     "message": "ok Sarah",
     "history": [],
-    "expected_outcome": "extract",
-    "expected_facts": [
-      {
-        "category": "relationship",
-        "predicate": "KNOWS",
-        "object_type": "Person",
-        "object_identifier_contains": "sarah"
-      }
-    ],
-    "notes": "Minimal boundary case: one small-talk token ('ok') + one non-vocab token ('sarah'). Proves a single content token is enough to bypass the gate."
+    "expected_outcome": "skip",
+    "notes": "Minimal boundary case: one small-talk token plus one proper noun should bypass the heuristic gate, but the extractor should still skip because the relationship is ambiguous."
   },
   {
     "id": "skip_pure_thanks_short",

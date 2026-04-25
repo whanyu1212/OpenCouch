@@ -1,9 +1,9 @@
-"""Terminal node that finalizes the turn's transcript before END.
+"""Terminal node that finalizes the turn transcript before END.
 
 This node exists because transcript finalization is the one concern that
 spans both branches and runs last: regardless of whether the turn took
 the crisis path or the therapeutic path, the final assistant response
-lives in ``state["response"]["text"]`` and needs to be appended to
+lives in ``state["response_text"]`` and needs to be appended to
 ``transcript`` + ``history`` so the next turn's ``get_history`` call in
 :class:`agent.persistence.PersistentAgentRuntime` sees it.
 
@@ -23,16 +23,25 @@ or in ``build_initial_state``:
   the graph.
 
 The cleanest shape is one tiny node, one responsibility. Its delta
-contains exactly ``transcript`` and ``history`` — nothing else. It
+contains exactly ``transcript`` and ``history`` - nothing else. It
 runs on both branches via the existing converge-before-END edges:
 
-    crisis_response_node → crisis_log_node → extract_semantic_facts_node
-      → finalize_turn_node → END
-    therapeutic_subgraph → extract_semantic_facts_node
-      → finalize_turn_node → END
+    crisis_resource_lookup_node → crisis_response_node → crisis_log_node
+      → finalize_turn_node
+        → extract_semantic_facts_node → END
+        → extract_procedural_rules_node → END
+    memory_control_node → finalize_turn_node
+        → extract_semantic_facts_node → END
+        → extract_procedural_rules_node → END
+    grounded_answer_node → finalize_turn_node
+        → extract_semantic_facts_node → END
+        → extract_procedural_rules_node → END
+    therapeutic_subgraph → finalize_turn_node
+        → extract_semantic_facts_node → END
+        → extract_procedural_rules_node → END
 
 The guard against appending an empty response is important: if some
-response node short-circuits without setting ``response.text``, we'd
+response node short-circuits without setting ``response_text``, we'd
 otherwise pollute the transcript with a blank assistant turn.
 """
 
@@ -49,7 +58,7 @@ from agent.state import AgentState
 
 async def run_finalize_turn_node(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],  # noqa: ARG001 — unused, shape contract
+    runtime: Runtime[WorkflowContext],  # noqa: ARG001 - required node shape
 ) -> dict[str, Any]:
     """Append the final assistant response to the transcript.
 
@@ -64,24 +73,24 @@ async def run_finalize_turn_node(
     the new assistant turn. If the response text is empty (which
     should only happen if a branch short-circuits without producing
     a reply), returns an empty delta so the transcript stays clean.
+
+    Args:
+        state: Current graph state after a response node has run.
+        runtime: LangGraph runtime, unused but required by node shape.
+
+    Returns:
+        State delta appending the assistant turn, or an empty delta.
     """
 
-    response_text = state.get("response", {}).get("text", "").strip()
+    response_text = str(state.get("response_text", "") or "").strip()
     if not response_text:
         # Nothing to append. Better to leave the transcript alone than
         # to write a blank assistant turn that the CLI would render.
         return {}
 
-    # v0.8 observability pass: stamp the routing mode onto the assistant
-    # turn dict so it round-trips through the checkpoint and surfaces
-    # in the CLI's /history panel. The mode string comes straight from
-    # ``state["routing"]["mode"]`` — whichever response node composed
-    # this reply set that field as part of its own delta. Falls back
-    # to ``None`` when routing hasn't resolved (edge cases: crisis
-    # short-circuit paths that never wrote the key, historical state
-    # predating this field). Persistence._messages_from_transcript
-    # reads the same key on load.
-    routing_mode = state.get("routing", {}).get("response_style") or None
+    # Stamp the routing mode onto the assistant turn so it round-trips through
+    # the checkpoint and surfaces in the CLI's /history panel.
+    routing_mode = state.get("response_style") or None
 
     assistant_turn = {
         "role": MessageRole.ASSISTANT.value,

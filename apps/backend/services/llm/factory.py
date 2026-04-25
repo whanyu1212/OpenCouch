@@ -1,3 +1,5 @@
+"""Factory helpers for constructing configured LLM provider clients."""
+
 from __future__ import annotations
 
 from typing import Literal

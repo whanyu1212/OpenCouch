@@ -1,14 +1,7 @@
-"""Shared helpers for memory-subsystem records.
+"""Shared timestamp and identifier helpers for memory-adjacent records.
 
-Two small utilities that were previously duplicated across
-``agent/nodes/crisis_log.py`` (``_hash_session_id``) and
-``agent/persistence.py`` (``_iso_now``). They're moved here so new
-memory subsystems (e.g. the session-feedback collector) can reuse them
-without cross-importing node-private helpers.
-
-Semantics are preserved exactly — the old private names are kept as
-module-local aliases at the original sites so existing tests and
-internal callers keep working unchanged.
+Memory, audit, and persistence code use these helpers to avoid
+duplicating timestamp formatting and opaque session-id hashing.
 """
 
 from __future__ import annotations

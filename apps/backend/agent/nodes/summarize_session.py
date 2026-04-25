@@ -1,4 +1,4 @@
-"""Session summarizer — runs once per session at session end.
+"""Session summarizer that runs once per session at session end.
 
 Unlike the other files in ``agent/nodes/``, this module does NOT export
 a LangGraph node function. It exports a standalone async function
@@ -9,18 +9,16 @@ a LangGraph node function. It exports a standalone async function
 Why not a graph node:
 
     Summarization runs at **session boundaries**, not per-turn. LangGraph's
-    value — multi-node orchestration, per-turn state reducers, conditional
-    routing — doesn't apply to a single end-of-session LLM call. Compiling
-    a throwaway one-node graph for this work would add scaffolding without
+    value - multi-node orchestration, per-turn state reducers, conditional
+    routing - does not apply to a single end-of-session LLM call. Compiling
+    a throwaway one-node graph for this work would add ceremony without
     any benefit. A bare async function with the same signature pattern as
     the extraction node is cleaner. The runtime already owns the store
     and the LLM client, so it can invoke the summarizer directly.
 
     This file lives in ``agent/nodes/`` anyway (not ``agent/memory/``)
-    because the analogous future work — the per-turn extract_facts node —
-    lives here. Keeping the session-boundary summarizer next to the
-    per-turn extractor makes the parallel structure visible to future
-    readers.
+    because it participates in the node-layer memory workflow alongside
+    the per-turn extractor.
 
 Design rules (mirror the extract_facts conventions):
 
@@ -37,7 +35,7 @@ Design rules (mirror the extract_facts conventions):
 3. **Failures degrade silently.** LLM errors, schema validation errors,
    and store write errors are all logged at WARNING level but never
    propagate. A summarization failure must not fail the session-end
-   flow — the user is trying to exit the CLI, not diagnose an LLM call.
+   flow; the user is trying to exit the CLI, not diagnose an LLM call.
 
 4. **Returns the written record** (or ``None``). The runtime uses this
    return value to render a farewell panel showing the user the summary
@@ -45,8 +43,7 @@ Design rules (mirror the extract_facts conventions):
    plain farewell instead."
 
 5. **Observability at INFO level.** The LLM's reason string is logged at
-   INFO so dogfood sessions surface summarizer decisions without rewiring
-   log levels — same pattern as the v0.3.1 extraction reason log.
+   INFO so summarizer decisions are visible during local evaluation.
 """
 
 from __future__ import annotations
@@ -99,6 +96,14 @@ def _session_arc_to_stored(
     rationale — in short, the crisis gate is the canonical source
     of truth for crisis severity and the summarizer should not
     re-interpret it.
+
+    Args:
+        arc: LLM-produced session arc.
+        owner_id: Owner id for the stored arc.
+        crisis_level_max: Peak crisis level observed during the session.
+
+    Returns:
+        Stored session arc ready for persistence.
     """
 
     now = _iso_now()
@@ -131,14 +136,15 @@ async def _write_session_arc(
     raised to the caller — a summarization failure must not break the
     session-end flow.
 
-    v0.8.1: accepts optional ``embedding`` and ``embedding_model``
-    kwargs matching the :class:`MemoryStore.aput` extension. When
-    provided, the summary arc is stored with its embedding attached
-    so the load_memory catch-up path can use hybrid retrieval to
-    surface relevant past sessions. When not provided (no embedding
-    provider, or the batch call failed), the arc is still written
-    but participates in retrieval via token-recall only — same
-    graceful-degradation pattern as the fact extractor.
+    Args:
+        store: Memory store to write to.
+        owner_id: Owner whose episodic namespace receives the arc.
+        stored_arc: Stored session arc to persist.
+        embedding: Optional document embedding for hybrid retrieval.
+        embedding_model: Optional embedding model identifier.
+
+    Returns:
+        None.
     """
 
     namespace = (owner_id, "episodic")
@@ -199,10 +205,9 @@ async def run_summarize_session(
             ``run_turn`` invocation. The LLM does NOT produce this
             field — it's a deterministic max-of-per-turn-crisis-gate-
             verdicts, so the crisis gate stays the single source of
-            truth for crisis severity. See the v0.4 ROADMAP status log
-            entry for the rationale and the design refactor that
-            removed ``crisis_level_max`` from the summarizer LLM's
-            output schema.
+            truth for crisis severity.
+        embedding_provider: Optional provider for storing a retrievable
+            embedding alongside the session arc.
         approach_hint: The dominant therapeutic modality used during
             the session (e.g., "cbt", "act"). Passed to the
             summarization prompt so the LLM extracts modality-specific
@@ -217,7 +222,6 @@ async def run_summarize_session(
     if ended_at is None:
         ended_at = _iso_now()
 
-    # ── Early exits ─────────────────────────────────────────────────────
     if llm_client is None:
         logger.debug("run_summarize_session: no llm_client; skipping")
         return None
@@ -230,8 +234,8 @@ async def run_summarize_session(
 
     owner_id = resolve_owner_id(state)
 
-    # Compute duration from started_at / ended_at. If parsing fails (e.g.
-    # malformed timestamp), degrade to 0 rather than crashing — the
+    # Compute duration from started_at / ended_at. If parsing fails (for
+    # example, malformed timestamps), degrade to 0 rather than crashing; the
     # summary is still useful without the duration field.
     duration_seconds = 0
     try:
@@ -246,13 +250,12 @@ async def run_summarize_session(
             ended_at,
         )
 
-    # Count user turns from the transcript. The state's progress.turn_count
+    # Count user turns from the transcript. The state's session_progress.turn_count
     # is technically 1-indexed and may include the current turn; using the
     # transcript is more reliable.
     transcript = state.get("transcript", [])
     user_turn_count = sum(1 for turn in transcript if turn.get("role") == "user")
 
-    # ── LLM structured-output summarization ─────────────────────────────
     try:
         result: SummarizationResult = await llm_client.generate_structured(
             prompt=build_summarization_user_prompt(
@@ -275,8 +278,7 @@ async def run_summarize_session(
         )
         return None
 
-    # Log the reason regardless — it's a free observability signal for
-    # prompt tuning, same INFO-level pattern as extract_facts.
+    # Log the reason regardless; it is a useful signal for prompt tuning.
     logger.info(
         "run_summarize_session: arc=%s reason=%r",
         "present" if result.arc is not None else "None",
@@ -284,12 +286,10 @@ async def run_summarize_session(
     )
 
     if result.arc is None:
-        # Legitimate skip — the LLM judged the session too thin to
-        # summarize. Not an error; the CLI should render a plain
-        # farewell without a summary panel.
+        # Legitimate skip: the LLM judged the session too thin to summarize.
+        # The CLI should render a plain farewell without a summary panel.
         return None
 
-    # ── Promote the LLM output to stored shape and write ────────────────
     try:
         stored_arc = _session_arc_to_stored(
             result.arc,
@@ -304,15 +304,15 @@ async def run_summarize_session(
         )
         return None
 
-    # v0.8.1: compute an embedding for the summary so the arc
-    # participates in hybrid retrieval when the next session opens.
+    # Compute an embedding for the summary so the arc participates in hybrid
+    # retrieval when the next session opens.
     # The summary prose is the canonical document-side representation
-    # of an arc — it's what the load_memory catch-up path renders as
+    # of an arc: it is what the load_memory catch-up path renders as
     # "Last session (themes): <summary>" and what the user's next-
     # session query would be trying to match semantically.
     #
     # Embedding failures degrade to None so a transient provider
-    # outage doesn't lose the arc — the store write still happens
+    # outage does not lose the arc; the store write still happens
     # via the token-recall path. Same contract as the extract_facts
     # embedding logic.
     arc_embedding: list[float] | None = None

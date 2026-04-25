@@ -1,13 +1,10 @@
-"""Embedding providers for semantic retrieval (v0.8.1).
+"""Embedding providers for hybrid memory retrieval.
 
-Before v0.8.1 the memory store's retrieval path was token-recall only:
-the v0.3.1 scorer in ``store.asearch`` computed
-``|query_tokens ∩ haystack_tokens| / |query_tokens|`` and returned
-matches above threshold 0.33. That works for exact-token overlap
-and reasonable paraphrases, but it has documented failure modes:
-stemming ("anxiety" ↔ "anxious"), synonyms ("sister" ↔ "sibling"),
-tense / number variation, and semantic paraphrase without lexical
-overlap. Those gaps are the main dogfood pain points v0.8.1 closes.
+Lexical token recall works well for exact overlap and simple
+paraphrases, but it misses stemming, synonyms, tense changes, and
+semantic paraphrases without shared tokens. Embedding providers add a
+dense retrieval path that complements lexical recall when credentials
+are configured.
 
 This module declares the :class:`EmbeddingProvider` protocol and
 three concrete implementations:
@@ -28,23 +25,22 @@ three concrete implementations:
   embedding via a ``NullEmbeddingProvider`` get back ``None``,
   which is the signal to fall back to token-recall.
 
-Design decisions locked for v0.8.1:
+Design decisions:
 
 1. **Protocol, not inheritance.** The :class:`EmbeddingProvider`
    protocol has exactly one method (``aembed``) plus two metadata
    properties (``dimension``, ``model_name``). Concrete classes
    implement the protocol structurally rather than inheriting from
-   an abstract base class — this matches the
+   an abstract base class. This matches the
    :class:`agent.memory.store.MemoryStore` pattern and keeps the
    provider surface minimal.
 
 2. **Metadata is part of the protocol.** ``dimension`` and
    ``model_name`` are required because the store writes the model
-   name alongside each record's embedding (in the ``embedding_model``
-   column added in v0.8.1). Later model
-   migrations can compare the stored model name against the current
-   provider's model name and skip retrieval on mismatched cohorts
-   until a re-embed sweep runs.
+   name alongside each record's embedding in the ``embedding_model``
+   column. Model migrations can compare the stored model name against
+   the current provider's model name and skip retrieval on mismatched
+   cohorts until a re-embed sweep runs.
 
 3. **Batch support.** ``aembed`` takes a list of texts and returns
    a list of embeddings (one per input). This matches the Gemini
@@ -56,7 +52,7 @@ Design decisions locked for v0.8.1:
    store serializes embeddings to a BLOB via
    ``struct.pack``/``unpack`` (see ``sqlite_store.py``). Keeping
    the protocol type as plain lists means callers don't need
-   numpy at the boundary — numpy only enters the picture inside
+   numpy at the boundary. numpy only enters the picture inside
    the retrieval scoring helper in ``retrieval.py``, and even
    there it's optional (the cosine similarity can run on pure
    Python floats).
@@ -77,7 +73,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +96,7 @@ DEFAULT_GEMINI_EMBEDDING_DIMENSION = 3072
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
-    """The async embedding interface for v0.8.1 retrieval.
+    """The async embedding interface for memory retrieval.
 
     Concrete implementations:
     - :class:`OpenAIEmbeddingProvider` — OpenAI text-embedding-3-large
@@ -122,6 +118,9 @@ class EmbeddingProvider(Protocol):
         handle model-migration cohorts. Should be stable across
         calls for a given provider instance — don't return random
         strings or timestamps.
+
+        Returns:
+            str: Stable embedding model identifier.
         """
         ...
 
@@ -134,6 +133,9 @@ class EmbeddingProvider(Protocol):
         cosine similarity. Mismatched dimensions are a signal to
         skip the record in the embedding path (the token-recall
         fallback still applies).
+
+        Returns:
+            int: Expected embedding vector dimension.
         """
         ...
 
@@ -264,10 +266,22 @@ class OpenAIEmbeddingProvider:
 
     @property
     def model_name(self) -> str:
+        """Return the configured OpenAI embedding model name.
+
+        Returns:
+            str: Embedding model identifier.
+        """
+
         return self._model
 
     @property
     def dimension(self) -> int:
+        """Return the configured OpenAI embedding dimensionality.
+
+        Returns:
+            int: Expected embedding vector dimension.
+        """
+
         return self._dimension
 
     async def awarmup(self) -> None:
@@ -396,10 +410,8 @@ class GeminiEmbeddingProvider:
                 "Set GEMINI_API_KEY or GOOGLE_API_KEY."
             )
 
-        # Import inside __init__ so the module can be imported in
-        # environments without google-genai installed (though the
-        # project always has it as of v0.8). Matches the laziness
-        # pattern used elsewhere in services/llm/.
+        # Import lazily so this module can load when google-genai is
+        # unavailable or unused.
         from google import genai
 
         self._client = genai.Client(api_key=resolved_key)
@@ -408,10 +420,22 @@ class GeminiEmbeddingProvider:
 
     @property
     def model_name(self) -> str:
+        """Return the configured Gemini embedding model name.
+
+        Returns:
+            str: Embedding model identifier.
+        """
+
         return self._model
 
     @property
     def dimension(self) -> int:
+        """Return the configured Gemini embedding dimensionality.
+
+        Returns:
+            int: Expected embedding vector dimension.
+        """
+
         return self._dimension
 
     async def awarmup(self) -> None:
@@ -453,7 +477,7 @@ class GeminiEmbeddingProvider:
         try:
             response = await self._client.aio.models.embed_content(
                 model=self._model,
-                contents=sanitized,
+                contents=cast(Any, sanitized),
                 config=types.EmbedContentConfig(
                     task_type=task_type,
                 ),

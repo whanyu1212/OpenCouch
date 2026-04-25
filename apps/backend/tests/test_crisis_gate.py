@@ -182,6 +182,55 @@ def test_detects_idiomatic_safe_override_separately() -> None:
     assert assessment.level == 0
 
 
+def test_detects_benign_planning_safe_override_separately() -> None:
+    """Benign planning language should not trigger a crisis clarification."""
+
+    state = build_initial_state(
+        AgentInput(message="Okay, I've planned it within my head."),
+        include_input_history=True,
+    )
+
+    override = detect_crisis_override(state)
+    assert override is not None
+    kind, assessment = override
+    assert kind == "idiomatic_safe"
+    assert assessment.level == 0
+    assert assessment.needs_clarification is False
+
+
+def test_post_safety_check_deescalates_default_crisis_reply_language() -> None:
+    """A post-crisis denial should de-escalate even after the default crisis reply."""
+
+    state = build_initial_state(
+        AgentInput(
+            message="I'm not going to do anything tonight. I just needed to say it out loud.",
+            history=[
+                {"role": "user", "content": "I've been thinking about ending it."},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Thank you for telling me this — I'm really glad you reached out. "
+                        "Your safety matters most right now. "
+                        "If you feel at risk of harming yourself, please contact your local "
+                        "emergency services right now or go to the nearest emergency department. "
+                        "If possible, move away from anything you could use to hurt yourself and "
+                        "contact a trusted person who can stay with you."
+                    ),
+                },
+            ],
+        ),
+        include_input_history=True,
+    )
+
+    override = detect_crisis_override(state)
+    assert override is not None
+    kind, assessment = override
+    assert kind == "idiomatic_safe"
+    assert assessment.level == 0
+    assert assessment.needs_crisis_response is False
+    assert assessment.needs_clarification is False
+
+
 # ─── Standalone crisis-gate node tests ────────────────────────────────────
 
 
@@ -196,14 +245,14 @@ async def test_run_crisis_gate_node_override_path_standalone() -> None:
 
     command = await run_crisis_gate_node(state, _MockRuntime())  # type: ignore[arg-type]
 
-    assert command.goto == "crisis_response_node"
+    assert command.goto == "crisis_resource_lookup_node"
     assert command.update["crisis"].level == 3
     assert command.update["crisis"].needs_crisis_response is True
-    assert command.update["routing"]["route"] == "crisis"
-    assert command.update["routing"]["crisis_override_kind"] == "imminent_risk"
-    assert command.update["routing"]["crisis_classifier_path"] == "override"
-    assert command.update["routing"]["crisis_llm_failure_occurred"] is False
-    assert command.update["response"]["kind"] == ResponseCategory.CRISIS
+    assert command.update["route"] == "crisis"
+    assert command.update["crisis_audit"]["crisis_override_kind"] == "imminent_risk"
+    assert command.update["crisis_audit"]["crisis_classifier_path"] == "override"
+    assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is False
+    assert command.update["response_kind"] == ResponseCategory.CRISIS
 
 
 @pytest.mark.asyncio
@@ -217,14 +266,14 @@ async def test_run_crisis_gate_node_no_llm_path_standalone() -> None:
 
     command = await run_crisis_gate_node(state, _MockRuntime())  # type: ignore[arg-type]
 
-    assert command.goto == "load_memory_node"
+    assert command.goto == "memory_control_gate_node"
     assert command.update["crisis"].level == 1
     assert command.update["crisis"].needs_crisis_response is False
     assert command.update["crisis"].needs_clarification is True
-    assert command.update["routing"]["route"] == "therapeutic"
-    assert command.update["routing"]["crisis_override_kind"] == "none"
-    assert command.update["routing"]["crisis_classifier_path"] == "deterministic"
-    assert command.update["routing"]["crisis_llm_failure_occurred"] is False
+    assert command.update["route"] == "therapeutic"
+    assert command.update["crisis_audit"]["crisis_override_kind"] == "none"
+    assert command.update["crisis_audit"]["crisis_classifier_path"] == "deterministic"
+    assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is False
 
 
 @pytest.mark.asyncio
@@ -250,13 +299,13 @@ async def test_run_crisis_gate_node_llm_success_path_standalone() -> None:
         _MockRuntime(llm_client=llm),
     )
 
-    assert command.goto == "crisis_response_node"
+    assert command.goto == "crisis_resource_lookup_node"
     assert command.update["crisis"].level == 2
-    assert command.update["routing"]["route"] == "crisis"
-    assert command.update["routing"]["crisis_override_kind"] == "none"
-    assert command.update["routing"]["crisis_classifier_path"] == "llm_primary"
-    assert command.update["routing"]["crisis_llm_failure_occurred"] is False
-    assert command.update["response"]["kind"] == ResponseCategory.CRISIS
+    assert command.update["route"] == "crisis"
+    assert command.update["crisis_audit"]["crisis_override_kind"] == "none"
+    assert command.update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
+    assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is False
+    assert command.update["response_kind"] == ResponseCategory.CRISIS
 
 
 @pytest.mark.asyncio
@@ -273,13 +322,13 @@ async def test_run_crisis_gate_node_llm_failure_fallback_standalone() -> None:
         _MockRuntime(llm_client=_FailingStructuredLLM()),
     )
 
-    assert command.goto == "load_memory_node"
+    assert command.goto == "memory_control_gate_node"
     assert command.update["crisis"].level == 1
     assert command.update["crisis"].needs_crisis_response is False
     assert command.update["crisis"].needs_clarification is True
-    assert command.update["routing"]["crisis_override_kind"] == "none"
-    assert command.update["routing"]["crisis_classifier_path"] == "deterministic"
-    assert command.update["routing"]["crisis_llm_failure_occurred"] is True
+    assert command.update["crisis_audit"]["crisis_override_kind"] == "none"
+    assert command.update["crisis_audit"]["crisis_classifier_path"] == "deterministic"
+    assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is True
 
 
 @pytest.mark.asyncio
@@ -305,11 +354,11 @@ async def test_run_crisis_gate_node_enforces_truth_table_on_llm_output() -> None
         _MockRuntime(llm_client=llm),
     )
 
-    assert command.goto == "load_memory_node"
+    assert command.goto == "memory_control_gate_node"
     assert command.update["crisis"].level == 0
     assert command.update["crisis"].needs_crisis_response is False
     assert command.update["crisis"].needs_clarification is False
-    assert command.update["routing"]["crisis_classifier_path"] == "llm_primary"
+    assert command.update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
 
 
 # ─── v0.9 safety-reorder regression tests ─────────────────────────────────
@@ -344,8 +393,9 @@ class _BrokenMemoryStore(OpenCouchMemoryStore):
 async def test_crisis_path_succeeds_with_broken_store() -> None:
     """v0.9 safety regression: a crisis message must reach crisis_response
     even when the memory store is entirely broken. The graph reorder
-    (START → crisis_gate → crisis_response) ensures the crisis path
-    never touches load_memory_node, so store failures are irrelevant."""
+    (START → crisis_gate → crisis_resource_lookup → crisis_response) ensures
+    the crisis path never touches load_memory_node, so store failures are
+    irrelevant."""
 
     result = await run_agent(
         AgentInput(message="I have pills and I am going to kill myself tonight."),

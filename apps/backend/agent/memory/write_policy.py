@@ -27,6 +27,15 @@ from agent.memory.semantic_policy import (
 
 
 def _lowered_texts(*values: str) -> str:
+    """Join non-empty values into one lowercase text blob.
+
+    Args:
+        values: Text fragments to normalize.
+
+    Returns:
+        Lowercase text joined with spaces.
+    """
+
     return " ".join(v.lower() for v in values if v).strip()
 
 

@@ -31,22 +31,19 @@ The system prompt enforces three orthogonal constraints:
 
 3. **Evidence is always a verbatim user quote.** Each rule must carry
    the specific user utterance that triggered the write as its
-   evidence field. This is the auditability hook for the future
-   ``/memory list rules`` UX: users need to be able to answer "why
+   evidence field. This supports the ``/memory list rules`` UX:
+   users need to be able to answer "why
    does the agent think I said that?" by reading the evidence.
 
-Phase scope:
-
-Phase C produces rules from:
+This writer produces rules from:
 
 - **explicit user requests** about how the agent should respond, and
 - **clear implicit agent-facing preferences** that may need repetition
   before persistence, such as "Meditation makes me more anxious."
 
-The phase-4 nightly consolidation pass that infers rules from
-accumulated facts is still a separate code path with different
-constraints. This writer should stay conservative and grounded in the
-current user message only.
+Any later consolidation path that infers rules from accumulated facts
+should remain separate from this writer. This writer stays conservative
+and grounded in the current user message only.
 """
 
 from __future__ import annotations

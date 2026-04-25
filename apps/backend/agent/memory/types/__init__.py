@@ -13,12 +13,6 @@ from agent.memory.types.audit import (
     FeedbackSource,
     SessionFeedbackRecord,
 )
-from agent.memory.types.consolidation import (
-    ConsolidationProposal,
-    ConsolidationProposalType,
-    ConsolidationRunRecord,
-    MergeProposalDetail,
-)
 from agent.memory.types.episodic import (
     ACTContext,
     CBTContext,
@@ -46,15 +40,6 @@ from agent.memory.types.procedural import (
     ProceduralRule,
     ProceduralRuleDraft,
     ProceduralRuleSource,
-)
-from agent.memory.types.relationships import (
-    CARE_KINDS,
-    FAMILY_KINDS,
-    FRIENDSHIP_KINDS,
-    PROFESSIONAL_KINDS,
-    ROMANTIC_KINDS,
-    RelationshipKind,
-    RelatesToEdge,
 )
 from agent.memory.types.semantic import (
     ExtractionResult,
@@ -96,23 +81,12 @@ __all__ = [
     "ProceduralProfile",
     "ProceduralRuleDraft",
     "ProceduralExtractionResult",
-    "RelationshipKind",
-    "FAMILY_KINDS",
-    "ROMANTIC_KINDS",
-    "FRIENDSHIP_KINDS",
-    "PROFESSIONAL_KINDS",
-    "CARE_KINDS",
-    "RelatesToEdge",
     "CrisisOverrideOutcome",
     "CrisisClassifierPath",
     "CrisisLogRecord",
     "CrisisLogLevelCounts",
     "CrisisLogPathCounts",
     "CrisisLogAggregate",
-    "ConsolidationProposalType",
-    "ConsolidationProposal",
-    "ConsolidationRunRecord",
-    "MergeProposalDetail",
     "TherapeuticResponseStyle",
     "DispatchDecision",
     "FeedbackLabel",

@@ -1,16 +1,9 @@
-"""Retrieval scoring helpers for v0.8.1 hybrid search.
+"""Retrieval scoring helpers for hybrid memory search.
 
-Before v0.8.1 the retrieval path was token-recall only: the
-``asearch`` methods on both :class:`agent.memory.store.OpenCouchMemoryStore`
-and :class:`agent.memory.sqlite_store.SqliteMemoryStore` computed
-``|query_tokens ∩ haystack_tokens| / |query_tokens|`` using the v0.3.1
-scorer and returned matches above threshold 0.33.
-
-v0.8.1 adds an embedding-similarity path AND a Reciprocal Rank
-Fusion (RRF) combiner that merges the two ranked lists into a
-single hybrid ranking. This module owns the lexical scorer, dense
-scorer, combiner, and cosine-similarity math so both stores can use
-the same scoring logic without duplicating it.
+This module owns the lexical scorer, dense scorer, Reciprocal Rank
+Fusion (RRF) combiner, and cosine-similarity math used by both memory
+stores. Lexical recall handles exact token overlap and proper nouns;
+dense retrieval handles paraphrases when embeddings are available.
 
 Why hybrid (RRF) rather than pure embedding:
 
@@ -20,8 +13,8 @@ Why hybrid (RRF) rather than pure embedding:
    me about Sarah" against a stored fact "my sister Sarah visited"
    is an exact overlap win for token-recall and an ambiguous mid-
    tier score for embeddings. The extractor writes proper-noun-heavy
-   facts (``KNOWS Sarah``, ``USES fluoxetine``), so this failure
-   mode would directly hurt dogfood quality.
+   facts (``KNOWS Sarah``, ``USES fluoxetine``), so lexical recall
+   must remain part of the ranking.
 
 2. **Short queries.** Embedding quality drops for short queries
    because there's not enough context for the model to disambiguate.
@@ -29,8 +22,8 @@ Why hybrid (RRF) rather than pure embedding:
 
 3. **Fallback path.** If the embedding provider is unavailable
    (guest mode, no API key, API outage), hybrid with only the
-   token-recall input gracefully degenerates to the v0.3.1
-   scorer — no special-case logic needed.
+   token-recall input gracefully degenerates to lexical search with
+   no special-case logic needed.
 
 Why RRF specifically (vs. weighted score fusion or cascade rerank):
 
@@ -46,11 +39,7 @@ Why RRF specifically (vs. weighted score fusion or cascade rerank):
   comparable as floats, but their rank positions are).
 - **Standard practice.** RRF is the default hybrid mode in
   Elasticsearch, Vespa, Milvus, and the BEIR benchmark suite's
-  hybrid baselines. Choosing it for v0.8.1 means future
-  contributors see a familiar pattern.
-
-See ``notes/voice-chat-design.md`` and the v0.8.1 planning
-discussion in the task-log for the rationale.
+  hybrid baselines, so contributors see a familiar pattern.
 """
 
 from __future__ import annotations
@@ -108,13 +97,10 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     ``0.0`` for either vector being empty or all-zero (no
     meaningful similarity to compute).
 
-    Pure Python implementation — no numpy dependency. At
-    v0.8.1 scale (hundreds of records per user, 768-dim
-    embeddings) this is fast enough: a single cosine is ~50
-    microseconds on CPU, and a full namespace scan is well
-    under 10ms for any realistic store size. When v0.8.2 or
-    later wants to scale, this function becomes the boundary
-    where numpy or scipy enters the picture.
+    Pure Python implementation with no numpy dependency. At the
+    current expected scale of hundreds of records per user, this is
+    fast enough for a namespace scan. This function is the boundary
+    where a vectorized implementation can replace the loop if needed.
 
     Args:
         a: First vector as a list of floats.
@@ -151,8 +137,8 @@ class ScoredRecord:
     Used as the intermediate type in the retrieval path before
     the final fusion + limit slice. The ``insertion_index`` field
     is used as the tiebreaker when two records share the same
-    score, matching the v0.3.1 token-recall contract so search
-    behavior is deterministic across runs.
+    score, matching the lexical-search contract so behavior is
+    deterministic across runs.
     """
 
     record: "StoreRecord"
@@ -193,7 +179,7 @@ def lexical_rank(
     query_text: str,
     match_threshold: float,
 ) -> list[ScoredRecord]:
-    """Rank candidates by the v0.3.1 token-recall scorer.
+    """Rank candidates by lexical token recall.
 
     Args:
         candidates: Candidate records with caller-defined insertion indices.
@@ -306,8 +292,8 @@ def rrf_fuse(
 
     Ties in RRF score are broken by the record's ``insertion_index``
     (ascending) so behavior stays deterministic across runs. This
-    matches the v0.3.1 token-recall contract where insertion order
-    was the tiebreaker for equal-recall records.
+    matches the lexical-search contract where insertion order is the
+    tiebreaker for equal-recall records.
 
     When one of the input lists is empty (e.g., no embedding
     provider configured, so ``dense_ranked`` is empty), RRF
@@ -319,8 +305,7 @@ def rrf_fuse(
 
     Args:
         lexical_ranked: The token-recall ranked results, sorted
-            best-first. Usually the output of the v0.3.1 token-recall
-            scan.
+            best-first. Usually the output of the lexical scan.
         dense_ranked: The embedding-similarity ranked results, sorted
             best-first. Empty when no embedding provider is available.
         limit: Maximum number of records to return after fusion.

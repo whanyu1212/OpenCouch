@@ -1,9 +1,7 @@
-"""Candidate models for the phase-1 memory write policy split.
+"""Candidate models for the memory write policy.
 
 These types sit between the LLM extractor output and the persistent
-memory store. Phase 1 does not add a real session buffer yet, but it
-does stop treating "the extractor produced it" as identical to "write
-it now". The node layer first promotes extractor outputs into
+memory store. The node layer first promotes extractor outputs into
 ``MemoryCandidate`` instances, then the deterministic policy engine
 decides whether to commit immediately, defer, require repetition, or
 drop.
@@ -133,7 +131,7 @@ def build_semantic_candidate(
         message (str): Current user message for durability/sensitivity heuristics.
 
     Returns:
-        SemanticCandidate: Phase-1 semantic candidate with deterministic policy hints.
+        SemanticCandidate: Semantic candidate with deterministic policy hints.
     """
 
     lowered = f"{message} {write.evidence_quote}".lower()
@@ -208,7 +206,7 @@ def build_procedural_candidate(
         turn_index (int): Turn index for candidate provenance.
 
     Returns:
-        ProceduralCandidate: Phase-1 procedural candidate with deterministic policy hints.
+        ProceduralCandidate: Procedural candidate with deterministic policy hints.
     """
 
     lowered = f"{message} {draft.rule} {' '.join(draft.evidence)}".lower()

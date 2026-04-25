@@ -127,15 +127,21 @@ def _state_with_pre_existing_diagnostics(**extra: Any) -> Any:
         "transcript": [],
         "history": [],
         "working_memory": [],
-        "memory": {
+        "session_memory": {
             "summary": "",
             "active_concerns": [],
             "open_loops": [],
             "current_goal": None,
         },
-        "routing": {"route": "therapeutic", "response_style": "pending"},
-        "response": {"text": "", "kind": "therapeutic"},
-        "progress": {"turn_count": 1},
+        "procedural_profile": {
+            "procedural_rules": [],
+            "proactive_recall_enabled": False,
+        },
+        "route": "therapeutic",
+        "response_style": "pending",
+        "response_text": "",
+        "response_kind": "therapeutic",
+        "session_progress": {"turn_count": 1},
         "diagnostics": {"pre_existing_key": 42, "another_key": "val"},
         **extra,
     }
@@ -192,9 +198,7 @@ def test_crisis_gate_build_delta_does_not_spread_diagnostics() -> None:
     Uses the helper directly since the full crisis_gate_node returns a
     Command object (harder to call in isolation).
     """
-    state = _state_with_pre_existing_diagnostics()
     delta = _build_crisis_delta(
-        state,
         CrisisAssessment(),
         override_kind="none",
         classifier_path="deterministic",

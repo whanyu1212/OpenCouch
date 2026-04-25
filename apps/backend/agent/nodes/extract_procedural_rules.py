@@ -1,4 +1,4 @@
-"""Procedural rule writer node with hot-path policy + session buffering.
+"""Procedural rule writer node with hot-path policy and session buffering.
 
 Runs after the response generation node on every turn and writes zero
 or more procedural rules to the user's ``ProceduralProfile`` in the
@@ -6,14 +6,14 @@ procedural namespace of the memory store. The node splits extraction from
 immediate persistence: the LLM output first becomes a procedural
 candidate, the deterministic policy decides whether it is safe and
 durable enough to ``commit_now``, and only those candidates are written
-to the profile. Held procedural candidates are buffered for later phases
+to the profile. Held procedural candidates are buffered for session-end review
 rather than written immediately. Parallels the design of
 :func:`agent.nodes.extract_facts.run_extract_semantic_facts_node`
-structurally — per-turn side effect, runs on both the crisis and
+structurally: per-turn side effect, runs on both the crisis and
 therapeutic branches, silently skips when no LLM client is available
 or memory mode is INCOGNITO, always returns an empty state delta.
 
-Phase-1 design rules:
+Design rules:
 
 1. **Conservative writing.** Most turns produce zero rules. Rule writes
    are reserved for moments when the user either explicitly asks the
@@ -23,13 +23,13 @@ Phase-1 design rules:
    ``agent/memory/procedural_prompts.py`` for the prompt design notes.
 
 2. **Silent skip on incognito or no LLM.** Incognito mode is a privacy
-   promise — no long-term writes to the memory store. The writer node
+   promise: no long-term writes to the memory store. The writer node
    no-ops without logging an error. Same contract as the semantic
    extractor.
 
 3. **Failures degrade silently.** LLM errors, schema validation errors,
    and store write errors are all logged at WARNING level but never
-   propagate. The writer is a side-effect node — a failure here must
+   propagate. The writer is a side-effect node; a failure here must
    not fail the parent turn.
 
 4. **Always return an empty state delta.** The write is a side effect;
@@ -39,11 +39,10 @@ Phase-1 design rules:
 5. **Policy before persistence.** Extracted rule drafts become
    :class:`ProceduralCandidate` instances first. The deterministic
    policy can downgrade a candidate to ``commit_at_session_end`` or
-   ``drop``. In phase 1 those non-``commit_now`` outcomes are
-   diagnostics-only and do not write.
+   ``drop``. Non-``commit_now`` outcomes are diagnostics-only on the
+   hot path and can be reviewed at session end.
 
-6. **Conservative reconciliation.** Phase D still keeps the node
-   simple, but new writes now reconcile against the existing profile:
+6. **Conservative reconciliation.** New writes reconcile against the existing profile:
    exact duplicates are skipped and clearly stronger/conflicting rules
    can replace older wording. This avoids stale procedural guidance
    accumulating indefinitely without adding a full background job.
@@ -104,11 +103,16 @@ async def run_extract_procedural_rules_node(
     incognito mode. All other failure modes (LLM errors, schema
     validation errors, store write errors) are logged at WARNING level
     with ``exc_info=True`` but never propagate.
+
+    Args:
+        state: Current graph state after response generation.
+        runtime: LangGraph runtime carrying memory dependencies.
+
+    Returns:
+        State delta containing procedural writer diagnostics.
     """
 
-    # v0.8 observability: time the full writer call and report
-    # write count via the diagnostics dict. Same shape as the
-    # semantic extractor's _diagnostics_delta helper.
+    # Time the full writer call and report write counts via diagnostics.
     start = time.monotonic()
 
     def _diagnostics_delta(
@@ -120,7 +124,19 @@ async def run_extract_procedural_rules_node(
         procedural_policy_drops: int = 0,
         reason: str = "",
     ) -> dict[str, Any]:
-        """Return a state delta carrying just the writer's diagnostics."""
+        """Return a state delta carrying just the writer's diagnostics.
+
+        Args:
+            procedural_writes: Number of procedural rules written.
+            procedural_candidates: Total LLM candidate count.
+            procedural_commit_now_candidates: Candidates eligible for immediate write.
+            procedural_session_end_holds: Candidates buffered until session end.
+            procedural_policy_drops: Candidates rejected by deterministic policy.
+            reason: Human-readable writer or skip reason.
+
+        Returns:
+            State delta with diagnostics only.
+        """
 
         return {
             "diagnostics": {
@@ -134,16 +150,22 @@ async def run_extract_procedural_rules_node(
             }
         }
 
-    # ── Early exits ─────────────────────────────────────────────────────
-
-    # v0.9: crisis gate first — same rationale as extract_facts.
-    route = state.get("routing", {}).get("route")
-    if route == "crisis":
-        logger.debug(
-            "extract_procedural_rules_node: crisis path; skipping to avoid "
-            "delaying crisis response delivery"
+    # Skip extraction on high-priority operational routes for the same reason
+    # as semantic extraction: these replies are not useful procedural material.
+    route = state.get("route")
+    if route in {"crisis", "memory_control", "grounded_lookup"}:
+        skip_reason = (
+            "crisis_path"
+            if route == "crisis"
+            else "memory_control_path"
+            if route == "memory_control"
+            else "grounded_lookup_path"
         )
-        return _diagnostics_delta(reason="skipped: crisis_path")
+        logger.debug(
+            "extract_procedural_rules_node: %s; skipping extraction",
+            skip_reason,
+        )
+        return _diagnostics_delta(reason=f"skipped: {skip_reason}")
 
     llm_client = runtime.context.llm_client
     memory_mode = runtime.context.memory_mode
@@ -172,11 +194,10 @@ async def run_extract_procedural_rules_node(
         )
         return _diagnostics_delta(reason="skipped: small_talk_gate")
 
-    progress = state.get("progress", {})
-    turn_count = int(progress.get("turn_count", 1))
+    session_progress = state.get("session_progress", {})
+    turn_count = int(session_progress.get("turn_count", 1))
     turn_index = max(0, turn_count - 1)
 
-    # ── LLM structured-output writing ───────────────────────────────────
     try:
         result: ProceduralExtractionResult = await llm_client.generate_structured(
             prompt=build_procedural_writer_user_prompt(state),
@@ -191,12 +212,9 @@ async def run_extract_procedural_rules_node(
         )
         return _diagnostics_delta(reason="skipped: llm error")
 
-    # Log the writer's reason regardless of whether rules were produced —
-    # it's a free observability signal for prompt tuning. INFO level (not
-    # DEBUG) so dogfood sessions can see writer decisions without having
-    # to rewire logging. The conservative writer rejects most turns, and
-    # knowing *why* it rejected a turn is the fastest way to catch prompt
-    # drift.
+    # Log the reason regardless of whether rules were produced; the
+    # conservative writer rejects most turns, and the reason is the fastest
+    # way to catch prompt drift.
     logger.info(
         "extract_procedural_rules_node: %d rules, reason=%r",
         len(result.rules),
@@ -206,7 +224,6 @@ async def run_extract_procedural_rules_node(
     if not result.rules:
         return _diagnostics_delta(reason=result.reason)
 
-    # ── Build candidates and apply deterministic write policy ─────────
     immediate_candidates: list[tuple[Any, Any]] = []
     session_end_holds = 0
     policy_drops = 0
@@ -244,11 +261,10 @@ async def run_extract_procedural_rules_node(
             reason=result.reason,
         )
 
-    # ── Per-draft write ────────────────────────────────────────────────
     # Each surviving candidate gets promoted to a ProceduralRule via
     # build_procedural_rule (which adds the added_at timestamp and
     # source="explicit_user"), then upserted into the user's profile.
-    # The helper handles the load → reconcile → put idiom internally;
+    # The helper handles the load-reconcile-put idiom internally;
     # we don't touch the store directly.
     #
     # Error handling is per-draft: a failure to write one rule does NOT

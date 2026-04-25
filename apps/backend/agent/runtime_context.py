@@ -1,10 +1,15 @@
-"""Runtime-only dependencies injected into the LangGraph workflow.
+"""Runtime dependency contract for the OpenCouch LangGraph workflow.
 
-This module owns the :class:`WorkflowContext` dataclass that the graph nodes
-read via ``runtime.context``. It lives in its own module so both
-:mod:`agent.graph` (which registers the context schema with the StateGraph)
-and the node modules (which read from ``runtime.context``) can import it
-without creating an import cycle.
+Graph state in ``agent.state`` stores checkpointable conversation channels:
+messages, routing outputs, prompt-visible memory, and diagnostics. This module
+defines the separate runtime context for process-owned services that should not
+be serialized into checkpoints.
+
+``agent.graph`` and ``agent.therapeutic.graph`` register ``WorkflowContext`` as
+their LangGraph ``context_schema``. Nodes then read dependencies from
+``runtime.context``. One-shot calls build the context in ``agent.graph``;
+thread-persistent sessions build it in ``agent.persistence`` so each thread can
+share runtime stores while keeping graph state scoped to the checkpoint.
 """
 
 from __future__ import annotations
@@ -21,38 +26,42 @@ from services.llm.base import BaseLLMClient
 
 @dataclass(slots=True, frozen=True)
 class WorkflowContext:
-    """Runtime-only dependencies injected into the LangGraph workflow."""
+    """Immutable dependency bundle injected through ``runtime.context``.
+
+    Attributes:
+        llm_client: Control-plane LLM used by safety classification, routing,
+            memory extraction, and other structured/background tasks.
+        memory_store: Shared semantic, episodic, and procedural memory store.
+            ``load_memory_node`` reads from it; extractor and exercise nodes may
+            write to it when memory mode allows.
+        crisis_log_backend: Always-on audit backend used by
+            ``crisis_log_node``. This remains available even when user memory
+            is incognito.
+        memory_mode: Current persistence tier. Memory-aware nodes use this to
+            decide whether durable memory reads/writes are allowed.
+        response_llm: Optional response-writing LLM. Therapeutic response nodes
+            prefer this and fall back to ``llm_client`` when it is not set.
+        embedding_provider: Optional embedding provider for hybrid retrieval
+            and write-time indexing.
+        session_memory_buffer: Optional per-thread candidate buffer. Hot-path
+            extractors add held semantic/procedural candidates here so
+            session-end commit can promote or drop them.
+    """
 
     llm_client: BaseLLMClient | None
-    # The unified memory store is the single entry point for long-term
-    # memory reads and writes. It fans out internally to the right
-    # namespace (semantic / episodic / procedural). Typed as the
-    # protocol so either implementation can be injected —
-    # :class:`OpenCouchMemoryStore` for in-memory (tests, incognito)
-    # or :class:`SqliteMemoryStore` for persistent (v0.8+, local mode).
-    # See ``agent/memory/store.py`` for the protocol definition.
     memory_store: MemoryStore
-    # The always-on crisis safety log. Writes regardless of memory_mode;
-    # incognito mode still records events, but without user identity.
     crisis_log_backend: CrisisLogBackend
     memory_mode: MemoryMode
     response_llm: BaseLLMClient | None = None
-    # v0.8.1: embedding provider for hybrid retrieval. When set,
-    # the extractor nodes compute embeddings at write time and
-    # the load_memory node computes query embeddings for the
-    # RRF fusion path in the store's ``asearch_similar`` method.
-    # When None or :class:`NullEmbeddingProvider`, retrieval
-    # degrades to token-recall only — the v0.3.1 contract that
-    # shipped before v0.8.1. Defaults to None so test helpers can
-    # construct minimal contexts without specifying an embedding
-    # provider explicitly.
     embedding_provider: EmbeddingProvider | None = None
-    # Phase 2: held semantic/procedural candidates live here until
-    # end_session decides whether they are durable enough to commit.
     session_memory_buffer: SessionMemoryBuffer | None = None
 
     @property
     def control_llm(self) -> BaseLLMClient | None:
-        """Pinned infrastructure client used by safety, routing, and memory."""
+        """Return the infrastructure client used by safety, routing, and memory.
+
+        Returns:
+            Shared control LLM client, if configured.
+        """
 
         return self.llm_client

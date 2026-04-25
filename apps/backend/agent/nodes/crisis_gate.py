@@ -10,7 +10,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
-from agent.memory.models import CrisisClassifierPath, CrisisOverrideOutcome
+from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import CrisisAssessment, ModeType, ResponseCategory
 from agent.prompts import (
     build_crisis_classifier_prompt,
@@ -88,7 +88,6 @@ def enforce_crisis_truth_table(assessment: CrisisAssessment) -> CrisisAssessment
 
 
 def _build_crisis_delta(
-    state: AgentState,
     assessment: CrisisAssessment,
     *,
     override_kind: CrisisOverrideOutcome,
@@ -99,7 +98,6 @@ def _build_crisis_delta(
     """Build the state delta for one crisis-gate decision.
 
     Args:
-        state (AgentState): Current graph state before the crisis update is applied.
         assessment (CrisisAssessment): Final assessment chosen for this turn.
         override_kind (CrisisOverrideOutcome): Override outcome recorded for audit metadata.
         classifier_path (CrisisClassifierPath): Classifier path that produced the assessment.
@@ -107,36 +105,18 @@ def _build_crisis_delta(
         duration_ms (float): Total wall-clock time spent in the crisis gate.
 
     Returns:
-        dict[str, Any]: Partial state update containing crisis, routing, response, and diagnostics data.
+        dict[str, Any]: Partial state update containing crisis, crisis-audit,
+            turn-scoped routing/output channels, and diagnostics data.
     """
 
     route = "crisis" if assessment.needs_crisis_response else "therapeutic"
-    routing = state.get("routing", {})
-    response = state.get("response", {})
-
-    return {
+    delta: dict[str, Any] = {
         "crisis": assessment,
-        "routing": {
-            **routing,
-            "route": route,
-            "response_style": (
-                "safety_check" if route == "crisis" else routing.get("response_style")
-            ),
-            "response_style_source": "crisis_gate",
-            "response_style_type": (
-                ModeType.CRISIS
-                if route == "crisis"
-                else routing.get("response_style_type")
-            ),
+        "route": route,
+        "crisis_audit": {
             "crisis_override_kind": override_kind,
             "crisis_classifier_path": classifier_path,
             "crisis_llm_failure_occurred": llm_failure_occurred,
-        },
-        "response": {
-            **response,
-            "kind": (
-                ResponseCategory.CRISIS if route == "crisis" else response.get("kind")
-            ),
         },
         "diagnostics": {
             "crisis_gate_ms": round(duration_ms, 2),
@@ -144,20 +124,26 @@ def _build_crisis_delta(
             "crisis_level": assessment.level,
         },
     }
+    if route == "crisis":
+        delta["response_style"] = "safety_check"
+        delta["response_style_source"] = "crisis_gate"
+        delta["response_style_type"] = ModeType.CRISIS
+        delta["response_kind"] = ResponseCategory.CRISIS
+    return delta
 
 
 async def run_crisis_gate_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
-) -> Command[Literal["crisis_response_node", "load_memory_node"]]:
+) -> Command[Literal["crisis_resource_lookup_node", "memory_control_gate_node"]]:
     """Run the crisis gate for the current turn.
 
     Args:
-        state (AgentState): Current graph state for the turn being processed.
-        runtime (Runtime[WorkflowContext]): LangGraph runtime carrying the workflow context.
+        state: Current graph state for the turn being processed.
+        runtime: LangGraph runtime carrying the workflow context.
 
     Returns:
-        Command[Literal["crisis_response_node", "load_memory_node"]]: State update plus the next node to run.
+        State update plus the next node to run.
     """
 
     llm_client = runtime.context.llm_client
@@ -198,16 +184,15 @@ async def run_crisis_gate_node(
 
     gate_duration_ms = (time.monotonic() - gate_start) * 1000
     delta = _build_crisis_delta(
-        state,
         assessment,
         override_kind=override_kind,
         classifier_path=classifier_path,
         llm_failure_occurred=llm_failure_occurred,
         duration_ms=gate_duration_ms,
     )
-    next_node = (
-        "crisis_response_node"
+    next_node: Literal["crisis_resource_lookup_node", "memory_control_gate_node"] = (
+        "crisis_resource_lookup_node"
         if assessment.needs_crisis_response
-        else "load_memory_node"
+        else "memory_control_gate_node"
     )
     return Command(update=delta, goto=next_node)

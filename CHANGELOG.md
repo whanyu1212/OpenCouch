@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-25 — Behavior Eval Stabilization + Extraction Eval Fixes
+
+### Eval sweep
+- Ran the deterministic and hybrid behavior eval suite with LangSmith tracing disabled to avoid quota noise during validation
+- Fixed deterministic crisis classification for negated self-harm planning language so protective statements like "not planning to hurt myself" no longer escalate to crisis response
+- Tightened therapeutic fallback routing for narrow reflective and clarifying cases while preserving LLM-primary routing for broader ambiguous turns
+- Fixed guided-exercise selection so "completely stuck" no longer false-matches the continuum exercise through the `complete` selector
+- Clarified the dispatcher closing boundary so mid-conversation "thanks, that helps" acknowledgments stay supportive, while explicit wind-down language still routes to closing
+- Fixed grounded factual lookup routing so session wrap-up takeaway requests containing "today" stay inside therapeutic closing/support instead of routing to web search
+
+### Extraction eval
+- Updated `extraction_eval.py` to grade both immediate semantic writes and session-held semantic candidates, matching the current write-policy architecture where sensitive categories like `trigger` and `loss` are intentionally held
+- Strengthened semantic extraction prompt examples for stable life context, bereavement, relationship-in-acknowledgment, therapist mentions, and pure-small-talk boundaries
+- Added narrow deterministic semantic backstops for high-precision facts the LLM may skip: helper relationships, therapist mentions, PhD context, and perfectionism triggers
+- Reclassified bare name-only acknowledgments such as "Thanks Sarah" / "ok Sarah" as skip cases because they are too ambiguous to persist safely without role or support context
+
+### Validation
+- Crisis eval passed in deterministic and hybrid modes (`46/46`)
+- Therapeutic routing hybrid passed (`53/53`)
+- Therapeutic behavior hybrid passed (`18/18`)
+- Long session trajectory hybrid passed (`39/39`)
+- Memory trajectory hybrid passed (`15/15`)
+- Extraction hybrid passed (`33/33`)
+- Summarization hybrid passed (`13/13`) and procedural writer hybrid passed (`18/18`)
+- Targeted extractor, diagnostics, and state-contract tests passed (`67 passed`)
+
 ## 2026-04-23 — Memory Internals Streamlining + Crisis Gate Cleanup
 
 ### Memory internals
@@ -25,6 +51,10 @@
 - Tightened `CrisisAssessmentSchema` with schema-native field descriptions and simplified the node flow by removing duplicate validation layers
 - Removed unused crisis-gate shadow monitoring and disagreement logging after confirming it was adding complexity without an active operational consumer
 - Added direct standalone `run_crisis_gate_node(...)` tests for override routing, deterministic fallback, LLM-primary success, LLM-exception fallback, and truth-table enforcement
+
+### CLI therapeutic theme refinement
+- Updated the OpenCouch CLI Rich theme from amber-dominant tones to a calmer **sage + muted blue** palette to better match the therapeutic product tone
+- Applied clearer color-role separation across `primary`, `accent`, `brand`, `panel`, `warning`, and `danger` to improve emotional hierarchy and crisis-state contrast
 
 ### Other fixes
 - Fixed mid-exercise text routing to read live exercise state from `progress` instead of stale routing state, preventing exercise continuity from drifting after side turns

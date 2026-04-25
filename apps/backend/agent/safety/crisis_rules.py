@@ -15,28 +15,11 @@ IMMINENT_PATTERNS = (
     r"\b(?:have|got)\s+(?:a|the|my)?\s*(?:gun|rope|knife|pills?|razor|blade)\b.{0,35}\b(?:for|to)\b.{0,20}\b(?:myself|end it|kill myself)\b",
     r"\b(?:this is my last|last message|goodbye everyone|you won't hear from me)\b",
     r"\b(?:swallow|take)\b.{0,20}\b(?:all|whole bottle|entire bottle)\b.{0,20}\b(?:pills?|tablets?)\b",
-    # v0.5: "going to the bridge" + timing — location-based imminent signals.
-    # The original `plan to|going to` pattern required explicit self-harm verbs
-    # after it ("going to kill myself"), but "going to the bridge tonight" is
-    # just as urgent without using the literal words. Locations associated
-    # with suicide (bridge, roof, tracks, garage with car running) paired
-    # with timing (tonight, tomorrow, right now) are high-specificity
-    # imminent signals. Regression pin: level_3_bridge_tonight test case.
+    # Location-based imminent signals can omit explicit self-harm verbs.
     r"\b(?:going to|headed to|driving to|walking to)\s+(?:the\s+)?(?:bridge|roof|railroad|tracks|river)\b",
-    # v0.5: stockpiling + preparation language. "Saved up pills" + "wrote
-    # letters" / "goodbye letters" is a textbook imminent-preparation
-    # cluster per policy/crisis.md but wasn't captured in regex. This
-    # pattern catches the stockpile half; the preparation half is in the
-    # "last message / goodbye" pattern above. Regression pin:
-    # level_3_saved_up_pills.
+    # Stockpiling language is urgent even before a self-harm verb appears.
     r"\b(?:saved up|stockpil(?:ed|ing)|collected|got enough)\s+(?:the\s+|my\s+|enough\s+)*(?:pills?|meds|medication|tablets?|sleeping pills?)\b",
-    # v0.5: means + proximate timing, generalized form. Catches
-    # "gun tomorrow morning" and similar "means word + tomorrow/
-    # tonight/today/soon/this week" combinations. The `have/got` pattern
-    # above required a 'for/to myself' suffix which was too strict —
-    # most real imminent disclosures don't add that suffix, they just
-    # name the means and the time. Regression pin:
-    # level_3_tomorrow_morning_gun.
+    # Means plus proximate timing is enough for imminent classification.
     r"\b(?:gun|rope|knife|pills?|razor|blade|rifle|firearm|overdose)\b.{0,40}\b(?:tomorrow|tonight|today|this (?:morning|afternoon|evening|week)|soon|right now|when\b.{0,20}\bleaves?)\b",
     r"\b(?:tomorrow|tonight|today|this (?:morning|afternoon|evening|week)|soon|right now)\b.{0,40}\b(?:gun|rope|knife|pills?|razor|blade|rifle|firearm|overdose)\b",
 )
@@ -44,30 +27,14 @@ IMMINENT_PATTERNS = (
 # Explicit self-harm/suicidal language, including colloquialisms/evasion slang.
 CLEAR_SELF_HARM_PATTERNS = (
     r"\b(?:kill myself|k[i1]ll m(?:yself|y self)|suicid(?:e|al)|end my life|want to die|die by suicide)\b",
-    # v0.5: added gerund forms ("hurting myself", "harming myself") in
-    # addition to the bare infinitive. Same bug class as the dispatcher's
-    # Stage B "end up" / "ending up" gap. "I keep thinking about hurting
-    # myself" was silently falling through to level 0 because the regex
-    # only matched "hurt myself" exact. Regression pin:
-    # level_2_hurting_myself_thought.
+    # Include gerund forms such as "hurting myself" and "harming myself".
     r"\b(?:hurt(?:ing)? myself|harm(?:ing)? myself|self[- ]?harm|cut(?:ting)? again|burn(?:ing)? myself)\b",
     r"\b(?:off myself|unalive myself|kms)\b",
     r"\b(?:don't want to be here anymore|nobody would miss me if i was gone|better off dead)\b",
     r"\b(?:go to sleep and (?:never|not) wake up|wish i didn't exist)\b",
-    # Suicidal ideation phrased as "ending it" or "wanting it to be over" — these
-    # are common evasions that omit the explicit "myself" object but signal the
-    # same ideation. Captured here so the deterministic tier flags them at L2.
+    # Common evasions can omit the explicit "myself" object.
     r"\b(?:end(?:ing)? it(?: all)?|want it to be over|ready for it to end)\b",
-    # v0.5: "no reason to live" and close variants. This phrase is
-    # explicitly listed in policy/crisis.md as a warning sign but wasn't
-    # captured in regex. It's clearly level 2 content — stating there's
-    # no reason to live is an explicit suicidal ideation disclosure.
-    # Two sub-patterns:
-    #  1. Direct "no/any reason/point to live" (covers "no reason to live",
-    #     "don't see any reason to live", "there's no point in living").
-    #  2. "nothing to live for" and the bleak "can't see a future".
-    # Regression pin: level_2_no_reason_to_live_explicit ("I don't see any
-    # reason to live anymore") and the canonical "no reason to live".
+    # "No reason to live" variants are explicit suicidal ideation.
     r"\b(?:no|any)\s+(?:reason|point)\s+(?:to|in)\s+liv(?:e|ing)\b",
     r"\b(?:nothing (?:left )?to live for|can't see a (?:future|reason))\b",
 )
@@ -79,16 +46,9 @@ AMBIGUOUS_PATTERNS = (
     r"\b(?:dark thoughts|not sure i can keep going|can't keep going)\b",
     r"\b(?:i want to disappear|i don't want to exist)\b",
     r"\b(?:better off without me|i'm a burden|everyone would be better without me)\b",
-    # v0.5: "no way out" is a trapped-feeling warning sign per
-    # policy/crisis.md but wasn't captured. "It feels like there's no way
-    # out of this" is ambiguous enough that we clarify rather than
-    # escalate to crisis response — but we must at least clarify.
-    # Regression pin: level_1_no_way_out.
+    # Trapped-feeling language should clarify rather than escalate.
     r"\bno way out\b",
-    # v0.5: passive anhedonia with "no point" framing — "don't see the
-    # point in getting out of bed", "no point in (doing) anything". These
-    # are warning signs but without explicit self-harm they're level 1,
-    # not level 2. Regression pin: level_1_no_reason_to_wake_up.
+    # Passive "no point" framing is level 1 without explicit self-harm.
     r"\b(?:don't see the point|no point)\b.{0,30}\b(?:getting (?:out of )?bed|waking up|going on|anything|even trying)\b",
 )
 
@@ -105,21 +65,37 @@ IDIOMATIC_SAFE_PATTERNS = (
     r"\b(?:i could kill for)\b",
 )
 
+# Benign planning or sorting language that can resemble "I have a plan" when
+# stripped from context, but is not self-harm content on its own.
+BENIGN_PLANNING_SAFE_PATTERNS = (
+    r"\bplanned it within my head\b",
+    r"\bfigured it out\b",
+    r"\bsorted it\b",
+)
+
 # Denials after a safety-check turn.
 SAFETY_DENIAL_PATTERNS = (
     r"\bnot suicidal\b",
     r"\bnot thinking about\s+(?:self[- ]?harm|suicide|hurting myself|harming myself|killing myself|ending it)\b",
+    r"\bnot\s+(?:planning|going|gonna|intending)\s+to\s+(?:hurt|harm|kill)\s+myself\b",
+    r"\bno\s+(?:plan|intent|intention)\s+to\s+(?:hurt|harm|kill)\s+myself\b",
     r"\b(?:i'?m safe|i am safe|i would never do that|i won't do that|i won't do anything)\b",
     r"\b(?:just venting|figure of speech|didn't mean it literally)\b",
     # Require explicit negation-of-intent, not bare "no" + self-harm
-    # co-occurrence. "No, I'm still thinking about ending it" must NOT
-    # match — that's confirming risk, not denying it.
+    # co-occurrence. "No, I'm still thinking about ending it" confirms risk.
     r"\bno(?:,| -)?\s*(?:i'?m not|not)\s+(?:hurting myself|harming myself|killing myself|ending it|thinking about it)\b",
 )
 
 
 def _combined_user_text(state: AgentState) -> str:
-    """Combine recent user turns into a single lowercase text blob."""
+    """Combine recent user turns into a lowercase text blob.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        Lowercase text containing recent user turns plus the current message.
+    """
 
     recent_user_turns = [
         turn["content"]
@@ -131,27 +107,50 @@ def _combined_user_text(state: AgentState) -> str:
 
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
-    """Return whether the text matches any pattern in the provided tuple."""
+    """Return whether text matches any regex pattern.
+
+    Args:
+        text: Text to search.
+        patterns: Regex patterns to test.
+
+    Returns:
+        Whether any pattern matches.
+    """
 
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _redact_matches(text: str, patterns: tuple[str, ...]) -> str:
+    """Remove matched spans from text before follow-up pattern scans.
+
+    Args:
+        text: Text to redact.
+        patterns: Regex patterns whose matched spans should be removed.
+
+    Returns:
+        Text with matched spans replaced by spaces.
+    """
+
+    redacted = text
+    for pattern in patterns:
+        redacted = re.sub(pattern, " ", redacted, flags=re.IGNORECASE)
+    return redacted
 
 
 def _previous_mode_was_safety_check(state: AgentState) -> bool:
     """Return whether the most recent assistant turn appears to be a safety check.
 
-    Uses two detection strategies:
-
-    1. **User denial in current message**: if the user's current message
-       contains safety-denial language AND the assistant's prior turn
-       contained safety-related language, we're in a post-safety-check
-       context.
-    2. **Phrase-based**: check the assistant's most recent response for
-       known safety-check phrases. The list is intentionally broad to
-       catch LLM-generated variations.
+    The phrase list is intentionally broad to catch LLM-generated variations.
 
     The crisis assessment state is reset each turn by ``build_initial_state``
     (it's not persisted via checkpoint merge), so state-based detection
     isn't viable.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        Whether the latest assistant turn looks like a safety check.
     """
 
     history = state.get("history", [])
@@ -177,6 +176,11 @@ def _previous_mode_was_safety_check(state: AgentState) -> bool:
                 "harming yourself",
                 "suicidal thought",
                 "suicidal ideation",
+                "your safety matters most right now",
+                "move away from anything you could use to hurt yourself",
+                "contact a trusted person who can stay with you",
+                "local crisis line",
+                "nearest emergency department",
             )
         ):
             return True
@@ -189,13 +193,15 @@ def detect_crisis_override(
 ) -> tuple[Literal["imminent_risk", "idiomatic_safe"], CrisisAssessment] | None:
     """Return hard overrides for obvious boundary cases.
 
-    Override precedence (highest to lowest):
-    1. Imminent risk — ALWAYS wins. A prior idiom must never suppress
-       a current imminent disclosure.
-    2. Idiomatic safe — only matches the CURRENT message, not combined
-       history. This prevents a prior "work is killing me" from
-       suppressing crisis detection on a later message.
-    3. Safety-denial context — post-safety-check de-escalation.
+    Imminent risk takes priority over safe idioms. Safe idioms only match
+    the current message so old benign language cannot suppress new risk.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        Override kind plus assessment, or ``None`` when normal classification
+        should run.
     """
 
     text = _combined_user_text(state)
@@ -213,7 +219,8 @@ def detect_crisis_override(
             ),
         )
 
-    if _matches_any(current_message, IDIOMATIC_SAFE_PATTERNS) and not (
+    safe_patterns = IDIOMATIC_SAFE_PATTERNS + BENIGN_PLANNING_SAFE_PATTERNS
+    if _matches_any(current_message, safe_patterns) and not (
         _matches_any(current_message, CLEAR_SELF_HARM_PATTERNS)
         or _matches_any(current_message, AMBIGUOUS_PATTERNS)
     ):
@@ -222,7 +229,7 @@ def detect_crisis_override(
             CrisisAssessment(
                 level=0,
                 confidence="high",
-                reason="Matched common idiomatic language without self-harm intent.",
+                reason="Matched safe idiomatic or benign planning language without self-harm intent.",
                 needs_crisis_response=False,
                 needs_clarification=False,
             ),
@@ -258,7 +265,14 @@ def detect_crisis_override(
 
 
 def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
-    """Assess crisis risk using deterministic rules."""
+    """Assess crisis risk using deterministic rules.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        Deterministic crisis assessment for the turn.
+    """
 
     text = _combined_user_text(state)
 
@@ -267,7 +281,9 @@ def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
         _, assessment = override
         return assessment
 
-    if _matches_any(text, CLEAR_SELF_HARM_PATTERNS):
+    risk_text = _redact_matches(text, SAFETY_DENIAL_PATTERNS)
+
+    if _matches_any(risk_text, CLEAR_SELF_HARM_PATTERNS):
         return CrisisAssessment(
             level=2,
             confidence="high",
@@ -276,7 +292,7 @@ def assess_crisis_risk_deterministically(state: AgentState) -> CrisisAssessment:
             needs_clarification=False,
         )
 
-    if _matches_any(text, AMBIGUOUS_PATTERNS):
+    if _matches_any(risk_text, AMBIGUOUS_PATTERNS):
         return CrisisAssessment(
             level=1,
             confidence="medium",

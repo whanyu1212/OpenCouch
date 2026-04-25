@@ -1,47 +1,26 @@
-"""Always-on session-feedback backend.
+"""Always-on session-feedback backends.
 
-Explicit end-of-session feedback ("was this session helpful?") written
-by :meth:`PersistentAgentRuntime.record_session_feedback` when the user
-provides a thumbs rating at ``/end``, ``/exit`` (save=y), or
-``POST /threads/{id}/end``. Mirrors :mod:`agent.audit.crisis_log` in
-shape and privacy posture — always-on regardless of memory mode, but
-``user_id_or_null`` is ALWAYS ``None`` in incognito mode.
+Session feedback stores explicit end-of-session ratings recorded by
+``PersistentAgentRuntime.record_session_feedback``. It is separate from
+prompt memory and uses a session-keyed read path because feedback is
+created at session close rather than during normal response generation.
 
-See :class:`agent.memory.models.SessionFeedbackRecord` for the record
-shape and privacy contract. See ``session_feedback_plan.md`` at the
-repo root for the full design rationale.
+Concrete backends share the same async protocol:
 
-Phase 1 scope:
-- :class:`SessionFeedbackBackend` protocol that any backend must
-  implement (``aappend``, ``alist_by_session``, ``arecord_count``,
-  ``apurge_before``, ``aclose``).
-- :class:`InMemorySessionFeedbackBackend` — dict-backed, ephemeral,
-  used in incognito mode and tests.
-- :class:`NullSessionFeedbackBackend` — no-op; reserved for test
-  fixtures that want to assert "no feedback was written". NOT a
-  valid production backend.
-- :class:`agent.audit.sqlite_session_feedback.SqliteSessionFeedbackBackend`
-  — aiosqlite-backed, durable across process restarts. Used by
-  persistent-mode runtimes.
-
-Design parallels with :mod:`agent.audit.crisis_log`:
-- Append-only from the runtime's perspective; ``apurge_before`` is an
-  operator / scheduled-cleanup concern, not touched by normal write
-  paths.
-- The primary read pattern is **per session**, not per date (feedback
-  is a closing-turn event, keyed to a specific session). So the
-  protocol exposes ``alist_by_session`` rather than ``alist_by_date``.
-- Retention window default is **180 days** (wider than crisis_log's 90
-  because feedback analytics benefit from a longer lookback).
+- ``InMemorySessionFeedbackBackend`` is ephemeral and used by tests and
+  incognito runtimes.
+- ``SqliteSessionFeedbackBackend`` persists records for local/synced
+  runtimes.
+- ``NullSessionFeedbackBackend`` is reserved for explicit test fixtures.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from agent.memory.models import SessionFeedbackRecord
+from agent.audit.models import SessionFeedbackRecord
 
 
 class SessionFeedbackBackend(Protocol):
@@ -124,12 +103,27 @@ class InMemorySessionFeedbackBackend:
     """
 
     def __init__(self) -> None:
+        """Initialize the in-memory feedback backend.
+
+        Returns:
+            None: Creates an empty in-memory feedback store.
+        """
+
         self._records_by_session: dict[str, list[SessionFeedbackRecord]] = defaultdict(
             list
         )
         self._closed = False
 
     def _ensure_open(self) -> None:
+        """Raise when the backend has already been closed.
+
+        Raises:
+            RuntimeError: If the backend is closed.
+
+        Returns:
+            None: The backend is open.
+        """
+
         if self._closed:
             raise RuntimeError("InMemorySessionFeedbackBackend is closed.")
 
@@ -288,12 +282,6 @@ class NullSessionFeedbackBackend:
         return 0
 
 
-# ─── Protocol conformance checks ────────────────────────────────────────────
-#
-# Assignment triggers a type-check at import time: if either class drifts
-# from the ``SessionFeedbackBackend`` Protocol shape, mypy / pyright will
-# complain here rather than at the runtime call site. Same pattern as
-# ``sqlite_crisis_log.py``'s conformance assertion.
-
-_: type[SessionFeedbackBackend] = InMemorySessionFeedbackBackend  # type: ignore[assignment]
-_: type[SessionFeedbackBackend] = NullSessionFeedbackBackend  # type: ignore[assignment]
+if TYPE_CHECKING:
+    _in_memory_backend: SessionFeedbackBackend = InMemorySessionFeedbackBackend()
+    _null_backend: SessionFeedbackBackend = NullSessionFeedbackBackend()

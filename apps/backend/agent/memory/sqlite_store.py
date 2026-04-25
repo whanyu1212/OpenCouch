@@ -1,63 +1,16 @@
 """SQLite-backed implementation of the :class:`MemoryStore` protocol.
 
-Shipped in phase 1 v0.8 to close the asymmetric persistence gap.
-Before v0.8 the only memory store was :class:`OpenCouchMemoryStore`,
-which holds all records in a per-instance dict. That worked for v0.3
-+ v0.4 dogfood but died at CLI restart — semantic facts and episodic
-arcs vanished the moment the Python process exited.
+:class:`SqliteMemoryStore` provides the same async interface as
+:class:`agent.memory.store.OpenCouchMemoryStore`, but persists records
+through an aiosqlite connection so memory survives process restarts.
+Persistent runtimes use this store for LOCAL and SYNCED memory modes;
+incognito sessions use the in-memory implementation.
 
-:class:`SqliteMemoryStore` implements the same
-:class:`agent.memory.store.MemoryStore` interface but backs its
-records with an aiosqlite connection so they survive restarts. The
-runtime picks between the two implementations based on memory mode:
-
-- INCOGNITO mode → :class:`OpenCouchMemoryStore` (no disk writes)
-- LOCAL / SYNCED mode → :class:`SqliteMemoryStore`
-
-Stage A scope (this file, this commit):
-- Declare the SQLite schema as module-level DDL constants
-- Stub the class so downstream files can import the name; full
-  implementation lands in Stage B
-
-Design decisions locked in Stage A:
-
-1. **Hybrid schema** — normalized discriminator columns for the
-   things we filter/index on (``id``, ``owner_id``, ``namespace_kind``,
-   ``category``, ``created_at``, ``last_referenced_at``), plus a
-   ``value`` JSON column holding the serialized pydantic model
-   (``model.model_dump(mode="json")``). Rationale: we get fast
-   ``WHERE owner_id = ? AND namespace_kind = ?`` lookups without
-   needing to decode JSON for every row, while still letting the
-   schema evolve when we add fields to ``SemanticFact`` or
-   ``StoredSessionArc`` without requiring a SQLite migration.
-
-2. **Single table for all three namespaces** — ``memory_records`` with
-   ``namespace_kind`` as the discriminator column. Semantic, episodic,
-   and procedural records coexist in one table distinguished by that
-   column. Simpler than three parallel tables; equivalent query
-   performance via the ``idx_memory_owner_kind`` compound index.
-
-3. **aiosqlite directly, no ORM.** aiosqlite is already in the
-   dependency tree via ``langgraph-checkpoint-sqlite``. Raw SQL with
-   pydantic handling serialization is simpler than SQLAlchemy for
-   our ~1-table schema and zero-join query patterns.
-
-4. **Keep the v0.3.1 Python scoring loop.** Rows come from SQLite via
-   ``SELECT ... WHERE owner_id = ? AND namespace_kind = ?``, then
-   the existing ``text_tokens`` recall scorer runs in Python on the
-   returned rows. Not using SQLite FTS5 because its BM25 scoring is
-   different from what v0.3.1's tests pin, and switching would
-   require re-calibrating every retrieval test. At v0.8 scale
-   (hundreds of records per user) the Python loop is fast enough.
-
-5. **One connection per runtime lifetime.** Matches the pattern
-   already used by the LangGraph checkpointer — connection opened
-   in ``__aenter__``, closed in ``__aexit__``. aiosqlite handles
-   async access through a single shared connection.
-
-Stage B (next) implements the full async methods (``aput``, ``aget``,
-``asearch``, ``adelete``, ``aclose``, ``record_count``, ``namespaces``)
-against the schema declared below.
+All semantic, episodic, and procedural records live in one
+``memory_records`` table and are separated by ``owner_id`` and
+``namespace_kind``. The table keeps indexed columns for common filters
+and stores the full serialized pydantic payload in a JSON ``value``
+column.
 """
 
 from __future__ import annotations
@@ -114,13 +67,10 @@ def _decode_embedding(blob: bytes | None) -> list[float] | None:
     return list(struct.unpack(f"<{count}f", blob))
 
 
-# ─── Schema DDL ────────────────────────────────────────────────────────
-
-
 # The single table backing all three namespace kinds. Discriminated
 # by ``namespace_kind``, indexed on ``(owner_id, namespace_kind)`` for
 # fast per-user namespace scans, and also indexed on
-# ``last_referenced_at`` for future retention / dormancy queries.
+# ``last_referenced_at`` for retention and dormancy queries.
 #
 # The ``value`` column is a JSON string produced by
 # ``pydantic_model.model_dump(mode="json")``. Callers receive a dict
@@ -150,24 +100,16 @@ CREATE TABLE IF NOT EXISTS memory_records (
     UNIQUE (id, owner_id, namespace_kind)
 );
 """
-# v0.8.1 added three embedding columns (``embedding``, ``embedding_dim``,
-# ``embedding_model``). For fresh SQLite files the
-# ``CREATE TABLE IF NOT EXISTS`` above creates them in one shot. For
-# existing v0.8 SQLite files that already have the table without
-# these columns, ``_ensure_schema`` detects the missing columns and
-# runs ``ALTER TABLE ADD COLUMN`` migrations in-place. Adding a column
-# to an existing SQLite table is an O(1) metadata operation — no
-# table rewrite required. All three columns are nullable so
-# pre-v0.8.1 records naturally have NULL embeddings, which the
-# read path treats as "no embedding available, use token-recall only."
+# Embedding columns are nullable so records without embeddings remain
+# valid and use lexical retrieval only.
 # Schema notes:
 #
 # - ``insertion_order`` is an explicit INTEGER PRIMARY KEY AUTOINCREMENT
 #   column rather than relying on SQLite's implicit ``rowid``. The
 #   in-memory store's search path has an insertion-order tiebreaker
-#   when two records share the same recall score, and a couple of
-#   v0.3.1 tests pin that guarantee. An explicit AUTOINCREMENT column
-#   makes the tiebreaker contractual at the schema level.
+#   when two records share the same recall score. An explicit
+#   AUTOINCREMENT column makes the tiebreaker contractual at the schema
+#   level.
 #
 # - ``UNIQUE (id, owner_id, namespace_kind)`` is a compound uniqueness
 #   constraint, NOT just on ``id``. The same ``id`` string can appear
@@ -202,9 +144,6 @@ MEMORY_SCHEMA_DDL: tuple[str, ...] = (
 )
 
 
-# ─── SqliteMemoryStore stub ────────────────────────────────────────────
-
-
 class SqliteMemoryStore:
     """SQLite-backed implementation of :class:`MemoryStore`.
 
@@ -214,12 +153,8 @@ class SqliteMemoryStore:
     search/delete/close/counts/namespaces) — the only difference is
     that records persist to disk instead of living in a dict.
 
-    The search path runs the same v0.3.1 Python-side token-recall
-    scorer used by the in-memory store. Rows come from SQLite via a
-    per-namespace SELECT (``WHERE owner_id = ? AND namespace_kind =
-    ?``), and the scorer runs in Python on the returned rows. At
-    phase-1 scale (hundreds of records per user) this is fast enough;
-    when the scale grows we can revisit with FTS5 or real embeddings.
+    The search path loads rows with a per-namespace SELECT and then
+    applies the shared lexical and dense retrieval helpers in Python.
 
     Connection lifecycle:
     - ``__init__`` stores the SQLite path but does NOT open the
@@ -264,8 +199,6 @@ class SqliteMemoryStore:
         self._connection: aiosqlite.Connection | None = None
         self._closed = False
         self._connect_lock = asyncio.Lock()
-
-    # ── Connection lifecycle ──────────────────────────────────────────
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
         """Open the SQLite connection on first use.
@@ -320,9 +253,8 @@ class SqliteMemoryStore:
         for ddl in MEMORY_SCHEMA_DDL:
             await conn.execute(ddl)
 
-        # v0.8.1 migration: add embedding columns to pre-existing
-        # v0.8 databases that were created before the embedding
-        # work shipped. PRAGMA table_info returns one row per
+        # Add embedding columns to databases created before hybrid
+        # retrieval shipped. PRAGMA table_info returns one row per
         # column; we collect column names and ALTER anything missing.
         async with conn.execute("PRAGMA table_info(memory_records)") as cursor:
             existing_columns = {row[1] for row in await cursor.fetchall()}
@@ -346,8 +278,6 @@ class SqliteMemoryStore:
                 )
 
         await conn.commit()
-
-    # ── Public interface (MemoryStore protocol) ───────────────────────
 
     async def aput(
         self,
@@ -795,8 +725,6 @@ class SqliteMemoryStore:
                 finally:
                     self._connection = None
 
-    # ── Debug / observability helpers ─────────────────────────────────
-    #
     # These share the same aiosqlite connection as the other async
     # methods, which is why they're async. An earlier attempt made
     # them sync by opening a short-lived sqlite3 connection per call,
@@ -881,8 +809,6 @@ class SqliteMemoryStore:
             return None
         return self._row_to_store_record(row, namespace)
 
-    # ── Namespace helpers ─────────────────────────────────────────────
-
     @staticmethod
     def _unpack_namespace(namespace: Namespace) -> tuple[str, str]:
         """Extract normalized namespace fields from the tuple.
@@ -903,12 +829,7 @@ class SqliteMemoryStore:
         return str(owner_id), str(namespace_kind)
 
 
-# ─── Protocol conformance assertion ────────────────────────────────────
-#
-# Verify at import time that SqliteMemoryStore satisfies the
-# MemoryStore protocol. This is a type-level assertion — if any
-# method is missing or has a wrong signature, type checkers flag it.
-# At runtime the assignment just binds the type, so there's no cost.
+# Static conformance check for the ``MemoryStore`` protocol.
 _: type[MemoryStore] = SqliteMemoryStore
 
 

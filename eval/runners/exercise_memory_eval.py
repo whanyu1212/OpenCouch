@@ -73,13 +73,11 @@ async def _evaluate_case(case: dict[str, Any]) -> tuple[bool, str | None]:
         "history": [],
         "user_id": "eval-user",
         "session_id": "eval-session",
-        "progress": {
+        "session_progress": {"turn_count": 5},
+        "exercise_state": {
             "exercise_type": case["exercise_type"],
             "exercise_step": case["exercise_step"],
-            "turn_count": 5,
         },
-        "response": {},
-        "routing": {},
     }
 
     await run_guided_exercise_response_node(

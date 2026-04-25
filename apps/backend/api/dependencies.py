@@ -3,7 +3,7 @@
 The ``PersistentAgentRuntime`` is an async context manager that owns
 SQLite connections, an embedding provider, and the LangGraph
 checkpointer. It must be opened once at startup and closed at
-shutdown — not per-request. FastAPI's lifespan protocol handles this.
+shutdown, not per request. FastAPI's lifespan protocol handles this.
 
 Usage in ``main.py``::
 
@@ -28,7 +28,7 @@ Then in route handlers::
     ):
         ...
 
-The runtime and LLM client are singletons — every request shares
+The runtime and LLM client are singletons. Every request shares
 the same instance. This is safe because ``PersistentAgentRuntime``
 serializes graph invocations per thread_id via the LangGraph
 checkpointer, and the LLM clients are stateless (each call is
@@ -81,27 +81,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     On shutdown, all connections are closed cleanly.
 
     The LLM client is resolved separately because it's stateless
-    and doesn't need lifecycle management — but we resolve it once
+    and doesn't need lifecycle management. We resolve it once
     at startup so route handlers don't pay the resolution cost
     per-request.
+
+    Args:
+        app: FastAPI app receiving the lifespan hook.
+
+    Yields:
+        None while the application is serving requests.
+
+    Returns:
+        Async lifespan context manager.
     """
 
     global _runtime, _llm_client, _response_llm_clients  # noqa: PLW0603
 
-    # Resolve LLM client — same logic as the CLI's resolve_llm_client.
-    # Returns None if no API key is configured (deterministic mode).
+    # Resolve clients once so request handlers do not pay setup cost.
+    # Missing API keys leave clients as None, keeping deterministic paths available.
     try:
         _llm_client = create_configured_control_llm_client()
     except Exception:
         _llm_client = None
     try:
-        _response_llm_clients = create_configured_response_llm_clients()
+        response_clients = create_configured_response_llm_clients()
+        _response_llm_clients = {
+            "fast": response_clients["fast"],
+            "quality": response_clients["quality"],
+        }
     except Exception:
         _response_llm_clients = {"fast": None, "quality": None}
 
-    # Resolve memory mode from environment. Default to LOCAL for the
-    # API server (persistent storage). The CLI has an interactive
-    # prompt for this; the API server just reads the env var.
+    # The API server reads memory mode from env because there is no interactive prompt.
     import os
 
     memory_mode_str = os.getenv("OPENCOUCH_MEMORY_MODE", "persistent")
@@ -137,8 +148,15 @@ def get_runtime() -> PersistentAgentRuntime:
     """FastAPI dependency that returns the shared runtime instance.
 
     Works with both HTTP and WebSocket endpoints (no Request
-    parameter needed — the runtime is a module-level singleton
+    parameter needed). The runtime is a module-level singleton
     populated by the lifespan handler).
+
+    Returns:
+        The initialized shared runtime.
+
+    Raises:
+        RuntimeError: If the FastAPI lifespan hook has not initialized
+            the runtime yet.
     """
 
     if _runtime is None:
@@ -154,12 +172,20 @@ def get_llm_client() -> BaseLLMClient | None:
 
     Returns None when no LLM provider is configured (deterministic
     mode).
+
+    Returns:
+        The configured control-plane LLM client, or None.
     """
 
     return _llm_client
 
 
 def get_response_llm_clients() -> dict[ResponseModelTier, BaseLLMClient | None]:
-    """FastAPI dependency that returns the shared response-tier clients."""
+    """FastAPI dependency that returns the shared response-tier clients.
+
+    Returns:
+        Mapping from response model tier to the configured client for
+        that tier, or None when unavailable.
+    """
 
     return _response_llm_clients

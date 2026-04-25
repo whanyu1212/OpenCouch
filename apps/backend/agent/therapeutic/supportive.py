@@ -1,4 +1,4 @@
-"""Supportive response mode — warm validation and gentle reflection."""
+"""Supportive response mode - warm validation and gentle reflection."""
 
 from __future__ import annotations
 
@@ -37,6 +37,13 @@ async def run_supportive_response_node(
 
     Falls back to a deterministic template when no LLM client is
     available (common in tests and deterministic-mode CLI runs).
+
+    Args:
+        state: Current graph state for the turn.
+        runtime: LangGraph runtime carrying configured dependencies.
+
+    Returns:
+        Response delta for the parent graph.
     """
 
     llm_client = runtime.context.response_llm or runtime.context.llm_client
@@ -60,15 +67,9 @@ async def run_supportive_response_node(
             )
 
     return {
-        "response": {
-            **state.get("response", {}),
-            "kind": ResponseCategory.THERAPEUTIC,
-            "text": response_text,
-        },
-        "routing": {
-            **state.get("routing", {}),
-            "response_style": "supportive",
-            "response_style_source": "therapeutic_dispatch",
-            "response_style_type": ModeType.THERAPEUTIC,
-        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "supportive",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
     }

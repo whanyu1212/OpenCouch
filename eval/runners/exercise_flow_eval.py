@@ -1,7 +1,7 @@
 """Runner for exercise flow (state transition) evaluation.
 
 Grades the guided exercise node's state transitions on a hand-curated
-dataset of (exercise_type, step, message) → expected transition. This
+dataset of (exercise_type, step, message) -> expected transition. This
 drives the real run_guided_exercise_response_node() with a mock runtime
 (no LLM), so it tests the deterministic classifier and state machine.
 
@@ -43,7 +43,7 @@ DATASET_PATH = (
 
 
 class _MockRuntime:
-    """Minimal runtime with no LLM — tests deterministic paths only."""
+    """Minimal runtime with no LLM for deterministic exercise paths."""
 
     def __init__(self) -> None:
         self.context = WorkflowContext(
@@ -55,6 +55,15 @@ class _MockRuntime:
 
 
 def _load_cases(path: Path) -> list[dict[str, Any]]:
+    """Load exercise-flow cases from disk.
+
+    Args:
+        path (Path): Dataset JSON path.
+
+    Returns:
+        list[dict[str, Any]]: Loaded case dictionaries.
+    """
+
     return json.loads(path.read_text())
 
 
@@ -64,16 +73,19 @@ def _classify_transition(
 ) -> str:
     """Determine the actual transition from the delta output.
 
-    Returns one of: "advance", "hold", "stuck", "exit", "complete".
+    Args:
+        case (dict[str, Any]): Dataset case used as the starting exercise state.
+        delta (dict[str, Any]): Guided-exercise node state delta.
+
+    Returns:
+        str: One of ``advance``, ``hold``, ``stuck``, ``exit``, or ``complete``.
     """
 
-    progress = delta.get("progress", {})
-    exercise_type = progress.get("exercise_type", "MISSING")
-    exercise_step = progress.get("exercise_step", "MISSING")
+    exercise_state = delta.get("exercise_state", {})
+    exercise_type = exercise_state.get("exercise_type", "MISSING")
+    exercise_step = exercise_state.get("exercise_step", "MISSING")
 
-    # If exercise_type is None → cleared (exit or complete)
     if exercise_type is None and exercise_step is None:
-        # Distinguish exit from complete: complete happens on the last step
         from agent.therapeutic.guided_exercise import _EXERCISE_REGISTRY
 
         orig_type = case["exercise_type"]
@@ -83,13 +95,10 @@ def _classify_transition(
             return "complete"
         return "exit"
 
-    # If step advanced
     if exercise_step == case["exercise_step"] + 1:
         return "advance"
 
-    # If no progress key at all, or step unchanged → hold or stuck
-    # Distinguish by response text (stuck offers rephrase)
-    response_text = delta.get("response", {}).get("text", "").lower()
+    response_text = str(delta.get("response_text", "") or "").lower()
     if "make it smaller" in response_text or "simpler" in response_text:
         return "stuck"
 
@@ -99,19 +108,25 @@ def _classify_transition(
 async def _evaluate_case(
     case: dict[str, Any],
 ) -> tuple[bool, str, str | None]:
-    """Run one case and compare to expected transition."""
+    """Run one case and compare it to the expected transition.
+
+    Args:
+        case (dict[str, Any]): Dataset case to evaluate.
+
+    Returns:
+        tuple[bool, str, str | None]: Pass flag, actual transition, and optional
+            failure detail.
+    """
 
     runtime = _MockRuntime()
     state: Any = {
         "message": case["message"],
         "history": [],
-        "progress": {
+        "session_progress": {"turn_count": 2},
+        "exercise_state": {
             "exercise_type": case["exercise_type"],
             "exercise_step": case["exercise_step"],
-            "turn_count": 2,
         },
-        "response": {},
-        "routing": {},
     }
 
     delta = await run_guided_exercise_response_node(
@@ -134,6 +149,12 @@ async def _evaluate_case(
 
 
 async def _run() -> int:
+    """Run the exercise-flow eval suite.
+
+    Returns:
+        int: Process exit code.
+    """
+
     cases = _load_cases(DATASET_PATH)
 
     print(f"Running exercise flow eval on {len(cases)} case(s).")
@@ -142,7 +163,6 @@ async def _run() -> int:
     passed = 0
     failures: list[str] = []
 
-    # Group by transition type for reporting
     by_transition: dict[str, dict[str, int]] = {}
 
     for case in cases:
@@ -158,7 +178,6 @@ async def _run() -> int:
         elif detail is not None:
             failures.append(detail)
 
-    # Report by transition type
     for transition, counts in sorted(by_transition.items()):
         print(f"  {transition:10s} {counts['passed']:2d}/{counts['total']:2d} passed")
 
@@ -178,6 +197,12 @@ async def _run() -> int:
 
 
 def main() -> int:
+    """Run the exercise-flow eval command.
+
+    Returns:
+        int: Process exit code.
+    """
+
     return asyncio.run(_run())
 
 

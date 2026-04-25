@@ -27,8 +27,8 @@ class FakeRuntime:
 
     def __init__(self) -> None:
         self.states = {
-            "thread-a": {"progress": {"turn_count": 2}, "transcript": []},
-            "thread-b": {"progress": {"turn_count": 1}, "transcript": []},
+            "thread-a": {"session_progress": {"turn_count": 2}, "transcript": []},
+            "thread-b": {"session_progress": {"turn_count": 1}, "transcript": []},
         }
         self.histories = {
             "thread-a": [
@@ -184,7 +184,7 @@ def _session() -> RunnerSession:
             Message(role=MessageRole.USER, content="first"),
             Message(role=MessageRole.ASSISTANT, content="reply"),
         ],
-        last_context={"progress": {"turn_count": 2}, "transcript": []},
+        last_context={"session_progress": {"turn_count": 2}, "transcript": []},
     )
 
 
@@ -306,7 +306,7 @@ async def test_resume_command_switches_active_thread(monkeypatch) -> None:
     monkeypatch.setattr(
         "opencouch_cli.app.render_context",
         lambda state: events.append(
-            ("context", str(state.get("progress", {}).get("turn_count", 0)))
+            ("context", str(state.get("session_progress", {}).get("turn_count", 0)))
         ),
     )
     monkeypatch.setattr(
@@ -324,7 +324,10 @@ async def test_resume_command_switches_active_thread(monkeypatch) -> None:
     assert should_continue is True
     assert session.thread_id == "thread-b"
     assert len(session.history) == 2
-    assert session.last_context == {"progress": {"turn_count": 1}, "transcript": []}
+    assert session.last_context == {
+        "session_progress": {"turn_count": 1},
+        "transcript": [],
+    }
     assert ("header", "deterministic:thread-b") in events
     assert ("history", "thread-b:2:2") in events
 
@@ -2042,27 +2045,28 @@ class TestRenderContext:
 
     The panel now shows procedural rules, the proactive-recall toggle,
     and guided-exercise tracking fields alongside the pre-existing
-    memory/progress surface. We assert these by capturing the Rich
+    memory/state surface. We assert these by capturing the Rich
     output stream and checking for substring markers.
     """
 
     def test_shows_procedural_rules_when_present(self, capsys) -> None:
-        """Procedural rules from memory.procedural_rules render as bullets."""
+        """Procedural rules from procedural_profile render as bullets."""
 
         from opencouch_cli.app import render_context
 
         state = {
-            "progress": {"turn_count": 3},
-            "memory": {
+            "session_progress": {"turn_count": 3},
+            "session_memory": {
                 "summary": "s",
                 "current_goal": None,
+            },
+            "procedural_profile": {
                 "procedural_rules": [
                     "You prefer short replies.",
                     "Don't suggest meditation.",
                 ],
                 "proactive_recall_enabled": False,
             },
-            "response": {"guidance": "-"},
             "working_memory": [],
         }
         render_context(state)  # type: ignore[arg-type]
@@ -2073,19 +2077,20 @@ class TestRenderContext:
         assert "Don't suggest meditation" in out
 
     def test_shows_proactive_recall_toggle(self, capsys) -> None:
-        """The recall row shows on/off based on the memory field."""
+        """The recall row shows on/off based on the procedural profile."""
 
         from opencouch_cli.app import render_context
 
         state = {
-            "progress": {"turn_count": 1},
-            "memory": {
+            "session_progress": {"turn_count": 1},
+            "session_memory": {
                 "summary": "",
                 "current_goal": None,
+            },
+            "procedural_profile": {
                 "procedural_rules": [],
                 "proactive_recall_enabled": True,
             },
-            "response": {"guidance": "-"},
             "working_memory": [],
         }
         render_context(state)  # type: ignore[arg-type]
@@ -2095,20 +2100,19 @@ class TestRenderContext:
         assert "on" in out
 
     def test_shows_exercise_state_when_active(self, capsys) -> None:
-        """Guided exercise type + step render when progress carries them."""
+        """Guided exercise type + step render when exercise_state carries them."""
 
         from opencouch_cli.app import render_context
 
         state = {
-            "progress": {
-                "turn_count": 1,
+            "session_progress": {"turn_count": 1},
+            "exercise_state": {
                 "exercise_type": "box_breathing",
                 "exercise_step": 3,
             },
-            "memory": {"summary": "", "current_goal": None},
-            "response": {"guidance": "-"},
+            "session_memory": {"summary": "", "current_goal": None},
+            "procedural_profile": {},
             "working_memory": [],
-            "routing": {},
         }
         render_context(state)  # type: ignore[arg-type]
         out = capsys.readouterr().out
@@ -2127,11 +2131,10 @@ class TestRenderContext:
         from opencouch_cli.app import render_context
 
         state = {
-            "progress": {"turn_count": 1},
-            "memory": {"summary": "", "current_goal": None},
-            "response": {"guidance": "-"},
+            "session_progress": {"turn_count": 1},
+            "session_memory": {"summary": "", "current_goal": None},
+            "procedural_profile": {},
             "working_memory": [],
-            "routing": {},
         }
         render_context(state)  # type: ignore[arg-type]
         out = capsys.readouterr().out
@@ -2155,9 +2158,9 @@ class TestRenderContext:
         from opencouch_cli.app import render_context
 
         state = {
-            "progress": {"turn_count": 1},
-            "memory": {"summary": "", "current_goal": None},
-            "response": {"guidance": "-"},
+            "session_progress": {"turn_count": 1},
+            "session_memory": {"summary": "", "current_goal": None},
+            "procedural_profile": {},
             "working_memory": [
                 {
                     "type": "semantic",

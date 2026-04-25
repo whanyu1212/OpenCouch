@@ -66,6 +66,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
+from agent.memory.candidates import SessionMemoryBuffer
 from agent.memory.store import OpenCouchMemoryStore
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.runtime_context import WorkflowContext
@@ -98,6 +99,7 @@ class _MockRuntime:
             memory_store=memory_store,
             crisis_log_backend=InMemoryCrisisLogBackend(),
             memory_mode=MemoryMode.LOCAL,
+            session_memory_buffer=SessionMemoryBuffer(session_id="eval-thread"),
         )
 
 
@@ -154,8 +156,8 @@ def _build_state(case: dict[str, Any]) -> AgentState:
     """Return a partial AgentState for the extraction node to read.
 
     The extraction node reads ``message``, ``history``, ``user_id``,
-    ``session_id``, and ``progress.turn_count``. We fabricate the
-    progress dict with turn_count=1 because every eval case is a
+    ``session_id``, and ``session_progress.turn_count``. We fabricate the
+    session-progress dict with turn_count=1 because every eval case is a
     single-turn scenario, not a multi-turn conversation where the
     turn index would matter for provenance.
     """
@@ -165,7 +167,7 @@ def _build_state(case: dict[str, Any]) -> AgentState:
         "history": case.get("history", []),
         "user_id": case.get("user_id"),
         "session_id": case.get("session_id", "eval-thread"),
-        "progress": {"turn_count": 1},
+        "session_progress": {"turn_count": 1},
         "transcript": [],
     }
     return cast(AgentState, state)
@@ -243,18 +245,20 @@ async def _evaluate_case(
     # want to grade.
     await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
-    # Reconstruct MemoryWrite-like objects from the store's records.
-    # The store holds SemanticFact instances (which extend MemoryWrite
-    # with store metadata), so we can use the same field paths for
-    # grading.
+    # Reconstruct MemoryWrite-like objects from both immediate store writes and
+    # session-held candidates. Trigger/loss facts are intentionally held by the
+    # write policy, but this runner grades extraction quality, not only
+    # immediate persistence.
     namespace = (state.get("user_id") or state["session_id"], "semantic")
     records = await store.asearch(namespace, query=None, limit=100)
 
-    # Convert StoreRecord.value dicts back to something grade-able.
-    # We build lightweight objects with the fields the grader reads
-    # rather than re-constructing full pydantic models (cheaper +
-    # doesn't depend on model internals).
-    returned_facts = [_FactView(record.value) for record in records]
+    buffer = runtime.context.session_memory_buffer
+    held_facts = (
+        [candidate.payload for candidate in buffer.semantic_candidates]
+        if buffer is not None
+        else []
+    )
+    returned_facts = [_FactView(record.value) for record in records] + held_facts
 
     expected_outcome = case["expected_outcome"]
 

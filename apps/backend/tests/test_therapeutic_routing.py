@@ -37,7 +37,11 @@ from agent.therapeutic.dispatcher import (
     pick_therapeutic_mode,
     run_therapeutic_dispatch_node,
 )
-from agent.therapeutic.graph import build_therapeutic_subgraph
+from agent.therapeutic.graph import (
+    TherapeuticSubgraphInput,
+    TherapeuticSubgraphOutput,
+    build_therapeutic_subgraph,
+)
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -102,6 +106,45 @@ class _FakeDispatchLLM(BaseLLMClient):
                 confidence="high",
             ),
         )
+
+
+class _RecordingTextLLM(BaseLLMClient):
+    """Record text-generation prompts while returning canned text."""
+
+    def __init__(self, response_text: str = "recorded") -> None:
+        self.prompts: list[str] = []
+        self.system_instructions: list[str | None] = []
+        self.response_text = response_text
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        return self.response_text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        yield self.response_text
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        raise RuntimeError("structured output not used by text-node prompt tests")
 
 
 class _MockRuntime:
@@ -341,8 +384,8 @@ class TestDispatchNode:
         """Active-exercise fast path short-circuits to guided_exercise.
 
         This is the CRITICAL multi-turn test for v0.6 Stage C. When a
-        prior turn started an exercise (setting progress.exercise_type
-        and progress.exercise_step), the dispatcher must route the
+        prior turn started an exercise (setting exercise_state.exercise_type
+        and exercise_state.exercise_step), the dispatcher must route the
         next turn to guided_exercise. With LLM-primary dispatch, the
         LLM sees the active exercise context in the prompt and picks
         guided_exercise to continue. The dispatcher preserves the
@@ -355,10 +398,10 @@ class TestDispatchNode:
         state: Any = {
             "message": "I see a lamp, a book, a plant, my coffee, and the window.",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 0,
-                "turn_count": 2,
             },
         }
 
@@ -386,10 +429,10 @@ class TestDispatchNode:
         state: Any = {
             "message": "I had a rough day at work.",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 1},
+            "exercise_state": {
                 "exercise_type": None,
                 "exercise_step": None,
-                "turn_count": 1,
             },
         }
 
@@ -405,11 +448,11 @@ class TestDispatchNode:
 
     @pytest.mark.asyncio
     async def test_command_update_contains_modality(self) -> None:
-        """The dispatcher's Command carries routing.therapeutic_approach.
+        """The dispatcher's Command carries top-level ``therapeutic_approach``.
 
-        Mode nodes own routing.mode/mode_source/mode_type in their own
-        deltas; the dispatcher only writes routing.therapeutic_approach so the mode
-        node can load the correct knowledge overlay.
+        Mode nodes own response-style metadata in their own deltas; the
+        dispatcher only writes ``therapeutic_approach`` so the mode node can
+        load the correct knowledge overlay.
         """
 
         runtime = _MockRuntime(llm_client=None)
@@ -418,10 +461,8 @@ class TestDispatchNode:
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         # Regex fallback for supportive defaults to MI
-        assert "routing" in cmd.update
-        assert (
-            cmd.update["routing"]["therapeutic_approach"] == "motivational_interviewing"
-        )
+        assert "therapeutic_approach" in cmd.update
+        assert cmd.update["therapeutic_approach"] == "motivational_interviewing"
 
 
 # ─── 3. build_therapeutic_subgraph compile tests ─────────────────────────
@@ -453,6 +494,13 @@ class TestSubgraphCompile:
             "guided_exercise_response_node",
         }
         assert expected.issubset(node_names), f"missing nodes: {expected - node_names}"
+
+    def test_subgraph_declares_explicit_input_and_output_schemas(self) -> None:
+        """The therapeutic subgraph should narrow its LangGraph boundary."""
+
+        subgraph = build_therapeutic_subgraph()
+        assert subgraph.builder.input_schema is TherapeuticSubgraphInput
+        assert subgraph.builder.output_schema is TherapeuticSubgraphOutput
 
 
 # ─── 4. End-to-end routing via run_agent ─────────────────────────────────
@@ -492,6 +540,70 @@ class TestEndToEndRouting:
         assert result.response_style == "reflective"
         assert result.response_text
         assert "pattern" in result.response_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_reflective_node_adds_question_when_llm_omits_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Reflective node should append a gentle question when needed."""
+
+        from agent.therapeutic import reflective
+        from agent.therapeutic.reflective import run_reflective_response_node
+
+        monkeypatch.setattr(reflective, "get_stream_writer", lambda: lambda _: None)
+
+        runtime = _MockRuntime(llm_client=_RecordingTextLLM())
+        state: Any = {
+            "message": "Why do I keep ending up in the same fight with my partner?",
+            "history": [],
+            "response": {},
+            "routing": {},
+        }
+
+        delta = await run_reflective_response_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["response_style"] == "reflective"
+        assert delta["response_text"].startswith("recorded")
+        assert "?" in delta["response_text"]
+
+    @pytest.mark.asyncio
+    async def test_technique_node_adds_attuned_opening_when_llm_omits_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Technique node should add an attuned opening before structure."""
+
+        from agent.therapeutic import technique
+        from agent.therapeutic.technique import run_technique_response_node
+
+        monkeypatch.setattr(technique, "get_stream_writer", lambda: lambda _: None)
+
+        runtime = _MockRuntime(
+            llm_client=_RecordingTextLLM(
+                "Absolutely. Let’s take it one piece at a time.\n\n"
+                "What’s the exact thought you want to examine, in your own words?"
+            )
+        )
+        state: Any = {
+            "message": (
+                "Can you help me examine this thought step by step? "
+                "I want to look at evidence for and against it."
+            ),
+            "history": [],
+            "therapeutic_approach": "cbt",
+        }
+
+        delta = await run_technique_response_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["response_style"] == "technique"
+        assert delta["response_text"].startswith("That sounds really hard.")
 
     @pytest.mark.asyncio
     async def test_clarifying_happy_path(self) -> None:
@@ -539,12 +651,12 @@ class TestEndToEndRouting:
 
         delta = await run_psychoeducation_response_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["response"]["kind"] == ResponseCategory.THERAPEUTIC
-        assert delta["response"]["text"]  # non-empty
-        assert delta["routing"]["response_style"] == "psychoeducation"
-        assert delta["routing"]["response_style_source"] == "therapeutic_dispatch"
+        assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
+        assert delta["response_text"]  # non-empty
+        assert delta["response_style"] == "psychoeducation"
+        assert delta["response_style_source"] == "therapeutic_dispatch"
         # Deterministic fallback is permission-first by design
-        assert "?" in delta["response"]["text"]
+        assert "?" in delta["response_text"]
 
     @pytest.mark.asyncio
     async def test_closing_deterministic_fallback_path(self) -> None:
@@ -571,12 +683,12 @@ class TestEndToEndRouting:
 
         delta = await run_closing_response_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["response"]["kind"] == ResponseCategory.THERAPEUTIC
-        assert delta["response"]["text"]  # non-empty
-        assert delta["routing"]["response_style"] == "closing"
-        assert delta["routing"]["response_style_source"] == "therapeutic_dispatch"
+        assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
+        assert delta["response_text"]  # non-empty
+        assert delta["response_style"] == "closing"
+        assert delta["response_style_source"] == "therapeutic_dispatch"
 
-        text_lower = delta["response"]["text"].lower()
+        text_lower = delta["response_text"].lower()
         # The single most common closing-mode failure mode
         assert "nice talking" not in text_lower
         assert "nice to meet" not in text_lower
@@ -593,8 +705,8 @@ class TestEndToEndRouting:
 
         Entry condition 1 for the guided_exercise node: no active
         exercise, so the node should start 5-4-3-2-1 grounding at
-        step 0. The delta must include progress.exercise_type and
-        progress.exercise_step.
+        step 0. The delta must include exercise_state.exercise_type and
+        exercise_state.exercise_step.
         """
 
         from agent.therapeutic.guided_exercise import (
@@ -606,9 +718,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "Can you walk me through a grounding exercise?",
             "history": [],
-            "progress": {"turn_count": 1},
-            "response": {},
-            "routing": {},
+            "session_progress": {"turn_count": 1},
         }
 
         delta = await run_guided_exercise_response_node(
@@ -617,13 +727,13 @@ class TestEndToEndRouting:
         )
 
         # Response delta is populated with the start-step text
-        assert delta["response"]["kind"] == ResponseCategory.THERAPEUTIC
-        assert delta["response"]["text"]
-        assert "five things" in delta["response"]["text"].lower()
-        assert delta["routing"]["response_style"] == "guided_exercise"
+        assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
+        assert delta["response_text"]
+        assert "five things" in delta["response_text"].lower()
+        assert delta["response_style"] == "guided_exercise"
         # Progress delta starts the exercise at step 0
-        assert delta["progress"]["exercise_type"] == "grounding_5_4_3_2_1"
-        assert delta["progress"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_type"] == "grounding_5_4_3_2_1"
+        assert delta["exercise_state"]["exercise_step"] == 0
 
     @pytest.mark.asyncio
     async def test_guided_exercise_advances_on_complete_response(self) -> None:
@@ -643,13 +753,11 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "I see a lamp, a plant, my coffee, the window, and a book.",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 0,
-                "turn_count": 2,
             },
-            "response": {},
-            "routing": {},
         }
 
         delta = await run_guided_exercise_response_node(
@@ -658,10 +766,10 @@ class TestEndToEndRouting:
         )
 
         # Exercise advanced to step 1 (4 things you can hear)
-        assert delta["progress"]["exercise_step"] == 1
-        assert delta["progress"]["exercise_type"] == "grounding_5_4_3_2_1"
-        assert "four things" in delta["response"]["text"].lower()
-        assert delta["routing"]["response_style"] == "guided_exercise"
+        assert delta["exercise_state"]["exercise_step"] == 1
+        assert "exercise_type" not in delta["exercise_state"]
+        assert "four things" in delta["response_text"].lower()
+        assert delta["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_holds_on_tentative_response(self) -> None:
@@ -680,13 +788,11 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "um, a plant?",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 0,
-                "turn_count": 2,
             },
-            "response": {},
-            "routing": {},
         }
 
         delta = await run_guided_exercise_response_node(
@@ -694,17 +800,54 @@ class TestEndToEndRouting:
             runtime,  # type: ignore[arg-type]
         )
 
-        # HOLD: progress is NOT in the delta (no state change), OR
-        # progress.exercise_step is still 0 if it IS in the delta.
-        # The current implementation omits progress on HOLD to signal
+        # HOLD: exercise_state is NOT in the delta (no state change), OR
+        # exercise_state.exercise_step is still 0 if it IS in the delta.
+        # The current implementation omits exercise_state on HOLD to signal
         # "no state change," which is the idiomatic LangGraph pattern
         # — but we tolerate either for robustness.
-        if "progress" in delta:
-            assert delta["progress"]["exercise_step"] == 0
+        if "exercise_state" in delta:
+            assert delta["exercise_state"]["exercise_step"] == 0
         # Fallback response gives space without advancing
-        assert delta["response"]["text"]
-        assert "time" in delta["response"]["text"].lower()
-        assert delta["routing"]["response_style"] == "guided_exercise"
+        assert delta["response_text"]
+        assert "time" in delta["response_text"].lower()
+        assert delta["response_style"] == "guided_exercise"
+
+    @pytest.mark.asyncio
+    async def test_guided_exercise_hold_prompt_reanchors_same_step(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Hold-path prompt should restate the active concrete step."""
+
+        from agent.therapeutic import guided_exercise
+        from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+
+        monkeypatch.setattr(
+            guided_exercise, "get_stream_writer", lambda: lambda _: None
+        )
+
+        runtime = _MockRuntime(llm_client=_RecordingTextLLM())
+        state: Any = {
+            "message": "That makes sense. I can keep going.",
+            "history": [],
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 0,
+            },
+        }
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        llm = cast(_RecordingTextLLM, runtime.context.llm_client)
+        assert delta["response_text"] == "recorded"
+        assert llm.prompts
+        prompt = llm.prompts[0].lower()
+        assert "restate this same step" in prompt
+        assert "things you can see around you right now" in prompt
 
     @pytest.mark.asyncio
     async def test_guided_exercise_stuck_offers_rephrase(self) -> None:
@@ -725,13 +868,11 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "I can't focus on this right now.",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 0,
-                "turn_count": 2,
             },
-            "response": {},
-            "routing": {},
         }
 
         delta = await run_guided_exercise_response_node(
@@ -739,20 +880,20 @@ class TestEndToEndRouting:
             runtime,  # type: ignore[arg-type]
         )
 
-        # STUCK: progress is NOT updated (step stays at 0)
-        if "progress" in delta:
-            assert delta["progress"]["exercise_step"] == 0
+        # STUCK: exercise_state is NOT updated (step stays at 0)
+        if "exercise_state" in delta:
+            assert delta["exercise_state"]["exercise_step"] == 0
         # Response offers a smaller version of the step
-        text_lower = delta["response"]["text"].lower()
+        text_lower = delta["response_text"].lower()
         assert "smaller" in text_lower or "one thing" in text_lower
-        assert delta["routing"]["response_style"] == "guided_exercise"
+        assert delta["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_exit_clears_state(self) -> None:
         """An exit signal clears exercise_type and exercise_step.
 
         The user wants to stop the exercise. The node must null out
-        both progress fields so the next dispatcher turn does NOT
+        both exercise-state fields so the next dispatcher turn does NOT
         take the active-exercise fast path.
         """
 
@@ -764,13 +905,11 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "This isn't helping, can we just talk?",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 0,
-                "turn_count": 2,
             },
-            "response": {},
-            "routing": {},
         }
 
         delta = await run_guided_exercise_response_node(
@@ -778,13 +917,13 @@ class TestEndToEndRouting:
             runtime,  # type: ignore[arg-type]
         )
 
-        # EXIT: progress fields must be cleared (None)
-        assert delta["progress"]["exercise_type"] is None
-        assert delta["progress"]["exercise_step"] is None
+        # EXIT: exercise-state fields must be cleared (None)
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
         # Response acknowledges the exit without defending the exercise
-        text_lower = delta["response"]["text"].lower()
+        text_lower = delta["response_text"].lower()
         assert "stop" in text_lower or "of course" in text_lower
-        assert delta["routing"]["response_style"] == "guided_exercise"
+        assert delta["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_guided_exercise_last_step_completion_clears_state(self) -> None:
@@ -805,13 +944,11 @@ class TestEndToEndRouting:
             "message": "Coffee. That's what I can taste right now.",
             "session_id": "test-routing",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 6},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 4,
-                "turn_count": 6,
             },
-            "response": {},
-            "routing": {},
         }
 
         delta = await run_guided_exercise_response_node(
@@ -820,12 +957,12 @@ class TestEndToEndRouting:
         )
 
         # Exercise completes naturally — state is cleared
-        assert delta["progress"]["exercise_type"] is None
-        assert delta["progress"]["exercise_step"] is None
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
         # Response names what the user just did
-        text_lower = delta["response"]["text"].lower()
+        text_lower = delta["response_text"].lower()
         assert "grounding" in text_lower or "walked" in text_lower
-        assert delta["routing"]["response_style"] == "guided_exercise"
+        assert delta["response_style"] == "guided_exercise"
 
     @pytest.mark.asyncio
     async def test_crisis_still_routes_to_crisis_not_therapeutic(self) -> None:
@@ -888,13 +1025,12 @@ class TestMidExerciseModalityPreservation:
         state: Any = {
             "message": "what do you mean by notice?",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "turn_count": 3,
             },
-            "response": {},
-            "routing": {"therapeutic_approach": "cbt"},
+            "therapeutic_approach": "cbt",
         }
 
         cmd = await run_therapeutic_dispatch_node(
@@ -904,10 +1040,41 @@ class TestMidExerciseModalityPreservation:
 
         # Clarifying should preserve the exercise's existing modality (cbt),
         # NOT use the LLM's fresh pick (grief_support).
-        assert cmd.update["routing"]["therapeutic_approach"] == "cbt"
+        assert cmd.update["therapeutic_approach"] == "cbt"
         assert cmd.goto == CLARIFYING_NODE
         # Exercise state must still be intact
-        assert "exercise_type" not in cmd.update.get("progress", {})
+        assert "exercise_type" not in cmd.update.get("exercise_state", {})
+
+    @pytest.mark.asyncio
+    async def test_clarifying_uses_pinned_exercise_modality_when_routing_missing(
+        self,
+    ) -> None:
+        """A clarifying side-turn falls back to exercise_state.exercise_modality."""
+
+        llm = _FakeDispatchLLM(
+            response_style="clarifying",
+            therapeutic_approach="grief_support",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state: Any = {
+            "message": "what do you mean by notice?",
+            "history": [],
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 2,
+                "exercise_modality": "cbt",
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.update["therapeutic_approach"] == "cbt"
+        assert cmd.goto == CLARIFYING_NODE
+        assert "exercise_type" not in cmd.update.get("exercise_state", {})
 
     @pytest.mark.asyncio
     async def test_psychoeducation_uses_fresh_modality(self) -> None:
@@ -921,13 +1088,12 @@ class TestMidExerciseModalityPreservation:
         state: Any = {
             "message": "how does grief work?",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "turn_count": 3,
             },
-            "response": {},
-            "routing": {"therapeutic_approach": "cbt"},
+            "therapeutic_approach": "cbt",
         }
 
         cmd = await run_therapeutic_dispatch_node(
@@ -937,28 +1103,53 @@ class TestMidExerciseModalityPreservation:
 
         # Psychoeducation should use the LLM's fresh pick (grief_support),
         # NOT the exercise's modality (cbt).
-        assert cmd.update["routing"]["therapeutic_approach"] == "grief_support"
+        assert cmd.update["therapeutic_approach"] == "grief_support"
         assert cmd.goto == PSYCHOEDUCATION_NODE
         # Exercise state must still be intact
-        assert "exercise_type" not in cmd.update.get("progress", {})
+        assert "exercise_type" not in cmd.update.get("exercise_state", {})
+
+    @pytest.mark.asyncio
+    async def test_regex_active_exercise_uses_pinned_modality_when_routing_missing(
+        self,
+    ) -> None:
+        """Regex continuation falls back to exercise_state.exercise_modality."""
+
+        runtime = _MockRuntime(llm_client=None)
+        state: Any = {
+            "message": "okay",
+            "history": [],
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 2,
+                "exercise_modality": "act",
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.update["therapeutic_approach"] == "act"
+        assert cmd.goto == GUIDED_EXERCISE_NODE
 
     @pytest.mark.asyncio
     async def test_deterministic_exit_clears_exercise_modality(self) -> None:
-        """Deterministic exit override clears exercise_modality in progress."""
+        """Deterministic exit override clears exercise_modality in exercise_state."""
 
         llm = _FakeDispatchLLM(response_style="supportive")
         runtime = _MockRuntime(llm_client=llm)
         state: Any = {
             "message": "never mind",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
                 "exercise_modality": "cbt",
-                "turn_count": 3,
             },
-            "response": {},
-            "routing": {"therapeutic_approach": "cbt"},
+            "therapeutic_approach": "cbt",
         }
 
         cmd = await run_therapeutic_dispatch_node(
@@ -967,9 +1158,9 @@ class TestMidExerciseModalityPreservation:
         )
 
         # Exit must clear all exercise state including modality
-        assert cmd.update["progress"]["exercise_type"] is None
-        assert cmd.update["progress"]["exercise_step"] is None
-        assert cmd.update["progress"]["exercise_modality"] is None
+        assert cmd.update["exercise_state"]["exercise_type"] is None
+        assert cmd.update["exercise_state"]["exercise_step"] is None
+        assert cmd.update["exercise_state"]["exercise_modality"] is None
         assert cmd.goto == SUPPORTIVE_NODE
 
     @pytest.mark.asyncio
@@ -984,14 +1175,13 @@ class TestMidExerciseModalityPreservation:
         state: Any = {
             "message": "actually let's talk about something else",
             "history": [],
-            "progress": {
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
                 "exercise_modality": "cbt",
-                "turn_count": 3,
             },
-            "response": {},
-            "routing": {"therapeutic_approach": "cbt"},
+            "therapeutic_approach": "cbt",
         }
 
         cmd = await run_therapeutic_dispatch_node(
@@ -999,6 +1189,6 @@ class TestMidExerciseModalityPreservation:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert cmd.update["progress"]["exercise_type"] is None
-        assert cmd.update["progress"]["exercise_step"] is None
-        assert cmd.update["progress"]["exercise_modality"] is None
+        assert cmd.update["exercise_state"]["exercise_type"] is None
+        assert cmd.update["exercise_state"]["exercise_step"] is None
+        assert cmd.update["exercise_state"]["exercise_modality"] is None

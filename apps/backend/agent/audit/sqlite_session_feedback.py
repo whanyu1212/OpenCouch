@@ -1,59 +1,12 @@
-"""SQLite-backed implementation of the :class:`SessionFeedbackBackend` protocol.
+"""SQLite-backed implementation of the session-feedback protocol.
 
-The v0.10 session-feedback collector needs a durable store so end-of-
-session thumbs ratings survive CLI / server restarts. Structurally
-parallel to :mod:`agent.audit.sqlite_crisis_log`:
+This backend persists ``SessionFeedbackRecord`` rows for local and
+synced runtimes. Indexed columns support session lookups and retention
+purges; the full serialized record remains in the ``value`` JSON column
+for forward compatibility.
 
-- INCOGNITO mode → :class:`InMemorySessionFeedbackBackend`, nothing
-  touches disk.
-- LOCAL / SYNCED mode → this backend, paired with
-  :class:`agent.memory.sqlite_store.SqliteMemoryStore` and
-  :class:`agent.audit.sqlite_crisis_log.SqliteCrisisLogBackend`.
-
-Design decisions mirrored from the crisis_log SQLite backend:
-
-1. **Hybrid schema.** Discriminating columns (``id``,
-   ``session_id_opaque``, ``recorded_at``, ``recorded_date``, ``label``,
-   ``source``, ``turn_count_at_end``) sit alongside a ``value`` JSON
-   column that holds the full serialized :class:`SessionFeedbackRecord`
-   as the forward-compatible source of truth.
-
-2. **Pre-computed ``recorded_date`` column.** Matches crisis_log's
-   ``detected_date`` trick: store the ``YYYY-MM-DD`` prefix at insert
-   time so :meth:`apurge_before` can use a B-tree index instead of
-   evaluating ``date(recorded_at)`` per row.
-
-3. **aiosqlite directly, no ORM.** Same rationale as crisis_log: the
-   dependency is already in the tree, and the schema is simple.
-
-4. **One connection per runtime lifetime, lazily opened.** Construction
-   is cheap; the first async method opens the connection and runs the
-   schema DDL. ``aclose`` tears it down.
-
-Differences from crisis_log worth calling out:
-
-- **No UNIQUE constraint on ``id``.** Phase 1 does not claim
-  idempotency — two calls to ``record_session_feedback`` produce two
-  rows with distinct fresh UUIDs. See ``session_feedback_plan.md`` §3
-  (v4.1/v4.2 fix 3) for the reasoning. If a future phase adds
-  idempotency, it will come via an explicit idempotency-key column
-  rather than repurposing ``id``.
-
-- **Session-keyed read pattern.** The primary read is
-  :meth:`alist_by_session` (per opaque session id), matching the
-  operational question "what feedback did this session produce?".
-  crisis_log's primary read is by date; feedback's is by session.
-
-- **``CHECK`` constraint on ``source``** in addition to ``label``.
-  Both are short controlled vocabularies where a schema-level guard
-  catches code-DB drift at insert time (e.g., a new Python enum
-  member added without a matching migration).
-
-- **Retention default of 180 days**, wider than crisis_log's 90,
-  because feedback analytics benefit from a longer lookback window.
-  The backend exposes :meth:`apurge_before` but the default is
-  enforced by the CLI / scheduled cleanup caller, not by the backend
-  itself.
+Feedback rows are intentionally session-keyed because they are created
+at session close, not by the response graph during normal turn handling.
 """
 
 from __future__ import annotations
@@ -62,16 +15,14 @@ import json
 import logging
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
 from agent.audit.session_feedback import SessionFeedbackBackend
-from agent.memory.models import SessionFeedbackRecord
+from agent.audit.models import SessionFeedbackRecord
 
 logger = logging.getLogger(__name__)
-
-
-# ─── Schema DDL ────────────────────────────────────────────────────────
 
 
 SESSION_FEEDBACK_DDL = """
@@ -89,34 +40,6 @@ CREATE TABLE IF NOT EXISTS session_feedback (
     value TEXT NOT NULL
 );
 """
-# Schema notes:
-#
-# - ``insertion_order INTEGER PRIMARY KEY AUTOINCREMENT`` is the SQLite
-#   primary key. It gives us stable chronological ordering for
-#   ``ORDER BY insertion_order ASC`` within a session bucket, matching
-#   the in-memory backend's "records in insertion order" contract.
-#
-# - ``id TEXT NOT NULL`` — intentionally NOT unique. Phase 1 does not
-#   provide idempotency; see module docstring for the explicit
-#   decision. ``id`` is an opaque UUID useful for external correlation
-#   (log lines, future idempotency keys) but it has no database-level
-#   uniqueness guarantee.
-#
-# - ``session_id_opaque TEXT NOT NULL`` — the SHA-256 of the session id,
-#   indexed below for per-session lookups. Safe to persist in incognito
-#   mode because it can't be reverse-mapped to a user.
-#
-# - ``recorded_date TEXT NOT NULL`` holds the ``YYYY-MM-DD`` prefix of
-#   ``recorded_at``, computed at insert time. Enables B-tree index use
-#   for :meth:`apurge_before` instead of per-row ``date(recorded_at)``.
-#
-# - ``label TEXT ... CHECK (...)`` and ``source TEXT ... CHECK (...)``
-#   are controlled-vocabulary guards — defense against silent drift
-#   between the Python enum and the DB schema.
-#
-# - ``value TEXT NOT NULL`` holds the full serialized
-#   :class:`SessionFeedbackRecord` as JSON. The denormalized columns
-#   enable fast filtering; this JSON is the source of truth.
 
 
 SESSION_FEEDBACK_INDEX_SESSION_DDL = """
@@ -130,7 +53,6 @@ CREATE INDEX IF NOT EXISTS idx_feedback_recorded_date
 """
 
 
-# Every statement uses ``IF NOT EXISTS`` so re-running is a safe no-op.
 SESSION_FEEDBACK_SCHEMA_DDL: tuple[str, ...] = (
     SESSION_FEEDBACK_DDL,
     SESSION_FEEDBACK_INDEX_SESSION_DDL,
@@ -138,29 +60,12 @@ SESSION_FEEDBACK_SCHEMA_DDL: tuple[str, ...] = (
 )
 
 
-# ─── SqliteSessionFeedbackBackend ──────────────────────────────────────
-
-
 class SqliteSessionFeedbackBackend:
     """SQLite-backed implementation of :class:`SessionFeedbackBackend`.
 
-    Behaviorally identical to :class:`InMemorySessionFeedbackBackend`
-    for all five method semantics; the only difference is that records
-    persist to disk instead of living in a dict.
-
-    Connection lifecycle (same pattern as
-    :class:`agent.audit.sqlite_crisis_log.SqliteCrisisLogBackend`):
-
-    - ``__init__`` stores the SQLite path but does NOT open the
-      connection. Construction is cheap and doesn't touch disk.
-    - The first async method call triggers lazy ``_ensure_connection``,
-      which opens an aiosqlite connection and runs the schema DDL.
-      Subsequent calls reuse the same connection.
-    - ``aclose`` closes the connection and marks the backend as closed.
-      Any further calls raise ``RuntimeError``.
-    - The backend is **not** thread-safe. Each runtime instance should
-      own its own backend; do not share an instance across concurrent
-      callers.
+    The connection opens lazily on first async use, then stays attached
+    to the backend until ``aclose``. Each runtime instance should own its
+    own backend instance; the class is not thread-safe.
     """
 
     def __init__(self, sqlite_path: str | Path) -> None:
@@ -178,8 +83,6 @@ class SqliteSessionFeedbackBackend:
         )
         self._connection: aiosqlite.Connection | None = None
         self._closed = False
-
-    # ── Connection lifecycle ──────────────────────────────────────────
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
         """Open the SQLite connection on first use.
@@ -215,8 +118,6 @@ class SqliteSessionFeedbackBackend:
         for ddl in SESSION_FEEDBACK_SCHEMA_DDL:
             await conn.execute(ddl)
         await conn.commit()
-
-    # ── Public interface (SessionFeedbackBackend protocol) ────────────
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:
         """Append one SQLite-backed feedback record.
@@ -342,8 +243,6 @@ class SqliteSessionFeedbackBackend:
             finally:
                 self._connection = None
 
-    # ── Helpers ───────────────────────────────────────────────────────
-
     @staticmethod
     def _extract_date_prefix(recorded_at: str) -> str:
         """Extract the date prefix from an ISO-8601 timestamp.
@@ -360,13 +259,8 @@ class SqliteSessionFeedbackBackend:
         return date_prefix
 
 
-# ─── Protocol conformance assertion ────────────────────────────────────
-#
-# Verify at import time that SqliteSessionFeedbackBackend satisfies the
-# SessionFeedbackBackend protocol. Matches the sqlite_crisis_log.py
-# pattern — a type-level assertion that catches missing or mis-signed
-# methods during module load.
-_: type[SessionFeedbackBackend] = SqliteSessionFeedbackBackend
+if TYPE_CHECKING:
+    _sqlite_backend: SessionFeedbackBackend = SqliteSessionFeedbackBackend(":memory:")
 
 
 __all__ = [

@@ -28,6 +28,9 @@ class OpenAILLMClient(BaseLLMClient):
             api_key: Optional explicit API key override.
             model: Model identifier to use for requests.
 
+        Returns:
+            None.
+
         Raises:
             ValueError: If no OpenAI API key can be resolved.
         """
@@ -47,30 +50,15 @@ class OpenAILLMClient(BaseLLMClient):
     ) -> str:
         """Generate a plain-text response with OpenAI.
 
-        When ``use_search=True``, the OpenAI hosted ``web_search`` tool
-        is attached to the Responses API call so the model can ground
-        its reply against live web results. This is the call path the
-        crisis resource lookup tool uses to find verified regional
-        hotlines.
-
-        Before v0.8, this client silently ignored ``use_search=True``
-        and documented the parameter as "unused for interface parity."
-        That was a real safety gap for the crisis resource lookup
-        path — the tool's system prompt told the model to "use your
-        web search capability" but the client never attached a search
-        tool, leaving the model free to produce results from training
-        data (sometimes accurate for well-known regions, sometimes
-        hallucinated for less-common ones). The v0.8 fix wires up
-        OpenAI's ``web_search`` tool so ``use_search=True`` does what
-        it says on the tin.
+        When ``use_search=True``, the OpenAI hosted web-search tool is
+        attached to the Responses API call so the model can ground its
+        reply against live web results.
 
         Args:
             prompt: The user or task prompt to send to the model.
             system_instruction: Optional top-level instruction for model behavior.
-            use_search: When True, attach OpenAI's hosted ``web_search``
-                tool so the model can ground its reply against live
-                web results. When False (the default), the call runs
-                without any tool attached.
+            use_search: Whether to attach OpenAI's hosted web-search
+                tool. When False, no tool is attached.
 
         Returns:
             The generated text response.
@@ -83,23 +71,12 @@ class OpenAILLMClient(BaseLLMClient):
             input_items.append({"role": "system", "content": system_instruction})
         input_items.append({"role": "user", "content": prompt})
 
-        # The Responses API accepts ``tools`` as an optional parameter.
-        # When absent, the call behaves exactly as before. When present,
-        # the model may route the call through the attached tool before
-        # producing its final text — but ``response.output_text`` still
-        # returns just the final user-visible text, so the caller
-        # contract stays the same.
-        #
-        # We only attach the tool list when ``use_search=True``; passing
-        # an empty list is a different code path in the SDK (it forces
-        # tools-enabled request shape with no tools available) and
-        # isn't what we want for the common no-search case.
         kwargs: dict[str, Any] = {
             "model": self.model,
             "input": input_items,
         }
         if use_search:
-            kwargs["tools"] = [{"type": "web_search"}]
+            kwargs["tools"] = [{"type": "web_search_preview"}]
 
         response = await self.client.responses.create(**kwargs)
         text = response.output_text
@@ -123,7 +100,7 @@ class OpenAILLMClient(BaseLLMClient):
             String chunks of the generated text as they arrive.
         """
 
-        input_items = []
+        input_items: list[Any] = []
         if system_instruction:
             input_items.append({"role": "system", "content": system_instruction})
         input_items.append({"role": "user", "content": prompt})
@@ -156,7 +133,7 @@ class OpenAILLMClient(BaseLLMClient):
         Raises:
             ValueError: If OpenAI does not return parsed structured output.
         """
-        input_items = []
+        input_items: list[Any] = []
         if system_instruction:
             input_items.append({"role": "system", "content": system_instruction})
         input_items.append({"role": "user", "content": prompt})

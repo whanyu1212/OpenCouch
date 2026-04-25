@@ -1,3 +1,5 @@
+"""Runtime configuration helpers for model and tracing setup."""
+
 from __future__ import annotations
 
 import os
@@ -15,9 +17,7 @@ from services.llm.openai_client import DEFAULT_OPENAI_MODEL
 LLMProvider = Literal["gemini", "openai"]
 ResponseModelTier = Literal["fast", "quality"]
 
-# Single source of truth for the default provider when LLM_PROVIDER
-# env var is unset. Used by both the Settings dataclass default and
-# get_settings() fallback so they always agree.
+# Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
 
@@ -39,7 +39,9 @@ def load_runtime_env() -> None:
     repo_root = Path(__file__).resolve().parents[3]
 
     load_dotenv(repo_root / ".env", override=False)
+    load_dotenv(repo_root / ".env.local", override=False)
     load_dotenv(backend_root / ".env", override=False)
+    load_dotenv(backend_root / ".env.local", override=False)
     _DOTENV_LOADED = True
 
 
@@ -89,10 +91,10 @@ def get_settings() -> Settings:
     )
 
     return Settings(
-        llm_provider=provider,  # type: ignore[arg-type]
+        llm_provider=provider,
         gemini_model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
         openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
-        response_fast_provider=response_fast_provider,  # type: ignore[arg-type]
+        response_fast_provider=response_fast_provider,
         response_fast_gemini_model=os.getenv(
             "RESPONSE_FAST_GEMINI_MODEL",
             os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
@@ -101,7 +103,7 @@ def get_settings() -> Settings:
             "RESPONSE_FAST_OPENAI_MODEL",
             os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         ),
-        response_quality_provider=response_quality_provider,  # type: ignore[arg-type]
+        response_quality_provider=response_quality_provider,
         response_quality_gemini_model=os.getenv(
             "RESPONSE_QUALITY_GEMINI_MODEL",
             os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
@@ -124,12 +126,25 @@ def get_settings() -> Settings:
 
 
 def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
-    """Read and validate an LLM provider env var."""
+    """Read and validate an LLM provider env var.
+
+    Args:
+        name: Environment variable name to read.
+        fallback: Provider used when the variable is unset.
+
+    Returns:
+        Validated provider literal.
+
+    Raises:
+        ValueError: If the environment value is not supported.
+    """
 
     raw = os.getenv(name, fallback).strip().lower()
-    if raw not in {"gemini", "openai"}:
-        raise ValueError(f"Unsupported {name} value: {raw}")
-    return raw  # type: ignore[return-value]
+    if raw == "gemini":
+        return "gemini"
+    if raw == "openai":
+        return "openai"
+    raise ValueError(f"Unsupported {name} value: {raw}")
 
 
 def _resolve_model_for_provider(
@@ -138,7 +153,16 @@ def _resolve_model_for_provider(
     gemini_model: str,
     openai_model: str,
 ) -> str:
-    """Return the provider-specific model string."""
+    """Return the provider-specific model string.
+
+    Args:
+        provider: LLM provider selected for the client.
+        gemini_model: Gemini model name to use when provider is Gemini.
+        openai_model: OpenAI model name to use when provider is OpenAI.
+
+    Returns:
+        Model name for the selected provider.
+    """
 
     return gemini_model if provider == "gemini" else openai_model
 
@@ -146,7 +170,15 @@ def _resolve_model_for_provider(
 def create_configured_control_llm_client(
     settings: Settings | None = None,
 ) -> BaseLLMClient:
-    """Create the pinned control-plane LLM client for the runtime."""
+    """Create the pinned control-plane LLM client for the runtime.
+
+    Args:
+        settings: Optional preloaded settings. Reads the environment
+            when omitted.
+
+    Returns:
+        Configured control-plane LLM client.
+    """
 
     load_runtime_env()
     settings = settings or get_settings()
@@ -165,7 +197,16 @@ def create_configured_response_llm_client(
     tier: ResponseModelTier,
     settings: Settings | None = None,
 ) -> BaseLLMClient:
-    """Create the response-writer LLM client for a user-facing tier."""
+    """Create the response-writer LLM client for a user-facing tier.
+
+    Args:
+        tier: Response model tier to configure.
+        settings: Optional preloaded settings. Reads the environment
+            when omitted.
+
+    Returns:
+        Configured response-writer LLM client.
+    """
 
     load_runtime_env()
     settings = settings or get_settings()
@@ -190,7 +231,15 @@ def create_configured_response_llm_client(
 def create_configured_response_llm_clients(
     settings: Settings | None = None,
 ) -> dict[ResponseModelTier, BaseLLMClient]:
-    """Create both response-tier clients for reuse in the API server."""
+    """Create both response-tier clients for reuse in the API server.
+
+    Args:
+        settings: Optional preloaded settings. Reads the environment
+            when omitted.
+
+    Returns:
+        Response-tier clients keyed by tier.
+    """
 
     settings = settings or get_settings()
     return {
@@ -200,6 +249,14 @@ def create_configured_response_llm_clients(
 
 
 def create_configured_llm_client(settings: Settings | None = None) -> BaseLLMClient:
-    """Backward-compatible alias for the pinned control-plane client."""
+    """Return the configured control-plane client.
+
+    Args:
+        settings: Optional preloaded settings. Reads the environment
+            when omitted.
+
+    Returns:
+        Configured control-plane LLM client.
+    """
 
     return create_configured_control_llm_client(settings)

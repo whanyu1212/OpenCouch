@@ -167,13 +167,25 @@ flowchart TD
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
+        MCG{"memory_control_gate<br/>recall • forget • inspect"}:::safeNode
+        MC[["memory_control<br/>slash + natural language"]]:::safeNode
+        GLG{"grounded_lookup_gate<br/>current factual requests"}:::safeNode
+        GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
         TS[["therapeutic_subgraph<br/>7 styles • 7 approaches"]]:::safeNode
+        MCG ==>|memory control| MC
+        MCG ==>|ordinary turn| GLG
+        GLG ==>|lookup| GA
+        GLG ==>|support| LM
         LM ==> TS
     end
 
     subgraph RISK ["Crisis Branch"]
+        RL[["crisis_resource_lookup<br/>location-aware resources"]]:::riskNode
         CR[["crisis_response<br/>PFA overlay • local hotlines"]]:::riskNode
+        CL[/"crisis_log"/]:::riskNode
+        RL ==> CR
+        CR ==> CL
     end
 
     FT{{"finalize_turn<br/>operator.add reducer"}}:::sysNode
@@ -202,10 +214,12 @@ flowchart TD
 
     %% Logic Flows
     IN ==> CG
-    CG ==>|Safe| LM
-    CG -.->|Risk| CR
+    CG ==>|Safe| MCG
+    CG -.->|Risk| RL
+    MC ==> FT
+    GA ==> FT
     TS ==> FT
-    CR -.-> FT
+    CL -.-> FT
     FT -.-> EF
     FT -.-> EP
     PW -.->|immediate writes| DB
@@ -257,6 +271,8 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Behavior eval stabilization** — full deterministic + hybrid eval sweep is green across crisis, therapeutic routing, behavior, long trajectories, memory trajectories, summarization, and procedural writer checks
+- **Extraction eval fixes** — semantic extraction eval now grades session-held candidates correctly, prompt examples cover stable context/loss/support relationships, and narrow deterministic backstops recover high-precision facts the LLM may skip
 - **Memory package boundary cleanup** — moved the always-on audit backends (`crisis_log`, `session_feedback`, SQLite variants) into `agent/audit/`, updated imports across runtime/evals/tests, and added a dedicated `agent/memory/README.md` to map the subsystem
 - **Memory internals cleanup** — removed stale memory-package artifacts, split monolithic memory models into typed submodules, and centralized shared retrieval/policy logic
 - **Load-memory retrieval quality** — semantic recall now filters inactive facts before hybrid ranking and truncation, so dormant or superseded memory no longer crowds out active context
@@ -267,7 +283,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 - **Architecture rename** — `mode` → `response_style`, `modality` → `therapeutic_approach` across the entire codebase for clearer terminology
 - **Prompt reorganization** — moved prompt sources into `agent/prompts/sources/`, deduplicated shared helpers into a single module
 - **Memory robustness** — Unicode-aware tokenizer, procedural rule cap, atomic batch writes, episodic date filter, enriched semantic triples, fail-loud owner_id validation
-- **CLI visual redesign** — "Midnight Journal" aesthetic with warm amber/sage palette, Unicode block-art wordmark, minimal left-bar info messages
+- **CLI visual redesign** — "Midnight Journal" aesthetic with a therapeutic **sage + muted blue** palette, clearer primary/accent/brand role separation, Unicode block-art wordmark, and minimal left-bar info messages
 - **Memory system rewrite** — policy-based candidate extraction, session-end commit, repetition-gated promotion, reconciliation/supersession
 - **Response model tiers** — `fast` vs `quality` text-response switching in both web UI and CLI
 - **Crisis gate hardening** — LLM-primary architecture with regex fallback, shadow monitoring, and adversarial-resistant prompt

@@ -88,7 +88,7 @@ def _partial_state(
     """Build a partial AgentState for extraction node unit tests.
 
     Only the fields the extraction node reads (message, history, user_id,
-    session_id, progress) are populated. The rest is left off and the
+    session_id, session_progress) are populated. The rest is left off and the
     value is cast to AgentState — the test is asserting behavior, not
     schema completeness.
     """
@@ -98,7 +98,7 @@ def _partial_state(
         "history": [],
         "user_id": user_id,
         "session_id": session_id,
-        "progress": {"turn_count": turn_count},
+        "session_progress": {"turn_count": turn_count},
     }
     return cast(AgentState, state)
 
@@ -359,6 +359,30 @@ class TestExtractFactsNodeUnit:
         )
         assert fake.extraction_calls == 1
         assert await store.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_deterministic_backstop_recovers_helper_relationship(self) -> None:
+        """High-precision relationship mentions are recovered if the LLM skips."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[],
+                reason="model skipped short acknowledgment",
+            )
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(message="Thanks, Sarah helped me with that.")
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 1
+        records = await store.asearch(("user-1", "semantic"), query=None, limit=10)
+        assert len(records) == 1
+        value = records[0].value
+        assert value["category"] == "relationship"
+        assert value["predicate"] == "KNOWS"
+        assert value["object"]["identifier"] == "Sarah"
 
     @pytest.mark.asyncio
     async def test_single_new_fact_writes_to_store(self) -> None:

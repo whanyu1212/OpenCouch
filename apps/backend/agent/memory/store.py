@@ -1,66 +1,19 @@
-"""Unified memory store for the OpenCouch agent.
+"""Unified memory-store interface and in-memory implementation.
 
-The :class:`MemoryStore` protocol is the interface the agent's nodes
-use to read and write long-term memory. Two concrete implementations
-satisfy it:
+The :class:`MemoryStore` protocol is the async interface the agent's
+nodes use to read and write long-term memory. It is implemented by
+this module's :class:`OpenCouchMemoryStore` and by
+:class:`agent.memory.sqlite_store.SqliteMemoryStore`.
 
-- :class:`OpenCouchMemoryStore` (in-memory, dict-backed) — original
-  v0.1 scaffolding, fast and ephemeral. Used by unit tests and by
-  incognito-mode CLI sessions where nothing should persist.
-- :class:`agent.memory.sqlite_store.SqliteMemoryStore` (v0.8) —
-  aiosqlite-backed, durable across process restarts. Used by
-  persistent-mode CLI sessions so that semantic facts and episodic
-  arcs survive ``/exit`` + restart.
+Records are grouped by namespace, usually ``(user_id, kind)`` where
+``kind`` is ``"semantic"``, ``"episodic"``, or ``"procedural"``. The
+in-memory store keeps one dict-backed bucket per namespace. The SQLite
+store persists the same logical records in a single table.
 
-Both implementations fan out records by namespace (semantic /
-episodic / procedural) via a ``(user_id, kind)`` tuple. The in-memory
-version keeps per-namespace dicts; the SQLite version keeps a single
-``memory_records`` table with ``namespace_kind`` as a discriminator
-column and an index on ``(owner_id, namespace_kind)``.
-
-Phase 1 v0.8 scope (for this file):
-- :class:`MemoryStore` protocol ships alongside the existing
-  :class:`OpenCouchMemoryStore`. The protocol captures the async
-  interface (``aput``, ``aget``, ``asearch``, ``adelete``, ``aclose``)
-  plus the debug helpers the CLI uses (``record_count``,
-  ``namespaces``). Both concrete classes satisfy it structurally.
-- Token-recall search behavior is unchanged. :class:`SqliteMemoryStore`
-  runs the same Python-side scoring loop used by
-  :class:`OpenCouchMemoryStore` — the only difference is where the
-  rows come from (SQL query vs dict iteration). See the
-  :data:`SEARCH_MATCH_THRESHOLD` comment below for the scorer rationale.
-- Incognito mode still uses :class:`OpenCouchMemoryStore` (the runtime
-  picks the implementation based on mode).
-
-Token-recall scoring details (v0.3.1, still current):
-- Uses the shared tokenizer from :mod:`agent.memory.text_tokens` and
-  computes ``|query_tokens ∩ haystack_tokens| / |query_tokens|`` after
-  filtering stopwords from the query side. A record counts as a match
-  when that recall ratio meets :data:`SEARCH_MATCH_THRESHOLD`.
-- Results are returned in score-descending order with insertion order
-  as a deterministic tiebreaker. Callers that relied on pure
-  insertion-order behavior should be aware of the change; in practice
-  the only caller (``load_memory_node``) wants best-match-first anyway.
-- Still a placeholder for the real text-embedding-3-small pathway
-  that lands after v0.8. Token-recall is deterministic, cheap, and
-  dramatically better than substring match for the paraphrase-heavy
-  retrieval path, without introducing any embedding dependency or
-  cold-start model load.
-- **Semantic** (v0.3) and **episodic** (v0.4) namespaces are both
-  wired through the real extraction/retrieval path. Procedural reads
-  still return empty (procedural memory lands in v0.7).
-
-Design decisions:
-- The store is a **standalone class hierarchy**, not a subclass of
-  LangGraph's ``BaseStore``. The full ``BaseStore`` batch-op dispatcher
-  is more scaffolding than phase 1 needs; phase 3 will revisit whether
-  to inherit or write an adapter when graph memory lands.
-- Namespaces are represented as tuples (``(user_id, kind)``) matching
-  the LangGraph convention, so a future migration to ``BaseStore`` is
-  a straightforward adapter rather than a redesign.
-- The store exposes a small async interface: ``aput``, ``aget``,
-  ``asearch``, ``adelete``, ``aclose``. No sync variants. Agent nodes
-  always run in async context so there's no caller that needs sync.
+Search combines lexical token recall with optional embedding
+similarity. Lexical recall remains deterministic and cheap, while
+embedding matches improve paraphrase-heavy retrieval when an embedding
+provider is configured.
 """
 
 from __future__ import annotations
@@ -71,9 +24,9 @@ from typing import Any, Protocol, runtime_checkable
 
 from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
 
-# A namespace is a tuple of strings, typically ``(user_id, kind)`` where
-# kind is one of "semantic", "episodic", "procedural". The tuple shape
-# matches LangGraph's BaseStore convention so a future adapter is easy.
+# A namespace is typically ``(user_id, kind)`` where kind is one of
+# "semantic", "episodic", or "procedural". The tuple shape mirrors
+# LangGraph's BaseStore convention.
 Namespace = tuple[str, ...]
 
 # Minimum query-token recall ratio for a record to count as a search hit.
@@ -82,20 +35,16 @@ Namespace = tuple[str, ...]
 # of the query's meaningful tokens must appear in the record."
 #
 # Why 0.33 and not the more obvious 0.5:
-# Natural user queries are wordier than the stored evidence quotes they
-# query, so the denominator (query token count) tends to be larger than
-# the overlap. A realistic retrieval case like the query "I feel
-# overwhelmed at work" against a stored fact "I worry about work stress"
-# produces meaningful tokens {feel, overwhelmed, work} vs a haystack that
-# contains {work} — overlap 1, recall 1/3 ≈ 0.333. At threshold 0.5 this
-# correctly-relevant record misses; at 0.33 it hits. The Stage E dogfood
-# pass showed this pattern repeatedly, so the bar is set where natural
-# queries with one topical keyword still land.
+# Natural user queries are often wordier than stored evidence quotes,
+# so the denominator tends to be larger than the overlap. A query like
+# "I feel overwhelmed at work" against "I worry about work stress" has
+# one topical overlap across three meaningful query tokens. At 0.5 this
+# relevant record misses; at 0.33 it lands.
 #
 # Why not lower (0.2, 0.25):
-# Lower thresholds start to allow spurious matches. The Stage E long-
-# paraphrase query "things have been tense with Sarah lately" has four
-# meaningful tokens and only {sarah} in the haystack — recall 1/4 = 0.25.
+# Lower thresholds start to allow spurious matches. The query "things
+# have been tense with Sarah lately" has four meaningful tokens and
+# only {sarah} in a matching haystack, so recall is 1/4 = 0.25.
 # At threshold 0.33 this correctly misses (low signal, only one keyword
 # among four connectives). At threshold 0.25 it would hit, but only
 # because Sarah is the one word the query happens to share. That's too
@@ -106,8 +55,8 @@ Namespace = tuple[str, ...]
 # asymmetry is intentional: retrieval false-negatives hurt user experience
 # directly (the agent forgets), while dedup false-positives hurt memory
 # integrity permanently (distinct facts get merged). Tune retrieval
-# loose, tune dedup tight. The v0.8 embedding pathway will replace this
-# with proper semantic similarity and render the threshold obsolete.
+# loose, tune dedup tight. Embedding retrieval complements this lexical
+# threshold but does not replace it; both paths feed hybrid ranking.
 SEARCH_MATCH_THRESHOLD = 0.33
 
 
@@ -119,14 +68,9 @@ class StoreRecord:
     belongs to. The ``value`` dict holds the serialized pydantic model
     (via ``model.model_dump()``) so the store stays model-agnostic.
 
-    v0.8.1 adds two optional fields — ``embedding`` and
-    ``embedding_model`` — to support the hybrid retrieval path via
-    :meth:`MemoryStore.asearch_similar`. Records written before
-    v0.8.1 or through a NullEmbeddingProvider leave both fields
-    as ``None``, and those records participate in hybrid retrieval
-    via the token-recall path only. Records with embeddings
-    participate in both the token-recall and the embedding-
-    similarity paths.
+    Optional ``embedding`` and ``embedding_model`` fields support
+    hybrid retrieval. Records without embeddings still participate
+    through the lexical recall path.
     """
 
     namespace: Namespace
@@ -147,18 +91,8 @@ class _NamespaceBucket:
 class MemoryStore(Protocol):
     """The async memory-store interface both implementations satisfy.
 
-    Added in v0.8 alongside the SQLite-backed implementation. Before
-    v0.8, :class:`OpenCouchMemoryStore` was the only implementation and
-    callers typed their store parameters as that concrete class. v0.8
-    adds :class:`agent.memory.sqlite_store.SqliteMemoryStore` as a
-    sibling — same interface, SQLite-backed persistence — so the
-    runtime can swap implementations without the callers needing to
-    know which one they're holding.
-
-    The protocol mirrors the existing OpenCouchMemoryStore surface
-    exactly, because OpenCouchMemoryStore was the reference
-    implementation. Any method added to both concrete classes should
-    be added here first.
+    The runtime can swap in-memory and SQLite-backed implementations
+    without node code knowing which one it is holding.
 
     Design notes:
     - **``@runtime_checkable``** so ``isinstance(store, MemoryStore)``
@@ -171,15 +105,9 @@ class MemoryStore(Protocol):
       callers can substitute the type annotation without having to
       adjust call sites.
 
-    When this protocol grows, keep two rules in mind:
-    1. Any method added here MUST be implemented by both concrete
-       classes before the protocol signature ships, or runtime callers
-       that duck-type against the protocol will get AttributeError.
-    2. The protocol should only capture the methods nodes and runtime
-       code actually USE. Internal debug helpers (e.g.,
-       ``record_count``) that aren't part of the node interface don't
-       need to be in the protocol — they can live on the concrete
-       classes only.
+    Keep this protocol limited to methods used by nodes, runtime code,
+    or CLI diagnostics. Any method added here must be implemented by
+    both concrete stores before callers depend on it.
     """
 
     async def aput(
@@ -349,18 +277,11 @@ class MemoryStore(Protocol):
 class OpenCouchMemoryStore:
     """In-memory implementation of the :class:`MemoryStore` protocol.
 
-    This is the original v0.1 scaffolding — dict-backed, fast, and
-    ephemeral. Records live in a per-instance dict keyed by namespace
-    and are discarded when the instance is garbage collected.
-
-    As of v0.8 this is no longer the only implementation. A sibling
-    :class:`agent.memory.sqlite_store.SqliteMemoryStore` provides the
-    same interface with SQLite-backed persistence. The runtime can
-    accept either one through the :class:`MemoryStore` protocol type
-    annotation. Tests and unit-test fixtures should prefer this
-    in-memory version because it has no connection lifecycle and no
-    I/O overhead; production runtime uses the SQLite version so
-    session arcs and semantic facts survive CLI restarts.
+    Records live in a per-instance dict keyed by namespace and are
+    discarded when the instance is garbage collected. Tests and
+    incognito-mode sessions prefer this implementation because it has
+    no connection lifecycle and no disk writes. Persistent runtimes use
+    :class:`agent.memory.sqlite_store.SqliteMemoryStore`.
 
     The store is **not** thread-safe. Each runtime instance should own
     its own store; do not share a single instance across runtimes or
@@ -368,10 +289,25 @@ class OpenCouchMemoryStore:
     """
 
     def __init__(self) -> None:
+        """Initialize an empty in-memory store.
+
+        Returns:
+            None: Creates empty namespace buckets.
+        """
+
         self._buckets: dict[Namespace, _NamespaceBucket] = {}
         self._closed = False
 
     def _ensure_open(self) -> None:
+        """Raise when the store has already been closed.
+
+        Raises:
+            RuntimeError: If the store is closed.
+
+        Returns:
+            None: The store is open.
+        """
+
         if self._closed:
             raise RuntimeError("OpenCouchMemoryStore is closed.")
 
@@ -546,25 +482,32 @@ class OpenCouchMemoryStore:
         if bucket is None:
             return []
 
-        # Pre-filter by age when requested
         if max_age_days is not None:
             from datetime import UTC, datetime, timedelta
 
             cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
 
             def _is_recent(record: StoreRecord) -> bool:
+                """Return whether a record was created within the age window.
+
+                Args:
+                    record (StoreRecord): Candidate record to inspect.
+
+                Returns:
+                    bool: ``True`` when the record is recent enough.
+                """
+
                 created_raw = record.value.get("created_at", "")
                 if not created_raw:
-                    return False  # no timestamp → exclude from time-filtered results
+                    return False
                 try:
                     created_str = str(created_raw).replace("Z", "+00:00")
                     created = datetime.fromisoformat(created_str)
-                    # Treat naive timestamps as UTC
                     if created.tzinfo is None:
                         created = created.replace(tzinfo=UTC)
                     return created >= cutoff
                 except (ValueError, TypeError):
-                    return False  # unparseable → exclude
+                    return False
 
             candidates = {k: v for k, v in bucket.records.items() if _is_recent(v)}
         else:

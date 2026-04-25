@@ -9,7 +9,7 @@ dependencies = [
   "graphiti-core>=0.28.2",
   "langgraph>=1.0,<2.0",
   "langgraph-checkpoint-sqlite>=3.0,<4.0",
-  "livekit-agents[deepgram,langchain,openai,silero,turn-detector]~=1.4",
+  "livekit-agents[openai,silero,turn-detector]~=1.5",
   "openai>=2.0",
   "pydantic>=2.8,<3.0",
   "python-dotenv>=1.0,<2.0",
@@ -21,8 +21,10 @@ dependencies = [
 [dependency-groups]
 dev = [
   "httpx>=0.28.1",
+  "mypy>=1.20.2",
   "pytest>=8.0,<9.0",
   "pytest-asyncio>=0.23,<1.0",
+  "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -37,3 +39,30 @@ asyncio_mode = "auto"
 markers = [
   "live_api: tests that call a real external model API",
 ]
+
+[tool.coverage.run]
+branch = true
+source = [
+  "agent",
+  "api",
+  "core",
+  "opencouch_cli",
+  "services",
+  "voice",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = [
+  "aiosqlite",
+  "google",
+  "google.*",
+  "openai",
+]
+ignore_missing_imports = true

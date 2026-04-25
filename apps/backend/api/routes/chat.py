@@ -1,7 +1,7 @@
-"""Chat endpoints — the core of the API.
+"""Chat endpoints for conversation turns.
 
-POST /api/chat — synchronous turn (wait for full response)
-WS   /api/chat/stream — streaming turn (status events + response)
+POST /api/chat: synchronous turn that waits for the full response.
+WS   /api/chat/stream: streaming turn with status events and response text.
 
 Both endpoints wrap ``PersistentAgentRuntime.run_turn`` and
 ``run_turn_stream`` respectively, converting between the HTTP/WS
@@ -12,7 +12,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from agent.models import Channel, ChunkEvent, DoneEvent, StatusEvent, friendly_stage
+from agent.models import (
+    AgentOutput,
+    Channel,
+    ChunkEvent,
+    DoneEvent,
+    StatusEvent,
+    friendly_stage,
+)
 from agent.persistence import PersistentAgentRuntime
 from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
 from api.models import (
@@ -29,8 +36,15 @@ from services.llm.base import BaseLLMClient
 router = APIRouter(tags=["chat"])
 
 
-def _output_to_chat_response(output) -> ChatResponse:
-    """Map an internal AgentOutput to the API response schema."""
+def _output_to_chat_response(output: AgentOutput) -> ChatResponse:
+    """Map an internal AgentOutput to the API response schema.
+
+    Args:
+        output: Internal agent output returned by the runtime.
+
+    Returns:
+        Public API chat response.
+    """
 
     return ChatResponse(
         response_text=output.response_text,
@@ -60,7 +74,7 @@ async def chat(
 ) -> ChatResponse:
     """Run one conversation turn and return the full response.
 
-    This is the synchronous endpoint — it blocks until the entire
+    This is the synchronous endpoint: it blocks until the entire
     graph pipeline completes and returns the response in one shot.
     For real-time progress updates, use the WebSocket endpoint at
     ``/api/chat/stream`` instead.
@@ -70,15 +84,25 @@ async def chat(
     use a new one to start fresh. The optional ``user_id`` enables
     cross-thread memory sharing (same as the CLI's ``--user-id``
     flag).
+
+    Args:
+        body: Validated chat request body.
+        runtime: Shared persistent agent runtime.
+        llm_client: Optional control-plane LLM client.
+        response_llm_clients: Response-tier clients keyed by tier.
+
+    Returns:
+        The completed chat response.
     """
 
+    response_tier: ResponseModelTier = body.response_model_tier or "fast"
     result = await runtime.run_turn(
         thread_id=body.thread_id,
         message=body.message,
         channel=Channel.WEB,
         user_id=body.user_id,
         llm_client=llm_client,
-        response_llm_client=response_llm_clients.get(body.response_model_tier),
+        response_llm_client=response_llm_clients.get(response_tier),
     )
     return _output_to_chat_response(result.output)
 
@@ -111,6 +135,15 @@ async def chat_stream(
     sends a close frame with code 1011 (internal error) and a reason
     string. The client should display the error and allow the user
     to retry.
+
+    Args:
+        websocket: Accepted WebSocket connection.
+        runtime: Shared persistent agent runtime.
+        llm_client: Optional control-plane LLM client.
+        response_llm_clients: Response-tier clients keyed by tier.
+
+    Returns:
+        None.
     """
 
     await websocket.accept()
@@ -119,6 +152,7 @@ async def chat_stream(
         # Read the single request message from the client.
         data = await websocket.receive_json()
         request = ChatRequest.model_validate(data)
+        response_tier: ResponseModelTier = request.response_model_tier or "fast"
 
         async for event in runtime.run_turn_stream(
             thread_id=request.thread_id,
@@ -126,23 +160,23 @@ async def chat_stream(
             channel=Channel.WEB,
             user_id=request.user_id,
             llm_client=llm_client,
-            response_llm_client=response_llm_clients.get(request.response_model_tier),
+            response_llm_client=response_llm_clients.get(response_tier),
         ):
             if isinstance(event, StatusEvent):
-                msg = StreamStatusMessage(
+                status_msg = StreamStatusMessage(
                     stage=friendly_stage(event.stage),
                     detail=event.detail,
                 )
-                await websocket.send_json(msg.model_dump())
+                await websocket.send_json(status_msg.model_dump())
 
             elif isinstance(event, ChunkEvent):
-                msg = StreamChunkMessage(text=event.text)
-                await websocket.send_json(msg.model_dump())
+                chunk_msg = StreamChunkMessage(text=event.text)
+                await websocket.send_json(chunk_msg.model_dump())
 
             elif isinstance(event, DoneEvent):
                 chat_response = _output_to_chat_response(event.output)
-                msg = StreamDoneMessage(response=chat_response)
-                await websocket.send_json(msg.model_dump())
+                done_msg = StreamDoneMessage(response=chat_response)
+                await websocket.send_json(done_msg.model_dump())
 
     except WebSocketDisconnect:
         # Client disconnected before the turn finished. The runtime

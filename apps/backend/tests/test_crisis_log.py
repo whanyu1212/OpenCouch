@@ -24,7 +24,11 @@ from agent.graph import run_agent
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.models import CrisisLogRecord
+from agent.audit.models import (
+    CrisisClassifierPath,
+    CrisisLogPathCounts,
+    CrisisLogRecord,
+)
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
 from agent.nodes.crisis_log import _hash_session_id, run_crisis_log_node
 from agent.runtime_context import WorkflowContext
@@ -32,6 +36,14 @@ from agent.state import AgentState
 
 
 # ─── Test helpers ────────────────────────────────────────────────────────
+
+
+def test_crisis_path_counts_cover_all_classifier_paths() -> None:
+    """Crisis path aggregates should cover every classifier path literal."""
+
+    counts = CrisisLogPathCounts()
+    for path in CrisisClassifierPath.__args__:
+        assert hasattr(counts, path)
 
 
 class _MockRuntime:
@@ -53,6 +65,7 @@ def _build_crisis_state(
     reason: str = "imminent self-harm language detected",
     user_id: str | None = "user-123",
     session_id: str | None = "thread-abc",
+    crisis_audit: dict[str, Any] | None = None,
 ) -> AgentState:
     """Build a minimal AgentState for the crisis log node to read."""
 
@@ -68,6 +81,7 @@ def _build_crisis_state(
             needs_crisis_response=needs_crisis_response,
             needs_clarification=False,
         ),
+        "crisis_audit": crisis_audit or {},
     }
     return cast(AgentState, state)
 
@@ -161,6 +175,29 @@ class TestCrisisLogNode:
         assert record.reason == "user said 'I want to end it'"
         assert record.user_id_or_null == "user-xyz"
         assert record.response_node_completed is True
+        assert record.llm_failure_occurred is False
+
+    @pytest.mark.asyncio
+    async def test_crisis_audit_metadata_is_written_to_record(self) -> None:
+        """The record should reflect the dedicated crisis-audit channel."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(
+            crisis_audit={
+                "crisis_override_kind": "imminent_risk",
+                "crisis_classifier_path": "override",
+                "crisis_llm_failure_occurred": False,
+            }
+        )
+
+        await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.override_kind == "imminent_risk"
+        assert record.classifier_path == "override"
         assert record.llm_failure_occurred is False
 
     @pytest.mark.asyncio

@@ -5,7 +5,8 @@ the current user message, plus procedural state for prompt shaping.
 
 Key behaviors:
 - semantic and episodic entries are merged into ``working_memory``
-- procedural rules and the recall toggle stay on ``state["memory"]``
+- session summaries/goals stay on ``state["session_memory"]``
+- procedural rules and the recall toggle stay on ``state["procedural_profile"]``
 - first-turn sessions prepend the latest episodic summary as catch-up
 - incognito mode skips retrieval and returns empty memory state
 """
@@ -160,9 +161,17 @@ def _episodic_entry_identity(entry: WorkingMemoryEntry) -> tuple[str, tuple[str,
 
     if entry.get("type") != "episodic":
         return "", ()
+    summary_raw = entry.get("summary")
+    themes_raw = entry.get("primary_themes")
+    summary = summary_raw if isinstance(summary_raw, str) else ""
+    themes = (
+        tuple(theme for theme in themes_raw if isinstance(theme, str))
+        if isinstance(themes_raw, list)
+        else ()
+    )
     return (
-        entry.get("summary", ""),
-        tuple(entry.get("primary_themes") or []),
+        summary,
+        themes,
     )
 
 
@@ -368,7 +377,8 @@ async def run_load_memory_node(
         runtime (Runtime[WorkflowContext]): LangGraph runtime with memory dependencies.
 
     Returns:
-        dict[str, Any]: State delta with working memory, memory metadata, and diagnostics.
+        dict[str, Any]: State delta with working memory, session/procedural
+            memory metadata, and diagnostics.
     """
 
     memory_store = runtime.context.memory_store
@@ -379,9 +389,11 @@ async def run_load_memory_node(
     if is_guest_mode:
         return {
             "working_memory": [],
-            "memory": {
-                **state.get("memory", {}),
+            "session_memory": {
+                **state.get("session_memory", {}),
                 "summary": "Guest session without long-term memory.",
+            },
+            "procedural_profile": {
                 "procedural_rules": [],
                 "proactive_recall_enabled": False,
             },
@@ -412,6 +424,10 @@ async def run_load_memory_node(
     )
 
     has_searchable_memory = semantic_store_size > 0 or episodic_store_size > 0
+    query_embedding: list[float] | None = None
+    query_embedding_model: str | None = None
+    episodic_entries: list[WorkingMemoryEntry] = []
+    semantic_entries: list[WorkingMemoryEntry] = []
 
     if has_searchable_memory:
         (
@@ -438,11 +454,7 @@ async def run_load_memory_node(
             ),
         )
     else:
-        query_embedding = None
-        query_embedding_model = None
         retrieval_path = "skipped_empty_store"
-        episodic_entries: list[WorkingMemoryEntry] = []
-        semantic_entries: list[WorkingMemoryEntry] = []
 
     retrieval_duration_ms = (time.monotonic() - retrieval_start) * 1000
 
@@ -477,9 +489,11 @@ async def run_load_memory_node(
 
     return {
         "working_memory": list(working_memory),
-        "memory": {
-            **state.get("memory", {}),
+        "session_memory": {
+            **state.get("session_memory", {}),
             "summary": summary,
+        },
+        "procedural_profile": {
             "procedural_rules": procedural_rules,
             "proactive_recall_enabled": proactive_recall_enabled,
         },

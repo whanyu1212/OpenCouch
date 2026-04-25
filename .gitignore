@@ -68,6 +68,14 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Generated eval SQLite artifacts
+eval/*.sqlite
+eval/*.sqlite3
+eval/*.db
+eval/.*.sqlite
+eval/.*.sqlite3
+eval/.*.db
+
 # Flask stuff:
 instance/
 .webassets-cache

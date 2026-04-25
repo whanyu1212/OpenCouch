@@ -1,8 +1,7 @@
 """Conservative reconciliation helpers for durable memory writes.
 
-Phase D adds a small amount of post-extraction cleanup without turning
-the hot path into a full consolidation system. The helpers here answer
-two narrow questions:
+These helpers add post-extraction cleanup without turning the hot path
+into a full consolidation system. They answer two narrow questions:
 
 1. Should a new semantic fact bump, supersede, or coexist with active
    semantic records that already exist?
@@ -143,10 +142,28 @@ def filter_semantic_collision_candidates(
 
 
 def _normalized_identifier(identifier: str) -> str:
+    """Normalize an identifier for exact string comparison.
+
+    Args:
+        identifier (str): Raw identifier text.
+
+    Returns:
+        str: Lowercase identifier with normalized whitespace.
+    """
+
     return " ".join(identifier.lower().split())
 
 
 def _identifier_tokens(identifier: str) -> frozenset[str]:
+    """Tokenize an identifier for overlap checks.
+
+    Args:
+        identifier (str): Raw identifier text.
+
+    Returns:
+        frozenset[str]: Meaningful identifier tokens.
+    """
+
     return tokenize_meaningful(identifier)
 
 
@@ -187,6 +204,15 @@ def _prefer_new_identifier(new_identifier: str, existing_identifier: str) -> boo
 
 
 def _has_explicit_correction(text: str) -> bool:
+    """Return whether text contains a semantic correction marker.
+
+    Args:
+        text (str): Text to inspect.
+
+    Returns:
+        bool: ``True`` when the text contains a correction marker.
+    """
+
     lowered = text.lower()
     return any(marker in lowered for marker in _SEMANTIC_CORRECTION_MARKERS)
 
@@ -270,6 +296,16 @@ def plan_semantic_write(
 
 
 def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
+    """Return the coarse polarity of a procedural preference.
+
+    Args:
+        text (str): Procedural rule/evidence text.
+
+    Returns:
+        Literal["negative", "positive"]: ``"negative"`` for stop/avoid style
+        requests, otherwise ``"positive"``.
+    """
+
     lowered = text.lower()
     if any(marker in lowered for marker in _PROCEDURAL_NEGATION_MARKERS):
         return "negative"
@@ -290,6 +326,16 @@ def _procedural_rule_signature(rule: ProceduralRule) -> str:
 
 
 def _prefer_new_rule(new_rule: str, existing_rule: str) -> bool:
+    """Return whether a new rule is more specific than an existing one.
+
+    Args:
+        new_rule (str): Candidate replacement rule text.
+        existing_rule (str): Existing stored rule text.
+
+    Returns:
+        bool: ``True`` when the new rule has more specificity.
+    """
+
     new_tokens = tokenize_meaningful(new_rule)
     existing_tokens = tokenize_meaningful(existing_rule)
     new_specificity = (len(new_tokens), len(new_rule.strip()))

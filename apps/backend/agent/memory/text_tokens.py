@@ -37,9 +37,6 @@ import re
 # Token extraction regex: Unicode word characters, ignoring punctuation.
 # "I'm anxious!" and "im anxious" produce the same token set. Apostrophes
 # split contractions ("I'm" → ["i", "m"]) which is imperfect but stable.
-# NOTE: this is intentionally the same regex the dedup helper used
-# internally — moved here so both paths share a canonical definition.
-#
 # Uses \w+ (Unicode-aware by default in Python 3) so accented Latin,
 # Cyrillic, and CJK characters produce tokens instead of empty sets.
 # CJK characters are post-processed into per-character tokens by

@@ -17,8 +17,8 @@ Those backends now live in [agent/audit](../audit):
 - session feedback backends
 
 Important distinction:
-- `agent.memory.types.audit` still contains audit-related record schemas
-- `agent.audit.*` contains the backend implementations that persist them
+- `agent.audit.models` owns audit-related record schemas
+- `agent.memory.types.audit` only keeps compatibility re-exports
 
 ## Mental Model
 
@@ -80,14 +80,12 @@ There are 3 main memory shapes:
 ### Types
 
 - [models.py](./models.py): compatibility export surface for memory-layer models.
-- [types/](./types): actual pydantic model definitions grouped by concern:
+- [types/](./types): pydantic model definitions and compatibility exports grouped by concern:
   - `semantic.py`
   - `episodic.py`
   - `procedural.py`
-  - `audit.py`
+  - `audit.py` compatibility re-exports from `agent.audit.models`
   - `therapeutic.py`
-  - `relationships.py`
-  - `consolidation.py`
   - `primitives.py`
 
 ## Common Entry Points

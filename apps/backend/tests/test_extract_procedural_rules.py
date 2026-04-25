@@ -62,7 +62,7 @@ def _partial_state(
         "history": history or [],
         "user_id": user_id,
         "session_id": session_id,
-        "progress": {"turn_count": 1},
+        "session_progress": {"turn_count": 1},
     }
     return cast(AgentState, state)
 

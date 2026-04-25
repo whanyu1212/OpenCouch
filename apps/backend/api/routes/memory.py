@@ -1,9 +1,9 @@
 """Memory inspection and deletion endpoints.
 
-GET    /api/memory/status — user-facing memory counts + recall toggle
-DELETE /api/memory/facts/{n} — delete one semantic fact by index
-DELETE /api/memory/sessions/{n} — delete one episodic arc by index
-DELETE /api/memory/rules/{n} — delete one procedural rule by index
+GET    /api/memory/status: user-facing memory counts and recall toggle.
+DELETE /api/memory/facts/{n}: delete one semantic fact by index.
+DELETE /api/memory/sessions/{n}: delete one episodic arc by index.
+DELETE /api/memory/rules/{n}: delete one procedural rule by index.
 
 These endpoints mirror the CLI's ``/memory status``, ``/memory
 forget fact <n>``, ``/memory forget session <n>``, and ``/memory
@@ -11,7 +11,7 @@ forget rule <n>`` commands. The indexes are 1-based and match the
 order shown by ``/memory list`` (insertion order).
 
 Bulk destructive ops (``/memory clear``, ``/memory purge-crisis``)
-are intentionally NOT exposed over the API — they require typed
+are intentionally not exposed over the API because they require typed
 confirmation that a REST endpoint can't enforce safely. They remain
 CLI-only until a frontend with a proper confirmation flow exists.
 """
@@ -42,6 +42,13 @@ def _resolve_owner_id(
     Mirrors ``RunnerSession.owner_id()`` in the CLI: user_id if set,
     thread_id as fallback. Every memory operation is scoped to this
     owner so cross-user access is not reachable.
+
+    Args:
+        user_id: Optional stable owner identifier.
+        thread_id: Thread identifier used as the fallback owner.
+
+    Returns:
+        Effective owner id for memory operations.
     """
 
     return user_id or thread_id
@@ -52,7 +59,15 @@ async def _list_active_semantic_records(
     *,
     owner_id: str,
 ) -> list[StoreRecord]:
-    """Return the active semantic records for this owner."""
+    """Return the active semantic records for this owner.
+
+    Args:
+        runtime: Runtime that owns the memory store.
+        owner_id: Owner namespace to query.
+
+    Returns:
+        Active semantic records after tombstone reconciliation.
+    """
 
     store = runtime.memory_store
     records = await store.asearch((owner_id, "semantic"), query=None, limit=1000)
@@ -65,7 +80,16 @@ async def memory_status(
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> MemoryStatusResponse:
-    """Return user-facing memory counts and the recall toggle state."""
+    """Return user-facing memory counts and the recall toggle state.
+
+    Args:
+        thread_id: Thread to scope the status to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Memory status payload for the effective owner.
+    """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
@@ -100,7 +124,16 @@ async def list_facts(
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> list[dict]:
-    """List all semantic facts for this owner."""
+    """List all semantic facts for this owner.
+
+    Args:
+        thread_id: Thread to scope the listing to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        JSON-serializable semantic fact rows.
+    """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     records = await _list_active_semantic_records(runtime, owner_id=owner_id)
@@ -126,7 +159,16 @@ async def list_sessions(
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> list[dict]:
-    """List all episodic session arcs for this owner."""
+    """List all episodic session arcs for this owner.
+
+    Args:
+        thread_id: Thread to scope the listing to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        JSON-serializable episodic session rows.
+    """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
@@ -153,7 +195,16 @@ async def list_rules(
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> list[dict]:
-    """List all procedural rules for this owner."""
+    """List all procedural rules for this owner.
+
+    Args:
+        thread_id: Thread to scope the listing to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        JSON-serializable procedural rule rows.
+    """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
@@ -182,6 +233,15 @@ async def delete_fact(
     The index matches the ``#`` column in ``/memory list`` (insertion
     order) for active, user-visible facts only. Returns 404 if the
     index is out of range or no active facts exist.
+
+    Args:
+        index: One-based fact index from the memory list.
+        thread_id: Thread to scope the deletion to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Delete result with a user-facing detail string.
     """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
@@ -215,7 +275,17 @@ async def delete_session(
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> DeleteResponse:
-    """Delete one episodic session arc by its 1-based index."""
+    """Delete one episodic session arc by its 1-based index.
+
+    Args:
+        index: One-based session index from the memory list.
+        thread_id: Thread to scope the deletion to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Delete result with a user-facing detail string.
+    """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
@@ -247,7 +317,17 @@ async def delete_rule(
     user_id: str | None = Query(default=None, description="Optional owner override."),
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> DeleteResponse:
-    """Delete one procedural rule by its 1-based index."""
+    """Delete one procedural rule by its 1-based index.
+
+    Args:
+        index: One-based rule index from the memory list.
+        thread_id: Thread to scope the deletion to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Delete result with a user-facing detail string.
+    """
 
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
