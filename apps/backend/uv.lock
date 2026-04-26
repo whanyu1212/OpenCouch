@@ -2148,6 +2148,7 @@ name = "opencouch-backend"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiosqlite" },
     { name = "fastapi" },
     { name = "google-genai" },
     { name = "graphiti-core" },
@@ -2174,6 +2175,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.22,<1.0" },
     { name = "fastapi", specifier = ">=0.115,<1.0" },
     { name = "google-genai", specifier = ">=1.0,<2.0" },
     { name = "graphiti-core", specifier = ">=0.28.2" },

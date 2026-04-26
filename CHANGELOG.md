@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-04-26 — Telegram Session Rotation Hardening + Markdown Rendering
+
+### Telegram session rotation
+- Hardened rotated Telegram sessions with startup recovery for orphaned registry rows, interrupted legacy-migration state recovery, non-blocking per-chat maintenance sweeps, and active-pointer guards before reclaiming closed thread checkpoints
+- Added one-shot lease/liveness retry for rotated Telegram turns so transient races between active-thread resolution and runtime execution re-resolve the active pointer before showing the maintenance message
+- Fixed reclaim bookkeeping so transient reset failures remain retryable and only become stuck after repeated failures or long-aged closed sessions
+- Tightened runtime active-session mutation markers so failed turns remain observable as interrupted until finalization, instead of clearing the marker on graph exceptions
+
+### Telegram rendering
+- Added safe Telegram HTML rendering for common Markdown emitted by the response writer: bold, italic, inline code, fenced code blocks, headings, and HTTP(S) links
+- Split rendered Telegram replies into API-safe chunks while preserving open HTML tags across chunk boundaries
+- Kept unsafe raw HTML and non-HTTP(S) links escaped so model output cannot inject Telegram parse-mode markup
+
+### Validation
+- Added runtime and Telegram regression coverage for interrupted markers, startup orphan recovery, lease retry, non-blocking sweeps, reclaim retry semantics, registry migration, and rendered HTML replies
+- Full backend test suite passed (`1104 passed, 13 skipped`)
+- Targeted mypy, pre-commit, py_compile, and diff whitespace checks passed for the changed backend files
+
 ## 2026-04-25 — Behavior Eval Stabilization + Extraction Eval Fixes
 
 ### Eval sweep

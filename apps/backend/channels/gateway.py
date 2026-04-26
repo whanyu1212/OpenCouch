@@ -26,6 +26,7 @@ from channels.telegram import (
     TelegramConfigurationError,
     TelegramGatewayConfig,
     build_telegram_application,
+    is_rotated_telegram_thread_id,
 )
 from core.config import (
     create_configured_control_llm_client,
@@ -61,7 +62,7 @@ class TelegramGatewayLock:
         """
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
         lock_file: TextIO | None = None
         try:
             lock_file = os.fdopen(fd, "r+", encoding="utf-8")
@@ -208,6 +209,12 @@ async def run_telegram_gateway(
             crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
             memory_mode=memory_mode,
             default_llm_client=llm_client,
+            finalize_active_sessions_on_close=(not config.thread_rotation_enabled),
+            auto_finalize_excluded=(
+                is_rotated_telegram_thread_id
+                if config.thread_rotation_enabled
+                else None
+            ),
         )
         async with runtime:
             channel = TelegramChannel(
@@ -216,15 +223,19 @@ async def run_telegram_gateway(
                 llm_client=llm_client,
                 response_llm_client=response_llm_client,
             )
-            application = build_telegram_application(
-                config=config,
-                channel=channel,
-            )
-            await run_telegram_application(
-                application,
-                drop_pending_updates=config.drop_pending_updates,
-                stop_event=stop_event,
-            )
+            await channel.start()
+            try:
+                application = build_telegram_application(
+                    config=config,
+                    channel=channel,
+                )
+                await run_telegram_application(
+                    application,
+                    drop_pending_updates=config.drop_pending_updates,
+                    stop_event=stop_event,
+                )
+            finally:
+                await channel.stop()
 
 
 async def run_telegram_application(
