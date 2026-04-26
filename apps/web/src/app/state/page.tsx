@@ -8,17 +8,27 @@ import { useSessionStore } from "@/lib/session";
  * State Inspector — displays the full agent state dict for the current
  * thread. This is the developer dashboard equivalent of `GET /api/threads/{id}/state`.
  *
- * Shows collapsible sections for each top-level state group:
- * memory, progress, routing, response, crisis, diagnostics, transcript.
+ * Shows collapsible sections for the current split LangGraph state:
+ * response fields, session memory, procedural profile, session progress,
+ * exercise state, memory control, crisis, diagnostics, and transcript.
  */
 
-// Top-level state keys in display order, with labels and descriptions
 const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }[] = [
-  { key: "routing", label: "Routing", desc: "Route decision, mode, semantic signals", icon: "⇢" },
-  { key: "response", label: "Response", desc: "Generated response text and metadata", icon: "◆" },
+  { key: "route", label: "Route", desc: "Top-level graph branch", icon: "⇢" },
+  { key: "response_style", label: "Response Style", desc: "Current reply style", icon: "◆" },
+  { key: "therapeutic_approach", label: "Approach", desc: "Therapeutic approach overlay", icon: "◇" },
+  { key: "response_kind", label: "Response Kind", desc: "Therapeutic or crisis category", icon: "◈" },
+  { key: "response_text", label: "Response Text", desc: "Generated reply text", icon: "¶" },
   { key: "crisis", label: "Crisis", desc: "Safety assessment: level, confidence, flags", icon: "⚑" },
-  { key: "memory", label: "Memory", desc: "Summary, concerns, loops, procedural rules", icon: "◉" },
-  { key: "progress", label: "Progress", desc: "Intent, stage, turn count, exercise state", icon: "▸" },
+  { key: "session_memory", label: "Session Memory", desc: "Summary, concerns, loops, goal", icon: "◉" },
+  { key: "procedural_profile", label: "Procedural Profile", desc: "Style rules and recall toggle", icon: "☷" },
+  { key: "session_progress", label: "Session Progress", desc: "Intent, stage, turn count", icon: "▸" },
+  { key: "exercise_state", label: "Exercise State", desc: "Guided exercise continuity", icon: "◎" },
+  { key: "memory_control", label: "Memory Control", desc: "Pending memory action", icon: "⌁" },
+  { key: "grounded_lookup_status", label: "Grounded Lookup", desc: "Factual lookup status", icon: "⌕" },
+  { key: "resource_lookup_status", label: "Crisis Resources", desc: "Crisis resource lookup status", icon: "✚" },
+  { key: "inferred_location", label: "Inferred Location", desc: "User-stated crisis location", icon: "⌖" },
+  { key: "found_resources", label: "Found Resources", desc: "Verified crisis resources", icon: "☑" },
   { key: "diagnostics", label: "Diagnostics", desc: "Per-turn timings and write counts", icon: "⏱" },
   { key: "transcript", label: "Transcript", desc: "Full conversation history", icon: "¶" },
   { key: "history", label: "History", desc: "Raw history array", icon: "↻" },
@@ -59,10 +69,10 @@ export default function StateInspectorPage() {
 
   // Extract top-level info
   const turnCount = state
-    ? (state.progress as Record<string, unknown> | undefined)?.turn_count
+    ? (state.session_progress as Record<string, unknown> | undefined)?.turn_count
     : null;
-  const mode = state
-    ? (state.routing as Record<string, unknown> | undefined)?.mode
+  const responseStyle = state
+    ? state.response_style
     : null;
 
   return (
@@ -76,9 +86,9 @@ export default function StateInspectorPage() {
               turn {String(turnCount)}
             </span>
           )}
-          {mode != null && String(mode) !== "pending" && (
+          {responseStyle != null && String(responseStyle) !== "pending" && (
             <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border bg-oc-teal-50 text-oc-teal-700 border-oc-teal-200/60">
-              {String(mode)}
+              {String(responseStyle)}
             </span>
           )}
         </div>
@@ -147,7 +157,19 @@ export default function StateInspectorPage() {
                 .filter(
                   (k) =>
                     !STATE_SECTIONS.some((s) => s.key === k) &&
-                    !["message", "channel", "user_id", "session_id", "installed_skills"].includes(k)
+                    ![
+                      "message",
+                      "channel",
+                      "user_id",
+                      "session_id",
+                      "installed_skills",
+                      "response_style_source",
+                      "response_style_type",
+                      "should_persist_memory",
+                      "grounded_lookup_query",
+                      "crisis_audit",
+                      "memory_control_action",
+                    ].includes(k)
                 )
                 .map((key) => (
                   <StateSection
@@ -343,18 +365,32 @@ function getSummary(key: string, value: unknown): string {
   const obj = value as Record<string, unknown>;
 
   switch (key) {
-    case "routing":
-      return `mode=${String(obj.mode ?? "—")} route=${String(obj.route ?? "—")} source=${String(obj.mode_source ?? "—")}`;
-    case "response":
-      return `kind=${String(obj.kind ?? "—")} persist=${String(obj.should_persist_memory ?? "—")} text=${String(obj.text ?? "").slice(0, 60)}…`;
+    case "route":
+    case "response_style":
+    case "therapeutic_approach":
+    case "response_kind":
+    case "grounded_lookup_status":
+    case "resource_lookup_status":
+    case "inferred_location":
+      return String(value || "—");
+    case "response_text":
+      return String(value || "").slice(0, 80);
     case "crisis": {
       const level = obj.level ?? obj.level;
       return `level=${String(level ?? 0)} conf=${String(obj.confidence ?? "—")} crisis=${String(obj.needs_crisis_response ?? false)}`;
     }
-    case "memory":
-      return `goal=${String(obj.current_goal ?? "none")} concerns=${Array.isArray(obj.active_concerns) ? obj.active_concerns.length : 0} rules=${Array.isArray(obj.procedural_rules) ? obj.procedural_rules.length : 0}`;
-    case "progress":
+    case "session_memory":
+      return `goal=${String(obj.current_goal ?? "none")} concerns=${Array.isArray(obj.active_concerns) ? obj.active_concerns.length : 0} loops=${Array.isArray(obj.open_loops) ? obj.open_loops.length : 0}`;
+    case "procedural_profile":
+      return `rules=${Array.isArray(obj.procedural_rules) ? obj.procedural_rules.length : 0} recall=${String(obj.proactive_recall_enabled ?? false)}`;
+    case "session_progress":
       return `stage=${String(obj.stage ?? "—")} intent=${String(obj.intent ?? "—")} turn=${String(obj.turn_count ?? "—")}`;
+    case "exercise_state":
+      return `type=${String(obj.exercise_type ?? "none")} step=${String(obj.exercise_step ?? "—")} approach=${String(obj.exercise_modality ?? "—")}`;
+    case "memory_control": {
+      const pending = obj.pending_action;
+      return pending ? "pending confirmation" : "no pending action";
+    }
     case "diagnostics": {
       const total = obj.turn_total_ms;
       return total != null ? `total=${Number(total).toFixed(0)}ms` : "empty";
