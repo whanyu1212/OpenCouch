@@ -93,6 +93,7 @@ export function CommandPalette() {
           </svg>
           <input
             autoFocus
+            aria-label="Search actions"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search actions..."

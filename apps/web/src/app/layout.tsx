@@ -23,6 +23,10 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "OpenCouch",
   description: "Mental health support with persistent memory",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default function RootLayout({

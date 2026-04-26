@@ -33,3 +33,31 @@ jobs:
       - name: Run crisis eval runner
         working-directory: apps/backend
         run: uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
+
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run web lint
+        working-directory: apps/web
+        run: pnpm lint
+
+      - name: Run web build
+        working-directory: apps/web
+        run: pnpm build

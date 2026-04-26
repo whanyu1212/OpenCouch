@@ -56,18 +56,33 @@ export default function MemoryPage() {
   }, [loadAll, memoryRefreshVersion]);
 
   const handleDeleteFact = async (index: number) => {
-    await deleteMemoryFact(index, threadId, userId || undefined);
-    bumpMemoryRefreshVersion();
+    setError(null);
+    try {
+      await deleteMemoryFact(index, threadId, userId || undefined);
+      bumpMemoryRefreshVersion();
+    } catch {
+      setError("Could not delete memory fact.");
+    }
   };
 
   const handleDeleteSession = async (index: number) => {
-    await deleteMemorySession(index, threadId, userId || undefined);
-    bumpMemoryRefreshVersion();
+    setError(null);
+    try {
+      await deleteMemorySession(index, threadId, userId || undefined);
+      bumpMemoryRefreshVersion();
+    } catch {
+      setError("Could not delete memory session.");
+    }
   };
 
   const handleDeleteRule = async (index: number) => {
-    await deleteMemoryRule(index, threadId, userId || undefined);
-    bumpMemoryRefreshVersion();
+    setError(null);
+    try {
+      await deleteMemoryRule(index, threadId, userId || undefined);
+      bumpMemoryRefreshVersion();
+    } catch {
+      setError("Could not delete memory rule.");
+    }
   };
 
   const handleRecallChange = async (enabled: boolean) => {

@@ -84,12 +84,18 @@ export function ThreadDrawer() {
       onMouseDown={closeThreadDrawer}
     >
       <aside
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="thread-drawer-title"
         className="h-full w-full max-w-md bg-oc-bg-card border-l border-oc-border-strong shadow-2xl flex flex-col"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="px-5 py-4 border-b border-oc-border flex items-center justify-between">
           <div>
-            <h2 className="font-display text-lg text-oc-teal-900">
+            <h2
+              id="thread-drawer-title"
+              className="font-display text-lg text-oc-teal-900"
+            >
               Previous sessions
             </h2>
             <p className="mt-0.5 text-[12px] text-oc-text-muted">

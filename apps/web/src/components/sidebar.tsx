@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useSessionStore } from "@/lib/session";
 import { useCommandActions } from "@/lib/command-actions";
 import { CouchLogo } from "@/components/logo";
@@ -54,6 +54,11 @@ const NAV_ITEMS = [
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 260;
+const SIDEBAR_WIDTH_STORAGE_KEY = "opencouch-sidebar-width";
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
+}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -84,28 +89,65 @@ export function Sidebar() {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isResizing = useRef(false);
 
-  const handleMouseDown = useCallback(() => {
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      const saved = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+      if (!saved) return;
+
+      const parsed = Number(saved);
+      if (!Number.isFinite(parsed)) return;
+      setWidth(clampSidebarWidth(parsed));
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  const updateWidth = useCallback((nextWidth: number) => {
+    const clamped = clampSidebarWidth(nextWidth);
+    setWidth(clamped);
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped));
+  }, []);
+
+  const handlePointerDown = useCallback(() => {
     isResizing.current = true;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handlePointerMove = (e: PointerEvent) => {
       if (!isResizing.current) return;
-      const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX));
-      setWidth(newWidth);
+      updateWidth(e.clientX);
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = () => {
       isResizing.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
     };
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-  }, []);
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp);
+  }, [updateWidth]);
+
+  const handleResizeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        updateWidth(width - 16);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        updateWidth(width + 16);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        updateWidth(MIN_WIDTH);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        updateWidth(MAX_WIDTH);
+      }
+    },
+    [updateWidth, width]
+  );
 
   return (
     <aside
@@ -325,8 +367,16 @@ export function Sidebar() {
 
       {/* Drag handle */}
       <div
-        onMouseDown={handleMouseDown}
-        className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-oc-teal-300/30 active:bg-oc-teal-400/40 transition-colors z-20"
+        role="separator"
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
+        aria-valuenow={width}
+        tabIndex={0}
+        onPointerDown={handlePointerDown}
+        onKeyDown={handleResizeKeyDown}
+        className="absolute top-0 right-0 z-20 h-full w-2 cursor-col-resize touch-none transition-colors hover:bg-oc-teal-300/30 focus:bg-oc-teal-300/30 focus:outline-none active:bg-oc-teal-400/40"
       />
     </aside>
   );
