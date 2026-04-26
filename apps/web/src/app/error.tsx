@@ -1,12 +1,18 @@
 "use client";
 
+import { useEffect } from "react";
+
 export default function Error({
   error,
-  reset,
+  unstable_retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  unstable_retry: () => void;
 }) {
+  useEffect(() => {
+    console.error(error);
+  }, [error]);
+
   return (
     <div className="flex min-h-screen flex-1 items-center justify-center bg-oc-bg px-6 text-oc-text">
       <div className="max-w-md rounded-xl border border-oc-border bg-oc-bg-card p-6">
@@ -23,7 +29,7 @@ export default function Error({
         ) : null}
         <button
           type="button"
-          onClick={reset}
+          onClick={() => unstable_retry()}
           className="mt-5 rounded-lg border border-oc-teal-200 bg-oc-teal-50 px-4 py-2 text-[13px] font-medium text-oc-teal-800 transition-colors hover:bg-oc-teal-100"
         >
           Try again
