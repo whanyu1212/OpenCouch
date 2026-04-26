@@ -18,7 +18,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent.memory.models import ProceduralProfile, ProceduralRule
-from agent.memory.procedural import aput_procedural_profile
+from agent.memory.procedural import (
+    aget_procedural_profile,
+    aput_procedural_profile,
+)
 from agent.persistence import PersistentAgentRuntime
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
@@ -515,6 +518,35 @@ class TestMemory:
         )
         assert resp.status_code == 200
         assert resp.json()["session_feedback_count"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_update_memory_recall_toggles_owner_state(
+        self, client, runtime
+    ) -> None:
+        """PATCH /memory/recall should persist the proactive recall toggle."""
+
+        resp = await client.patch(
+            "/api/memory/recall",
+            params={"thread_id": "recall-thread", "user_id": "recall-owner"},
+            json={"enabled": True},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["owner_id"] == "recall-owner"
+        assert data["proactive_recall_enabled"] is True
+
+        profile = await aget_procedural_profile(
+            runtime.memory_store,
+            user_id="recall-owner",
+        )
+        assert profile.proactive_recall_enabled is True
+
+        status = await client.get(
+            "/api/memory/status",
+            params={"thread_id": "other-thread", "user_id": "recall-owner"},
+        )
+        assert status.status_code == 200
+        assert status.json()["proactive_recall_enabled"] is True
 
     @pytest.mark.asyncio
     async def test_delete_fact_404_when_empty(self, client) -> None:

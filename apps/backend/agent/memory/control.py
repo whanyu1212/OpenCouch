@@ -64,6 +64,8 @@ def _semantic_preview(value: dict[str, Any]) -> str:
     predicate = str(value.get("predicate", ""))
     object_id = _entity_identifier(value.get("object"))
     quote = str(value.get("evidence_quote", "")).strip()
+    if quote and not predicate:
+        return quote
     if quote:
         return f'{category}: {predicate} {object_id} — "{quote}"'
     return f"{category}: {predicate} {object_id}"
