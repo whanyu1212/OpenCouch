@@ -168,13 +168,227 @@ COPING_ADVICE_REQUEST_PATTERNS: tuple[str, ...] = (
     r"\bdifferent severity levels\b",
 )
 
+# Bare "walk|guide me through" was removed in favor of the noun-gated
+# WALKTHROUGH_CONSENT_PATTERN below — bare walkthrough requests can be
+# informational ("walk me through why this happens") and must not count as
+# exercise consent on their own.
 EXPLICIT_EXERCISE_REQUEST_PATTERNS: tuple[str, ...] = (
-    r"\b(?:guide|walk) me through\b",
     r"\b(?:let'?s|can we|could we|shall we|help me)\b.{0,60}\b(?:do|try|practice|start|begin)\b",
     r"\b(?:do|try|practice|start|begin)\b.{0,50}\b(?:exercise|grounding|breathing|skill|technique|thought record|behavioral experiment|values|defusion|self-compassion|gratitude|relaxation)\b",
     r"\b(?:grounding exercise|breathing exercise|box breathing|muscle relaxation|progressive muscle relaxation|thought record|behavioral experiment|values compass|leaves exercise|stop technique|improve the moment|gratitude exercise)\b",
     r"\bcan we do something\b",
     r"\bis there something we can do\b",
+)
+
+
+# ─── Canonical guided_exercise consent triggers ──────────────────────────────
+#
+# Single source of truth for triggers that appear verbatim in the dispatcher
+# prompt's guided_exercise example list AND must be recognized by
+# EXERCISE_CONSENT_PATTERNS. To add a trigger: append to this tuple. Both the
+# rendered prompt sentence and the consent regex pick it up automatically.
+# The contract test ``test_dispatcher_prompt_trigger_sentence_is_mechanically_rendered``
+# enforces that the prompt prose cannot drift from this list.
+_PROMPT_GUIDED_EXERCISE_TRIGGERS: tuple[str, ...] = (
+    "ground me",
+    "breathing exercise",
+    "guide me through a grounding exercise",
+    "let's do a thought record",
+    "can we figure out a way to test it",
+    "behavioral experiment",
+    "can we look at what actually matters to me",
+    "is there something we can do about that",
+    "values compass",
+    "leaves exercise",
+    "STOP technique",
+    "IMPROVE the moment",
+    "gratitude exercise",
+)
+
+
+# Trailing words that complete an exercise noun phrase. If a tool noun is
+# followed by something OTHER than end/punctuation/these completers, the user
+# is talking ABOUT the noun ("grounding theory"), not asking to do it.
+_NOUN_PHRASE_COMPLETERS: tuple[str, ...] = (
+    "exercise",
+    "practice",
+    "technique",
+    "session",
+    "skill",
+    "skills",
+)
+
+
+# Exercise/tool nouns recognized as the direct object of "walk/guide me through".
+_WALKTHROUGH_NOUNS: tuple[str, ...] = (
+    "grounding",
+    "breathing",
+    "thought record",
+    "behavioral experiment",
+    "values",
+    "defusion",
+    "self-compassion",
+    "gratitude",
+    "mindfulness",
+    "exercise",
+    "technique",
+    "skill",
+    "skills",
+    "practice",
+)
+
+
+# Real terminator: end-of-message OR (whitespace +) punctuation.
+_TERMINATOR = r"(?:[\s\.\,\?\!]*$|\s*[\.\,\?\!])"
+
+
+# Walkthrough consent: "walk/guide me through (det/mod)? NOUN (completer)?
+# TERMINATOR". The completer is consumed (not just lookahead) so an additional
+# trailing word cannot sneak past as informational content. See
+# UNCONSENTED_EXERCISE_FIX_PLAN.md Constraint 4 + Codex iter-11/12 for the
+# rationale.
+WALKTHROUGH_CONSENT_PATTERN = (
+    rf"\b(?:walk|guide) me through "
+    rf"(?:(?:a|an|the|some|my|that|this|your|your favorite|a short|a quick|my usual)\s+){{0,3}}"
+    rf"(?:{'|'.join(re.escape(n) for n in _WALKTHROUGH_NOUNS)})"
+    rf"(?:\s+(?:{'|'.join(_NOUN_PHRASE_COMPLETERS)}))?"
+    rf"{_TERMINATOR}"
+)
+
+
+# How-to consent variant: "walk/guide me through how to (verb) NOUN".
+WALKTHROUGH_HOWTO_CONSENT_PATTERN = (
+    rf"\b(?:walk|guide) me through how to "
+    rf"(?:do|use|practice|start|run|try|work through|go through|fill out|complete|begin|apply|get started with) "
+    rf"(?:(?:a|an|the|some|my|that|this|your)\s+){{0,2}}"
+    rf"(?:{'|'.join(re.escape(n) for n in _WALKTHROUGH_NOUNS)})\b"
+)
+
+
+# Informational walkthrough — wh-question form. Does not require a tool noun.
+INFORMATIONAL_WALKTHROUGH_PATTERN = (
+    r"\b(?:walk|guide) me through\b.{0,40}\b(?:why|what|how|whether)\b"
+)
+
+
+# Informational walkthrough — tool noun + non-terminating trailing content.
+# Catches "walk me through grounding theory", "walk me through breathing
+# problems", "walk me through grounding exercise theory". This pattern is NOT
+# strictly disjoint from WALKTHROUGH_CONSENT_PATTERN; routing correctness comes
+# from the consent-first ordering in
+# _is_advice_request_without_exercise_consent. See Constraint 7 in
+# UNCONSENTED_EXERCISE_FIX_PLAN.md.
+INFORMATIONAL_WALKTHROUGH_NOUN_PATTERN = (
+    rf"\b(?:walk|guide) me through "
+    rf"(?:(?:a|an|the|some|my|that|this|your)\s+){{0,3}}"
+    rf"(?:{'|'.join(re.escape(n) for n in _WALKTHROUGH_NOUNS)})"
+    rf"(?:\s+(?:{'|'.join(_NOUN_PHRASE_COMPLETERS)}))?"
+    rf"\s+\w+"
+)
+
+
+def _trigger_to_regex(trigger: str) -> str:
+    """Compile a literal trigger phrase to a word-bounded case-insensitive regex.
+
+    Trailing 'it' is generalized to 'it/that/this/the X' for natural object
+    substitution — e.g. "can we figure out a way to test it" also matches
+    "can we figure out a way to test the thought".
+
+    Args:
+        trigger: The literal canonical trigger phrase.
+
+    Returns:
+        A regex string for case-insensitive substring matching.
+    """
+
+    base = re.escape(trigger.lower())
+    if trigger.lower().endswith(" it"):
+        base = re.escape(trigger.lower()[:-3]) + r"\s+(?:it|that|this|the\s+\w+)"
+    return rf"\b{base}\b"
+
+
+def _format_prompt_trigger_phrases() -> str:
+    """Format the canonical trigger list as a quoted, comma-separated string."""
+
+    return ", ".join(f"'{t}'" for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS)
+
+
+# Delimited canonical trigger sentence rendered into the dispatcher prompt.
+# The HTML-comment delimiters are LLM-tolerated formatting and provide a
+# deterministic span for the contract test
+# ``test_dispatcher_prompt_trigger_sentence_is_mechanically_rendered``.
+_TRIGGER_LIST_SENTENCE = (
+    f"<!-- triggers:start -->Trigger phrases include: "
+    f"{_format_prompt_trigger_phrases()}.<!-- triggers:end -->"
+)
+
+
+# Canonical exercise-consent regex set, derived from the explicit pattern set,
+# the canonical trigger list, and the walkthrough consent patterns. Both the
+# existing _is_coping_advice_without_exercise_consent guard and the new
+# _is_advice_request_without_exercise_consent guard consult this set.
+EXERCISE_CONSENT_PATTERNS: tuple[str, ...] = (
+    *EXPLICIT_EXERCISE_REQUEST_PATTERNS,
+    *(_trigger_to_regex(t) for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS),
+    WALKTHROUGH_CONSENT_PATTERN,
+    WALKTHROUGH_HOWTO_CONSENT_PATTERN,
+)
+
+
+# Anaphoric guidance — bare "how do I X this/that/it/the pattern" questions
+# whose object is a behavior pattern, not a content topic. Six branches; see
+# UNCONSENTED_EXERCISE_FIX_PLAN.md Step 3f for design.
+ANAPHORIC_GUIDANCE_PATTERNS: tuple[str, ...] = (
+    # Branch 1: phrasal verb + bare pronoun, terminal/punctuation.
+    # "break out of it", "get out of this", "snap out of that". Lookahead
+    # blocks "out of this lease/relationship/college".
+    r"\bhow (?:do|can|should|would|to)\s*(?:i|we|you)?\s*(?:\w+\s+){0,2}"
+    r"(?:break (?:out of|free of|away from)|get (?:out of|away from|into)|"
+    r"snap out of)"
+    r"(?:\s+(?:doing|fighting|avoiding))?\s+"
+    r"(?:this|that|it)(?=[\s\.\,\?\!]*$|\s*[\.\,\?\!])",
+    # Branch 2: phrasal verb + pronoun + EXPLICIT pattern noun.
+    # "get out of this loop", "break out of this cycle", "snap out of this spiral".
+    r"\bhow (?:do|can|should|would|to)\s*(?:i|we|you)?\s*(?:\w+\s+){0,2}"
+    r"(?:break (?:out of|free of|away from)|get (?:out of|away from|into)|"
+    r"snap out of)"
+    r"\s+(?:this|that|the)\s+(?:pattern|cycle|habit|behaviou?r|loop|spiral)\b",
+    # Branch 3: bare verb + (optional gerund) + EXPLICIT pattern noun.
+    # "break this cycle", "stop this pattern", "interrupt the loop".
+    r"\bhow (?:do|can|should|would|to)\s*(?:i|we|you)?\s*(?:\w+\s+){0,2}"
+    r"(?:break|stop|change|interrupt|fix|undo|escape)"
+    r"(?:\s+(?:doing|fighting|avoiding))?\s+"
+    r"(?:this|that|the)\s+(?:pattern|cycle|habit|behaviou?r|loop|spiral)\b",
+    # Branch 4: "stop doing this/that/it" — terminal pronoun, narrow softeners
+    # allowed.
+    r"\bhow (?:do|can|should|would|to)\s*(?:i|we|you)?\s*(?:\w+\s+){0,2}"
+    r"stop\s+doing\s+(?:this|that|it)"
+    r"(?:\s+(?:in general|for good|anymore|once and for all))?"
+    r"(?=[\s\.\,\?\!]*$|\s*[\.\,\?\!])",
+    # Branch 5: "what do/can/should/would I do (about|with) this/that/it"
+    r"\bwhat (?:do|can|should|would) i do (?:about|with) (?:this|that|it)\b",
+    # Branch 6: "what now"
+    r"\bwhat now\b\??\s*$",
+)
+
+
+# Acceptance regex set — end-anchored to the full message. An acknowledgment
+# plus a new question (e.g. "yes, that makes sense, how do I stop this?") does
+# NOT match acceptance.
+ACCEPTANCE_PATTERNS: tuple[str, ...] = (
+    r"^\s*(?:yes|yeah|yep|sure|ok|okay|please|alright|absolutely)[\.\!]?\s*$",
+    r"^\s*(?:yes|yeah|yep|sure|ok|okay)[,\s]+(?:please|let'?s(?:\s+(?:do|try)(?:\s+it)?)?|do it|try it)[\.\!]?\s*$",
+    r"^\s*(?:let'?s|please)\s+(?:do|try)\s+(?:it|that)[\.\!]?\s*$",
+    r"^\s*(?:i'?m|i am)\s+(?:ready|in|game)[\.\!]?\s*$",
+    r"^\s*(?:go ahead|sounds good)[\.\!]?\s*$",
+)
+
+
+# Patterns that detect an assistant-side exercise offer in the prior turn.
+EXERCISE_OFFER_PATTERNS: tuple[str, ...] = (
+    r"\bwould you like to (?:try|do)\b.{0,40}\b(?:exercise|grounding|breathing|practice|technique|thought record|behavioral experiment|values|defusion|self-compassion)\b",
+    r"\b(?:we could|i could)\b.{0,40}\b(?:try|do|walk through|practice|run through)\b.{0,40}\b(?:exercise|grounding|breathing|technique|thought record|behavioral experiment|values|defusion|self-compassion)\b",
+    r"\bwant to (?:try|do)\b.{0,40}\b(?:grounding|breathing|exercise|technique|thought record|behavioral experiment)\b",
 )
 
 
@@ -255,7 +469,78 @@ def _is_coping_advice_without_exercise_consent(message: str) -> bool:
     return _matches_any(
         lowered,
         COPING_ADVICE_REQUEST_PATTERNS,
-    ) and not _matches_any(lowered, EXPLICIT_EXERCISE_REQUEST_PATTERNS)
+    ) and not _matches_any(lowered, EXERCISE_CONSENT_PATTERNS)
+
+
+def _message_is_acceptance_of_offer(state: AgentState, message: str) -> bool:
+    """Return whether the prior assistant turn offered an exercise AND the
+    current message is a clean direct acceptance of that offer.
+
+    Args:
+        state: The current agent state, with conversation ``history``.
+        message: The current user message.
+
+    Returns:
+        ``True`` when the most recent assistant turn contained an exercise
+        offer and the current message matches an acceptance pattern. Returns
+        ``False`` when the message is an acknowledgment plus a new question
+        (which doesn't end-anchor to acceptance).
+    """
+
+    history = state.get("history", []) or []
+    for turn in reversed(history):
+        if turn.get("role") == "assistant":
+            offered = _matches_any(
+                turn.get("content", "").lower(), EXERCISE_OFFER_PATTERNS
+            )
+            return offered and _matches_any(message.lower(), ACCEPTANCE_PATTERNS)
+    return False
+
+
+def _is_advice_request_without_exercise_consent(
+    state: AgentState, message: str
+) -> bool:
+    """Return whether the message is a bare anaphoric advice request OR an
+    informational walkthrough, with no consent signal.
+
+    LOAD-BEARING ORDER: the consent check runs BEFORE the trigger checks.
+    ``INFORMATIONAL_WALKTHROUGH_NOUN_PATTERN`` deliberately overlaps with
+    ``WALKTHROUGH_CONSENT_PATTERN`` on edge cases like
+    "walk me through grounding exercise" — disjointness is not enforced at
+    the regex level. Routing correctness depends on consent winning when both
+    patterns could match.
+
+    Reordering these checks would change observed behavior. See Constraint 7
+    in ``UNCONSENTED_EXERCISE_FIX_PLAN.md``.
+
+    Args:
+        state: The current agent state, with conversation ``history``.
+        message: The current user message.
+
+    Returns:
+        ``True`` when an LLM ``guided_exercise`` pick should be rewritten to
+        psychoeducation; ``False`` when the LLM's pick should stand.
+    """
+
+    lowered = message.lower()
+
+    # Consent FIRST — load-bearing.
+    if _matches_any(lowered, EXERCISE_CONSENT_PATTERNS):
+        return False
+    if _has_active_exercise(state):
+        return False
+    if _message_is_acceptance_of_offer(state, message):
+        return False
+
+    # Trigger conditions: anaphoric guidance OR informational walkthrough.
+    if _matches_any(lowered, ANAPHORIC_GUIDANCE_PATTERNS):
+        return True
+    if _matches_any(
+        lowered,
+        (INFORMATIONAL_WALKTHROUGH_PATTERN, INFORMATIONAL_WALKTHROUGH_NOUN_PATTERN),
+    ):
+        return True
+    return False
 
 
 def pick_therapeutic_mode(
@@ -367,9 +652,8 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "expressing emotion (use supportive), the user is noticing a "
         "pattern but not ready to work on it (use reflective), the user "
         "is asking 'why does this happen?' (use psychoeducation), OR the "
-        "user is explicitly asking to START a specific exercise track like "
-        "'let's do a thought record', 'can we figure out a way to test it', "
-        "or 'can we look at what actually matters to me?' — those are "
+        "user is explicitly asking to START a specific exercise track from "
+        "the canonical guided_exercise trigger list above — those are "
         "guided_exercise turns because the agent should begin the matching "
         "stepwise exercise. Also do NOT use technique just because the user "
         "wants to 'talk it through' or remember what went better. If they "
@@ -406,17 +690,12 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "breathing, muscle relaxation, thought work, behavioral "
         "experiments, behavioral activation, acceptance/defusion, values "
         "work, self-compassion, emotion regulation, or gratitude. "
-        "Trigger phrases include: 'ground me', 'breathing exercise', "
-        "'guide me through a grounding exercise', "
-        "'let's do a thought record', 'can we figure out a way to test it', "
-        "'behavioral experiment', 'can we look at what actually matters to me', "
-        "'is there something we can do about that?' after the user says "
-        "they are being hard on themselves, "
-        "'values compass', 'leaves exercise', 'STOP technique', "
-        "'IMPROVE the moment', "
-        "'gratitude exercise'. The "
+        f"{_TRIGGER_LIST_SENTENCE} The "
         "trigger is a REQUEST for a structured intervention, not a "
-        "general description of distress. "
+        "general description of distress. When the user names "
+        "self-criticism or another concrete pain and then asks if there's "
+        "something to be done about it, that 'do something about it' style "
+        "trigger is consent to a self-compassion exercise. "
         "If the user is explicitly asking to START one of the supported "
         "exercise tracks, choose guided_exercise even if the content "
         "involves thought work, testing a belief, or values exploration. "
@@ -437,7 +716,13 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "'why does grounding even work?' (asking about the mechanism, "
         "not asking to do it), 'what are some tips to cope at different "
         "severity levels?' (asking for guidance/options, not to practice "
-        "a skill now). "
+        "a skill now), 'how do I break out of this?', 'how do I stop "
+        "doing this?', 'how do I break this cycle?', 'how do I get out "
+        "of this loop?', 'what do I do about this?', 'what now?' (short "
+        "anaphoric requests for guidance on changing a behavior or "
+        "pattern — the user wants a frame or one or two options, not a "
+        "structured exercise like grounding, breathing, or a thought "
+        "record). "
         "When uncertain, route to supportive — the user can always "
         "ask again more explicitly if they want the structured path.\n"
         "- clarifying: ask one focused question. Use only when the user's "
@@ -449,6 +734,18 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "session-opening greeting is NOT clarifying territory — route those "
         "to supportive.\n\n"
         "Pick one response_style. "
+        "The active therapeutic_approach from a prior turn does NOT, by "
+        "itself, authorize starting that approach's named exercises. To "
+        "pick guided_exercise, one of the following must hold: (i) the "
+        "current user message contains a request to do something structured "
+        "(matches the guided_exercise trigger phrases above), OR (ii) the "
+        "assistant's previous turn explicitly offered a specific exercise "
+        "AND the current user message is a clean direct acceptance ('yes', "
+        "'yes please', 'sure', 'let's try it'). An acknowledgment-plus-"
+        "question like 'yes, that makes sense, but how do I stop doing "
+        "this?' is NOT an acceptance. If neither holds — for example, the "
+        "prior modality is dbt_skills and the user asks 'how do I stop "
+        "doing this' — route to psychoeducation, not guided_exercise.\n\n"
         "Additionally, pick the therapeutic_approach that best fits this "
         "turn's content. The therapeutic approach determines which "
         "framework informs the response:\n"
@@ -695,6 +992,19 @@ async def run_therapeutic_dispatch_node(
             ):
                 logger.debug(
                     "therapeutic_dispatch: guided_exercise advice guard -> "
+                    "psychoeducation"
+                )
+                return Command(
+                    update=_routing_update(modality),
+                    goto=PSYCHOEDUCATION_NODE,
+                )
+
+            if (
+                mode == "guided_exercise"
+                and _is_advice_request_without_exercise_consent(state, message)
+            ):
+                logger.debug(
+                    "therapeutic_dispatch: anaphoric/walkthrough guidance guard -> "
                     "psychoeducation"
                 )
                 return Command(
