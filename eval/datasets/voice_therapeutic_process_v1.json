@@ -1,0 +1,73 @@
+[
+  {
+    "id": "detailed_vent_orients_not_passive",
+    "description": "A detailed vent should move beyond pure passive holding without becoming directive.",
+    "previous": {},
+    "user_text": "I've been pushing through work for months because everyone depends on me, and now even small requests from my boss make me feel trapped.",
+    "expect_session_intent": "vent",
+    "expect_guidance_permission": "not_yet",
+    "expect_process_stage_in": ["orient", "identify"],
+    "expect_agent_kind_in": ["understanding", "reflective"],
+    "expect_guidance_contains_any": [
+      "smallest useful next target",
+      "formulation fits"
+    ]
+  },
+  {
+    "id": "guidance_permission_persists_across_detail",
+    "description": "Once the user has invited active help, follow-up details should not reset to passive listening.",
+    "previous": {
+      "guidance_permission": "granted"
+    },
+    "user_text": "It started after I took on two extra projects and stopped sleeping well.",
+    "expect_session_intent": "work",
+    "expect_guidance_permission": "granted",
+    "expect_process_stage_in": ["orient"],
+    "expect_agent_kind_in": ["understanding"],
+    "expect_guidance_contains_any": [
+      "more active guidance"
+    ]
+  },
+  {
+    "id": "guidance_withdrawal_returns_to_holding",
+    "description": "The user can explicitly ask for listening instead of active guidance.",
+    "previous": {
+      "guidance_permission": "granted"
+    },
+    "user_text": "I don't want advice right now, can you just listen?",
+    "expect_session_intent": "vent",
+    "expect_guidance_permission": "not_yet",
+    "expect_process_stage_in": ["hold"],
+    "expect_agent_kind_in": ["hold_space"],
+    "expect_guidance_contains_any": [
+      "hold space without becoming passive"
+    ]
+  },
+  {
+    "id": "action_request_gets_small_next_step",
+    "description": "A direct action request should route to active guidance without implying a formal exercise.",
+    "previous": {},
+    "user_text": "What can I do tonight so this anxiety doesn't run the whole evening?",
+    "expect_session_intent": "work",
+    "expect_guidance_permission": "granted",
+    "expect_process_stage_in": ["ground"],
+    "expect_agent_kind_in": ["technique"],
+    "expect_guidance_contains_any": [
+      "one doable move, not a list"
+    ]
+  },
+  {
+    "id": "hot_thought_moves_to_examine",
+    "description": "An invited hot-thought turn should move into collaborative examination.",
+    "previous": {},
+    "assistant_text": "We can look at that thought together if you want.",
+    "user_text": "Yes, please help me figure out why I keep thinking I'm going to ruin everything.",
+    "expect_guidance_permission": "granted",
+    "expect_process_stage_in": ["identify", "examine"],
+    "expect_agent_kind_in": ["reflective", "understanding"],
+    "expect_hot_thought": true,
+    "expect_guidance_contains_any": [
+      "more active guidance"
+    ]
+  }
+]

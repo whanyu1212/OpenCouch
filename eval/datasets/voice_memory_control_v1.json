@@ -1,0 +1,121 @@
+[
+  {
+    "id": "list_saved_voice_memory",
+    "description": "A persistent voice session can show saved facts and style preferences.",
+    "setup": {
+      "mode": "local",
+      "facts": ["Presentations make me anxious."],
+      "rules": ["You prefer shorter responses."]
+    },
+    "steps": [
+      {
+        "tool": "show_saved_memory",
+        "expect_contains": [
+          "Here's what I currently have saved",
+          "Presentations make me anxious.",
+          "You prefer shorter responses."
+        ],
+        "expect_semantic_count": 1,
+        "expect_rule_count": 1
+      }
+    ]
+  },
+  {
+    "id": "voice_memory_status",
+    "description": "A persistent voice session can report memory counts and recall status.",
+    "setup": {
+      "mode": "local",
+      "facts": ["Work presentations are a recurring trigger."],
+      "rules": ["You prefer concise responses."]
+    },
+    "steps": [
+      {
+        "tool": "show_memory_status",
+        "expect_contains": [
+          "Saved facts: 1",
+          "Session summaries: 0",
+          "Style preferences: 1",
+          "Proactive recall: off"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "turn_recall_off",
+    "description": "A voice user can disable proactive memory recall.",
+    "setup": {
+      "mode": "local",
+      "recall_enabled": true
+    },
+    "steps": [
+      {
+        "tool": "set_proactive_memory_recall",
+        "args": {"enabled": false},
+        "expect_contains": ["proactive recall off", "will not proactively bring up past sessions"],
+        "expect_recall_enabled": false,
+        "expect_interruptions_blocked": 1
+      }
+    ]
+  },
+  {
+    "id": "delete_memory_requires_confirmation",
+    "description": "A voice delete request prepares a target, then deletes only after confirmation.",
+    "setup": {
+      "mode": "local",
+      "facts": ["Presentations make me anxious."]
+    },
+    "steps": [
+      {
+        "tool": "prepare_memory_deletion",
+        "args": {"query": "presentations"},
+        "expect_contains": ["If you want me to delete it"],
+        "expect_pending_delete": true,
+        "expect_semantic_count": 1
+      },
+      {
+        "tool": "confirm_memory_deletion",
+        "expect_contains": ["Deleted that saved fact."],
+        "expect_pending_delete": false,
+        "expect_semantic_count": 0,
+        "expect_interruptions_blocked": 1
+      }
+    ]
+  },
+  {
+    "id": "cancel_memory_delete",
+    "description": "A voice user can cancel a pending memory deletion without mutating memory.",
+    "setup": {
+      "mode": "local",
+      "facts": ["Presentations make me anxious."]
+    },
+    "steps": [
+      {
+        "tool": "prepare_memory_deletion",
+        "args": {"query": "presentations"},
+        "expect_pending_delete": true,
+        "expect_semantic_count": 1
+      },
+      {
+        "tool": "cancel_memory_deletion",
+        "expect_contains": ["Cancelled. I didn't change your memory."],
+        "expect_pending_delete": false,
+        "expect_semantic_count": 1
+      }
+    ]
+  },
+  {
+    "id": "incognito_memory_control_noop",
+    "description": "Incognito voice sessions do not show or edit durable memory.",
+    "setup": {
+      "mode": "incognito",
+      "facts": ["This should not be exposed in guest mode."]
+    },
+    "steps": [
+      {
+        "tool": "show_saved_memory",
+        "expect_contains": ["guest mode"],
+        "expect_semantic_count": 1
+      }
+    ]
+  }
+]

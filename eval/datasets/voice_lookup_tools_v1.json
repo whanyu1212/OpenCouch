@@ -1,0 +1,97 @@
+[
+  {
+    "id": "factual_lookup_uses_search",
+    "description": "Explicit factual lookup should use provider-native search and return the verified answer.",
+    "setup": {
+      "llm_responses": [
+        "Singapore's SOS crisis hotline is 1767. Sources: sos.org.sg"
+      ]
+    },
+    "steps": [
+      {
+        "tool": "answer_grounded_factual_lookup",
+        "args": {
+          "query": "Can you look up Singapore crisis hotline numbers?"
+        },
+        "expect_contains": ["1767", "Sources"],
+        "expect_use_search": [true]
+      }
+    ]
+  },
+  {
+    "id": "factual_lookup_without_llm_fails_closed",
+    "description": "If the lookup client is unavailable, the voice tool should say it cannot verify rather than guessing.",
+    "setup": {
+      "llm_available": false
+    },
+    "steps": [
+      {
+        "tool": "answer_grounded_factual_lookup",
+        "args": {
+          "query": "Can you check the latest hotline number?"
+        },
+        "expect_contains": ["won't guess"],
+        "expect_use_search": []
+      }
+    ]
+  },
+  {
+    "id": "crisis_resources_singapore",
+    "description": "Location-aware crisis lookup should extract the user's stated location and search for verified local resources.",
+    "setup": {
+      "llm_responses": [
+        "Singapore",
+        "Samaritans of Singapore | 1767 | https://www.sos.org.sg"
+      ]
+    },
+    "steps": [
+      {
+        "tool": "provide_crisis_resources",
+        "args": {
+          "location_context": "I'm in Singapore and need a crisis hotline."
+        },
+        "expect_contains": ["Singapore", "Samaritans of Singapore", "1767"],
+        "expect_use_search": [false, true]
+      }
+    ]
+  },
+  {
+    "id": "crisis_resources_no_location",
+    "description": "Crisis lookup should ask for location instead of inferring one when none was disclosed.",
+    "setup": {
+      "llm_responses": [""]
+    },
+    "steps": [
+      {
+        "tool": "provide_crisis_resources",
+        "args": {
+          "location_context": "I need a crisis hotline."
+        },
+        "expect_contains": ["share your country or city", "988"],
+        "expect_use_search": [false]
+      }
+    ]
+  },
+  {
+    "id": "crisis_resources_search_failure",
+    "description": "Crisis lookup should fall back safely if provider search fails.",
+    "setup": {
+      "llm_responses": [
+        "Singapore",
+        {
+          "raises": "search unavailable"
+        }
+      ]
+    },
+    "steps": [
+      {
+        "tool": "provide_crisis_resources",
+        "args": {
+          "location_context": "I'm in Singapore."
+        },
+        "expect_contains": ["couldn't verify", "local emergency services", "988"],
+        "expect_use_search": [false, true]
+      }
+    ]
+  }
+]
