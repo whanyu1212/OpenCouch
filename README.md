@@ -271,6 +271,8 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Telegram session rotation hardening** — rotated Telegram sessions now recover orphaned registry rows on startup, preserve interrupted turn markers for finalization, avoid blocking foreground chats during sweeps, and retry transient lease/liveness races before showing maintenance copy
+- **Telegram Markdown rendering** — Telegram replies now render common response Markdown as safe Telegram HTML, including bold, italic, code, headings, and HTTP(S) links, with chunk splitting that preserves HTML tag balance
 - **Behavior eval stabilization** — full deterministic + hybrid eval sweep is green across crisis, therapeutic routing, behavior, long trajectories, memory trajectories, summarization, and procedural writer checks
 - **Extraction eval fixes** — semantic extraction eval now grades session-held candidates correctly, prompt examples cover stable context/loss/support relationships, and narrow deterministic backstops recover high-precision facts the LLM may skip
 - **Memory package boundary cleanup** — moved the always-on audit backends (`crisis_log`, `session_feedback`, SQLite variants) into `agent/audit/`, updated imports across runtime/evals/tests, and added a dedicated `agent/memory/README.md` to map the subsystem
