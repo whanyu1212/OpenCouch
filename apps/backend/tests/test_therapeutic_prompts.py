@@ -320,6 +320,19 @@ def test_closing_prompt_handles_wrap_up_takeaway_requests() -> None:
     assert "exploration" in prompt
 
 
+def test_closing_prompt_handles_one_word_acknowledgments_quietly() -> None:
+    """Closing should not turn terse acknowledgments into a sendoff."""
+
+    prompt = build_closing_system_prompt(_make_state())
+
+    assert 'one-word acknowledgment such as\n  "ok"' in prompt
+    assert '"Okay." is enough' in prompt
+    assert "Do not summarize the arc" in prompt
+    assert "add an open-door sentence" in prompt
+    assert "parental close" in prompt
+    assert "One-word acknowledgments" in prompt
+
+
 def test_supportive_prompt_handles_low_content_opening_orientation() -> None:
     """Supportive openings may orient lightly without becoming intake."""
 
@@ -336,6 +349,54 @@ def test_supportive_prompt_handles_low_content_opening_orientation() -> None:
     assert 'a question ending in "?"' in prompt
     assert "Good low-content opening" in prompt
     assert "it does not actually ask the optional orientation question" in prompt
+
+
+def test_supportive_prompt_breaks_uniform_response_shape() -> None:
+    """Supportive mode should not force reflection -> explanation -> question."""
+
+    prompt = build_supportive_system_prompt(_make_state())
+    normalized = " ".join(prompt.split())
+
+    assert "Vary reply shape across turns" in prompt
+    assert "a paraphrase that stands alone" in normalized
+    assert "a single question with no preamble" in normalized
+    assert "If two consecutive replies followed" in normalized
+    assert "drop one of the parts" in normalized
+    assert "reflection -> explanation -> question" in prompt
+    assert "Let a reflection stand on its own" in prompt
+    assert "pairing a reflection with an explanation" in prompt
+
+
+def test_supportive_prompt_handles_acknowledgments_and_capability_questions() -> None:
+    """Supportive mode should answer terse acknowledgments and capability asks directly."""
+
+    prompt = build_supportive_system_prompt(_make_state())
+
+    assert 'one-word acknowledgment such as "ok"' in prompt
+    assert 'Often "Okay." is enough' in prompt
+    assert "Do not add a takeaway" in prompt
+    assert "parental close" in prompt
+    assert "specific cases below override" in prompt
+    assert "what you can do for them" in prompt
+    assert "answer as a stance" in prompt
+    assert "not a feature list" in prompt
+    assert "what you will be doing in the conversation" in prompt
+
+
+def test_psychoeducation_prompt_handles_pop_neuro_practical_requests() -> None:
+    """Pop-neuro shorthand should not trigger a lecture before practical help."""
+
+    prompt = build_psychoeducation_system_prompt(_make_state())
+    normalized = " ".join(prompt.split())
+
+    assert "Pop-neuroscience shorthand" in prompt
+    assert "I need dopamine" in prompt
+    assert "answer the practical need first" in prompt
+    assert "Do not open by correcting the neuroscience framing" in normalized
+    assert "lecturing about brain chemistry" in prompt
+    assert "What can I do to get dopamine?" in prompt
+    assert "Stand up and step outside for two minutes" in prompt
+    assert "That's it for now" in prompt
 
 
 def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> None:

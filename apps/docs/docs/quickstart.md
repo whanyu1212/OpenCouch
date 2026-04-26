@@ -134,6 +134,41 @@ Memory loads at session start, refreshes selectively mid-session,
 and persists via a transcript replay on disconnect. See the
 [Voice (LiveKit)](/docs/voice) page for the full architecture.
 
+### Telegram dogfood gateway
+
+The Telegram gateway is a standalone local process for direct-message
+text dogfood. It uses the same persistent text runtime as the CLI/API,
+but FastAPI does not need to be running.
+
+Create a bot with `@BotFather`, DM it once, then get your numeric
+Telegram sender ID:
+
+<TerminalWindow title="bash — Telegram getUpdates">
+{`curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"`}
+</TerminalWindow>
+
+Use `message.from.id` as the allowlisted sender. If Telegram returns a
+409 webhook conflict, clear the webhook and retry:
+
+<TerminalWindow title="bash — Telegram deleteWebhook">
+{`curl "https://api.telegram.org/bot<YOUR_TOKEN>/deleteWebhook"`}
+</TerminalWindow>
+
+Run the gateway from `apps/backend`:
+
+<TerminalWindow title="bash — Telegram gateway">
+{`OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \\
+OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \\
+OPENCOUCH_TELEGRAM_OWNER_ID="alice" \\
+OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast \\
+OPENCOUCH_MEMORY_MODE=persistent \\
+uv run python -m channels.gateway telegram`}
+</TerminalWindow>
+
+Use `/start` or `/help` for the static intro, send normal messages to
+talk, and use `/end` to close the active session manually. Restarting
+the gateway does not require sending `/start` again.
+
 ## Slash commands
 
 Once inside the text CLI:

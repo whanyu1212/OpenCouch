@@ -17,6 +17,7 @@ What's shipped, what's in progress, and what's planned.
 | **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
 | **Voice Chat (LiveKit)** | LiveKit-native worker with WebRTC room transport, `TherapeuticAgent` ↔ `CrisisAgent` handoffs, bounded `GroundingTask` (10 voice-allowlisted exercises), `@function_tool` declarations, and three-phase memory (startup load / mid-session retrieval / shutdown transcript replay). Lives in `apps/backend/voice/livekit/`. |
 | **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /threads/{id}/end`. SQLite-backed, incognito-safe. |
+| **Telegram DM Gateway** | Standalone local dogfood gateway for Telegram DMs. Uses `Channel.TELEGRAM`, the existing persistent text runtime, allowlisted numeric sender IDs, canonical owner ID memory, `/start`, `/help`, `/end`, plain-text replies, 20-minute runtime sessions, and an advisory lock for duplicate gateway prevention. |
 | **Session Trajectory Eval** | Unified runner for short (inline) and long (checkpoint) trajectory datasets. 25 long-trajectory cases covering approach, boundary enforcement, crisis arcs, closing, venting, and response style transitions. Concurrent hybrid execution with `--concurrency`, `--case`, `--verbose`. |
 | **Crisis Gate — LLM-primary** | LLM is the primary crisis classifier; regex is fallback only. Override precedence fix, prompt hardening (conversation fencing, anti-injection, adversarial examples), strict truth table enforcement. |
 | **Dispatcher — LLM-primary** | LLM handles all response style + approach classification. Context-blind regex fast paths removed. LLM-based mid-exercise exit detection. Exercise approach persistence. |
@@ -40,11 +41,12 @@ What's shipped, what's in progress, and what's planned.
 
 ### Messaging Channels
 
-Adapters for Telegram, WhatsApp, and Discord. The `Channel` enum
-already has slots (`Channel.TELEGRAM`, `Channel.WHATSAPP`); the
-agent graph is channel-agnostic. Each adapter maps platform message
-formats to `AgentInput` / `AgentOutput`. Crisis responses would need
-channel-specific formatting (inline buttons, embeds).
+WhatsApp and Discord adapters. `Channel.WHATSAPP` already exists;
+Discord would need an enum addition. The agent graph is channel-agnostic.
+Each adapter maps platform message formats to `AgentInput` /
+`AgentOutput`. Crisis responses would need channel-specific formatting
+(inline buttons, embeds). Telegram groups, media, and richer formatting
+remain future scope beyond the shipped DM text gateway.
 
 ### Acoustic Crisis Detection
 

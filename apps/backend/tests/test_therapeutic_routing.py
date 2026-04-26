@@ -30,10 +30,16 @@ from agent.state import AgentState
 from agent.therapeutic.dispatcher import (
     CLARIFYING_NODE,
     CLOSING_NODE,
+    EXERCISE_CONSENT_PATTERNS,
     GUIDED_EXERCISE_NODE,
     PSYCHOEDUCATION_NODE,
     REFLECTIVE_NODE,
     SUPPORTIVE_NODE,
+    _PROMPT_GUIDED_EXERCISE_TRIGGERS,
+    _is_advice_request_without_exercise_consent,
+    _matches_any,
+    _format_prompt_trigger_phrases,
+    build_therapeutic_dispatch_system_prompt,
     pick_therapeutic_mode,
     run_therapeutic_dispatch_node,
 )
@@ -1233,3 +1239,434 @@ class TestMidExerciseModalityPreservation:
         assert cmd.update["exercise_state"]["exercise_type"] is None
         assert cmd.update["exercise_state"]["exercise_step"] is None
         assert cmd.update["exercise_state"]["exercise_modality"] is None
+
+
+# ─── Anaphoric/walkthrough guidance guard ────────────────────────────────────
+
+
+_OFFER_GROUNDING = "Would you like to try a grounding exercise?"
+
+
+def _state_with_offer(message: str) -> AgentState:
+    """Build a state where the prior assistant turn offered grounding."""
+
+    return _build_state(
+        message,
+        history=[
+            {"role": "user", "content": "I'm anxious."},
+            {"role": "assistant", "content": _OFFER_GROUNDING},
+        ],
+    )
+
+
+def _state_with_active_exercise(message: str) -> AgentState:
+    """Build a state with an active grounding exercise in progress."""
+
+    state: Any = {
+        "message": message,
+        "history": [],
+        "exercise_state": {
+            "exercise_type": "grounding",
+            "exercise_step": 2,
+            "exercise_modality": "dbt_skills",
+        },
+    }
+    return cast(AgentState, state)
+
+
+class TestAdviceRequestWithoutExerciseConsent:
+    """Pure-function tests for ``_is_advice_request_without_exercise_consent``.
+
+    Test matrix follows ``UNCONSENTED_EXERCISE_FIX_PLAN.md`` Step 5a. The cases
+    encode the regex-shape decisions made across 14 adversarial-review
+    iterations.
+    """
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # Anaphoric — phrasal terminal pronouns (Branch 1).
+            "how to break out of it",
+            "how do I break out of this",
+            "how do I break out of this.",
+            "how do I break out of this?",
+            # Anaphoric — phrasal verb + pattern noun (Branch 2).
+            "how do I get out of this loop",
+            "how do I break out of this cycle",
+            "how do I snap out of this spiral",
+            "how do I get out of this pattern",
+            # Anaphoric — bare verb + pattern noun (Branch 3).
+            "how do I break this cycle",
+            "how do I break the pattern",
+            "how do I break this habit",
+            "how do I stop this pattern",
+            # Anaphoric — "stop doing this" (Branch 4) + softeners.
+            "how do I stop doing this",
+            "how can I stop doing that",
+            "how do I just stop doing this in general",
+            "how do I stop doing this for good",
+            # Anaphoric — Branches 5/6.
+            "what do I do about this",
+            "what now?",
+            # Informational walkthrough — wh form.
+            "walk me through why this happens",
+            "guide me through what just happened",
+            "walk me through how this works",
+            "walk me through what grounding actually does",
+            "walk me through how STOP works",
+            # Informational walkthrough — tool noun + non-completer trailing.
+            "walk me through grounding theory",
+            "walk me through breathing problems",
+            "walk me through breathing technique problems",
+            # Note: "walk me through grounding exercise theory" is documented
+            # as out of scope — the inherited bare-noun pattern in
+            # EXPLICIT_EXERCISE_REQUEST_PATTERNS matches "grounding exercise"
+            # as consent. See UNCONSENTED_EXERCISE_FIX_PLAN.md Risk section
+            # ("negated exercise mentions / pre-existing condition").
+        ],
+    )
+    def test_should_fire(self, message: str) -> None:
+        state = _build_state(message)
+        assert _is_advice_request_without_exercise_consent(state, message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # Content references with bare pronouns — must not fire.
+            "how do I break it to my mom",
+            "how do I break it down for them",
+            "how do I fix it with my partner",
+            "how do I get out of this lease",
+            "how do I get out of this relationship",
+            "how do I tell my partner about this",
+            "how do I tell my partner that I love this",
+            # Bare "how do I stop this" — intentional gap.
+            "how do I stop this",
+            # Statements, not questions.
+            "I need to stop doing this",
+            "I want to stop",
+            # Explicit exercise request via canonical trigger.
+            "let's do a thought record",
+            "ground me",
+            # Walkthrough WITH exercise/tool noun as completed direct object.
+            "walk me through grounding",
+            "guide me through breathing",
+            "walk me through a thought record",
+            "walk me through grounding exercise",
+            "walk me through a grounding exercise",
+            "walk me through a short grounding practice",
+            "walk me through your favorite breathing technique",
+            "walk me through some grounding",
+            "walk me through how to do grounding",
+            "walk me through how to work through a thought record",
+            "walk me through how to fill out a thought record",
+            # Prompt-only consent triggers.
+            "can we figure out a way to test it",
+            "can we figure out a way to test the thought",
+            "can we look at what actually matters to me",
+            # Combined anaphoric + consent — consent wins.
+            "how do I break this cycle, can we figure out a way to test it?",
+            "how do I get out of this loop, can we look at what actually matters to me?",
+        ],
+    )
+    def test_should_not_fire(self, message: str) -> None:
+        state = _build_state(message)
+        assert _is_advice_request_without_exercise_consent(state, message) is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "yes",
+            "yeah",
+            "sure",
+            "ok",
+            "okay",
+            "yes please",
+            "sure, let's try it.",
+            "let's try it",
+            "let's do it",
+            "go ahead",
+            "sounds good",
+            "yes, please",
+        ],
+    )
+    def test_clean_acceptance_after_offer_does_not_fire(self, message: str) -> None:
+        state = _state_with_offer(message)
+        assert _is_advice_request_without_exercise_consent(state, message) is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "how do I break this cycle",
+            "how do I stop doing this",
+            # Acknowledgment + new question is NOT an acceptance — guard fires.
+            "yes, that makes sense, how do I break this cycle?",
+            "yes, that makes sense, but how do I stop doing this?",
+        ],
+    )
+    def test_non_acceptance_after_offer_still_fires(self, message: str) -> None:
+        state = _state_with_offer(message)
+        assert _is_advice_request_without_exercise_consent(state, message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "how to break out of it",
+            "how do I break this cycle",
+            "walk me through why this happens",
+        ],
+    )
+    def test_active_exercise_suppresses_guard(self, message: str) -> None:
+        state = _state_with_active_exercise(message)
+        assert _is_advice_request_without_exercise_consent(state, message) is False
+
+
+class TestAnaphoricGuardIntegration:
+    """Integration tests via ``run_therapeutic_dispatch_node`` (Step 5b).
+
+    Each test mocks the LLM to return ``guided_exercise`` + a modality, then
+    asserts the guard rewrites (or correctly declines to rewrite) routing.
+    """
+
+    PANIC_HISTORY: list[dict[str, str]] = [
+        {
+            "role": "user",
+            "content": "I keep overworking and panicking when I try to slow down.",
+        },
+        {
+            "role": "assistant",
+            "content": "Yeah — control becomes the way you buy safety.",
+        },
+        {"role": "user", "content": "Yes you are right."},
+        {
+            "role": "assistant",
+            "content": "That fits with what you've been describing.",
+        },
+    ]
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "How to break out of it",
+            "How do I stop doing this",
+            "How do I break this cycle",
+            "How do I just stop doing this in general",
+            "walk me through why this happens",
+            "walk me through what grounding actually does",
+            "walk me through how STOP works",
+            "walk me through grounding theory",
+            "walk me through breathing problems",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_guard_rewrites_to_psychoeducation_with_modality_preserved(
+        self, message: str
+    ) -> None:
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="dbt_skills",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(message, history=self.PANIC_HISTORY)
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == PSYCHOEDUCATION_NODE
+        assert cmd.update["therapeutic_approach"] == "dbt_skills"
+        assert fake.structured_calls == 1
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "walk me through how to do grounding",
+            "walk me through a short grounding practice",
+            "walk me through your favorite breathing technique",
+            "walk me through how to fill out a thought record",
+            "can you walk me through a grounding exercise",
+            "ground me",
+            "can we figure out a way to test it",
+            "can we look at what actually matters to me",
+            "how do I break this cycle, can we figure out a way to test it?",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_explicit_consent_routes_to_guided_exercise(
+        self, message: str
+    ) -> None:
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="dbt_skills",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(message, history=self.PANIC_HISTORY)
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "yes, please",
+            "yes",
+            "go ahead",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_clean_acceptance_after_offer_routes_to_guided_exercise(
+        self, message: str
+    ) -> None:
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="dbt_skills",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(
+            message,
+            history=[
+                {"role": "user", "content": "I'm anxious."},
+                {"role": "assistant", "content": _OFFER_GROUNDING},
+            ],
+        )
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "how do I stop doing this",
+            "yes, that makes sense, but how do I stop doing this?",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_non_acceptance_after_offer_still_rewrites(
+        self, message: str
+    ) -> None:
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="dbt_skills",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(
+            message,
+            history=[
+                {"role": "user", "content": "I'm anxious."},
+                {"role": "assistant", "content": _OFFER_GROUNDING},
+            ],
+        )
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == PSYCHOEDUCATION_NODE
+
+
+class TestCopingAdviceConsentNowBroader:
+    """Step 5c — the existing coping-advice guard now uses the broader
+    ``EXERCISE_CONSENT_PATTERNS`` superset, so combined utterances with a
+    consent clause keep the LLM's guided_exercise pick.
+    """
+
+    @pytest.mark.asyncio
+    async def test_combined_advice_plus_cbt_consent_keeps_guided_exercise(
+        self,
+    ) -> None:
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="cbt",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(
+            "what are some ways to cope, can we figure out a way to test it?"
+        )
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+
+
+class TestPromptTriggerContract:
+    """Step 5d — bidirectional prompt-trigger contract.
+
+    Two tests pin the canonical-list-as-source-of-truth invariant:
+
+    1. The delimited trigger sentence is mechanically rendered AND no other
+       trigger-list anchor or canonical multi-word-imperative trigger appears
+       outside the delimited span.
+    2. Every canonical trigger matches ``EXERCISE_CONSENT_PATTERNS``.
+    """
+
+    _TRIGGER_LIST_ANCHORS: tuple[str, ...] = (
+        "Trigger phrases include:",
+        "Triggers include:",
+        "Examples of triggers:",
+        "Trigger examples:",
+        "Explicit starts include:",
+        "trigger phrases such as",
+    )
+
+    # Triggers that are also generic therapeutic vocabulary and may legitimately
+    # appear in non-trigger prose elsewhere in the prompt.
+    _GENERIC_VOCAB_EXEMPTIONS: frozenset[str] = frozenset(
+        {
+            "behavioral experiment",
+            "breathing exercise",
+            "gratitude exercise",
+        }
+    )
+
+    def test_dispatcher_prompt_trigger_sentence_is_mechanically_rendered(self) -> None:
+        prompt = build_therapeutic_dispatch_system_prompt()
+
+        expected_span = (
+            "<!-- triggers:start -->Trigger phrases include: "
+            + _format_prompt_trigger_phrases()
+            + ".<!-- triggers:end -->"
+        )
+
+        assert prompt.count("<!-- triggers:start -->") == 1, (
+            "Expected exactly one start delimiter"
+        )
+        assert prompt.count("<!-- triggers:end -->") == 1, (
+            "Expected exactly one end delimiter"
+        )
+
+        import re as _re
+
+        span_match = _re.search(
+            r"<!-- triggers:start -->(.*?)<!-- triggers:end -->",
+            prompt,
+            _re.DOTALL,
+        )
+        assert span_match is not None
+        assert span_match.group(0) == expected_span, (
+            "Trigger span content drifted from canonical list"
+        )
+
+        prompt_outside_span = prompt.replace(span_match.group(0), "")
+
+        for anchor in self._TRIGGER_LIST_ANCHORS:
+            assert anchor not in prompt_outside_span, (
+                f"Trigger-list anchor {anchor!r} appears outside the delimited "
+                "span. Add new triggers to _PROMPT_GUIDED_EXERCISE_TRIGGERS."
+            )
+
+        # Strong guarantee for unambiguous consent triggers.
+        strong_guarded = tuple(
+            t
+            for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS
+            if t.lower() not in self._GENERIC_VOCAB_EXEMPTIONS
+        )
+        for trigger in strong_guarded:
+            assert trigger.lower() not in prompt_outside_span.lower(), (
+                f"Canonical trigger {trigger!r} appears outside the delimited "
+                "span. Add it to _PROMPT_GUIDED_EXERCISE_TRIGGERS only."
+            )
+
+    def test_canonical_triggers_match_consent_patterns(self) -> None:
+        for trigger in _PROMPT_GUIDED_EXERCISE_TRIGGERS:
+            assert _matches_any(trigger, EXERCISE_CONSENT_PATTERNS), (
+                f"Canonical trigger {trigger!r} does not match "
+                "EXERCISE_CONSENT_PATTERNS"
+            )
