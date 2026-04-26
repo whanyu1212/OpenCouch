@@ -160,6 +160,23 @@ SELF_REPORT_PATTERNS: tuple[str, ...] = (
     r"\bit (?:hurts|feels|sucks|is tough|is hard)\b",
 )
 
+COPING_ADVICE_REQUEST_PATTERNS: tuple[str, ...] = (
+    r"\b(?:what are|what're|what is|what's|give me|can you give me|could you give me|do you have|any)\b.{0,80}\b(?:tips|strategies|ways|ideas|options|suggestions|advice|skills|tools)\b",
+    r"\b(?:tips|strategies|ways|ideas|options|suggestions|advice|skills|tools)\b.{0,80}\b(?:cope|coping|manage|handle|deal with|calm|anxiety|panic|stress|overwhelm)\b",
+    r"\bhow (?:can|do|should) i\b.{0,80}\b(?:cope|manage|handle|deal with|calm|respond)\b",
+    r"\bwhat (?:can|should) i do\b.{0,80}\b(?:when|if|about|for|to)\b",
+    r"\bdifferent severity levels\b",
+)
+
+EXPLICIT_EXERCISE_REQUEST_PATTERNS: tuple[str, ...] = (
+    r"\b(?:guide|walk) me through\b",
+    r"\b(?:let'?s|can we|could we|shall we|help me)\b.{0,60}\b(?:do|try|practice|start|begin)\b",
+    r"\b(?:do|try|practice|start|begin)\b.{0,50}\b(?:exercise|grounding|breathing|skill|technique|thought record|behavioral experiment|values|defusion|self-compassion|gratitude|relaxation)\b",
+    r"\b(?:grounding exercise|breathing exercise|box breathing|muscle relaxation|progressive muscle relaxation|thought record|behavioral experiment|values compass|leaves exercise|stop technique|improve the moment|gratitude exercise)\b",
+    r"\bcan we do something\b",
+    r"\bis there something we can do\b",
+)
+
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     """Return whether the text matches any regex pattern.
@@ -221,6 +238,24 @@ def _active_exercise_modality(state: AgentState) -> str | None:
     if modality:
         return modality
     return state.get("therapeutic_approach")
+
+
+def _is_coping_advice_without_exercise_consent(message: str) -> bool:
+    """Return whether a message asks for advice rather than guided practice.
+
+    Args:
+        message: The current user message.
+
+    Returns:
+        ``True`` when the user is asking for tips/options/strategies
+        and has not explicitly opted into a structured exercise.
+    """
+
+    lowered = message.lower()
+    return _matches_any(
+        lowered,
+        COPING_ADVICE_REQUEST_PATTERNS,
+    ) and not _matches_any(lowered, EXPLICIT_EXERCISE_REQUEST_PATTERNS)
 
 
 def pick_therapeutic_mode(
@@ -298,6 +333,10 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "agent doesn't know what 'it' refers to and needs to ask. "
         "Psychoeducation requires a concrete experience to frame; if the "
         "experience itself is unclear, route to clarifying first. "
+        "Also use psychoeducation, not guided_exercise, when the user asks "
+        "for general tips, options, strategies, or severity-level guidance "
+        "about coping and has not explicitly asked to practice one now. "
+        "This is an informational request even if it mentions coping skills. "
         "Counter-examples that should route to reflective: "
         "(d) questions where the user is NAMING THEIR OWN pattern — 'I "
         "always apologize first in arguments, why?', 'I keep finding "
@@ -396,7 +435,9 @@ def build_therapeutic_dispatch_system_prompt() -> str:
         "request and should route to guided_exercise. "
         "Counter-examples that should route to psychoeducation: "
         "'why does grounding even work?' (asking about the mechanism, "
-        "not asking to do it). "
+        "not asking to do it), 'what are some tips to cope at different "
+        "severity levels?' (asking for guidance/options, not to practice "
+        "a skill now). "
         "When uncertain, route to supportive — the user can always "
         "ask again more explicitly if they want the structured path.\n"
         "- clarifying: ask one focused question. Use only when the user's "
@@ -647,6 +688,18 @@ async def run_therapeutic_dispatch_node(
                 return Command(
                     update=_clear_active_exercise_update(modality),
                     goto=_MODE_NODE_MAP[mode],
+                )
+
+            if mode == "guided_exercise" and _is_coping_advice_without_exercise_consent(
+                message
+            ):
+                logger.debug(
+                    "therapeutic_dispatch: guided_exercise advice guard -> "
+                    "psychoeducation"
+                )
+                return Command(
+                    update=_routing_update(modality),
+                    goto=PSYCHOEDUCATION_NODE,
                 )
 
             return Command(

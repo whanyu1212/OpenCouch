@@ -362,6 +362,14 @@
     "notes": "v0.6 Stage C: boundary case between psychoeducation and guided_exercise. User asks ABOUT grounding (why does it work, what's the point) rather than asking TO DO grounding. This is a confusion about the mechanism, not a request for the intervention — psychoeducation territory, not guided_exercise. Tests the 'asking about mechanism' counter-example in the dispatcher prompt."
   },
   {
+    "id": "psychoeducation_coping_tips_not_guided_exercise",
+    "history": [],
+    "message": "What are some tips to cope at different severity levels?",
+    "expected_mode": "psychoeducation",
+    "dispatch_tier": "llm",
+    "notes": "Dogfood regression: the user asks for coping guidance/options, not to be walked through a skill. Even if the LLM over-picks guided_exercise, the post-dispatch guard should keep this in psychoeducation."
+  },
+  {
     "id": "guided_exercise_breathing",
     "history": [],
     "message": "Can you walk me through a breathing exercise? I'm really wound up.",
