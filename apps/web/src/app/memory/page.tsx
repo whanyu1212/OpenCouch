@@ -9,6 +9,7 @@ import {
   deleteMemoryFact,
   deleteMemorySession,
   deleteMemoryRule,
+  updateMemoryRecall,
   type MemoryFact,
   type MemoryRule,
   type MemorySession,
@@ -27,6 +28,7 @@ export default function MemoryPage() {
   const [rules, setRules] = useState<MemoryRule[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [updatingRecall, setUpdatingRecall] = useState(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -66,6 +68,27 @@ export default function MemoryPage() {
   const handleDeleteRule = async (index: number) => {
     await deleteMemoryRule(index, threadId, userId || undefined);
     bumpMemoryRefreshVersion();
+  };
+
+  const handleRecallChange = async (enabled: boolean) => {
+    setUpdatingRecall(true);
+    setError(null);
+    try {
+      const result = await updateMemoryRecall(enabled, threadId, userId || undefined);
+      setStatus((current) =>
+        current
+          ? {
+              ...current,
+              proactive_recall_enabled: result.proactive_recall_enabled,
+            }
+          : current
+      );
+      bumpMemoryRefreshVersion();
+    } catch {
+      setError("Could not update proactive recall.");
+    } finally {
+      setUpdatingRecall(false);
+    }
   };
 
   const TABS: { key: Tab; label: string; count: number }[] = [
@@ -125,7 +148,13 @@ export default function MemoryPage() {
 
         {!loading && !error && (
           <div className="animate-fadeIn">
-            {tab === "overview" && status && <OverviewTab status={status} />}
+            {tab === "overview" && status && (
+              <OverviewTab
+                status={status}
+                updatingRecall={updatingRecall}
+                onRecallChange={handleRecallChange}
+              />
+            )}
             {tab === "facts" && <FactsTab facts={facts} onDelete={handleDeleteFact} />}
             {tab === "sessions" && <SessionsTab sessions={sessions} onDelete={handleDeleteSession} />}
             {tab === "rules" && <RulesTab rules={rules} onDelete={handleDeleteRule} />}
@@ -136,7 +165,17 @@ export default function MemoryPage() {
   );
 }
 
-function OverviewTab({ status }: { status: MemoryStatus }) {
+function OverviewTab({
+  status,
+  updatingRecall,
+  onRecallChange,
+}: {
+  status: MemoryStatus;
+  updatingRecall: boolean;
+  onRecallChange: (enabled: boolean) => Promise<void>;
+}) {
+  const recallEnabled = status.proactive_recall_enabled;
+
   return (
     <div className="space-y-5 max-w-lg">
       {/* Count cards */}
@@ -160,9 +199,37 @@ function OverviewTab({ status }: { status: MemoryStatus }) {
         />
         <MetaRow
           label="Proactive recall"
-          value={status.proactive_recall_enabled ? "On" : "Off"}
-          accent={status.proactive_recall_enabled}
+          value={recallEnabled ? "On" : "Off"}
+          accent={recallEnabled}
         />
+      </div>
+
+      <div className="bg-oc-bg-card border border-oc-border rounded-xl p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[15px] font-medium text-oc-text">
+              Proactive recall
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-oc-text-muted">
+              When on, OpenCouch may mention relevant past sessions without
+              being asked. When off, it should only reference saved memories
+              when you ask or when safety and style preferences require it.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={updatingRecall}
+            aria-pressed={recallEnabled}
+            onClick={() => void onRecallChange(!recallEnabled)}
+            className={`shrink-0 rounded-full border px-3.5 py-2 text-[12px] font-mono transition-all disabled:opacity-50 ${
+              recallEnabled
+                ? "border-oc-teal-300 bg-oc-teal-50 text-oc-teal-800"
+                : "border-oc-border bg-oc-bg text-oc-text-secondary hover:bg-oc-warm-50"
+            }`}
+          >
+            {updatingRecall ? "saving..." : recallEnabled ? "on" : "off"}
+          </button>
+        </div>
       </div>
     </div>
   );

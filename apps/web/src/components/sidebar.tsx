@@ -2,13 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef, useState, useCallback, useEffect } from "react";
-import {
-  endSession,
-  getMemoryFacts,
-  getThreadSessionStatus,
-} from "@/lib/api";
+import { useRef, useState, useCallback } from "react";
 import { useSessionStore } from "@/lib/session";
+import { useCommandActions } from "@/lib/command-actions";
 import { CouchLogo } from "@/components/logo";
 
 const NAV_ITEMS = [
@@ -68,35 +64,25 @@ export function Sidebar() {
     responseModelTier,
     setUserId,
     setThreadId,
-    setResponseModelTier,
-    newSession,
     chatLoading,
     voiceConnected,
-    messages,
-    memoryFacts,
-    setMemoryFacts,
-    addUnseenMemories,
-    bumpMemoryRefreshVersion,
     lastEndedSession,
-    setLastEndedSession,
-    clearLastEndedSession,
   } = useSessionStore();
+  const {
+    canEndSession,
+    endCurrentSession,
+    endError,
+    endingSession,
+    identityLocked,
+    isBusy,
+    openThreadDrawer,
+    setResponseTier,
+    showTextResponseTier,
+    startNewSession,
+  } = useCommandActions();
   const isIncognito = sessionMode === "incognito";
-  const hasSessionTurns = messages.some((message) => message.role === "user");
-  const [endingSession, setEndingSession] = useState(false);
-  const [endError, setEndError] = useState<string | null>(null);
-  const [hasActiveSession, setHasActiveSession] = useState(false);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const isResizing = useRef(false);
-  const isBusy = chatLoading || endingSession;
-  const identityLocked =
-    isBusy || (sessionMode === "persistent" && hasActiveSession);
-  const canEndSession =
-    sessionMode === "persistent" &&
-    !voiceConnected &&
-    hasActiveSession &&
-    !isBusy;
-  const showTextResponseTier = pathname !== "/voice";
 
   const handleMouseDown = useCallback(() => {
     isResizing.current = true;
@@ -120,135 +106,6 @@ export function Sidebar() {
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
   }, []);
-
-  useEffect(() => {
-    if (sessionMode !== "persistent" || voiceConnected) {
-      setHasActiveSession(false);
-      return;
-    }
-
-    let cancelled = false;
-    const refreshStatus = () => {
-      getThreadSessionStatus(threadId)
-        .then((status) => {
-          if (!cancelled) {
-            setHasActiveSession(status.has_active_session);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setHasActiveSession(false);
-          }
-        });
-    };
-
-    refreshStatus();
-    const intervalId = window.setInterval(refreshStatus, 30000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [threadId, sessionMode, voiceConnected, lastEndedSession]);
-
-  useEffect(() => {
-    if (
-      sessionMode === "persistent" &&
-      !voiceConnected &&
-      chatLoading &&
-      hasSessionTurns
-    ) {
-      setHasActiveSession(true);
-    }
-  }, [chatLoading, hasSessionTurns, sessionMode, voiceConnected]);
-
-  const refreshSemanticFacts = useCallback(async () => {
-    if (isIncognito) {
-      setMemoryFacts([]);
-      return;
-    }
-
-    const facts = await getMemoryFacts(threadId, userId || undefined);
-    setMemoryFacts(facts);
-    addUnseenMemories(Math.max(0, facts.length - memoryFacts.length));
-  }, [
-    addUnseenMemories,
-    isIncognito,
-    memoryFacts.length,
-    setMemoryFacts,
-    threadId,
-    userId,
-  ]);
-
-  const finalizeCurrentPersistentSession = useCallback(
-    async ({
-      captureResult,
-    }: {
-      captureResult: boolean;
-    }) => {
-      if (
-        sessionMode !== "persistent" ||
-        voiceConnected ||
-        !hasActiveSession
-      ) {
-        if (!captureResult) clearLastEndedSession();
-        setEndError(null);
-        return null;
-      }
-
-      setEndingSession(true);
-      setEndError(null);
-
-      try {
-        const result = await endSession(threadId);
-        try {
-          await refreshSemanticFacts();
-        } catch {
-          // The session already ended. A stale semantic-facts panel
-          // should not turn a successful end-session action into a failure.
-        }
-        bumpMemoryRefreshVersion();
-
-        if (captureResult) {
-          setLastEndedSession({ threadId, ...result });
-        } else {
-          clearLastEndedSession();
-        }
-        setHasActiveSession(false);
-        return result;
-      } catch {
-        setEndError(
-          captureResult
-            ? "Could not end the current session."
-            : "Could not finalize the previous session before switching. It will still close on timeout or shutdown."
-        );
-        return null;
-      } finally {
-        setEndingSession(false);
-      }
-    },
-    [
-      bumpMemoryRefreshVersion,
-      clearLastEndedSession,
-      hasActiveSession,
-      refreshSemanticFacts,
-      sessionMode,
-      setLastEndedSession,
-      threadId,
-      voiceConnected,
-    ]
-  );
-
-  const handleExplicitEndSession = useCallback(async () => {
-    if (!canEndSession) return;
-    await finalizeCurrentPersistentSession({ captureResult: true });
-  }, [canEndSession, finalizeCurrentPersistentSession]);
-
-  const handleNewSession = useCallback(async () => {
-    if (isBusy) return;
-    await finalizeCurrentPersistentSession({ captureResult: false });
-    newSession();
-  }, [finalizeCurrentPersistentSession, isBusy, newSession]);
 
   return (
     <aside
@@ -276,7 +133,7 @@ export function Sidebar() {
       <div className="relative z-10 mx-3 px-3 py-3 border border-oc-border rounded-lg bg-oc-bg/60 backdrop-blur-sm space-y-2.5">
         {/* Mode indicator — clickable to go back to mode picker */}
         <button
-          onClick={() => void handleNewSession()}
+          onClick={() => void startNewSession()}
           disabled={isBusy}
           className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md border transition-all ${
             isIncognito
@@ -344,7 +201,7 @@ export function Sidebar() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setResponseModelTier("fast")}
+                onClick={() => setResponseTier("fast")}
                 disabled={chatLoading}
                 className={`px-2.5 py-2 text-[12px] rounded-md border transition-all ${
                   responseModelTier === "fast"
@@ -356,7 +213,7 @@ export function Sidebar() {
               </button>
               <button
                 type="button"
-                onClick={() => setResponseModelTier("quality")}
+                onClick={() => setResponseTier("quality")}
                 disabled={chatLoading}
                 className={`px-2.5 py-2 text-[12px] rounded-md border transition-all ${
                   responseModelTier === "quality"
@@ -374,7 +231,7 @@ export function Sidebar() {
         )}
         {!isIncognito && (
           <button
-            onClick={() => void handleExplicitEndSession()}
+            onClick={() => void endCurrentSession()}
             disabled={!canEndSession}
             className="w-full text-[12px] font-medium text-oc-teal-700 hover:text-oc-teal-600 py-2 border border-oc-teal-200/80 rounded-md hover:bg-oc-teal-50 hover:border-oc-teal-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -382,12 +239,21 @@ export function Sidebar() {
           </button>
         )}
         <button
-          onClick={() => void handleNewSession()}
+          onClick={() => void startNewSession()}
           disabled={isBusy}
           className="w-full text-[12px] font-medium text-oc-teal-700 hover:text-oc-teal-600 py-2 border border-oc-border-subtle rounded-md hover:bg-oc-teal-50 hover:border-oc-teal-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           + New Session
         </button>
+        {!isIncognito && (
+          <button
+            type="button"
+            onClick={openThreadDrawer}
+            className="w-full text-[12px] font-medium text-oc-text-secondary hover:text-oc-teal-700 py-2 border border-oc-border-subtle rounded-md hover:bg-oc-warm-50 hover:border-oc-border transition-all"
+          >
+            Previous Sessions
+          </button>
+        )}
         {endError && (
           <p className="text-[11px] leading-relaxed text-oc-red">{endError}</p>
         )}

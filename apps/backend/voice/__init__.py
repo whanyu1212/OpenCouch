@@ -1,9 +1,12 @@
-"""Voice chat module — OpenAI Realtime direct integration.
+"""Voice chat module — two coexisting implementations for A/B testing.
 
-Option B implementation: direct WebSocket proxy between the browser
-and the OpenAI Realtime API. The Realtime model handles STT, response
-generation, and TTS natively. Our crisis gate runs as a synchronous
-pre-check on each user transcript before Realtime generates a response.
+Option B (voice/realtime.py, voice/api.py):
+    Direct WebSocket proxy between the browser and the OpenAI Realtime
+    API. Simple, low-latency, but no tool calling or agent routing.
 
-Previous Option A (LiveKit + LangGraph LLMAdapter) is in voice/deprecated/.
+Option C (voice/livekit/):
+    LiveKit Agents SDK with native Agent, AgentTask, and @function_tool
+    primitives. Supports multi-agent handoffs, structured grounding
+    exercises, and per-turn memory retrieval. Runs as a separate
+    worker process.
 """

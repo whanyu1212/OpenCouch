@@ -1,6 +1,7 @@
 """Memory inspection and deletion endpoints.
 
 GET    /api/memory/status: user-facing memory counts and recall toggle.
+PATCH  /api/memory/recall: set proactive recall on or off.
 DELETE /api/memory/facts/{n}: delete one semantic fact by index.
 DELETE /api/memory/sessions/{n}: delete one episodic arc by index.
 DELETE /api/memory/rules/{n}: delete one procedural rule by index.
@@ -24,11 +25,17 @@ from agent.memory.reconciliation import filter_active_semantic_records
 from agent.memory.procedural import (
     adelete_procedural_rule,
     aget_procedural_profile,
+    aset_proactive_recall,
 )
 from agent.memory.store import StoreRecord
 from agent.persistence import PersistentAgentRuntime
 from api.dependencies import get_runtime
-from api.models import DeleteResponse, MemoryStatusResponse
+from api.models import (
+    DeleteResponse,
+    MemoryRecallUpdateRequest,
+    MemoryRecallUpdateResponse,
+    MemoryStatusResponse,
+)
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -115,6 +122,39 @@ async def memory_status(
         crisis_log_count=crisis_count,
         session_feedback_count=feedback_count,
         proactive_recall_enabled=profile.proactive_recall_enabled,
+    )
+
+
+@router.patch("/recall", response_model=MemoryRecallUpdateResponse)
+async def update_memory_recall(
+    payload: MemoryRecallUpdateRequest,
+    thread_id: str = Query(description="Thread to scope the update to."),
+    user_id: str | None = Query(default=None, description="Optional owner override."),
+    runtime: PersistentAgentRuntime = Depends(get_runtime),
+) -> MemoryRecallUpdateResponse:
+    """Set the proactive recall toggle for the effective owner.
+
+    Args:
+        payload: Desired proactive recall state.
+        thread_id: Thread to scope the update to.
+        user_id: Optional owner override.
+        runtime: Shared persistent agent runtime.
+
+    Returns:
+        Updated proactive recall state for the effective owner.
+    """
+
+    owner_id = _resolve_owner_id(user_id, thread_id)
+    profile = await aset_proactive_recall(
+        runtime.memory_store,
+        user_id=owner_id,
+        enabled=payload.enabled,
+    )
+    state_text = "on" if profile.proactive_recall_enabled else "off"
+    return MemoryRecallUpdateResponse(
+        owner_id=owner_id,
+        proactive_recall_enabled=profile.proactive_recall_enabled,
+        detail=f"Proactive recall is now {state_text}.",
     )
 
 

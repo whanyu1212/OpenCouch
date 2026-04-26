@@ -161,6 +161,23 @@
     "notes": "Concrete reaction + understanding request should route to psychoeducation."
   },
   {
+    "id": "llm_psychoeducation_coping_tips_not_exercise",
+    "dispatch_tier": "llm",
+    "message": "What are some tips to cope at different severity levels?",
+    "expected_response_style": "psychoeducation",
+    "assertions": {
+      "must_not_include_any": [
+        "let's do an exercise",
+        "grounding exercise",
+        "5-4-3-2-1",
+        "close your eyes",
+        "I is for Imagery"
+      ],
+      "max_sentences": 8
+    },
+    "notes": "Dogfood regression: asking for coping tips by severity is an informational guidance request, not consent to start a DBT or grounding exercise."
+  },
+  {
     "id": "llm_guided_exercise_explicit_request",
     "dispatch_tier": "llm",
     "message": "Can you guide me through a grounding exercise right now?",

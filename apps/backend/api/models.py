@@ -166,6 +166,20 @@ class MemoryStatusResponse(BaseModel):
     proactive_recall_enabled: bool
 
 
+class MemoryRecallUpdateRequest(BaseModel):
+    """PATCH /api/memory/recall request."""
+
+    enabled: bool
+
+
+class MemoryRecallUpdateResponse(BaseModel):
+    """PATCH /api/memory/recall response."""
+
+    owner_id: str
+    proactive_recall_enabled: bool
+    detail: str
+
+
 class DeleteResponse(BaseModel):
     """Response for DELETE endpoints."""
 

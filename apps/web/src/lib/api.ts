@@ -8,21 +8,6 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
-export const REALTIME_VOICE_OPTIONS = [
-  "alloy",
-  "ash",
-  "ballad",
-  "coral",
-  "echo",
-  "sage",
-  "shimmer",
-  "verse",
-  "marin",
-  "cedar",
-] as const;
-
-export type RealtimeVoiceOption = (typeof REALTIME_VOICE_OPTIONS)[number];
-
 export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
   { value: "en", label: "english" },
   { value: "", label: "auto detect" },
@@ -38,6 +23,7 @@ export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
 
 export type TranscriptionLanguageOption =
   (typeof TRANSCRIPTION_LANGUAGE_OPTIONS)[number]["value"];
+export type VoiceMemoryMode = "persistent" | "incognito";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -52,9 +38,9 @@ export interface CrisisInfo {
 export interface ChatResponse {
   response_text: string;
   response_type: string;
-  mode: string | null;
-  mode_source: string | null;
-  modality: string | null;
+  response_style: string | null;
+  response_style_source: string | null;
+  therapeutic_approach: string | null;
   crisis: CrisisInfo;
   diagnostics: Record<string, unknown>;
 }
@@ -75,7 +61,7 @@ export type ResponseModelTier = "fast" | "quality";
 export interface Message {
   role: "user" | "assistant";
   content: string;
-  mode: string | null;
+  response_style: string | null;
 }
 
 export interface MemoryStatus {
@@ -85,6 +71,12 @@ export interface MemoryStatus {
   crisis_log_count: number;
   session_feedback_count: number;
   proactive_recall_enabled: boolean;
+}
+
+export interface MemoryRecallUpdateResponse {
+  owner_id: string;
+  proactive_recall_enabled: boolean;
+  detail: string;
 }
 
 export interface MemoryFact {
@@ -127,6 +119,20 @@ export interface EndSessionResponse {
   turn_count?: number;
   open_loops?: string[];
   resolved_threads?: string[];
+}
+
+export interface LiveKitVoiceTokenResponse {
+  server_url: string;
+  participant_token: string;
+  room_name: string;
+  identity: string;
+  memory_mode: string;
+}
+
+export interface LiveKitVoiceFinalizationStatusResponse {
+  status: "in_progress" | "completed" | "failed";
+  detail: string | null;
+  updated_at: string;
 }
 
 // ── Stream event types ───────────────────────────────────────────────
@@ -191,9 +197,16 @@ export async function getThreadSessionStatus(
   return res.json();
 }
 
-export async function endSession(threadId: string): Promise<EndSessionResponse> {
+export type SessionFeedbackLabel = "positive" | "negative" | "skip";
+
+export async function endSession(
+  threadId: string,
+  feedback?: SessionFeedbackLabel
+): Promise<EndSessionResponse> {
   const res = await fetch(`${API_BASE}/threads/${threadId}/end`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feedback: feedback ?? null }),
   });
   if (!res.ok) throw new Error(`End session failed: ${res.status}`);
   return res.json();
@@ -207,6 +220,22 @@ export async function getMemoryStatus(
   if (userId) params.set("user_id", userId);
   const res = await fetch(`${API_BASE}/memory/status?${params}`);
   if (!res.ok) throw new Error(`Memory status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateMemoryRecall(
+  enabled: boolean,
+  threadId: string,
+  userId?: string
+): Promise<MemoryRecallUpdateResponse> {
+  const params = new URLSearchParams({ thread_id: threadId });
+  if (userId) params.set("user_id", userId);
+  const res = await fetch(`${API_BASE}/memory/recall?${params}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`Memory recall update failed: ${res.status}`);
   return res.json();
 }
 
@@ -333,81 +362,43 @@ export function createChatStream(
   return ws;
 }
 
-// ── WebSocket for voice ──────────────────────────────────────────────
+// ── LiveKit voice session helpers ───────────────────────────────────
 
-export function createVoiceSession(
+export async function createLiveKitVoiceToken(
   userId: string,
   threadId: string,
-  voice: RealtimeVoiceOption,
   transcriptionLanguage: TranscriptionLanguageOption,
-  callbacks: {
-    onReady?: () => void;
-    onAudio?: (audioBytes: Uint8Array, itemId: string, contentIndex: number) => void;
-    onCaption?: (
-      role: "user" | "assistant",
-      text: string,
-      itemId: string,
-      status: "partial" | "final" | "cleared"
-    ) => void;
-    onTranscript?: (role: "user" | "assistant", text: string, itemId: string) => void;
-    onInterrupted?: () => void;
-    onError?: (message: string) => void;
+  memoryMode: VoiceMemoryMode
+): Promise<LiveKitVoiceTokenResponse> {
+  const res = await fetch(`${API_BASE}/voice/livekit/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      thread_id: threadId,
+      transcription_language: transcriptionLanguage,
+      memory_mode: memoryMode,
+      dispatch_agent: true,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`LiveKit token failed: ${res.status}`);
   }
-): WebSocket {
-  const ws = new WebSocket(`${WS_BASE}/voice/session`);
-
-  ws.onopen = () => {
-    ws.send(
-      JSON.stringify({
-        type: "start",
-        user_id: userId,
-        thread_id: threadId,
-        voice,
-        transcription_language: transcriptionLanguage,
-      })
-    );
-  };
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.type === "ready" && callbacks.onReady) {
-      callbacks.onReady();
-    } else if (data.type === "audio" && callbacks.onAudio) {
-      const bytes = Uint8Array.from(atob(data.data), (c) => c.charCodeAt(0));
-      callbacks.onAudio(bytes, data.item_id || "", data.content_index ?? 0);
-    } else if (data.type === "caption" && callbacks.onCaption) {
-      callbacks.onCaption(
-        data.role,
-        data.text || "",
-        data.item_id || "",
-        data.status || "partial"
-      );
-    } else if (data.type === "transcript" && callbacks.onTranscript) {
-      callbacks.onTranscript(data.role, data.text, data.item_id || "");
-    } else if (data.type === "interrupted" && callbacks.onInterrupted) {
-      callbacks.onInterrupted();
-    } else if (data.type === "error" && callbacks.onError) {
-      callbacks.onError(data.message);
-    }
-  };
-
-  return ws;
+  return res.json();
 }
 
-/** Send a truncation report back to the server */
-export function sendVoiceTruncate(
-  ws: WebSocket,
-  itemId: string,
-  contentIndex: number,
-  audioEndMs: number
-): void {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(
-    JSON.stringify({
-      type: "truncate",
-      item_id: itemId,
-      content_index: contentIndex,
-      audio_end_ms: audioEndMs,
-    })
+export async function getLiveKitVoiceFinalizationStatus(
+  threadId: string
+): Promise<LiveKitVoiceFinalizationStatusResponse | null> {
+  const res = await fetch(
+    `${API_BASE}/voice/livekit/finalization-status/${threadId}`,
+    { cache: "no-store" }
   );
+  if (res.status === 404) {
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(`LiveKit finalization status failed: ${res.status}`);
+  }
+  return res.json();
 }

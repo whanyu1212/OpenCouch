@@ -380,6 +380,47 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
+    async def test_llm_guided_exercise_pick_for_coping_tips_is_guarded(
+        self,
+    ) -> None:
+        """Coping advice requests should not start an exercise automatically."""
+
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="dbt_skills",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state("What are some tips to cope at different severity levels?")
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == PSYCHOEDUCATION_NODE
+        assert cmd.update["therapeutic_approach"] == "dbt_skills"
+        assert fake.structured_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_llm_explicit_coping_exercise_request_is_not_guarded(
+        self,
+    ) -> None:
+        """Explicit consent to do something structured still starts an exercise."""
+
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="dbt_skills",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(
+            "Everything is overwhelming right now. "
+            "Can we do something to help me cope with this moment?"
+        )
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+        assert cmd.update["therapeutic_approach"] == "dbt_skills"
+        assert fake.structured_calls == 1
+
+    @pytest.mark.asyncio
     async def test_active_exercise_fast_path_bypasses_llm(self) -> None:
         """Active-exercise fast path short-circuits to guided_exercise.
 

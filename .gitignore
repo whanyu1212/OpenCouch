@@ -245,6 +245,8 @@ llms.txt
 *_outline.md
 *_design.md
 *_research*.md
+BETA_DEPLOYMENT_MIGRATION.md
+TELEGRAM_CHANNEL_IMPLEMENTATION.md
 
 # local references / skills worktrees
 refs/

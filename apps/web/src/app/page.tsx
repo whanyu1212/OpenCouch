@@ -18,6 +18,8 @@ import {
   type ChatMessage,
   type EndedSessionResult,
 } from "@/lib/session";
+import { useCommandActions } from "@/lib/command-actions";
+import { resolveSlashCommand } from "@/lib/slash-commands";
 import { CouchLogo } from "@/components/logo";
 import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
 
@@ -87,6 +89,7 @@ export default function TextChatPage() {
     bumpMemoryRefreshVersion,
     responseModelTier,
   } = useSessionStore();
+  const { runAction } = useCommandActions();
   const [input, setInput] = useState("");
   const [stages, setStages] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -116,7 +119,7 @@ export default function TextChatPage() {
             history.map((m: Message) => ({
               role: m.role,
               content: m.content,
-              mode: m.mode,
+              responseStyle: m.response_style,
             }))
           );
         }
@@ -147,11 +150,12 @@ export default function TextChatPage() {
 
   const sendMessage = useCallback((text?: string) => {
     const msg = (text || input).trim();
-    if (!msg || isLoading) return;
+    if (!msg) return;
+    const slashCommand = resolveSlashCommand(msg);
+    if (!slashCommand && isLoading) return;
 
     clearLastEndedSession();
     setInput("");
-    setIsLoading(true);
     setStages([]);
     setOriginThread(null);
 
@@ -159,6 +163,31 @@ export default function TextChatPage() {
       inputRef.current.style.height = "auto";
     }
 
+    if (slashCommand) {
+      if (slashCommand.kind === "unsupported") {
+        addMessage({ role: "assistant", content: slashCommand.message });
+        return;
+      }
+
+      void runAction(slashCommand.actionId)
+        .then((handled) => {
+          if (!handled && slashCommand.disabledMessage) {
+            addMessage({
+              role: "assistant",
+              content: slashCommand.disabledMessage,
+            });
+          }
+        })
+        .catch(() => {
+          addMessage({
+            role: "assistant",
+            content: "Could not run that shortcut.",
+          });
+        });
+      return;
+    }
+
+    setIsLoading(true);
     addMessage({ role: "user", content: msg });
 
     let done = false;
@@ -191,9 +220,9 @@ export default function TextChatPage() {
           if (streamingStarted) {
             updateLastMessage({
               content: resp.response_text,
-              mode: resp.mode,
-              modeSource: resp.mode_source,
-              modality: resp.modality,
+              responseStyle: resp.response_style,
+              responseStyleSource: resp.response_style_source,
+              therapeuticApproach: resp.therapeutic_approach,
               responseType: resp.response_type,
               crisis: resp.crisis,
               diagnostics: resp.diagnostics,
@@ -202,9 +231,9 @@ export default function TextChatPage() {
             addMessage({
               role: "assistant",
               content: resp.response_text,
-              mode: resp.mode,
-              modeSource: resp.mode_source,
-              modality: resp.modality,
+              responseStyle: resp.response_style,
+              responseStyleSource: resp.response_style_source,
+              therapeuticApproach: resp.therapeutic_approach,
               responseType: resp.response_type,
               crisis: resp.crisis,
               diagnostics: resp.diagnostics,
@@ -216,13 +245,19 @@ export default function TextChatPage() {
 
           const semanticWrites = Number(resp.diagnostics?.semantic_writes ?? 0);
           const proceduralWrites = Number(resp.diagnostics?.procedural_writes ?? 0);
+          const memoryControlTurn =
+            resp.response_style === "memory_control" ||
+            resp.diagnostics?.memory_control_ms != null;
           if (
             sessionMode === "persistent" &&
-            (semanticWrites > 0 || proceduralWrites > 0)
+            (semanticWrites > 0 || proceduralWrites > 0 || memoryControlTurn)
           ) {
             bumpMemoryRefreshVersion();
           }
-          if (semanticWrites > 0 && sessionMode === "persistent") {
+          if (
+            sessionMode === "persistent" &&
+            (semanticWrites > 0 || memoryControlTurn)
+          ) {
             getMemoryFacts(threadId, userId || undefined)
               .then((facts) => {
                 setMemoryFacts(facts);
@@ -269,6 +304,7 @@ export default function TextChatPage() {
     memoryFacts.length,
     clearLastEndedSession,
     bumpMemoryRefreshVersion,
+    runAction,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -486,7 +522,7 @@ export default function TextChatPage() {
                           {msg.content}
                         </p>
                       </div>
-                      {msg.mode && <StateStrip msg={msg} />}
+                      {msg.responseStyle && <StateStrip msg={msg} />}
                     </div>
                   </div>
                 )}
@@ -630,14 +666,29 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
         onClick={() => setExpanded(!expanded)}
         className="flex flex-wrap items-center gap-2 group text-left"
       >
-        <Pill variant="teal">{msg.mode}</Pill>
-        {msg.modality && msg.modality !== "none" && (
-          <Pill variant="teal">{msg.modality}</Pill>
+        <Pill variant="teal">{msg.responseStyle}</Pill>
+        {msg.therapeuticApproach && msg.therapeuticApproach !== "none" && (
+          <Pill variant="teal">{msg.therapeuticApproach}</Pill>
         )}
-        {msg.modeSource && <Pill variant="muted">{msg.modeSource}</Pill>}
+        {msg.responseStyleSource && (
+          <Pill variant="muted">{msg.responseStyleSource}</Pill>
+        )}
+        {msg.responseStyle === "grounded_lookup" ? (
+          <Pill variant="muted">grounded</Pill>
+        ) : null}
+        {msg.responseStyle === "memory_control" ? (
+          <Pill variant="muted">memory</Pill>
+        ) : null}
         <Pill variant={safetyLabel === "safe" ? "green" : safetyLabel === "crisis" ? "red" : "amber"}>
           {safetyLabel}
         </Pill>
+        {diag.grounded_lookup_status != null ? (
+          <Pill variant="muted">lookup {String(diag.grounded_lookup_status)}</Pill>
+        ) : null}
+        {diag.resource_lookup_status != null &&
+        String(diag.resource_lookup_status) !== "not_attempted" ? (
+          <Pill variant="muted">resources {String(diag.resource_lookup_status)}</Pill>
+        ) : null}
         {diag.retrieval_path != null ? (
           <Pill variant="muted">{String(diag.retrieval_path)}</Pill>
         ) : null}
@@ -665,14 +716,20 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
               </span>
               <span className="text-oc-warm-600">→</span>
               <span className="text-oc-teal-300">
-                {msg.responseType === "crisis" ? "crisis_response" : "therapeutic"}
+                {msg.responseType === "crisis"
+                  ? "crisis_response"
+                  : msg.responseStyle === "memory_control"
+                    ? "memory_control"
+                    : msg.responseStyle === "grounded_lookup"
+                      ? "grounded_lookup"
+                      : "therapeutic"}
               </span>
               <span className="text-oc-warm-600">→</span>
-              <span className="text-amber-300">{msg.mode}</span>
-              {msg.modality && msg.modality !== "none" && (
+              <span className="text-amber-300">{msg.responseStyle}</span>
+              {msg.therapeuticApproach && msg.therapeuticApproach !== "none" && (
                 <>
                   <span className="text-oc-warm-600">·</span>
-                  <span className="text-purple-300">{msg.modality}</span>
+                  <span className="text-purple-300">{msg.therapeuticApproach}</span>
                 </>
               )}
             </div>
@@ -694,6 +751,11 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
             <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 flex-1 font-mono">
               <TimingRow label="load_memory" ms={diag.load_memory_ms} />
               <TimingRow label="crisis_gate" ms={diag.crisis_gate_ms} />
+              <TimingRow label="memory_gate" ms={diag.memory_control_gate_ms} />
+              <TimingRow label="memory_control" ms={diag.memory_control_ms} />
+              <TimingRow label="lookup_gate" ms={diag.grounded_lookup_gate_ms} />
+              <TimingRow label="grounded_lookup" ms={diag.grounded_lookup_ms} />
+              <TimingRow label="crisis_resources" ms={diag.crisis_resource_lookup_ms} />
               <TimingRow label="extract_facts" ms={diag.extract_facts_ms} extra={diag.semantic_writes} />
               <TimingRow label="extract_rules" ms={diag.extract_procedural_ms} extra={diag.procedural_writes} />
               <TimingRow label="total" ms={diag.turn_total_ms} bold />
@@ -709,6 +771,9 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
               <span>epi: <span className="text-oc-teal-300">{String(diag.episodic_hits ?? 0)}</span>/{String(diag.episodic_store_size ?? 0)}</span>
               <span>proc: <span className="text-oc-teal-300">{String(diag.procedural_count ?? 0)}</span></span>
               <span>recall: <span className={diag.proactive_recall ? "text-emerald-400" : "text-oc-warm-600"}>{diag.proactive_recall ? "on" : "off"}</span></span>
+              {diag.grounded_lookup_status != null ? (
+                <span>lookup: <span className="text-oc-teal-300">{String(diag.grounded_lookup_status)}</span></span>
+              ) : null}
             </div>
           </div>
 
@@ -735,6 +800,8 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
 
 
 function TimingRow({ label, ms, extra, bold }: { label: string; ms: unknown; extra?: unknown; bold?: boolean }) {
+  if (ms == null && extra == null && !bold) return null;
+
   const formatted = ms != null ? `${Number(ms).toFixed(0)}ms` : "—";
   const writes = extra != null ? ` (${String(extra)}w)` : "";
   return (
