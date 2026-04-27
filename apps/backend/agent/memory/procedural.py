@@ -70,8 +70,13 @@ from agent.memory.models import (
     ProceduralRule,
     ProceduralRuleSource,
 )
-from agent.memory.reconciliation import plan_procedural_rule_write
+from agent.memory.reconciliation import (
+    ProceduralReconciliationPlan,
+    plan_procedural_rule_write,
+    plan_procedural_rule_write_llm_primary,
+)
 from agent.memory.store import MemoryStore, Namespace
+from services.llm.base import BaseLLMClient
 
 # The fixed record key for every user's procedural profile.
 PROCEDURAL_KEY = "user_response_style"
@@ -250,6 +255,7 @@ async def aupsert_procedural_rule(
     *,
     user_id: str,
     rule: ProceduralRule,
+    llm_client: BaseLLMClient | None = None,
 ) -> ProceduralUpsertResult:
     """Add or reconcile a procedural rule against the user's profile.
 
@@ -262,10 +268,10 @@ async def aupsert_procedural_rule(
         ProceduralUpsertResult: Updated profile plus the reconciliation action taken.
     """
 
-    def _mutate(
+    def _apply_plan(
         profile: ProceduralProfile,
+        plan: ProceduralReconciliationPlan,
     ) -> tuple[ProceduralUpsertResult, bool]:
-        plan = plan_procedural_rule_write(rule, profile.rules)
         if plan.action == "skip":
             return ProceduralUpsertResult(profile=profile, action="skipped"), False
 
@@ -293,6 +299,29 @@ async def aupsert_procedural_rule(
         profile.rules.append(rule)
         _evict_oldest_rules(profile)
         return ProceduralUpsertResult(profile=profile, action="added"), True
+
+    if llm_client is not None:
+        async with _procedural_profile_lock(user_id):
+            profile = await aget_procedural_profile(store, user_id=user_id)
+            plan = await plan_procedural_rule_write_llm_primary(
+                rule,
+                profile.rules,
+                llm_client=llm_client,
+            )
+            result, should_persist = _apply_plan(profile, plan)
+            if should_persist:
+                await aput_procedural_profile(
+                    store,
+                    user_id=user_id,
+                    profile=profile,
+                )
+            return result
+
+    def _mutate(
+        profile: ProceduralProfile,
+    ) -> tuple[ProceduralUpsertResult, bool]:
+        plan = plan_procedural_rule_write(rule, profile.rules)
+        return _apply_plan(profile, plan)
 
     return await _mutate_procedural_profile(
         store,

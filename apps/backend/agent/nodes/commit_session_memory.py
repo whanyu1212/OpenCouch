@@ -33,7 +33,7 @@ from agent.memory.procedural import (
 )
 from agent.memory.reconciliation import (
     filter_semantic_collision_candidates,
-    plan_semantic_write,
+    plan_semantic_write_llm_primary,
 )
 from agent.memory.store import MemoryStore, StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
@@ -53,6 +53,7 @@ from agent.state import AgentState, resolve_owner_id
 if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
     from agent.memory.models import StoredSessionArc
+    from services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,7 @@ async def run_commit_session_memory(
     session_buffer: SessionMemoryBuffer | None,
     stored_arc: "StoredSessionArc | None",
     embedding_provider: "EmbeddingProvider | None" = None,
+    llm_client: "BaseLLMClient | None" = None,
 ) -> SessionMemoryCommitResult | None:
     """Commit buffered semantic/procedural candidates that survived review.
 
@@ -480,6 +482,7 @@ async def run_commit_session_memory(
         session_buffer: Runtime buffer containing held memory candidates.
         stored_arc: Optional episodic arc generated for the completed session.
         embedding_provider: Optional provider for semantic fact embeddings.
+        llm_client: Optional classifier client for reconciliation.
 
     Returns:
         Commit result when work was attempted, otherwise ``None``.
@@ -615,7 +618,11 @@ async def run_commit_session_memory(
                     write_reason=write_reason,
                     policy_version="phase3_v1",
                 )
-                reconciliation = plan_semantic_write(fact, collision_records)
+                reconciliation = await plan_semantic_write_llm_primary(
+                    fact,
+                    collision_records,
+                    llm_client=llm_client,
+                )
                 if reconciliation.bump_record is not None:
                     await _bump_last_referenced_at(
                         memory_store,
@@ -695,6 +702,7 @@ async def run_commit_session_memory(
                     memory_store,
                     user_id=owner_id,
                     rule=rule,
+                    llm_client=llm_client,
                 )
                 if upsert.action == "skipped":
                     result.procedural_skips += 1

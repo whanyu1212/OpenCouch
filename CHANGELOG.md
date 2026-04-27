@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-04-27 — Therapeutic Subgraph Refactor + Exercise Routing Cleanup
+
+### Therapeutic subgraph structure
+- Split the therapeutic dispatcher into focused modules for constants, LLM classification, regex catalog, state-aware guards, fallback routing, and prompt construction while keeping `agent.therapeutic.dispatcher` as the public compatibility surface
+- Split guided-exercise internals into dedicated modules for exercise definitions, registry/indexes, selection, step classification, state deltas, response builders, memory side effects, and node orchestration while preserving the existing `guided_exercise.py` import surface
+- Split therapeutic prompt assembly into `prompting/` modules for source selection, state-context formatting, mode instructions, and builders while keeping `prompts.py` as the compatibility export
+- Added shared streaming and response-delta helpers for simple therapeutic modes so supportive, reflective, clarifying, psychoeducation, closing, and technique responses use the same fallback/streaming path
+
+### Exercise routing and response behavior
+- Kept guided-exercise selection LLM-primary and option-aware so ambiguous requests can offer a small choice set instead of silently defaulting to 5-4-3-2-1 grounding
+- Centralized voice-eligible exercise IDs in the exercise registry and updated LiveKit voice tasks to consume that registry instead of maintaining a duplicate list
+- Tightened psychoeducation response instructions for practical tips/options requests so severity-level coping guidance stays compact and within behavior-eval length expectations
+- Cleaned up stale inline comments, replaced loose inline type comments with real type annotations in guided-exercise helpers, and kept load-bearing routing/regex comments where they document false-positive boundaries
+
+### Validation
+- Full backend test suite passed (`1130 passed, 13 skipped`)
+- Therapeutic routing hybrid eval passed (`54/54`)
+- Therapeutic behavior hybrid eval passed (`19/19`)
+- Exercise flow deterministic eval passed (`32/32`)
+- Exercise memory deterministic eval passed (`10/10`)
+- Exercise selection hybrid eval passed (`31/31`)
+- Focused pre-commit, py_compile, and diff whitespace checks passed for the changed backend files
+
 ## 2026-04-26 — Telegram Session Rotation Hardening + Markdown Rendering
 
 ### Telegram session rotation

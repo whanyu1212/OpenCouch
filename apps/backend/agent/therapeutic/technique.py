@@ -15,13 +15,10 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.prompts import (
-    build_technique_system_prompt,
-    build_therapeutic_response_prompt,
-)
+from agent.therapeutic.prompts import build_technique_system_prompt
+from agent.therapeutic.response_modes.common import run_streamed_mode_response
 
 logger = logging.getLogger(__name__)
 
@@ -102,31 +99,16 @@ async def run_technique_response_node(
         Response delta for the parent graph.
     """
 
-    llm_client = runtime.context.response_llm or runtime.context.llm_client
-
-    response_text = _DEFAULT_TECHNIQUE_REPLY
-    if llm_client is not None:
-        try:
-            writer = get_stream_writer()
-            chunks: list[str] = []
-            async for chunk in llm_client.generate_text_stream(
-                prompt=build_therapeutic_response_prompt(state, mode="technique"),
-                system_instruction=build_technique_system_prompt(state),
-            ):
-                chunks.append(chunk)
-                writer({"type": "chunk", "text": chunk})
-            response_text = "".join(chunks)
-        except Exception:
-            logger.warning(
-                "Technique response LLM call failed; using deterministic fallback.",
-                exc_info=True,
-            )
-    response_text = _ensure_attuned_opening(response_text)
-
-    return {
-        "response_kind": ResponseCategory.THERAPEUTIC,
-        "response_text": response_text,
-        "response_style": "technique",
-        "response_style_source": "therapeutic_dispatch",
-        "response_style_type": ModeType.THERAPEUTIC,
-    }
+    return await run_streamed_mode_response(
+        state,
+        runtime,
+        mode="technique",
+        system_prompt_builder=build_technique_system_prompt,
+        fallback_text=_DEFAULT_TECHNIQUE_REPLY,
+        logger=logger,
+        failure_message=(
+            "Technique response LLM call failed; using deterministic fallback."
+        ),
+        postprocess=_ensure_attuned_opening,
+        stream_writer_factory=get_stream_writer,
+    )

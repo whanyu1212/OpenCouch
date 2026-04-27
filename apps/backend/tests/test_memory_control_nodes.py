@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
@@ -22,6 +23,7 @@ from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from services.llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _Runtime:
@@ -31,14 +33,54 @@ class _Runtime:
         self,
         *,
         store: OpenCouchMemoryStore | None = None,
+        llm_client: BaseLLMClient | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
     ) -> None:
         self.context = WorkflowContext(
-            llm_client=None,
+            llm_client=llm_client,
             memory_store=store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
             memory_mode=memory_mode,
         )
+
+
+class _FakeMemoryControlLLM(BaseLLMClient):
+    """Fake structured client for memory-control routing tests."""
+
+    def __init__(self, decision: dict[str, Any] | Exception) -> None:
+        self.decision = decision
+        self.structured_calls: list[dict[str, Any]] = []
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        raise AssertionError("Text generation is not used by memory-control routing.")
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls.append(
+            {"prompt": prompt, "system_instruction": system_instruction}
+        )
+        if isinstance(self.decision, Exception):
+            raise self.decision
+        return response_schema(**self.decision)
 
 
 def _state(message: str, *, user_id: str = "user-1") -> AgentState:
@@ -47,6 +89,19 @@ def _state(message: str, *, user_id: str = "user-1") -> AgentState:
         include_input_history=True,
     )
     return cast(AgentState, dict(state))
+
+
+def _command_update(command: Any) -> dict[str, Any]:
+    """Return a non-optional command update for assertions.
+
+    Args:
+        command: LangGraph command returned by a routing gate.
+
+    Returns:
+        Command update cast to a concrete dictionary.
+    """
+
+    return cast(dict[str, Any], command.update)
 
 
 async def _seed_memory(
@@ -79,19 +134,28 @@ async def _seed_memory(
 
 @pytest.mark.asyncio
 async def test_memory_control_gate_routes_only_explicit_memory_commands() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "list",
+            "reasoning": "should not be called",
+            "confidence": "high",
+        }
+    )
     normal = await run_memory_control_gate_node(
         _state("I keep remembering the argument."),
-        cast(Any, _Runtime()),
+        cast(Any, _Runtime(llm_client=llm)),
     )
     explicit = await run_memory_control_gate_node(
         _state("What do you remember about me?"),
-        cast(Any, _Runtime()),
+        cast(Any, _Runtime(llm_client=llm)),
     )
 
     assert normal.goto == "grounded_lookup_gate_node"
     assert explicit.goto == "memory_control_node"
-    assert explicit.update["route"] == "memory_control"
-    assert explicit.update["memory_control_action"] == {"type": "list"}
+    explicit_update = _command_update(explicit)
+    assert explicit_update["route"] == "memory_control"
+    assert explicit_update["memory_control_action"] == {"type": "list"}
+    assert llm.structured_calls == []
 
 
 @pytest.mark.asyncio
@@ -113,7 +177,117 @@ async def test_memory_control_gate_routes_pending_confirmation() -> None:
     command = await run_memory_control_gate_node(state, cast(Any, _Runtime()))
 
     assert command.goto == "memory_control_node"
-    assert command.update["memory_control_action"] == {"type": "confirm_pending"}
+    update = _command_update(command)
+    assert update["memory_control_action"] == {"type": "confirm_pending"}
+
+
+@pytest.mark.asyncio
+async def test_memory_control_gate_llm_routes_ambiguous_recall_request() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "set_recall",
+            "enabled": False,
+            "reasoning": "User wants the assistant to stop bringing past material up.",
+            "confidence": "high",
+        }
+    )
+
+    command = await run_memory_control_gate_node(
+        _state("Can you stop bringing that up unless I ask?"),
+        cast(Any, _Runtime(llm_client=llm)),
+    )
+
+    assert command.goto == "memory_control_node"
+    update = _command_update(command)
+    assert update["memory_control_action"] == {
+        "type": "set_recall",
+        "enabled": False,
+    }
+    assert update["diagnostics"]["memory_control_classifier_path"] == "llm_primary"
+    assert len(llm.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_control_gate_llm_routes_ambiguous_preference() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "save_preference",
+            "rule_text": "shorter replies when I am panicking",
+            "reasoning": "User asks to keep a response preference in mind.",
+            "confidence": "high",
+        }
+    )
+
+    command = await run_memory_control_gate_node(
+        _state("Could you keep in mind that I prefer shorter replies?"),
+        cast(Any, _Runtime(llm_client=llm)),
+    )
+
+    assert command.goto == "memory_control_node"
+    update = _command_update(command)
+    assert update["memory_control_action"] == {
+        "type": "save_preference",
+        "rule_text": "You prefer shorter replies when I am panicking.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_memory_control_gate_llm_rejects_low_confidence_decision() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "forget_by_query",
+            "query": "the argument",
+            "reasoning": "Ambiguous user wording.",
+            "confidence": "low",
+        }
+    )
+
+    command = await run_memory_control_gate_node(
+        _state("Can you forget what I said earlier?"),
+        cast(Any, _Runtime(llm_client=llm)),
+    )
+
+    assert command.goto == "grounded_lookup_gate_node"
+    update = _command_update(command)
+    assert update["memory_control_action"] == {}
+    assert update["diagnostics"]["memory_control_classifier_path"] == "llm_primary"
+
+
+@pytest.mark.asyncio
+async def test_memory_control_gate_llm_rejects_vague_delete_target() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "forget_by_query",
+            "query": "that",
+            "reasoning": "Target is too vague.",
+            "confidence": "high",
+        }
+    )
+
+    command = await run_memory_control_gate_node(
+        _state("Please forget that."),
+        cast(Any, _Runtime(llm_client=llm)),
+    )
+
+    assert command.goto == "grounded_lookup_gate_node"
+    update = _command_update(command)
+    assert update["memory_control_action"] == {}
+
+
+@pytest.mark.asyncio
+async def test_memory_control_gate_llm_failure_falls_back_to_normal_route() -> None:
+    llm = _FakeMemoryControlLLM(RuntimeError("classifier unavailable"))
+
+    command = await run_memory_control_gate_node(
+        _state("Can you keep in mind that I prefer shorter replies?"),
+        cast(Any, _Runtime(llm_client=llm)),
+    )
+
+    assert command.goto == "grounded_lookup_gate_node"
+    update = _command_update(command)
+    assert update["memory_control_action"] == {}
+    assert update["diagnostics"]["memory_control_classifier_path"] == "deterministic"
+    assert update["diagnostics"]["memory_control_llm_failure_occurred"] is True
 
 
 @pytest.mark.asyncio
@@ -164,7 +338,8 @@ async def test_memory_control_delete_by_query_requires_confirmation_then_deletes
 
     assert "Do you want me to delete it" in first_delta["response_text"]
     assert first_delta["memory_control"]["pending_action"]["type"] == "delete"
-    assert await store.aget((first_state["user_id"], "semantic"), "fact-presentations")
+    owner_id = cast(str, first_state["user_id"])
+    assert await store.aget((owner_id, "semantic"), "fact-presentations")
 
     confirm_state = _state("yes, delete it")
     confirm_state["memory_control"] = first_delta["memory_control"]
@@ -176,9 +351,9 @@ async def test_memory_control_delete_by_query_requires_confirmation_then_deletes
 
     assert "Deleted that saved fact" in confirm_delta["response_text"]
     assert confirm_delta["memory_control"]["pending_action"] is None
+    confirm_owner_id = cast(str, confirm_state["user_id"])
     assert (
-        await store.aget((confirm_state["user_id"], "semantic"), "fact-presentations")
-        is None
+        await store.aget((confirm_owner_id, "semantic"), "fact-presentations") is None
     )
 
 

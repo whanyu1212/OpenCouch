@@ -184,6 +184,15 @@ class _FakeIncognitoExerciseContinuityLLM(_FakeCrossRestartLLM):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
+        if response_schema.__name__ == "ExerciseSelectionDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                selection_kind="selected",
+                exercise_type="grounding_5_4_3_2_1",
+                option_types=[],
+                reasoning="user explicitly asked for grounding",
+                confidence="high",
+            )
+
         if response_schema.__name__ != "DispatchDecision":
             return await super().generate_structured(
                 prompt=prompt,

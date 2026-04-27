@@ -79,6 +79,7 @@ export function MemoryPanel() {
         </div>
         <button
           onClick={() => setMemoryPanelOpen(false)}
+          aria-label="Close memories panel"
           className="text-oc-text-muted hover:text-oc-text transition-colors p-1"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4">
@@ -124,6 +125,8 @@ export function MemoryToggleButton() {
   return (
     <button
       onClick={() => setMemoryPanelOpen(!memoryPanelOpen)}
+      aria-label={memoryPanelOpen ? "Close memories panel" : "Open memories panel"}
+      aria-expanded={memoryPanelOpen}
       className={`flex items-center gap-1.5 text-[12px] font-mono transition-colors ${
         memoryPanelOpen
           ? "text-oc-teal-700"

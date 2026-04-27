@@ -294,6 +294,28 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
+    async def test_bare_ack_to_open_question_bypasses_llm(self) -> None:
+        """A bare "yes" after an open question needs clarification."""
+
+        fake = _FakeDispatchLLM(response_style="guided_exercise")
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(
+            "yes",
+            history=[
+                {
+                    "role": "user",
+                    "content": "I don't know if I should bring this up.",
+                },
+                {"role": "assistant", "content": "What's making you hesitant?"},
+            ],
+        )
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == CLARIFYING_NODE
+        assert fake.structured_calls == 0
+
+    @pytest.mark.asyncio
     async def test_no_llm_client_uses_regex_fallback(self) -> None:
         """With no LLM client the dispatcher must use the pure regex path."""
 
@@ -492,6 +514,32 @@ class TestDispatchNode:
         # pick supportive (what the fake returns).
         assert cmd.goto == SUPPORTIVE_NODE
         assert fake.structured_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_pending_exercise_selection_choice_routes_to_guided(self) -> None:
+        """A numbered reply to offered exercise options returns to the node."""
+
+        runtime = _MockRuntime(llm_client=None)
+        state: Any = {
+            "message": "2",
+            "history": [],
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
+                "exercise_type": None,
+                "exercise_step": None,
+                "exercise_selection_options": [
+                    "grounding_box_breathing",
+                    "self_compassion_break",
+                ],
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
 
     @pytest.mark.asyncio
     async def test_command_update_contains_modality(self) -> None:
@@ -703,6 +751,38 @@ class TestEndToEndRouting:
         assert delta["response_style"] == "psychoeducation"
         assert delta["response_style_source"] == "therapeutic_dispatch"
         # Deterministic fallback is permission-first by design
+        assert "?" in delta["response_text"]
+
+    @pytest.mark.asyncio
+    async def test_psychoeducation_node_adds_question_when_llm_omits_one(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Psychoeducation replies should end with a fit-check question."""
+
+        from agent.therapeutic import psychoeducation
+        from agent.therapeutic.psychoeducation import (
+            run_psychoeducation_response_node,
+        )
+
+        monkeypatch.setattr(
+            psychoeducation, "get_stream_writer", lambda: lambda _: None
+        )
+
+        runtime = _MockRuntime(
+            llm_client=_RecordingTextLLM(
+                "That can happen when your body alarm turns on at night. "
+                "The quiet can make sensations feel louder."
+            )
+        )
+        state = _build_state(
+            "My heart races and my chest gets tight at night. Why does this happen?",
+        )
+
+        delta = await run_psychoeducation_response_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["response_style"] == "psychoeducation"
+        assert delta["response_text"].startswith("That can happen")
         assert "?" in delta["response_text"]
 
     @pytest.mark.asyncio
@@ -1120,6 +1200,41 @@ class TestMidExerciseModalityPreservation:
         )
 
         assert cmd.update["therapeutic_approach"] == "cbt"
+        assert cmd.goto == CLARIFYING_NODE
+        assert "exercise_type" not in cmd.update.get("exercise_state", {})
+
+    @pytest.mark.asyncio
+    async def test_active_exercise_instruction_question_bypasses_llm(
+        self,
+    ) -> None:
+        """Instruction clarification should not let LLM routing clear exercise."""
+
+        llm = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="none",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state: Any = {
+            "message": (
+                "Do you mean things I can see right now, or just around me in general?"
+            ),
+            "history": [],
+            "session_progress": {"turn_count": 3},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 0,
+                "exercise_modality": "dbt_skills",
+            },
+            "therapeutic_approach": "dbt_skills",
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert llm.structured_calls == 0
+        assert cmd.update["therapeutic_approach"] == "dbt_skills"
         assert cmd.goto == CLARIFYING_NODE
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
 

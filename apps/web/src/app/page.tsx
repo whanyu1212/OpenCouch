@@ -80,7 +80,6 @@ export default function TextChatPage() {
     clearMessages,
     chatLoading: isLoading,
     setChatLoading: setIsLoading,
-    memoryFacts,
     setMemoryFacts,
     addUnseenMemories,
     memoryRefreshVersion,
@@ -92,8 +91,12 @@ export default function TextChatPage() {
   const { runAction } = useCommandActions();
   const [input, setInput] = useState("");
   const [stages, setStages] = useState<string[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const activeSocketRef = useRef<WebSocket | null>(null);
+  const activeStreamIdRef = useRef(0);
+  const loadingRef = useRef(isLoading);
 
   // Empty state data
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
@@ -103,6 +106,22 @@ export default function TextChatPage() {
   // Track the session's original thread so the user can navigate back
   // after clicking into a past thread from the empty state.
   const [originThread, setOriginThread] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadingRef.current = isLoading;
+  }, [isLoading]);
+
+  const closeActiveSocket = useCallback(() => {
+    activeStreamIdRef.current += 1;
+    activeSocketRef.current?.close();
+    activeSocketRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      closeActiveSocket();
+    };
+  }, [threadId, closeActiveSocket]);
 
   // Load history when thread changes — NOT on every re-mount.
   // Messages live in Zustand so they survive tab switches. We only
@@ -124,21 +143,33 @@ export default function TextChatPage() {
           );
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setNotice("Could not load chat history. Check that the backend is running.");
+      });
   }, [threadId, sessionMode, clearMessages, setMessages]);
 
   // Load memory status and existing facts for empty state / memory refreshes.
   useEffect(() => {
     if (sessionMode === "incognito") return;
-    getMemoryStatus(threadId, userId).then(setMemoryStatus).catch(() => {});
+    getMemoryStatus(threadId, userId)
+      .then(setMemoryStatus)
+      .catch(() => {
+        setNotice("Could not load memory status.");
+      });
     getMemoryFacts(threadId, userId || undefined)
       .then((facts) => setMemoryFacts(facts))
-      .catch(() => {});
+      .catch(() => {
+        setNotice("Could not load memory facts.");
+      });
   }, [threadId, userId, sessionMode, setMemoryFacts, memoryRefreshVersion]);
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
-    getThreads(5).then(setRecentThreads).catch(() => {});
+    getThreads(5)
+      .then(setRecentThreads)
+      .catch(() => {
+        setNotice("Could not load recent sessions.");
+      });
   }, [sessionMode, threadId]);
 
   useEffect(() => {
@@ -155,6 +186,7 @@ export default function TextChatPage() {
     if (!slashCommand && isLoading) return;
 
     clearLastEndedSession();
+    setNotice(null);
     setInput("");
     setStages([]);
     setOriginThread(null);
@@ -192,13 +224,18 @@ export default function TextChatPage() {
 
     let done = false;
     let streamingStarted = false;
+    closeActiveSocket();
+    const streamId = activeStreamIdRef.current + 1;
+    activeStreamIdRef.current = streamId;
+    const isCurrentStream = () => activeStreamIdRef.current === streamId;
 
-    const ws = createChatStream(
-      msg,
+    const ws = createChatStream({
+      message: msg,
       threadId,
       userId,
       responseModelTier,
-      (event: StreamEvent) => {
+      onEvent: (event: StreamEvent) => {
+        if (!isCurrentStream()) return;
         if (event.type === "status") {
           setStages((prev) => [...prev, event.stage]);
         } else if (event.type === "chunk") {
@@ -260,32 +297,47 @@ export default function TextChatPage() {
           ) {
             getMemoryFacts(threadId, userId || undefined)
               .then((facts) => {
+                if (!isCurrentStream()) return;
                 setMemoryFacts(facts);
-                addUnseenMemories(Math.max(0, facts.length - memoryFacts.length));
+                const currentFactCount = useSessionStore.getState().memoryFacts.length;
+                addUnseenMemories(Math.max(0, facts.length - currentFactCount));
               })
-              .catch(() => {});
+              .catch(() => {
+                if (!isCurrentStream()) return;
+                setNotice("Reply completed, but memory refresh failed.");
+              });
           }
 
           ws.close();
         }
-      }
-    );
+      },
+      onProtocolError: () => {
+        if (!isCurrentStream()) return;
+        done = true;
+        setStages([]);
+        setIsLoading(false);
+        setNotice("The chat stream sent an unreadable response. Please try again.");
+      },
+    });
+    activeSocketRef.current = ws;
 
     ws.onerror = () => {
-      if (done) return;
+      if (!isCurrentStream() || done) return;
+      done = true;
       setStages([]);
       setIsLoading(false);
-      addMessage({
-        role: "assistant",
-        content:
-          "Connection error — is the backend running?\nStart with: uv run uvicorn main:app --port 8000",
-      });
+      setNotice(
+        "Connection error. Check that the backend is running on the configured API URL."
+      );
     };
 
     ws.onclose = () => {
-      if (!done && isLoading) {
+      if (!isCurrentStream()) return;
+      activeSocketRef.current = null;
+      if (!done && loadingRef.current) {
         setStages([]);
         setIsLoading(false);
+        setNotice("The chat connection closed before the reply finished.");
       }
     };
   }, [
@@ -298,10 +350,10 @@ export default function TextChatPage() {
     addMessage,
     appendToLastMessage,
     updateLastMessage,
+    closeActiveSocket,
     setIsLoading,
     setMemoryFacts,
     addUnseenMemories,
-    memoryFacts.length,
     clearLastEndedSession,
     bumpMemoryRefreshVersion,
     runAction,
@@ -366,6 +418,7 @@ export default function TextChatPage() {
           {messages.length > 0 && !isLoading && (
             <button
               onClick={() => clearMessages()}
+              aria-label="Clear chat"
               className="flex items-center gap-1.5 text-[12px] font-mono text-oc-text-muted hover:text-oc-red transition-colors"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5">
@@ -378,6 +431,28 @@ export default function TextChatPage() {
           )}
         </div>
       </header>
+
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {notice ?? ""}
+      </div>
+
+      {notice && (
+        <div
+          className="mx-6 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <span>{notice}</span>
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              aria-label="Dismiss notification"
+              className="shrink-0 text-amber-700 hover:text-amber-900"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
@@ -532,7 +607,12 @@ export default function TextChatPage() {
 
           {/* Loading indicator with live pipeline stages */}
           {isLoading && (
-            <div className="flex items-start gap-3 animate-fadeIn">
+            <div
+              className="flex items-start gap-3 animate-fadeIn"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <div className="w-7 h-7 rounded-full bg-oc-warm-200 flex items-center justify-center shrink-0 mt-0.5">
                 <span className="text-[11px] font-display font-bold text-oc-warm-700">O</span>
               </div>
@@ -574,7 +654,11 @@ export default function TextChatPage() {
             <SessionEndedCard session={lastEndedSession} />
           ) : null}
           <div className="flex gap-2.5 items-end">
+            <label htmlFor="chat-input" className="sr-only">
+              Message
+            </label>
             <textarea
+              id="chat-input"
               ref={inputRef}
               value={input}
               onChange={handleInput}
@@ -588,6 +672,7 @@ export default function TextChatPage() {
             <button
               onClick={() => sendMessage()}
               disabled={isLoading || !input.trim()}
+              aria-label="Send message"
               className="bg-oc-teal-700 text-white px-4 py-3 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">

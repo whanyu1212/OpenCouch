@@ -1,6 +1,8 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type {
   EndSessionResponse,
   MemoryFact,
@@ -189,7 +191,27 @@ function generateThreadId(): string {
   return `web-${rand}`;
 }
 
-export const useSessionStore = create<SessionState>((set, get) => ({
+type PersistedSessionState = Pick<
+  SessionState,
+  | "isSetup"
+  | "sessionMode"
+  | "userId"
+  | "threadId"
+  | "responseModelTier"
+  | "transcriptionLanguageSelected"
+>;
+
+type SessionStorePersistApi = {
+  persist?: {
+    hasHydrated: () => boolean;
+    onHydrate: (callback: () => void) => () => void;
+    onFinishHydration: (callback: () => void) => () => void;
+  };
+};
+
+export const useSessionStore = create<SessionState>()(
+  persist(
+    (set, get) => ({
   isSetup: false,
   sessionMode: "persistent",
   userId: "",
@@ -345,4 +367,63 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : get().voiceFinalization,
     });
   },
-}));
+    }),
+    {
+      name: "opencouch-web-session",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state): PersistedSessionState => ({
+        isSetup: state.isSetup,
+        sessionMode: state.sessionMode,
+        userId: state.userId,
+        threadId: state.threadId,
+        responseModelTier: state.responseModelTier,
+        transcriptionLanguageSelected: state.transcriptionLanguageSelected,
+      }),
+      merge: (persisted, current): SessionState => {
+        const saved = persisted as Partial<PersistedSessionState> | undefined;
+        return {
+          ...current,
+          ...saved,
+          messages: [],
+          chatLoading: false,
+          memoryFacts: [],
+          memoryPanelOpen: false,
+          memoryUnseenCount: 0,
+          memoryRefreshVersion: 0,
+          lastEndedSession: null,
+          voiceConnected: false,
+          voiceAgentSpeaking: false,
+          voiceReadyToSpeak: false,
+          voiceTranscripts: [],
+          voiceActivities: [],
+          voiceFinalization: IDLE_VOICE_FINALIZATION_STATE,
+          voiceSessionInfo: null,
+          voiceError: null,
+        };
+      },
+    }
+  )
+);
+
+function getPersistApi() {
+  return (useSessionStore as typeof useSessionStore & SessionStorePersistApi)
+    .persist;
+}
+
+export function useSessionStoreHydrated(): boolean {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const persistApi = getPersistApi();
+      if (!persistApi) return () => {};
+
+      const unsubscribeHydrate = persistApi.onHydrate(onStoreChange);
+      const unsubscribeFinish = persistApi.onFinishHydration(onStoreChange);
+      return () => {
+        unsubscribeHydrate();
+        unsubscribeFinish();
+      };
+    },
+    () => getPersistApi()?.hasHydrated() ?? true,
+    () => false
+  );
+}

@@ -2,17 +2,60 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
+import pytest
+
 from agent.memory.candidates import (
     build_procedural_candidate,
     build_semantic_candidate,
 )
 from agent.memory.models import EntityRef, MemoryWrite, ProceduralRuleDraft
 from agent.memory.write_policy import (
+    decide_procedural_candidate_llm_primary,
     decide_procedural_candidate,
+    decide_semantic_candidate_llm_primary,
     decide_semantic_candidate,
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
 )
+from services.llm.base import BaseLLMClient, StructuredResponseT
+
+
+class _FakePolicyLLM(BaseLLMClient):
+    """Fake structured client for write-policy classifier tests."""
+
+    def __init__(self, decision: dict[str, Any]) -> None:
+        self.decision = decision
+        self.structured_calls = 0
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "unused"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls += 1
+        return cast(StructuredResponseT, response_schema(**self.decision))
 
 
 def _semantic_write(
@@ -171,3 +214,62 @@ def test_safety_conflicting_procedural_request_drops() -> None:
     decision = decide_procedural_candidate(candidate)
 
     assert decision.action == "drop"
+
+
+@pytest.mark.asyncio
+async def test_llm_semantic_policy_can_require_repetition_without_marker() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="context",
+            predicate="EXPERIENCED",
+            object_type="Concern",
+            object_identifier="ruining friendships",
+            evidence_quote="I ruin every friendship eventually.",
+        ),
+        message="I ruin every friendship eventually.",
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "require_repetition",
+            "reason": "global negative self-belief should need repetition",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_semantic_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
+
+    assert llm.structured_calls == 1
+    assert decision.action == "require_repetition"
+    assert decision.policy_version == "phase1_llm_v1"
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_policy_can_commit_durable_natural_request() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses.",
+            evidence=["From now on, be more direct with me."],
+        ),
+        message="From now on, be more direct with me.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "durable assistant-facing response preference",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_procedural_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
+
+    assert llm.structured_calls == 1
+    assert decision.action == "commit_now"
+    assert decision.policy_version == "phase1_llm_v1"

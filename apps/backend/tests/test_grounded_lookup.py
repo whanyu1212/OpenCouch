@@ -78,7 +78,57 @@ class _FakeSearchLLM(BaseLLMClient):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
-        raise AssertionError("Structured generation is not used by grounded lookup.")
+        raise AssertionError("Structured generation is not used by answer tests.")
+
+
+class _FakeLookupClassifierLLM(BaseLLMClient):
+    """Fake structured client for grounded-lookup routing tests."""
+
+    def __init__(
+        self,
+        *,
+        should_lookup: bool,
+        query: str | None = None,
+        confidence: str = "high",
+    ) -> None:
+        self.should_lookup = should_lookup
+        self.query = query
+        self.confidence = confidence
+        self.structured_calls: list[dict[str, Any]] = []
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        raise AssertionError("Text generation is not used by lookup classification.")
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls.append(
+            {"prompt": prompt, "system_instruction": system_instruction}
+        )
+        return response_schema(
+            should_lookup=self.should_lookup,
+            query=self.query,
+            reasoning="fake lookup routing decision",
+            confidence=self.confidence,
+        )
 
 
 def _state(message: str) -> AgentState:
@@ -104,6 +154,12 @@ def test_detect_grounded_lookup_requires_explicit_factual_signal() -> None:
         "Can you check if 988 works outside the US?"
     ) == {"query": "Can you check if 988 works outside the US?"}
     assert (
+        _detect_grounded_lookup_action(
+            "Can you check whether this wearable is evidence-based for anxiety?"
+        )
+        is None
+    )
+    assert (
         _detect_grounded_lookup_action("I'm overwhelmed about finding a therapist.")
         is None
     )
@@ -122,12 +178,14 @@ def test_detect_grounded_lookup_requires_explicit_factual_signal() -> None:
 
 @pytest.mark.asyncio
 async def test_grounded_lookup_gate_routes_explicit_search_request() -> None:
+    llm = _FakeLookupClassifierLLM(should_lookup=False)
     command = await run_grounded_lookup_gate_node(
         _state("Can you look up affordable counselling services in Singapore?"),
-        cast(Any, _Runtime()),
+        cast(Any, _Runtime(llm)),
     )
 
     assert command.goto == "grounded_answer_node"
+    assert llm.structured_calls == []
     assert command.update["route"] == "grounded_lookup"
     assert (
         command.update["grounded_lookup_query"]
@@ -138,14 +196,84 @@ async def test_grounded_lookup_gate_routes_explicit_search_request() -> None:
 
 @pytest.mark.asyncio
 async def test_grounded_lookup_gate_passes_ordinary_support_to_memory_load() -> None:
+    llm = _FakeLookupClassifierLLM(should_lookup=True)
     command = await run_grounded_lookup_gate_node(
         _state("I'm overwhelmed about finding a therapist."),
-        cast(Any, _Runtime()),
+        cast(Any, _Runtime(llm)),
+    )
+
+    assert command.goto == "load_memory_node"
+    assert llm.structured_calls == []
+    assert command.update["grounded_lookup_query"] == ""
+    assert command.update["grounded_lookup_status"] == "not_attempted"
+
+
+@pytest.mark.asyncio
+async def test_grounded_lookup_gate_passes_subjective_check_without_llm_call() -> None:
+    llm = _FakeLookupClassifierLLM(should_lookup=True)
+    command = await run_grounded_lookup_gate_node(
+        _state("Can you check if I'm being unreasonable?"),
+        cast(Any, _Runtime(llm)),
+    )
+
+    assert command.goto == "load_memory_node"
+    assert llm.structured_calls == []
+    assert command.update["grounded_lookup_query"] == ""
+
+
+@pytest.mark.asyncio
+async def test_grounded_lookup_gate_routes_ambiguous_factual_request_with_llm() -> None:
+    llm = _FakeLookupClassifierLLM(
+        should_lookup=True,
+        query="wearable evidence base for anxiety",
+    )
+    command = await run_grounded_lookup_gate_node(
+        _state("Can you check whether this wearable is evidence-based for anxiety?"),
+        cast(Any, _Runtime(llm)),
+    )
+
+    assert command.goto == "grounded_answer_node"
+    assert len(llm.structured_calls) == 1
+    assert command.update["route"] == "grounded_lookup"
+    assert (
+        command.update["grounded_lookup_query"] == "wearable evidence base for anxiety"
+    )
+    assert (
+        command.update["diagnostics"]["grounded_lookup_classifier_path"]
+        == "llm_primary"
+    )
+
+
+@pytest.mark.asyncio
+async def test_grounded_lookup_gate_passes_ambiguous_low_confidence() -> None:
+    llm = _FakeLookupClassifierLLM(
+        should_lookup=True,
+        query="unclear search",
+        confidence="low",
+    )
+    command = await run_grounded_lookup_gate_node(
+        _state("Is this advice evidence-based for people like me?"),
+        cast(Any, _Runtime(llm)),
+    )
+
+    assert command.goto == "load_memory_node"
+    assert len(llm.structured_calls) == 1
+    assert command.update["grounded_lookup_query"] == ""
+
+
+@pytest.mark.asyncio
+async def test_grounded_lookup_gate_passes_ambiguous_without_llm() -> None:
+    command = await run_grounded_lookup_gate_node(
+        _state("Is grounding proven to work?"),
+        cast(Any, _Runtime(None)),
     )
 
     assert command.goto == "load_memory_node"
     assert command.update["grounded_lookup_query"] == ""
-    assert command.update["grounded_lookup_status"] == "not_attempted"
+    assert (
+        command.update["diagnostics"]["grounded_lookup_classifier_path"]
+        == "deterministic"
+    )
 
 
 @pytest.mark.asyncio

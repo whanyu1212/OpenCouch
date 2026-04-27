@@ -5,8 +5,9 @@
  * NEXT_PUBLIC_API_URL (default: http://localhost:8000/api).
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-const WS_BASE = API_BASE.replace(/^http/, "ws");
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"
+).replace(/\/$/, "");
 
 export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
   { value: "en", label: "english" },
@@ -154,6 +155,15 @@ export interface StreamDoneEvent {
 }
 
 export type StreamEvent = StreamStatusEvent | StreamChunkEvent | StreamDoneEvent;
+
+export interface ChatStreamOptions {
+  message: string;
+  threadId: string;
+  userId?: string;
+  responseModelTier?: ResponseModelTier;
+  onEvent?: (event: StreamEvent) => void;
+  onProtocolError?: (error: Error) => void;
+}
 
 // ── REST helpers ─────────────────────────────────────────────────────
 
@@ -334,14 +344,57 @@ export async function getThreadState(
 
 // ── WebSocket stream for text chat ───────────────────────────────────
 
-export function createChatStream(
-  message: string,
-  threadId: string,
-  userId?: string,
-  responseModelTier?: ResponseModelTier,
-  onEvent?: (event: StreamEvent) => void
-): WebSocket {
-  const ws = new WebSocket(`${WS_BASE}/chat/stream`);
+function createWebSocketUrl(path: string): string {
+  if (API_BASE.startsWith("http://")) {
+    return `${API_BASE.replace(/^http:\/\//, "ws://")}${path}`;
+  }
+  if (API_BASE.startsWith("https://")) {
+    return `${API_BASE.replace(/^https:\/\//, "wss://")}${path}`;
+  }
+  if (API_BASE.startsWith("//")) {
+    const protocol =
+      typeof window !== "undefined" && window.location.protocol === "http:"
+        ? "ws:"
+        : "wss:";
+    return `${protocol}${API_BASE}${path}`;
+  }
+
+  if (typeof window === "undefined") {
+    return `${API_BASE}${path}`;
+  }
+
+  const base = API_BASE.startsWith("/") ? API_BASE : `/${API_BASE}`;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${base}${path}`;
+}
+
+function parseStreamEvent(raw: unknown): StreamEvent {
+  if (typeof raw !== "string") {
+    throw new Error("Chat stream frame was not text.");
+  }
+
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null || !("type" in parsed)) {
+    throw new Error("Chat stream frame was not a valid event.");
+  }
+
+  const event = parsed as Partial<StreamEvent>;
+  if (event.type !== "status" && event.type !== "chunk" && event.type !== "done") {
+    throw new Error("Chat stream frame had an unknown event type.");
+  }
+
+  return parsed as StreamEvent;
+}
+
+export function createChatStream({
+  message,
+  threadId,
+  userId,
+  responseModelTier,
+  onEvent,
+  onProtocolError,
+}: ChatStreamOptions): WebSocket {
+  const ws = new WebSocket(createWebSocketUrl("/chat/stream"));
 
   ws.onopen = () => {
     ws.send(
@@ -355,8 +408,16 @@ export function createChatStream(
   };
 
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    onEvent?.(data);
+    try {
+      onEvent?.(parseStreamEvent(event.data));
+    } catch (error) {
+      onProtocolError?.(
+        error instanceof Error
+          ? error
+          : new Error("Could not parse chat stream frame.")
+      );
+      ws.close();
+    }
   };
 
   return ws;
