@@ -2,7 +2,7 @@
 
 <img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
-**An open-source mental health support companion for reflective conversations, guided practice, memory continuity, and crisis-aware safety.**
+**A mental health companion built around three things: memory across sessions, 13 guided exercises, and a crisis gate on every turn.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
@@ -12,13 +12,11 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
-[Documentation](https://whanyu1212.github.io/OpenCouch/) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
-
 </div>
 
 > [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
-> OpenCouch is a support assistant for difficult moments, reflective dialogue, and structured exercises, with memory continuity across sessions.
+> OpenCouch is a place to think out loud, work through guided exercises, and pick up where you left off. It is not a substitute for professional care.
 
 > [!NOTE]
 > **Active Development:** OpenCouch is currently maintained by a solo developer. While stability is a priority, please anticipate occasional breaking changes as the architecture and features evolve. Documentation may lag behind the code at times because the project moves quickly.
@@ -27,6 +25,7 @@
 
 ## Table of Contents
 - [📖 Overview](#-overview)
+- [Screenshots](#screenshots)
 - [✨ Key Features](#-key-features)
 - [🚀 Quick Start](#-quick-start)
   - [Environment](#environment)
@@ -48,23 +47,38 @@
 
 ## 📖 Overview
 
-OpenCouch is an open-source support assistant for difficult moments, reflective dialogue, and structured exercises. The backend uses [LangGraph](https://langchain-ai.github.io/langgraph/) for the text runtime, FastAPI for APIs, and SQLite-backed persistence for memory and audit trails. The web UI is built with Next.js.
+The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with SQLite for memory and audit trails. The web UI is Next.js.
 
-Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus optional [LangSmith](https://www.langchain.com/langsmith) tracing.
+Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus Opik-first tracing.
 
 Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime powers the low-latency model path. The older direct Realtime harness remains in the backend for experiments.
 
-The project is still in active development. A close-beta rollout is planned, and production hardening is ongoing.
+A closed beta is planned.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/landing.png" width="100%" alt="OpenCouch landing page" /></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/chat.png" width="100%" alt="OpenCouch web chat" /></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/voice.png" width="100%" alt="OpenCouch voice mode" /></td>
+  </tr>
+  <tr>
+    <td width="16%"></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/cli-example.png" width="100%" alt="OpenCouch CLI session" /></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/telegram-example.png" width="100%" alt="OpenCouch Telegram DM" /></td>
+    <td width="16%"></td>
+  </tr>
+</table>
 
 ## ✨ Key Features
 
-- **Persistent Memory:** Stores semantic facts, episodic session arcs, and procedural rules across sessions.
-- **Safety by Default:** Evaluates every user input with a crisis gate before response generation, with a persistent audit trail.
-- **Traceable Execution:** Uses LangSmith to inspect graph execution, route selection, and per-turn text traces.
-- **Evaluation-Ready:** Combines local eval runners with LangSmith projects for regression tracking and failure analysis.
-- **LiveKit Voice:** Supports low-latency speech conversations through LiveKit sessions backed by OpenAI Realtime, with configurable voices, transcription language hints, and interruption handling.
-- **Telegram DM Gateway:** Runs a dogfood Telegram channel with session rotation, markdown rendering, allow-listing, and `/end` session closure.
-- **Guided Exercises:** Provides 13 multi-turn, state-tracked exercises for grounding, breathing, thought work, values reflection, and related structured practice.
+- Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
+- Crisis gate runs before every response, with a SQLite audit trail.
+- Local eval runners, plus Opik as the primary trace surface for regression tracking.
+- LiveKit voice in the browser, backed by OpenAI Realtime — configurable voices, transcription hints, interruption handling.
+- Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.
+- 13 guided exercises with multi-turn state tracking — grounding, breathing, thought work, values reflection, and others.
 
 ---
 
@@ -124,9 +138,15 @@ uv run python -m opencouch_cli --voice
 
 #### Observability & evaluation
 
-To enable LangSmith-backed observability and evaluation for local text runs, add the following to `.env` before running the CLI or API:
+To enable Opik-backed observability and evaluation for local text runs, add the following to `.env` before running the CLI or API:
 
 ```env
+# Primary external trace backend.
+OPIK_API_KEY=...
+OPIK_WORKSPACE=...
+OPIK_PROJECT_NAME=opencouch-dev
+
+# Optional secondary LangSmith / LangChain tracing.
 LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=...
@@ -192,7 +212,7 @@ pnpm install && npx docusaurus start --port 3001
 
 ## 🧠 Architecture
 
-OpenCouch uses a directed graph that enforces safety checks before therapeutic generation, then runs post-response memory evaluation on each turn and a separate session-end commit seam for episodic and buffered memory.
+Every turn passes through the crisis gate before therapeutic generation. Memory writes happen in two phases: per-turn extraction, then a session-end commit for episodic summaries and held candidates.
 
 ### Supported Surfaces
 
@@ -234,7 +254,7 @@ flowchart TD
         GLG{"grounded_lookup_gate<br/>LLM + hard-yes fallback"}:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
-        TS[["therapeutic_subgraph<br/>7 styles • 7 approaches"]]:::safeNode
+        TS[["therapeutic_subgraph<br/>7 styles • 7 approaches + none"]]:::safeNode
         MCG ==>|memory control| MC
         MCG ==>|ordinary turn| GLG
         GLG ==>|lookup| GA
@@ -250,25 +270,24 @@ flowchart TD
         CR ==> CL
     end
 
-    FT{{"finalize_turn<br/>operator.add reducer"}}:::sysNode
+    FT{{"finalize_turn<br/>checkpoint reply • set route"}}:::sysNode
 
     subgraph POST ["Post-response Memory Evaluation"]
         direction LR
-        EF[/"extract_facts"/]:::bgTask
-        EP[/"extract_rules"/]:::bgTask
-        PW["write_policy<br/>commit now • hold • drop"]:::bgTask
+        EF["extract_facts<br/>+ write_policy: commit • hold • drop"]:::bgTask
+        EP["extract_rules<br/>+ write_policy: commit • hold • drop"]:::bgTask
         SB[("session buffer<br/>held semantic • procedural")]:::sysNode
-        EF --> PW
-        EP --> PW
-        PW -.->|hold| SB
+        EF -.->|hold| SB
+        EP -.->|hold| SB
     end
 
-    SE{{"session_end<br/>/end • timeout • shutdown • voice disconnect"}}:::sysNode
-
-    subgraph SESSION ["Session-End Commit"]
+    subgraph SESSION ["Session-End Commit (runtime-driven, outside the LangGraph workflow)"]
         direction TB
-        SS["summarize_session<br/>episodic arc"]:::sysNode
-        CM["commit_session_memory<br/>promote held semantic • procedural"]:::sysNode
+        SE(["session_end trigger<br/>/end • timeout • shutdown • voice disconnect"]):::sysNode
+        SS(["summarize_session<br/>episodic arc"]):::sysNode
+        CM(["commit_session_memory<br/>promote held semantic • procedural"]):::sysNode
+        SE ==> SS
+        SE ==> CM
         SS ==> CM
     end
 
@@ -289,10 +308,9 @@ flowchart TD
     CL -.-> FT
     FT -.-> EF
     FT -.-> EP
-    PW -.->|immediate writes| DB
+    EF -.->|immediate writes| DB
+    EP -.->|immediate writes| DB
     SB -.->|held candidates| CM
-    SE ==> SS
-    SE ==> CM
     CM -.->|promoted / reconciled writes| DB
     SS -.->|episodic arc| DB
 
@@ -415,7 +433,7 @@ pre-commit run --all-files
 ---
 
 <div align="center">
-<sub>Built responsibly. Use responsibly.</sub>
+<sub>AGPL-3.0. Not a substitute for professional care.</sub>
 <br/>
 <br/>
 <a href="LICENSE">AGPL-3.0 License</a>

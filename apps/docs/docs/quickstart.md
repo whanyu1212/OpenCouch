@@ -4,6 +4,7 @@ sidebar_position: 2
 ---
 
 import TerminalWindow from '@site/src/components/TerminalWindow';
+import cliScreenshot from '@site/static/img/cli-example.png';
 
 # Quick Start
 
@@ -91,6 +92,8 @@ uv run python -m opencouch_cli \\
 Reuse the same `--user-id` and `--thread-id` to resume a conversation.
 Use the same `--user-id` with a new `--thread-id` to start a fresh
 session that still has access to the user's long-term memory.
+
+<img className="docs-screenshot" src={cliScreenshot} alt="OpenCouch CLI session" />
 
 ## Run the Web App
 
@@ -243,11 +246,17 @@ current eval map.
 
 ## Eval-driven Observability
 
-To enable LangSmith tracing for local text runs, add this to `.env`
+To enable Opik tracing for local text runs, add this to `.env`
 before starting the CLI or API:
 
-<TerminalWindow title="env — LangSmith tracing">
-{`LANGSMITH_TRACING=true
+<TerminalWindow title="env — Opik tracing">
+{`# Primary external trace backend.
+OPIK_API_KEY=...
+OPIK_WORKSPACE=...
+OPIK_PROJECT_NAME=opencouch-dev
+
+# Optional secondary LangSmith / LangChain tracing.
+LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=...
 LANGSMITH_PROJECT=opencouch-dev
@@ -259,5 +268,6 @@ LANGCHAIN_PROJECT=opencouch-dev`}
 </TerminalWindow>
 
 The `eval/runners/*` scripts remain the source of truth for behavioral
-regression checks. LangSmith adds trace inspection, run filtering, and
-experiment review.
+regression checks. Opik is the primary trace surface for graph execution,
+run filtering, and experiment review. LangSmith tracing remains supported
+as an optional secondary LangChain integration.

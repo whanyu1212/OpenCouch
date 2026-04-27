@@ -6,6 +6,7 @@ slug: /voice
 
 import VoiceArchitecture from '@site/src/components/VoiceArchitecture';
 import TerminalWindow from '@site/src/components/TerminalWindow';
+import voiceScreenshot from '@site/static/img/voice.png';
 
 # Voice (LiveKit)
 
@@ -26,6 +27,8 @@ in the voice hot path; voice has its own deterministic crisis
 safety net plus a model-invoked `crisis_check` tool that applies
 the deterministic crisis policy.
 :::
+
+<img className="docs-screenshot" src={voiceScreenshot} alt="OpenCouch voice mode" />
 
 <VoiceArchitecture />
 

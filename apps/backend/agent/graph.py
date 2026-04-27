@@ -20,6 +20,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -288,7 +289,15 @@ def build_agent_workflow(
     workflow.add_edge("extract_semantic_facts_node", END)
     workflow.add_edge("extract_procedural_rules_node", END)
 
-    return workflow.compile(checkpointer=checkpointer)
+    compiled = workflow.compile(checkpointer=checkpointer)
+
+    if os.getenv("OPIK_API_KEY") and os.getenv("OPIK_WORKSPACE"):
+        from opik.integrations.langchain import OpikTracer, track_langgraph
+
+        project_name = os.getenv("OPIK_PROJECT_NAME") or "opencouch-dev"
+        compiled = track_langgraph(compiled, OpikTracer(project_name=project_name))
+
+    return compiled
 
 
 # ── Public entrypoints ───────────────────────────────────────────────────────

@@ -3,11 +3,15 @@ title: Web UI
 sidebar_position: 3
 ---
 
+import webChatScreenshot from '@site/static/img/chat.png';
+
 # Web UI
 
 The web app in `apps/web` is the main browser surface for OpenCouch.
 It uses Next.js 16, React 19, Zustand for client session state, and
 FastAPI for the backend contract.
+
+<img className="docs-screenshot" src={webChatScreenshot} alt="OpenCouch web chat" />
 
 ## Local development
 

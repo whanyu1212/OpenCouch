@@ -126,6 +126,7 @@ const stats = [
 
 export default function Home(): JSX.Element {
   const glyphSrc = useBaseUrl('/img/opencouch-glyph-1024.png');
+  const landingSrc = useBaseUrl('/img/landing.png');
 
   useEffect(() => {
     const nodes = Array.from(
@@ -194,29 +195,8 @@ export default function Home(): JSX.Element {
               </div>
             </div>
 
-            <div className="hero-visual" aria-hidden="true">
-              <div className="hero-visual__terminal">
-                <div className="hero-visual__chrome">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <div className="hero-visual__code">
-                  <p>$ uv run python -m opencouch_cli --mode auto</p>
-                  <p>&gt; loading therapeutic graph…</p>
-                  <p>&gt; crisis gate: ready</p>
-                  <p>&gt; session context: initialized</p>
-                </div>
-              </div>
-              <div className="hero-visual__chat">
-                <div className="hero-visual__bubble hero-visual__bubble--user">
-                  I keep spiraling at night. Can we slow this down?
-                </div>
-                <div className="hero-visual__bubble hero-visual__bubble--assistant">
-                  Absolutely. Let's start with one small grounding step and stay with
-                  what feels manageable.
-                </div>
-              </div>
+            <div className="hero-visual">
+              <img className="hero-visual__image" src={landingSrc} alt="OpenCouch landing page" />
             </div>
           </div>
 

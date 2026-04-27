@@ -7,8 +7,12 @@ sidebar_position: 1
 
 OpenCouch uses two complementary surfaces for eval-driven development:
 
-1. **LangSmith** for external trace-level observability, run search, and evaluation review.
+1. **Opik** for primary external trace-level observability, run search, and evaluation review.
 2. **CLI inspection commands + live status** for local visibility into execution, state, and memory.
+
+LangSmith remains supported as an optional secondary LangChain tracing
+integration, but Opik is the default external surface to use when
+reviewing graph behavior.
 
 The CLI intentionally keeps the normal chat loop lightweight now:
 the reply renders as soon as the response is ready, a live spinner
@@ -57,7 +61,9 @@ without racing — no node needs to know what other nodes wrote.
 
 ## Observability & evaluation
 
-For text runs, LangSmith captures the LangGraph execution trace, including the top-level run plus child spans for graph nodes and subgraphs. In OpenCouch, LangSmith is the primary external surface for:
+For text runs, Opik captures the LangGraph execution trace, including
+the top-level run plus child spans for graph nodes and subgraphs. In
+OpenCouch, Opik is the primary external surface for:
 
 - inspecting graph execution paths
 - filtering runs by thread and runtime metadata
@@ -66,7 +72,24 @@ For text runs, LangSmith captures the LangGraph execution trace, including the t
 
 OpenCouch also attaches runtime metadata such as `thread_id`, `channel`, `memory_mode`, `streaming`, and `user_scope` to text runs to make traces easier to search.
 
-LangSmith complements the local CLI inspection surfaces below; it does not replace the project's deterministic eval runners or local debugging commands.
+Opik complements the local CLI inspection surfaces below; it does not
+replace the project's deterministic eval runners or local debugging
+commands.
+
+Enable Opik by setting:
+
+```env
+OPIK_API_KEY=...
+OPIK_WORKSPACE=...
+OPIK_PROJECT_NAME=opencouch-dev
+```
+
+`OPIK_PROJECT_NAME` is optional; the graph wrapper defaults to
+`opencouch-dev` when it is unset.
+
+LangSmith can be enabled alongside Opik through the standard
+`LANGSMITH_*` and `LANGCHAIN_*` environment variables when a secondary
+trace backend is useful.
 
 ---
 
