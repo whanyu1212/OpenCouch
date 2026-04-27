@@ -119,7 +119,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       <strong>Observability</strong>
     </div>
-    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions. Every node writes diagnostics through a <code>_merge_dicts</code> reducer; LangSmith captures the full trace.</p>
+    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions. Every node writes diagnostics through a <code>_merge_dicts</code> reducer; Opik captures the full trace.</p>
   </div>
 
   <div className="doc-card">

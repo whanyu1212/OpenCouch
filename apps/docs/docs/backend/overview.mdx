@@ -42,7 +42,7 @@ memory retrieval and all operational gates are skipped entirely.
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
 | Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics + per-channel session-state merging (exercise, progress, procedural profile) |
 | Audit separation | `agent/audit/` package | Crisis log + session feedback live outside prompt memory; cannot be disabled by user recall toggles |
-| Observability | LangSmith + local diagnostics | LangSmith for trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
+| Observability | Opik + local diagnostics | Opik for primary trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
 | Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records, opaque (SHA-256) session id |
 
 ---

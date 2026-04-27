@@ -3,11 +3,15 @@ title: Telegram Gateway
 sidebar_position: 4
 ---
 
+import telegramScreenshot from '@site/static/img/telegram-example.jpeg';
+
 # Telegram Gateway
 
 The Telegram gateway is a standalone direct-message channel for local
 dogfooding. It uses the persistent text runtime, but it does not
 require the FastAPI server.
+
+<img className="docs-screenshot docs-screenshot--portrait" src={telegramScreenshot} alt="OpenCouch Telegram DM" />
 
 ## Start polling
 

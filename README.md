@@ -25,6 +25,7 @@
 
 ## Table of Contents
 - [📖 Overview](#-overview)
+- [Screenshots](#screenshots)
 - [✨ Key Features](#-key-features)
 - [🚀 Quick Start](#-quick-start)
   - [Environment](#environment)
@@ -48,17 +49,33 @@
 
 The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with SQLite for memory and audit trails. The web UI is Next.js.
 
-Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus optional [LangSmith](https://www.langchain.com/langsmith) tracing.
+Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus Opik-first tracing.
 
 Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime powers the low-latency model path. The older direct Realtime harness remains in the backend for experiments.
 
 A closed beta is planned.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/landing.png" width="100%" alt="OpenCouch landing page" /></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/chat.png" width="100%" alt="OpenCouch web chat" /></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/voice.png" width="100%" alt="OpenCouch voice mode" /></td>
+  </tr>
+  <tr>
+    <td width="16%"></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/cli-example.png" width="100%" alt="OpenCouch CLI session" /></td>
+    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/telegram-example.png" width="100%" alt="OpenCouch Telegram DM" /></td>
+    <td width="16%"></td>
+  </tr>
+</table>
+
 ## ✨ Key Features
 
 - Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
 - Crisis gate runs before every response, with a SQLite audit trail.
-- Local eval runners, plus optional LangSmith for tracing and regression tracking.
+- Local eval runners, plus Opik as the primary trace surface for regression tracking.
 - LiveKit voice in the browser, backed by OpenAI Realtime — configurable voices, transcription hints, interruption handling.
 - Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.
 - 13 guided exercises with multi-turn state tracking — grounding, breathing, thought work, values reflection, and others.
@@ -121,9 +138,15 @@ uv run python -m opencouch_cli --voice
 
 #### Observability & evaluation
 
-To enable LangSmith-backed observability and evaluation for local text runs, add the following to `.env` before running the CLI or API:
+To enable Opik-backed observability and evaluation for local text runs, add the following to `.env` before running the CLI or API:
 
 ```env
+# Primary external trace backend.
+OPIK_API_KEY=...
+OPIK_WORKSPACE=...
+OPIK_PROJECT_NAME=opencouch-dev
+
+# Optional secondary LangSmith / LangChain tracing.
 LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=...
