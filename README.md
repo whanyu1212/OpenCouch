@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="apps/docs/static/img/opencouch-glyph-1024.png" width="80" alt="OpenCouch glyph" />
-
-# OpenCouch
+<img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
 **An open-source mental health support agent with persistent memory, crisis safety, and natural voice.**
 
@@ -15,12 +13,6 @@
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
 [Documentation](https://whanyu1212.github.io/OpenCouch/) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
-
-<br/>
-
-<p align="center">
-  <img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
-</p>
 
 </div>
 
