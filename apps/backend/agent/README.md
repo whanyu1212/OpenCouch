@@ -372,6 +372,7 @@ Common verification commands:
 
 ```bash
 uv run pytest apps/backend/tests -q
+uv run python eval/runners/exercise_selection_eval.py --mode deterministic
 uv run python eval/runners/exercise_flow_eval.py
 uv run python eval/runners/session_trajectory_eval.py --mode deterministic
 ```

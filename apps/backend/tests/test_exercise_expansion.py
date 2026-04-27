@@ -46,14 +46,76 @@ class _MockRuntime:
         self,
         llm_client: Any = None,
         memory_store: Any = None,
-        memory_mode: MemoryMode = MemoryMode.INCOGNITO,
+        memory_mode: MemoryMode | str = MemoryMode.INCOGNITO,
     ) -> None:
+        resolved_memory_mode = (
+            memory_mode
+            if isinstance(memory_mode, MemoryMode)
+            else MemoryMode(memory_mode)
+        )
         self.context = WorkflowContext(
             llm_client=llm_client,
             memory_store=memory_store or OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=memory_mode,
+            memory_mode=resolved_memory_mode,
         )
+
+
+class _StepClassifierLLM:
+    """Fake LLM for guided-exercise step classification tests."""
+
+    def __init__(
+        self,
+        *,
+        step_state: str = "complete",
+        selection_kind: str = "selected",
+        exercise_type: str | None = None,
+        option_types: list[str] | None = None,
+        response_text: str = "next step",
+    ) -> None:
+        self.step_state = step_state
+        self.selection_kind = selection_kind
+        self.exercise_type = exercise_type
+        self.option_types = option_types or []
+        self.response_text = response_text
+        self.structured_calls = 0
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: Any,
+        system_instruction: str | None = None,
+    ) -> Any:
+        self.structured_calls += 1
+        if response_schema.__name__ == "ExerciseOptionChoiceDecision":
+            return response_schema(
+                choice_kind="selected" if self.exercise_type else "unclear",
+                exercise_type=self.exercise_type,
+                reasoning="fake pending option choice",
+                confidence="high",
+            )
+        if response_schema.__name__ == "ExerciseSelectionDecision":
+            return response_schema(
+                selection_kind=self.selection_kind,
+                exercise_type=self.exercise_type,
+                option_types=self.option_types,
+                reasoning="fake exercise selection",
+                confidence="high",
+            )
+        return response_schema(
+            step_state=self.step_state,
+            reasoning="fake step classification",
+            confidence="high",
+        )
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> Any:
+        yield self.response_text
 
 
 def _make_state(
@@ -111,6 +173,8 @@ class TestConfirmationMode:
         )
         assert _classify_step_state("I took a breath", step) == "complete"
         assert _classify_step_state("I've done that", step) == "complete"
+        assert _classify_step_state("done that", step) == "complete"
+        assert _classify_step_state("did that", step) == "complete"
         assert _classify_step_state("I'm ready", step) == "complete"
         assert _classify_step_state("I exhaled", step) == "complete"
 
@@ -533,6 +597,108 @@ class TestSelfCompassionFlow:
         assert delta["exercise_state"]["exercise_step"] == 0
 
     @pytest.mark.asyncio
+    async def test_llm_selection_starts_self_compassion_without_keyword(self) -> None:
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_SELF_COMPASSION,
+            run_guided_exercise_response_node,
+        )
+
+        llm = _StepClassifierLLM(
+            selection_kind="selected",
+            exercise_type=EXERCISE_SELF_COMPASSION,
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state = _make_state("I'm being really harsh with myself today")
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_SELF_COMPASSION
+        assert delta["exercise_state"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_selection_options"] is None
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_selection_offers_options(self) -> None:
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_SELF_COMPASSION,
+            run_guided_exercise_response_node,
+        )
+
+        llm = _StepClassifierLLM(
+            selection_kind="ambiguous",
+            option_types=[EXERCISE_BOX_BREATHING, EXERCISE_SELF_COMPASSION],
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state = _make_state("Can we do something for this?")
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
+        assert delta["exercise_state"]["exercise_selection_options"] == [
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_SELF_COMPASSION,
+        ]
+        assert "which would you like" in delta["response_text"].lower()
+        assert "five things" not in delta["response_text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_pending_selection_number_starts_option(self) -> None:
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_SELF_COMPASSION,
+            run_guided_exercise_response_node,
+        )
+
+        runtime = _MockRuntime(llm_client=None)
+        state = _make_state("2")
+        state["exercise_state"]["exercise_selection_options"] = [
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_SELF_COMPASSION,
+        ]
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_SELF_COMPASSION
+        assert delta["exercise_state"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_selection_options"] is None
+
+    @pytest.mark.asyncio
+    async def test_pending_selection_llm_resolves_natural_choice(self) -> None:
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_SELF_COMPASSION,
+            run_guided_exercise_response_node,
+        )
+
+        llm = _StepClassifierLLM(exercise_type=EXERCISE_SELF_COMPASSION)
+        runtime = _MockRuntime(llm_client=llm)
+        state = _make_state("self-kindness option")
+        state["exercise_state"]["exercise_selection_options"] = [
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_SELF_COMPASSION,
+        ]
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert llm.structured_calls == 1
+        assert delta["exercise_state"]["exercise_type"] == EXERCISE_SELF_COMPASSION
+        assert delta["exercise_state"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_selection_options"] is None
+
+    @pytest.mark.asyncio
     async def test_self_compassion_completes_in_3_steps(self) -> None:
         """Self-compassion break has 3 steps; completing step 2 should clear state."""
         from agent.therapeutic.guided_exercise import (
@@ -556,6 +722,35 @@ class TestSelfCompassionFlow:
 
         assert delta["exercise_state"]["exercise_type"] is None
         assert delta["exercise_state"]["exercise_step"] is None
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_advances_natural_confirmation(self) -> None:
+        """LLM step classification handles confirmations beyond regex coverage."""
+
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_SELF_COMPASSION,
+            run_guided_exercise_response_node,
+        )
+
+        llm = _StepClassifierLLM(
+            step_state="complete",
+            response_text="Good. Now remind yourself that you're not alone.",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state = _make_state(
+            "I sat with that for a moment",
+            EXERCISE_SELF_COMPASSION,
+            0,
+        )
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert llm.structured_calls == 1
+        assert delta["exercise_state"]["exercise_step"] == 1
+        assert "not alone" in delta["response_text"].lower()
 
 
 class TestExitMidExercise:
@@ -582,6 +777,26 @@ class TestExitMidExercise:
             "stop" in delta["response_text"].lower()
             or "helpful" in delta["response_text"].lower()
         )
+
+    @pytest.mark.asyncio
+    async def test_explicit_exit_bypasses_llm_classifier(self) -> None:
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_SELF_COMPASSION,
+            run_guided_exercise_response_node,
+        )
+
+        llm = _StepClassifierLLM(step_state="complete")
+        runtime = _MockRuntime(llm_client=llm)
+        state = _make_state("stop, I want to just talk", EXERCISE_SELF_COMPASSION, 0)
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert llm.structured_calls == 0
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert delta["exercise_state"]["exercise_step"] is None
 
     @pytest.mark.asyncio
     async def test_exit_leaves_on_stream_clears_state(self) -> None:

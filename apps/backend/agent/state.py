@@ -120,6 +120,7 @@ class ExerciseState(TypedDict):
     exercise_type: NotRequired[str | None]
     exercise_step: NotRequired[int | None]
     exercise_modality: NotRequired[str | None]
+    exercise_selection_options: NotRequired[list[str] | None]
 
 
 class MemoryControlState(TypedDict):

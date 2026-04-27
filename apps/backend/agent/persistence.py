@@ -107,6 +107,7 @@ _EXERCISE_STATE_FIELDS = (
     "exercise_type",
     "exercise_step",
     "exercise_modality",
+    "exercise_selection_options",
 )
 ExpectedSessionLiveness = Literal["active", "absent"]
 
@@ -865,6 +866,7 @@ class PersistentAgentRuntime:
                 "exercise_type": None,
                 "exercise_step": None,
                 "exercise_modality": None,
+                "exercise_selection_options": None,
             }
 
         if state.get("therapeutic_approach") is not None:
@@ -1260,6 +1262,7 @@ class PersistentAgentRuntime:
             session_buffer=session_buffer,
             stored_arc=stored_arc,
             embedding_provider=self._embedding_provider,
+            llm_client=llm_client,
         )
         if commit_result is not None:
             logger.info(

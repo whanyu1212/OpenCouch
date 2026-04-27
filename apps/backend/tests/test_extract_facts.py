@@ -607,8 +607,8 @@ class TestExtractFactsNodeUnit:
         assert any("structured-output call failed" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_early_negative_self_belief_skips_before_llm(self) -> None:
-        """Early-turn negative self-belief language should skip extraction."""
+    async def test_early_negative_self_belief_requires_repetition(self) -> None:
+        """Early-turn negative self-belief should be held, not skipped pre-LLM."""
 
         store = OpenCouchMemoryStore()
         fake = _FakeExtractionLLM(
@@ -626,16 +626,14 @@ class TestExtractFactsNodeUnit:
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["diagnostics"]["semantic_writes"] == 0
-        assert (
-            delta["diagnostics"]["extract_facts_reason"]
-            == "skipped: early_emerging_pattern"
-        )
-        assert fake.extraction_calls == 0
+        assert delta["diagnostics"]["extract_facts_reason"] == "would-be extraction"
+        assert delta["diagnostics"]["semantic_repeat_required"] == 1
+        assert fake.extraction_calls == 1
         assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
-    async def test_early_shared_emerging_pattern_marker_skips_before_llm(self) -> None:
-        """Early-turn emerging-pattern language should use the shared marker set."""
+    async def test_early_shared_emerging_pattern_requires_repetition(self) -> None:
+        """Early-turn emerging-pattern language should be held by write policy."""
 
         store = OpenCouchMemoryStore()
         fake = _FakeExtractionLLM(
@@ -653,11 +651,9 @@ class TestExtractFactsNodeUnit:
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["diagnostics"]["semantic_writes"] == 0
-        assert (
-            delta["diagnostics"]["extract_facts_reason"]
-            == "skipped: early_emerging_pattern"
-        )
-        assert fake.extraction_calls == 0
+        assert delta["diagnostics"]["extract_facts_reason"] == "would-be extraction"
+        assert delta["diagnostics"]["semantic_repeat_required"] == 1
+        assert fake.extraction_calls == 1
         assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio

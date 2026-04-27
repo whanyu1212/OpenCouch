@@ -62,7 +62,7 @@ from agent.memory.extraction_prompts import (
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.reconciliation import (
     filter_semantic_collision_candidates,
-    plan_semantic_write,
+    plan_semantic_write_llm_primary,
 )
 from agent.memory.models import EntityRef, ExtractionResult, MemoryWrite, SemanticFact
 from agent.memory.modes import MemoryMode
@@ -72,7 +72,7 @@ from agent.memory.semantic_policy import (
     has_durability_marker,
 )
 from agent.memory.store import MemoryStore
-from agent.memory.write_policy import decide_semantic_candidate
+from agent.memory.write_policy import decide_semantic_candidate_llm_primary
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -502,14 +502,6 @@ async def run_extract_semantic_facts_node(
     turn_count = int(session_progress.get("turn_count", 1))
     turn_index = max(0, turn_count - 1)
 
-    if _should_skip_early_emerging_pattern(state["message"], turn_index):
-        logger.debug(
-            "extract_semantic_facts_node: early emerging-pattern guard triggered; "
-            "skipping extraction for message %r",
-            state["message"][:80],
-        )
-        return _diagnostics_delta(reason="skipped: early_emerging_pattern")
-
     try:
         extraction: ExtractionResult = await llm_client.generate_structured(
             prompt=build_extraction_user_prompt(state, turn_index=turn_index),
@@ -550,7 +542,10 @@ async def run_extract_semantic_facts_node(
 
     for write in extraction.facts:
         candidate = build_semantic_candidate(write, message=state["message"])
-        decision = decide_semantic_candidate(candidate)
+        decision = await decide_semantic_candidate_llm_primary(
+            candidate,
+            llm_client=llm_client,
+        )
 
         if decision.action == "commit_now":
             immediate_candidates.append((candidate, decision))
@@ -690,7 +685,11 @@ async def run_extract_semantic_facts_node(
                 write_reason=decision.reason,
                 policy_version=decision.policy_version,
             )
-            reconciliation = plan_semantic_write(fact, collision_records)
+            reconciliation = await plan_semantic_write_llm_primary(
+                fact,
+                collision_records,
+                llm_client=llm_client,
+            )
             if reconciliation.bump_record is not None:
                 await _bump_last_referenced_at(
                     store,

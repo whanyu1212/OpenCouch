@@ -2,7 +2,7 @@
 
 Guided exercise tracks which exercise is running and which step the user is
 on across multiple turns. The node owns exercise-state transitions; the LLM
-only writes user-facing prose for the next step.
+classifies progress and writes user-facing prose for the next step.
 
 Architecture overview:
 
@@ -21,19 +21,17 @@ Architecture overview:
    side-turns, and wrap-ups can route elsewhere while preserving or clearing
    exercise state as appropriate.
 
-3. **Deterministic step-state classifier.** The node inspects the
-   user's message and classifies it as ``complete`` / ``hold`` /
-   ``stuck`` / ``exit``. This is done with regex and simple heuristics
-   rather than an inner LLM call so the state machine stays explicit and
-   testable.
+3. **LLM-primary step-state classifier.** The node asks the control LLM
+   to classify the user's message as ``complete`` / ``hold`` /
+   ``stuck`` / ``exit``. High-precision local exit/stuck overrides still
+   fire first, and the regex classifier remains the fallback when no LLM
+   is configured or the classifier call fails.
 
-4. **LLM generates response text; node owns state.** The node
-   decides which step to advance to (via the classifier + the
-   exercise registry), then calls the LLM to generate the
-   response prose for that step. The LLM never decides the state
-   transition. That's the node's job. This keeps the state machine
-   auditable and the LLM call single-purpose (write the response,
-   don't classify).
+4. **Classifier chooses labels; node owns transitions.** The classifier
+   returns only the step-state label. The node decides which state delta
+   to emit from that label and the exercise registry, then asks the LLM
+   to generate the response prose for the next step. This keeps state
+   transitions auditable while avoiding endless regex coverage patches.
 
 5. **Exercise registry.** Supported exercises are stored as
    ``ExerciseStep`` tuples in ``_EXERCISE_REGISTRY``. Adding a new exercise
@@ -65,6 +63,7 @@ from uuid import uuid4
 
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
+from pydantic import BaseModel, Field
 
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
@@ -120,6 +119,41 @@ class ExerciseStep:
     expected_count: int
     min_count_for_completion: int
     completion_mode: CompletionMode = "item_count"
+
+
+class ExerciseStepDecision(BaseModel):
+    """Structured output for guided-exercise step classification."""
+
+    step_state: StepState
+    reasoning: str = Field(min_length=1, max_length=240)
+    confidence: Literal["low", "medium", "high"]
+
+
+@dataclass(frozen=True)
+class ExerciseSelectionResult:
+    """Internal result for guided-exercise selection."""
+
+    exercise_type: str | None
+    options: tuple[str, ...] = ()
+
+
+class ExerciseSelectionDecision(BaseModel):
+    """Structured output for guided-exercise selection."""
+
+    selection_kind: Literal["selected", "ambiguous"]
+    exercise_type: str | None = None
+    option_types: list[str] = Field(default_factory=list)
+    reasoning: str = Field(min_length=1, max_length=240)
+    confidence: Literal["low", "medium", "high"]
+
+
+class ExerciseOptionChoiceDecision(BaseModel):
+    """Structured output for resolving pending exercise-option choices."""
+
+    choice_kind: Literal["selected", "unclear"]
+    exercise_type: str | None = None
+    reasoning: str = Field(min_length=1, max_length=240)
+    confidence: Literal["low", "medium", "high"]
 
 
 # 5-4-3-2-1 grounding: a sensory exercise that anchors the user in the
@@ -846,6 +880,28 @@ _EXERCISE_DISPLAY_NAMES: dict[str, str] = {
     EXERCISE_CONTINUUM: "a continuum exercise",
 }
 
+_EXERCISE_SELECTION_USE_CASES: dict[str, str] = {
+    EXERCISE_5_4_3_2_1: "sensory grounding for acute anxiety, panic, dissociation, or needing to orient to the room",
+    EXERCISE_BOX_BREATHING: "paced breathing for stress, body activation, racing heart, or needing to slow down",
+    EXERCISE_STOP_TECHNIQUE: "a quick pause for urges, impulsive reactions, or needing to stop and choose the next action",
+    EXERCISE_THOUGHT_RECORD: "examining a distressing thought, belief, assumption, or self-critical interpretation",
+    EXERCISE_TINY_ACTION: "behavioral activation when the user feels stuck, depleted, avoidant, or unable to start",
+    EXERCISE_LEAVES_ON_STREAM: "defusion or acceptance when the user is caught in thoughts and wants distance from them",
+    EXERCISE_MUSCLE_RELAXATION: "body tension, muscle tightness, restlessness, or wanting to relax physically",
+    EXERCISE_BEHAVIORAL_EXPERIMENT: "testing a fear, prediction, or belief with a small real-world experiment",
+    EXERCISE_SELF_COMPASSION: "self-criticism, shame, harsh self-talk, or wanting to be kinder to oneself",
+    EXERCISE_IMPROVE: "distress tolerance for getting through an overwhelming moment",
+    EXERCISE_VALUES_COMPASS: "values, meaning, direction, purpose, or deciding what matters next",
+    EXERCISE_GRATITUDE: "noticing positive moments, appreciation, or broadening attention beyond distress",
+    EXERCISE_CONTINUUM: "softening all-or-nothing labels like total failure, terrible person, or 100 percent bad",
+}
+
+_DEFAULT_EXERCISE_OPTIONS: tuple[str, ...] = (
+    EXERCISE_5_4_3_2_1,
+    EXERCISE_BOX_BREATHING,
+    EXERCISE_SELF_COMPASSION,
+)
+
 
 # ── Step-state classifier ──────────────────────────────────────────────
 
@@ -879,7 +935,7 @@ _STUCK_PATTERNS: tuple[str, ...] = (
 # isn't working" — which hits STUCK first anyway via pattern priority).
 _CONFIRMATION_PATTERNS: tuple[str, ...] = (
     r"^\s*(?:ok|okay|done|yes|yeah|yep|yup|got it|did it|ready|"
-    r"finished|mhm|mhmm|alright|sure)\s*[.!]?\s*$",
+    r"finished|mhm|mhmm|alright|sure|done that|did that)\s*[.!]?\s*$",
     r"\b(?:i did|i'?ve done|i'?m done|i'?m ready|done with that|"
     r"i did that|that'?s done)\b",
     r"\b(?:took (?:a |the )?breath|breathed?|exhaled?|inhaled?|"
@@ -1004,6 +1060,106 @@ def _classify_step_state(
     return "hold"
 
 
+def _build_step_classifier_prompt(
+    *,
+    state: AgentState,
+    exercise_type: str,
+    step_index: int,
+    current_step: ExerciseStep,
+) -> str:
+    """Build the LLM prompt for guided-exercise step classification.
+
+    Args:
+        state: Current graph state.
+        exercise_type: Active exercise identifier.
+        step_index: Current zero-based exercise step.
+        current_step: Exercise step the user is responding to.
+
+    Returns:
+        Prompt asking for a structured step-state decision.
+    """
+
+    message = state.get("message", "")
+    exercise_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, exercise_type)
+    return (
+        "Classify the user's latest reply to the current guided-exercise step. "
+        "Return exactly one step_state:\n"
+        "- complete: the user appears to have completed the requested step, "
+        "including natural confirmations like 'done that' or equivalent wording.\n"
+        "- hold: the user is tentative, partial, off-step, or still engaging but "
+        "has not clearly completed the step.\n"
+        "- stuck: the user says they cannot do the step, nothing comes to mind, "
+        "or the exercise feels confusing/frustrating.\n"
+        "- exit: the user wants to stop, cancel, switch away, or just talk.\n\n"
+        "If uncertain between complete and hold, choose hold. If the reply "
+        "clearly opts out, choose exit.\n\n"
+        f"Exercise: {exercise_name} ({exercise_type})\n"
+        f"Current step index: {step_index}\n"
+        f"Completion mode: {current_step.completion_mode}\n"
+        f"Expected item count: {current_step.expected_count}\n"
+        f"Minimum item count for completion: {current_step.min_count_for_completion}\n"
+        f'Step instruction: "{current_step.prompt_fallback}"\n'
+        f'User reply: "{message}"'
+    )
+
+
+async def _classify_step_state_llm_primary(
+    *,
+    state: AgentState,
+    classifier_llm: Any,
+    exercise_type: str,
+    step_index: int,
+    current_step: ExerciseStep,
+) -> StepState:
+    """Classify step progress with an LLM primary path and regex fallback.
+
+    Args:
+        state: Current graph state.
+        classifier_llm: Control-plane LLM client, if available.
+        exercise_type: Active exercise identifier.
+        step_index: Current zero-based exercise step.
+        current_step: Exercise step the user is responding to.
+
+    Returns:
+        Step-state classification for the current exercise turn.
+    """
+
+    message = state.get("message", "")
+
+    # High-precision local overrides keep explicit exits and stuck states
+    # immediate even if the classifier is unavailable or permissive.
+    if _matches_any(message, _EXIT_PATTERNS):
+        return "exit"
+    if _matches_any(message, _STUCK_PATTERNS):
+        return "stuck"
+
+    if classifier_llm is None:
+        return _classify_step_state(message, current_step)
+
+    try:
+        decision: ExerciseStepDecision = await classifier_llm.generate_structured(
+            prompt=_build_step_classifier_prompt(
+                state=state,
+                exercise_type=exercise_type,
+                step_index=step_index,
+                current_step=current_step,
+            ),
+            response_schema=ExerciseStepDecision,
+            system_instruction=(
+                "You are a strict state classifier for a therapeutic guided "
+                "exercise. Do not write user-facing text. Classify only the "
+                "latest user reply against the current step."
+            ),
+        )
+        return decision.step_state
+    except Exception:
+        logger.warning(
+            "Guided exercise step classifier failed; using deterministic fallback.",
+            exc_info=True,
+        )
+        return _classify_step_state(message, current_step)
+
+
 # ── State delta helpers ────────────────────────────────────────────────
 
 
@@ -1033,6 +1189,7 @@ def _start_exercise_delta(
             "exercise_type": exercise_type,
             "exercise_step": 0,
             "exercise_modality": modality,
+            "exercise_selection_options": None,
         },
     }
 
@@ -1075,6 +1232,7 @@ def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
             "exercise_type": None,
             "exercise_step": None,
             "exercise_modality": None,
+            "exercise_selection_options": None,
         },
     }
 
@@ -1268,6 +1426,272 @@ def _select_exercise(
     return EXERCISE_5_4_3_2_1
 
 
+def _valid_exercise_options(
+    option_types: list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return valid unique exercise options in display order.
+
+    Args:
+        option_types: Exercise identifiers proposed by a classifier.
+
+    Returns:
+        Deduplicated exercise identifiers that exist in the registry.
+    """
+
+    valid: list[str] = []
+    for exercise_type in option_types:
+        if exercise_type in _EXERCISE_REGISTRY and exercise_type not in valid:
+            valid.append(exercise_type)
+    return tuple(valid[:3])
+
+
+def _available_exercises_for_prompt() -> str:
+    """Return a compact exercise catalog for selection prompts.
+
+    Returns:
+        Newline-separated exercise ids, display names, and use cases.
+    """
+
+    rows: list[str] = []
+    for exercise_type in _EXERCISE_REGISTRY:
+        rows.append(
+            "- "
+            f"{exercise_type}: {_EXERCISE_DISPLAY_NAMES[exercise_type]} — "
+            f"{_EXERCISE_SELECTION_USE_CASES[exercise_type]}"
+        )
+    return "\n".join(rows)
+
+
+def _build_exercise_selection_prompt(state: AgentState) -> str:
+    """Build the LLM prompt for choosing a guided exercise.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        Prompt asking for a structured exercise-selection decision.
+    """
+
+    history_lines = []
+    for turn in (state.get("history", []) or [])[-6:]:
+        role = turn.get("role", "unknown")
+        content = turn.get("content", "")
+        if content:
+            history_lines.append(f"{role}: {content}")
+    recent_history = "\n".join(history_lines) or "(none)"
+    return (
+        "Choose the best guided exercise for the user's current need. "
+        "If the user explicitly names a supported exercise or technique family "
+        "such as breathing, box breathing, muscle relaxation, STOP, a thought "
+        "record, behavioral experiment, self-compassion, values, defusion, or "
+        "gratitude, treat that as a clear selected exercise. "
+        "If one exercise is clearly best, return selection_kind='selected' "
+        "with that exercise_type. Return selection_kind='ambiguous' only when "
+        "multiple exercises are plausible or the user's need is too broad. "
+        "When ambiguous, include 2 or 3 option_types the user can choose from. "
+        "Do not default to grounding just because the request is broad.\n\n"
+        "Available exercises:\n"
+        f"{_available_exercises_for_prompt()}\n\n"
+        "Recent conversation:\n"
+        f"{recent_history}\n\n"
+        f'Current user message: "{state.get("message", "")}"'
+    )
+
+
+def _resolve_pending_exercise_choice(
+    message: str,
+    options: tuple[str, ...],
+) -> str | None:
+    """Resolve a user's follow-up choice from pending exercise options.
+
+    Args:
+        message: Current user message.
+        options: Pending exercise identifiers offered on the prior turn.
+
+    Returns:
+        Selected exercise identifier, or ``None`` if the message is not a
+        clear choice.
+    """
+
+    lowered = message.lower().strip()
+    match = re.match(r"^(?:option\s*)?(?P<index>[1-9])(?:[.)])?\b", lowered)
+    if match is not None:
+        index = int(match.group("index")) - 1
+        if 0 <= index < len(options):
+            return options[index]
+
+    ordinal_map = {
+        "one": 0,
+        "first": 0,
+        "two": 1,
+        "second": 1,
+        "three": 2,
+        "third": 2,
+    }
+    for word, index in ordinal_map.items():
+        if re.search(rf"\b{word}\b", lowered) and 0 <= index < len(options):
+            return options[index]
+
+    selected = _select_exercise(message)
+    if selected in options:
+        return selected
+    return None
+
+
+def _build_pending_exercise_choice_prompt(
+    message: str,
+    options: tuple[str, ...],
+) -> str:
+    """Build the LLM prompt for resolving a pending exercise choice.
+
+    Args:
+        message: Current user message.
+        options: Pending exercise options from the prior assistant turn.
+
+    Returns:
+        Prompt asking for a structured option-choice decision.
+    """
+
+    option_rows = []
+    for index, exercise_type in enumerate(options, start=1):
+        option_rows.append(
+            f"{index}. {exercise_type}: {_EXERCISE_DISPLAY_NAMES[exercise_type]} - "
+            f"{_EXERCISE_SELECTION_USE_CASES[exercise_type]}"
+        )
+    return (
+        "The assistant previously offered these guided-exercise options. "
+        "Decide whether the user's latest reply chooses exactly one of them. "
+        "Use choice_kind='unclear' when the reply asks a question, rejects the "
+        "options, or does not clearly select one.\n\n"
+        "Options:\n"
+        f"{chr(10).join(option_rows)}\n\n"
+        f'User reply: "{message}"'
+    )
+
+
+async def _resolve_pending_exercise_choice_llm_primary(
+    message: str,
+    options: tuple[str, ...],
+    *,
+    classifier_llm: Any,
+) -> str | None:
+    """Resolve a pending exercise-option choice with an LLM primary path.
+
+    Args:
+        message: Current user message.
+        options: Pending exercise options from the prior assistant turn.
+        classifier_llm: Control-plane LLM client, if configured.
+
+    Returns:
+        Selected exercise identifier, or ``None`` when the choice is unclear.
+    """
+
+    if classifier_llm is None:
+        return None
+
+    try:
+        decision: ExerciseOptionChoiceDecision = (
+            await classifier_llm.generate_structured(
+                prompt=_build_pending_exercise_choice_prompt(message, options),
+                response_schema=ExerciseOptionChoiceDecision,
+                system_instruction=(
+                    "You are a strict classifier for a pending guided-exercise "
+                    "option choice. Return structured output only."
+                ),
+            )
+        )
+    except Exception:
+        logger.warning(
+            "Guided exercise option-choice classifier failed; keeping options.",
+            exc_info=True,
+        )
+        return None
+
+    if (
+        decision.choice_kind == "selected"
+        and decision.exercise_type in options
+        and decision.confidence != "low"
+    ):
+        return decision.exercise_type
+    return None
+
+
+async def _select_exercise_llm_primary(
+    state: AgentState,
+    *,
+    classifier_llm: Any,
+) -> ExerciseSelectionResult:
+    """Select a guided exercise with an LLM primary path.
+
+    Args:
+        state: Current graph state.
+        classifier_llm: Control-plane LLM client, if available.
+
+    Returns:
+        Exercise selection result. ``exercise_type`` is set when the node should
+        start an exercise immediately; otherwise ``options`` contains choices
+        to offer the user.
+    """
+
+    exercise_state = state.get("exercise_state", {}) or {}
+    pending_options = _valid_exercise_options(
+        tuple(exercise_state.get("exercise_selection_options") or ())
+    )
+    if pending_options:
+        choice = _resolve_pending_exercise_choice(
+            state.get("message", ""), pending_options
+        )
+        if choice is not None:
+            return ExerciseSelectionResult(exercise_type=choice)
+        choice = await _resolve_pending_exercise_choice_llm_primary(
+            state.get("message", ""),
+            pending_options,
+            classifier_llm=classifier_llm,
+        )
+        if choice is not None:
+            return ExerciseSelectionResult(exercise_type=choice)
+        return ExerciseSelectionResult(exercise_type=None, options=pending_options)
+
+    if classifier_llm is None:
+        return ExerciseSelectionResult(
+            exercise_type=_select_exercise(
+                state.get("message", ""),
+                history=state.get("history", []),
+            )
+        )
+
+    try:
+        decision: ExerciseSelectionDecision = await classifier_llm.generate_structured(
+            prompt=_build_exercise_selection_prompt(state),
+            response_schema=ExerciseSelectionDecision,
+            system_instruction=(
+                "You are a strict classifier that selects among supported "
+                "guided exercises. Do not write user-facing text. Return a "
+                "structured selection only."
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "Guided exercise selection classifier failed; offering choices.",
+            exc_info=True,
+        )
+        return ExerciseSelectionResult(
+            exercise_type=None, options=_DEFAULT_EXERCISE_OPTIONS
+        )
+
+    if (
+        decision.selection_kind == "selected"
+        and decision.exercise_type in _EXERCISE_REGISTRY
+        and decision.confidence != "low"
+    ):
+        return ExerciseSelectionResult(exercise_type=decision.exercise_type)
+
+    options = _valid_exercise_options(tuple(decision.option_types))
+    if len(options) < 2:
+        options = _DEFAULT_EXERCISE_OPTIONS
+    return ExerciseSelectionResult(exercise_type=None, options=options)
+
+
 # Deterministic fallback strings used when no LLM client is available.
 _FALLBACK_HOLD = "Take your time — even one counts. There's no rush."
 _FALLBACK_STUCK_REPHRASE = (
@@ -1328,8 +1752,9 @@ async def run_guided_exercise_response_node(
 
     1. **Starting an exercise** — ``exercise_state.exercise_type`` is None
        (no exercise running). The dispatcher's LLM classifier picked
-       this mode based on the user's current message. The node starts
-       the default exercise (5-4-3-2-1 grounding) at step 0.
+       this mode based on the user's current message. The node selects
+       the exercise with an LLM-primary classifier; ambiguous selections
+       produce a short option list instead of defaulting to grounding.
 
     2. **Continuing an exercise** — ``exercise_state.exercise_type`` is set
        from a prior turn. The dispatcher routed here with active exercise
@@ -1340,9 +1765,9 @@ async def run_guided_exercise_response_node(
     return an exercise-state delta when the exercise state changes (start,
     advance, clear).
 
-    Falls back to deterministic templates when no LLM client is
-    available. The fallbacks are comprehensive enough to drive the
-    full 5-4-3-2-1 exercise end-to-end with no LLM — not just start.
+    Falls back to deterministic templates and regex exercise selection when no
+    LLM client is available. The fallbacks are comprehensive enough to drive
+    the full 5-4-3-2-1 exercise end-to-end with no LLM — not just start.
 
     Args:
         state: Current graph state.
@@ -1352,7 +1777,8 @@ async def run_guided_exercise_response_node(
         Response and state delta for the exercise turn.
     """
 
-    llm_client = runtime.context.response_llm or runtime.context.llm_client
+    control_llm = runtime.context.llm_client
+    response_llm = runtime.context.response_llm or control_llm
     memory_store = runtime.context.memory_store
     memory_mode = runtime.context.memory_mode
     exercise_state = state.get("exercise_state", {})
@@ -1361,7 +1787,11 @@ async def run_guided_exercise_response_node(
 
     # ── Entry condition 1: starting a new exercise ─────────────────
     if exercise_type is None or step_index is None:
-        return _handle_start(state, llm_client)
+        return await _handle_start(
+            state,
+            classifier_llm=control_llm,
+            llm_client=response_llm,
+        )
 
     # ── Entry condition 2: continuing an existing exercise ─────────
     current_step = _get_current_step(exercise_type, step_index)
@@ -1377,13 +1807,18 @@ async def run_guided_exercise_response_node(
             step_index,
         )
         cleared = _clear_exercise_delta(state)
-        start_delta = _handle_start(state, llm_client)
+        start_delta = await _handle_start(
+            state,
+            classifier_llm=control_llm,
+            llm_client=response_llm,
+        )
         # Merge: the start delta's exercise-state update wins over the clear
         return {**cleared, **start_delta}
 
     return await _handle_continue(
         state=state,
-        llm_client=llm_client,
+        classifier_llm=control_llm or response_llm,
+        llm_client=response_llm,
         memory_store=memory_store,
         memory_mode=memory_mode,
         exercise_type=exercise_type,
@@ -1392,25 +1827,72 @@ async def run_guided_exercise_response_node(
     )
 
 
-def _handle_start(
+def _build_selection_options_delta(options: tuple[str, ...]) -> dict[str, Any]:
+    """Build a response that asks the user to choose an exercise.
+
+    Args:
+        options: Exercise identifiers to offer.
+
+    Returns:
+        Response and pending-selection state delta.
+    """
+
+    valid_options = _valid_exercise_options(options)
+    if len(valid_options) < 2:
+        valid_options = _DEFAULT_EXERCISE_OPTIONS
+    option_lines = "\n".join(
+        f"{index}. {_EXERCISE_DISPLAY_NAMES[exercise_type]}"
+        for index, exercise_type in enumerate(valid_options, start=1)
+    )
+    response_text = (
+        "A few options could fit here. Which would you like to try?\n"
+        f"{option_lines}\n"
+        "You can reply with a number or the exercise name."
+    )
+    return {
+        "exercise_state": {
+            "exercise_type": None,
+            "exercise_step": None,
+            "exercise_modality": None,
+            "exercise_selection_options": list(valid_options),
+        },
+        "response_kind": ResponseCategory.THERAPEUTIC,
+        "response_text": response_text,
+        "response_style": "guided_exercise",
+        "response_style_source": "therapeutic_dispatch",
+        "response_style_type": ModeType.THERAPEUTIC,
+    }
+
+
+async def _handle_start(
     state: AgentState,
+    *,
+    classifier_llm: Any,  # BaseLLMClient | None
     llm_client: Any,  # BaseLLMClient | None, but Any avoids an import
 ) -> dict[str, Any]:
     """Start a new exercise at step 0.
 
-    Selects the exercise based on keywords in the user's message.
-    Falls back to 5-4-3-2-1 grounding when no keyword matches.
+    Selects the exercise with an LLM-primary classifier. If the classifier is
+    uncertain, the node offers a few choices instead of silently defaulting to
+    grounding. Regex selection remains the no-LLM fallback.
 
     Args:
         state: Current graph state.
+        classifier_llm: Control-plane LLM client, if configured.
         llm_client: Response LLM client, currently unused for start turns.
 
     Returns:
         Response and exercise-state delta for the first step.
     """
 
-    message = state.get("message", "")
-    selected = _select_exercise(message, history=state.get("history", []))
+    selection = await _select_exercise_llm_primary(
+        state,
+        classifier_llm=classifier_llm,
+    )
+    if selection.exercise_type is None:
+        return _build_selection_options_delta(selection.options)
+
+    selected = selection.exercise_type
     steps = _EXERCISE_REGISTRY[selected]
     response_text = steps[0].prompt_fallback
     # The start step uses the deterministic fallback directly —
@@ -1433,6 +1915,7 @@ def _handle_start(
 async def _handle_continue(
     *,
     state: AgentState,
+    classifier_llm: Any,  # BaseLLMClient | None
     llm_client: Any,  # BaseLLMClient | None
     memory_store: Any,  # MemoryStore | None
     memory_mode: Any,  # MemoryMode
@@ -1450,6 +1933,8 @@ async def _handle_continue(
 
     Args:
         state: Current graph state.
+        classifier_llm: Control-plane LLM client used for step-state
+            classification, if configured.
         llm_client: Response LLM client, if configured.
         memory_store: Memory store used for completion facts, if configured.
         memory_mode: Current memory mode.
@@ -1461,8 +1946,13 @@ async def _handle_continue(
         Response and state delta for the continuation turn.
     """
 
-    message = state.get("message", "")
-    step_state = _classify_step_state(message, current_step)
+    step_state = await _classify_step_state_llm_primary(
+        state=state,
+        classifier_llm=classifier_llm,
+        exercise_type=exercise_type,
+        step_index=step_index,
+        current_step=current_step,
+    )
 
     logger.debug(
         "guided_exercise continue: exercise_type=%s step_index=%d step_state=%s",

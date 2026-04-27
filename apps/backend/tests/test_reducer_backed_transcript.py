@@ -17,6 +17,7 @@ verify that:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 import operator
 import typing
 from typing import Annotated, Any, NotRequired, get_type_hints
@@ -24,6 +25,7 @@ from typing import Annotated, Any, NotRequired, get_type_hints
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.models import DispatchDecision
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.graph import build_agent_workflow, build_initial_state
@@ -32,6 +34,7 @@ from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.persistence import PersistentAgentRuntime
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
+from services.llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ── Reducer annotation tests ───────────────────────────────────────────────
@@ -205,6 +208,66 @@ class _FakeRuntime:
         )
 
 
+class _GuidedExerciseLLM(BaseLLMClient):
+    """Fake control LLM that routes safe therapeutic turns to guided exercise."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "fake text"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "Good. Now remind yourself that you're not alone in this."
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        if response_schema.__name__ == "CrisisAssessmentSchema":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                level=0,
+                confidence="high",
+                reason="safe therapeutic support request",
+                needs_crisis_response=False,
+                needs_clarification=False,
+            )
+        if response_schema.__name__ == "ExerciseStepDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                step_state="complete",
+                reasoning="The user confirmed completing the previous step.",
+                confidence="high",
+            )
+        if response_schema.__name__ == "ExerciseSelectionDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                selection_kind="selected",
+                exercise_type="self_compassion_break",
+                option_types=[],
+                reasoning="Self-critical language maps to self-compassion.",
+                confidence="high",
+            )
+        return typing.cast(
+            StructuredResponseT,
+            DispatchDecision(
+                response_style="guided_exercise",
+                therapeutic_approach="act",
+                reasoning="guided exercise requested or active",
+                confidence="high",
+            ),
+        )
+
+
 @pytest.mark.asyncio
 async def test_finalize_returns_single_element_delta() -> None:
     """finalize_turn_node should return a 1-element list for transcript
@@ -342,6 +405,62 @@ async def test_exercise_state_persists_across_turns() -> None:
         assert session_progress2.get("turn_count", 0) >= 2, (
             f"turn_count should be >= 2, got {session_progress2.get('turn_count')}"
         )
+
+
+@pytest.mark.asyncio
+async def test_self_compassion_exercise_continues_across_turns() -> None:
+    """A self-compassion exercise should not restart as generic grounding.
+
+    This covers the real user-facing streaming path: turn 1 starts a
+    self-compassion break, then a short confirmation on turn 2 should advance
+    that same exercise instead of falling back to the default 5-4-3-2-1
+    grounding exercise.
+    """
+
+    llm = _GuidedExerciseLLM()
+    async with PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+        default_llm_client=llm,
+    ) as runtime:
+        events1 = [
+            event
+            async for event in runtime.run_turn_stream(
+                thread_id="t-self-compassion",
+                message=(
+                    "I'm being really hard on myself right now. "
+                    "Is there something we can do about that?"
+                ),
+                llm_client=llm,
+            )
+        ]
+
+        state1 = await runtime.get_state("t-self-compassion")
+        assert state1 is not None
+        exercise_state1 = state1.get("exercise_state", {})
+        assert exercise_state1.get("exercise_type") == "self_compassion_break"
+        assert exercise_state1.get("exercise_step") == 0
+
+        events2 = [
+            event
+            async for event in runtime.run_turn_stream(
+                thread_id="t-self-compassion",
+                message="done that",
+                llm_client=llm,
+            )
+        ]
+
+        state2 = await runtime.get_state("t-self-compassion")
+
+    done1 = next(event for event in events1 if event.type == "done")
+    done2 = next(event for event in events2 if event.type == "done")
+    assert done1.output.response_style == "guided_exercise"
+    assert state2 is not None
+    exercise_state2 = state2.get("exercise_state", {})
+    assert exercise_state2.get("exercise_type") == "self_compassion_break"
+    assert exercise_state2.get("exercise_step") == 1
+    assert "not alone" in done2.output.response_text.lower()
+    assert "5-4-3-2-1" not in done2.output.response_text
 
 
 @pytest.mark.asyncio

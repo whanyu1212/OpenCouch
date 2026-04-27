@@ -1,18 +1,18 @@
-"""Runner for guided-exercise selection evaluation.
+"""Runner for memory-control routing evaluation.
 
-Grades the production guided-exercise start path on a hand-curated dataset of
-message -> selected exercise / option-list outcomes.
+Grades the text memory-control gate on a hand-curated dataset of message ->
+memory-control / pass-through outcomes.
 
 Usage:
-    # Regex / pending-choice fallback path only. LLM-tier misses are reported
-    # but do not fail the process.
-    python eval/runners/exercise_selection_eval.py --mode deterministic
+    # Hard deterministic routes only. LLM-tier misses are reported but do not
+    # fail the process.
+    python eval/runners/memory_control_routing_eval.py --mode deterministic
 
-    # LLM-primary path via the configured provider.
-    python eval/runners/exercise_selection_eval.py --mode hybrid
+    # LLM-primary middle path via the configured provider.
+    python eval/runners/memory_control_routing_eval.py --mode hybrid
 
     # Auto-detect: hybrid if a provider is configured, else deterministic.
-    python eval/runners/exercise_selection_eval.py --mode auto  # default
+    python eval/runners/memory_control_routing_eval.py --mode auto  # default
 """
 
 # ruff: noqa: E402
@@ -33,22 +33,22 @@ if str(BACKEND_ROOT) not in sys.path:
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
+from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 from core.config import create_configured_llm_client
 from services.llm.base import BaseLLMClient
 
 DATASET_PATH = (
-    Path(__file__).resolve().parents[1] / "datasets" / "exercise_selection_v1.json"
+    Path(__file__).resolve().parents[1] / "datasets" / "memory_control_routing_v1.json"
 )
 
 EvalMode = Literal["auto", "deterministic", "hybrid"]
-SelectionTier = Literal["deterministic", "llm"]
+RoutingTier = Literal["deterministic", "llm"]
 
 
 class _MockRuntime:
-    """Minimal runtime that exposes the guided-exercise node dependencies."""
+    """Minimal runtime that exposes the memory-control gate dependencies."""
 
     def __init__(self, *, llm_client: BaseLLMClient | None) -> None:
         self.context = WorkflowContext(
@@ -67,7 +67,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(
-        description="Run guided-exercise selection evaluation."
+        description="Run memory-control routing evaluation."
     )
     parser.add_argument(
         "--mode",
@@ -129,58 +129,82 @@ def _resolve_llm_client(mode: EvalMode) -> tuple[BaseLLMClient | None, str]:
 
 
 def _build_state(case: dict[str, Any]) -> AgentState:
-    """Build the partial AgentState read by the exercise node.
+    """Build the partial AgentState read by the memory-control gate.
 
     Args:
         case: Dataset case.
 
     Returns:
-        Cast AgentState dictionary for the node.
+        Cast AgentState dictionary for the gate.
     """
 
     state: dict[str, Any] = {
         "message": case["message"],
         "history": case.get("history", []),
-        "session_progress": {"turn_count": 1},
-        "exercise_state": case.get("exercise_state", {}),
+        "working_memory": case.get("working_memory", []),
+        "memory_control": case.get("memory_control", {}),
     }
     return cast(AgentState, state)
 
 
-def _actual_outcome(delta: dict[str, Any]) -> tuple[str, str | None, list[str]]:
-    """Extract the selection outcome from a guided-exercise node delta.
+def _actual_outcome(command: Any) -> tuple[str, dict[str, Any]]:
+    """Extract the routing outcome and memory-control action.
 
     Args:
-        delta: State delta returned by the guided-exercise node.
+        command: Command returned by the memory-control gate.
 
     Returns:
-        Tuple of outcome kind, selected exercise id, and offered option ids.
+        Tuple of outcome label and action dictionary.
     """
 
-    exercise_state = delta.get("exercise_state", {}) or {}
-    selected = exercise_state.get("exercise_type")
-    options = list(exercise_state.get("exercise_selection_options") or [])
-    if selected is not None:
-        return "selected", str(selected), options
-    if len(options) >= 2:
-        return "options", None, options
-    return "unknown", None, options
+    update = cast(dict[str, Any], command.update or {})
+    if command.goto == "memory_control_node":
+        return "memory_control", dict(update.get("memory_control_action", {}) or {})
+    if command.goto == "grounded_lookup_gate_node":
+        return "pass_through", {}
+    return f"unknown({command.goto})", {}
+
+
+def _check_text_contains(
+    value: str,
+    *,
+    required: list[str],
+    include_any: list[str],
+) -> str | None:
+    """Return failure detail when text misses required terms.
+
+    Args:
+        value: Text to inspect.
+        required: Terms that must all be present.
+        include_any: Terms where at least one must be present.
+
+    Returns:
+        Failure detail, or None when the text satisfies expectations.
+    """
+
+    lowered = value.lower()
+    missing = [term for term in required if term.lower() not in lowered]
+    if missing:
+        return f"missing required term(s): {missing!r}; got {value!r}"
+
+    if include_any and not any(term.lower() in lowered for term in include_any):
+        return f"missing any of {include_any!r}; got {value!r}"
+
+    return None
 
 
 def _evaluate_expected(
     case: dict[str, Any],
     *,
     outcome: str,
-    selected: str | None,
-    options: list[str],
+    action: dict[str, Any],
 ) -> str | None:
     """Return a failure detail if the actual outcome misses expectations.
 
     Args:
         case: Dataset case.
-        outcome: Actual outcome kind.
-        selected: Actual selected exercise id, if any.
-        options: Actual offered option ids, if any.
+        outcome: Actual outcome label.
+        action: Actual memory-control action.
 
     Returns:
         Failure detail, or None when the case passes.
@@ -190,25 +214,44 @@ def _evaluate_expected(
     if outcome != expected_outcome:
         return f"got outcome={outcome}, expected {expected_outcome}"
 
-    if expected_outcome == "selected":
-        expected_exercise = case["expected_exercise"]
-        if selected != expected_exercise:
-            return f"got exercise={selected}, expected {expected_exercise}"
+    if expected_outcome != "memory_control":
         return None
 
-    required_options = case.get("expected_options_include") or []
-    missing = [option for option in required_options if option not in options]
-    if missing:
-        return f"options missing required id(s): {missing!r}; got {options!r}"
+    expected_action_type = case["expected_action_type"]
+    if action.get("type") != expected_action_type:
+        return f"got action={action.get('type')}, expected {expected_action_type}"
 
-    include_any = case.get("expected_options_include_any") or []
-    if include_any and not any(option in options for option in include_any):
-        return f"options missing any of {include_any!r}; got {options!r}"
+    if "expected_enabled" in case and action.get("enabled") != case["expected_enabled"]:
+        return (
+            f"got enabled={action.get('enabled')}, expected {case['expected_enabled']}"
+        )
 
-    excluded = case.get("expected_options_exclude") or []
-    present_excluded = [option for option in excluded if option in options]
-    if present_excluded:
-        return f"options included excluded id(s): {present_excluded!r}"
+    if (
+        "expected_target_kind" in case
+        and action.get("target_kind") != case["expected_target_kind"]
+    ):
+        return (
+            f"got target_kind={action.get('target_kind')}, "
+            f"expected {case['expected_target_kind']}"
+        )
+
+    if expected_action_type == "forget_by_query":
+        failure = _check_text_contains(
+            str(action.get("query", "")),
+            required=case.get("expected_query_contains") or [],
+            include_any=case.get("expected_query_contains_any") or [],
+        )
+        if failure is not None:
+            return f"query {failure}"
+
+    if expected_action_type == "save_preference":
+        failure = _check_text_contains(
+            str(action.get("rule_text", "")),
+            required=case.get("expected_rule_contains") or [],
+            include_any=case.get("expected_rule_contains_any") or [],
+        )
+        if failure is not None:
+            return f"rule_text {failure}"
 
     return None
 
@@ -218,7 +261,7 @@ async def _evaluate_case(
     *,
     llm_client: BaseLLMClient | None,
 ) -> tuple[bool, str, str | None]:
-    """Run one case through the guided-exercise node.
+    """Run one case through the memory-control gate.
 
     Args:
         case: Dataset case.
@@ -230,22 +273,17 @@ async def _evaluate_case(
 
     runtime = _MockRuntime(llm_client=llm_client)
     state = _build_state(case)
-    delta = await run_guided_exercise_response_node(
+    command = await run_memory_control_gate_node(
         state,
         runtime,  # type: ignore[arg-type]
     )
-    outcome, selected, options = _actual_outcome(delta)
-    failure = _evaluate_expected(
-        case,
-        outcome=outcome,
-        selected=selected,
-        options=options,
-    )
+    outcome, action = _actual_outcome(command)
+    failure = _evaluate_expected(case, outcome=outcome, action=action)
     if failure is None:
         return True, outcome, None
 
     detail = (
-        f"FAIL [{case.get('selection_tier', '?')}] {case['id']}: {failure}. "
+        f"FAIL [{case.get('routing_tier', '?')}] {case['id']}: {failure}. "
         f"message={case['message']!r}"
     )
     return False, outcome, detail
@@ -271,12 +309,12 @@ async def _run(
     if case_id is not None:
         cases = [case for case in cases if case["id"] == case_id]
         if not cases:
-            print(f"No exercise selection eval case found for id={case_id!r}.")
+            print(f"No memory-control routing eval case found for id={case_id!r}.")
             return 1
 
     llm_client, resolved_mode = _resolve_llm_client(mode)
     print(
-        f"Running exercise selection eval in {resolved_mode} mode "
+        f"Running memory-control routing eval in {resolved_mode} mode "
         f"on {len(cases)} case(s) from {dataset_path.name}."
     )
     print()
@@ -288,7 +326,7 @@ async def _run(
     failures: list[str] = []
 
     for case in cases:
-        tier: SelectionTier = case.get("selection_tier", "deterministic")
+        tier: RoutingTier = case.get("routing_tier", "deterministic")
         if tier not in by_tier:
             by_tier[tier] = {"total": 0, "passed": 0}
         by_tier[tier]["total"] += 1
@@ -324,7 +362,7 @@ async def _run(
         if blocking_failed > 0:
             print()
             print(
-                f"{blocking_failed} deterministic-tier failure(s) — these should "
+                f"{blocking_failed} deterministic-tier failure(s) - these should "
                 "pass without an LLM client."
             )
             return 1
@@ -335,7 +373,7 @@ async def _run(
             print(
                 f"Note: {llm_tier['total'] - llm_tier['passed']} llm-tier case(s) "
                 "did not pass in deterministic mode. This is expected; run with "
-                "--mode hybrid to grade the LLM-primary selector."
+                "--mode hybrid to grade the LLM-primary memory-control classifier."
             )
         return 0
 
@@ -345,7 +383,7 @@ async def _run(
 
 
 def main() -> int:
-    """Run the exercise selection eval command.
+    """Run the memory-control routing eval command.
 
     Returns:
         Process exit code.

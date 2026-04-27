@@ -436,6 +436,53 @@ def _has_active_exercise(state: AgentState) -> bool:
     )
 
 
+def _has_pending_exercise_selection(state: AgentState) -> bool:
+    """Return whether the user has pending guided-exercise options.
+
+    Args:
+        state: The current agent state.
+
+    Returns:
+        ``True`` when the prior guided-exercise turn offered selectable options.
+    """
+
+    exercise_state = state.get("exercise_state", {}) or {}
+    return bool(exercise_state.get("exercise_selection_options"))
+
+
+def _looks_like_pending_exercise_choice(message: str) -> bool:
+    """Return whether a message looks like an exercise-option choice.
+
+    Args:
+        message: The current user message.
+
+    Returns:
+        ``True`` for short numeric/ordinal choices or explicit exercise names.
+    """
+
+    lowered = message.lower().strip()
+    if re.match(r"^(?:option\s*)?[1-9](?:[.)])?\s*$", lowered):
+        return True
+    return _matches_any(
+        lowered,
+        (
+            r"\b(?:one|two|three|first|second|third)\b",
+            r"\b(?:grounding|ground me|5-4-3-2-1)\b",
+            r"\b(?:breath|breathe|breathing|box breathing)\b",
+            r"\b(?:self.?compassion|compassion break|kinder to myself)\b",
+            r"\b(?:thought record|thought check|belief)\b",
+            r"\b(?:values|what matters|purpose|compass)\b",
+            r"\b(?:gratitude|grateful|thankful)\b",
+            r"\b(?:muscle|relaxation|pmr)\b",
+            r"\b(?:stop technique|s\.t\.o\.p)\b",
+            r"\b(?:improve|overwhelmed|too much)\b",
+            r"\b(?:defusion|leaves|let go)\b",
+            r"\b(?:behavioral experiment|test this belief)\b",
+            r"\b(?:continuum|all.or.nothing)\b",
+        ),
+    )
+
+
 def _active_exercise_modality(state: AgentState) -> str | None:
     """Return the pinned modality for an active exercise.
 
@@ -925,10 +972,12 @@ async def run_therapeutic_dispatch_node(
                 "exercise_type": None,
                 "exercise_step": None,
                 "exercise_modality": None,
+                "exercise_selection_options": None,
             },
         }
 
     exercise_active = _has_active_exercise(state)
+    exercise_selection_pending = _has_pending_exercise_selection(state)
 
     # Honor explicit exercise opt-outs without waiting for the LLM.
     if exercise_active and _matches_any(lowered, EXERCISE_EXIT_PATTERNS):
@@ -936,6 +985,14 @@ async def run_therapeutic_dispatch_node(
         return Command(
             update=_clear_active_exercise_update("none"),
             goto=SUPPORTIVE_NODE,
+        )
+
+    if exercise_selection_pending and _looks_like_pending_exercise_choice(message):
+        logger.debug("therapeutic_dispatch: pending exercise selection choice")
+        existing_modality = state.get("therapeutic_approach") or "none"
+        return Command(
+            update=_routing_update(existing_modality),
+            goto=GUIDED_EXERCISE_NODE,
         )
 
     if llm_client is not None:

@@ -81,7 +81,7 @@ from agent.memory.procedural_prompts import (
     build_procedural_writer_system_prompt,
     build_procedural_writer_user_prompt,
 )
-from agent.memory.write_policy import decide_procedural_candidate
+from agent.memory.write_policy import decide_procedural_candidate_llm_primary
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -235,7 +235,10 @@ async def run_extract_procedural_rules_node(
             session_id=state.get("session_id") or owner_id,
             turn_index=turn_index,
         )
-        decision = decide_procedural_candidate(candidate)
+        decision = await decide_procedural_candidate_llm_primary(
+            candidate,
+            llm_client=llm_client,
+        )
 
         if decision.action == "commit_now":
             immediate_candidates.append((candidate, decision))
@@ -283,7 +286,12 @@ async def run_extract_procedural_rules_node(
                 write_reason=decision.reason,
                 policy_version=decision.policy_version,
             )
-            upsert = await aupsert_procedural_rule(store, user_id=owner_id, rule=rule)
+            upsert = await aupsert_procedural_rule(
+                store,
+                user_id=owner_id,
+                rule=rule,
+                llm_client=llm_client,
+            )
             if upsert.action != "skipped":
                 written += 1
         except Exception:

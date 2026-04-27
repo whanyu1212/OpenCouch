@@ -1,0 +1,107 @@
+[
+  {
+    "id": "hard_yes_explicit_search_services",
+    "routing_tier": "deterministic",
+    "message": "Can you look up affordable counselling services in Singapore?",
+    "expected_outcome": "lookup",
+    "expected_query_contains": ["affordable counselling services", "Singapore"],
+    "notes": "Explicit look-up request should route without an LLM classifier call."
+  },
+  {
+    "id": "hard_yes_current_988_rules",
+    "routing_tier": "deterministic",
+    "message": "What are the current 988 rules outside the US?",
+    "expected_outcome": "lookup",
+    "expected_query_contains": ["current 988 rules"],
+    "notes": "Current-info question should route directly to grounded lookup."
+  },
+  {
+    "id": "hard_yes_official_eligibility",
+    "routing_tier": "deterministic",
+    "message": "Find official eligibility rules for FMLA mental health leave.",
+    "expected_outcome": "lookup",
+    "expected_query_contains": ["official eligibility", "FMLA"],
+    "notes": "Official eligibility request should route directly to grounded lookup."
+  },
+  {
+    "id": "hard_yes_check_numeric_service",
+    "routing_tier": "deterministic",
+    "message": "Can you check if 988 works outside the US?",
+    "expected_outcome": "lookup",
+    "expected_query_contains": ["988", "outside the US"],
+    "notes": "Check-if plus numeric service identifier remains a hard lookup."
+  },
+  {
+    "id": "hard_no_subjective_unreasonable",
+    "routing_tier": "deterministic",
+    "message": "Can you check if I'm being unreasonable?",
+    "expected_outcome": "pass_through",
+    "notes": "Subjective reassurance should not be searched."
+  },
+  {
+    "id": "hard_no_normal_feeling",
+    "routing_tier": "deterministic",
+    "message": "Is it normal to feel guilty after setting a boundary?",
+    "expected_outcome": "pass_through",
+    "notes": "Therapeutic normalization should stay in the support path."
+  },
+  {
+    "id": "hard_no_bad_person",
+    "routing_tier": "deterministic",
+    "message": "Am I a bad person for needing space from them?",
+    "expected_outcome": "pass_through",
+    "notes": "Self-judgment question is subjective, not factual lookup."
+  },
+  {
+    "id": "hard_no_ordinary_support",
+    "routing_tier": "deterministic",
+    "message": "I'm overwhelmed about finding a therapist.",
+    "expected_outcome": "pass_through",
+    "notes": "Ordinary support request should not trigger lookup classification."
+  },
+  {
+    "id": "llm_positive_wearable_evidence",
+    "routing_tier": "llm",
+    "message": "Can you check whether this wearable is evidence-based for anxiety?",
+    "expected_outcome": "lookup",
+    "expected_query_contains_any": ["wearable", "evidence", "anxiety"],
+    "notes": "Ambiguous check-whether request should route via LLM classifier."
+  },
+  {
+    "id": "llm_positive_grounding_research",
+    "routing_tier": "llm",
+    "message": "Is grounding actually proven to work for panic?",
+    "expected_outcome": "lookup",
+    "expected_query_contains_any": ["grounding", "panic", "proven"],
+    "notes": "Evidence question should route to grounded lookup when classifier is available."
+  },
+  {
+    "id": "llm_positive_recent_research_stress_wearables",
+    "routing_tier": "llm",
+    "message": "What does recent research say about stress wearables?",
+    "expected_outcome": "lookup",
+    "expected_query_contains_any": ["recent research", "stress", "wearables"],
+    "notes": "Research request should route through the LLM middle path."
+  },
+  {
+    "id": "llm_negative_therapist_right",
+    "routing_tier": "llm",
+    "message": "Can you verify whether my therapist is right about me avoiding conflict?",
+    "expected_outcome": "pass_through",
+    "notes": "Verification wording is subjective/process-oriented here."
+  },
+  {
+    "id": "llm_negative_advice_right_for_me",
+    "routing_tier": "llm",
+    "message": "Is this advice right for me?",
+    "expected_outcome": "pass_through",
+    "notes": "Personal fit should stay therapeutic unless external facts are requested."
+  },
+  {
+    "id": "llm_negative_broken_meaning",
+    "routing_tier": "llm",
+    "message": "Does this mean I'm broken?",
+    "expected_outcome": "pass_through",
+    "notes": "Meaning/self-worth question should not be searched."
+  }
+]

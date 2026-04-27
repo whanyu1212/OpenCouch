@@ -8,19 +8,25 @@ into a full consolidation system. They answer two narrow questions:
 2. Should a new procedural rule append, replace an older weaker rule,
    or be skipped as a duplicate/conflict?
 
-The heuristics are deliberately conservative. They only act when the
-signals are strong enough to avoid silently deleting valid parallel
-facts or preferences.
+The async helpers use LLM-primary classifiers with conservative
+deterministic fallback. They only act when the signals are strong enough
+to avoid silently deleting valid parallel facts or preferences.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from agent.memory.models import MemoryWrite, ProceduralRule, SemanticFact
 from agent.memory.store import StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
+from services.llm.base import BaseLLMClient
+
+logger = logging.getLogger(__name__)
 
 _SEMANTIC_CORRECTION_MARKERS = (
     "actually",
@@ -60,6 +66,24 @@ class ProceduralReconciliationPlan:
 
     action: ProceduralRuleAction
     replace_indexes: list[int] = field(default_factory=list)
+
+
+class SemanticReconciliationDecision(BaseModel):
+    """Structured output for semantic memory reconciliation."""
+
+    action: Literal["bump", "supersede", "coexist"]
+    record_indexes: list[int] = Field(default_factory=list)
+    reason: str = Field(min_length=1, max_length=240)
+    confidence: Literal["low", "medium", "high"]
+
+
+class ProceduralReconciliationDecision(BaseModel):
+    """Structured output for procedural rule reconciliation."""
+
+    action: ProceduralRuleAction
+    replace_indexes: list[int] = Field(default_factory=list)
+    reason: str = Field(min_length=1, max_length=240)
+    confidence: Literal["low", "medium", "high"]
 
 
 def is_active_semantic_record_value(value: dict[str, Any]) -> bool:
@@ -295,6 +319,162 @@ def plan_semantic_write(
     return plan
 
 
+def _semantic_reconciliation_prompt(
+    fact: SemanticFact,
+    collision_records: list[StoreRecord],
+) -> str:
+    """Build the LLM prompt for semantic reconciliation.
+
+    Args:
+        fact (SemanticFact): New semantic fact.
+        collision_records (list[StoreRecord]): Active same-slot records.
+
+    Returns:
+        str: Prompt for structured reconciliation.
+    """
+
+    record_lines = []
+    for index, record in enumerate(collision_records):
+        value = record.value
+        object_value = value.get("object", {}) or {}
+        record_lines.append(
+            f"{index}. key={record.key!r}; "
+            f"object={object_value.get('type')}:{object_value.get('identifier')}; "
+            f"evidence={value.get('evidence_quote')!r}"
+        )
+    records = "\n".join(record_lines) or "(none)"
+    return (
+        "Decide how to reconcile a new semantic memory with existing active "
+        "records in the same conceptual slot.\n\n"
+        "Actions:\n"
+        "- bump: the new fact is essentially the same memory; refresh one "
+        "existing record and do not write a new one.\n"
+        "- supersede: the new fact corrects or replaces selected older records; "
+        "write the new fact and mark selected records dormant.\n"
+        "- coexist: the new fact can validly live alongside the old records.\n\n"
+        "Be conservative. Do not supersede unless the new evidence clearly "
+        "corrects, replaces, or makes the old record stale.\n\n"
+        f"New fact: category={fact.category}; predicate={fact.predicate}; "
+        f"object={fact.object.type}:{fact.object.identifier}; "
+        f"evidence={fact.evidence_quote!r}\n\n"
+        "Existing records:\n"
+        f"{records}"
+    )
+
+
+def _procedural_reconciliation_prompt(
+    new_rule: ProceduralRule,
+    existing_rules: list[ProceduralRule],
+) -> str:
+    """Build the LLM prompt for procedural rule reconciliation.
+
+    Args:
+        new_rule (ProceduralRule): New procedural rule.
+        existing_rules (list[ProceduralRule]): Active existing rules.
+
+    Returns:
+        str: Prompt for structured reconciliation.
+    """
+
+    rule_lines = []
+    for index, rule in enumerate(existing_rules):
+        rule_lines.append(
+            f"{index}. id={rule.id!r}; rule={rule.rule!r}; evidence={rule.evidence!r}"
+        )
+    rules = "\n".join(rule_lines) or "(none)"
+    return (
+        "Decide how to reconcile a new procedural preference rule with the "
+        "user's active procedural profile.\n\n"
+        "Actions:\n"
+        "- append: the new rule is distinct and should be added.\n"
+        "- replace: the new rule is a clearer, more specific, or conflicting "
+        "replacement for selected existing rules.\n"
+        "- skip: the new rule duplicates existing guidance or is weaker than "
+        "what is already stored.\n\n"
+        "Be conservative about replace. Only replace when selected existing "
+        "rules are genuinely stale, weaker, or contradictory.\n\n"
+        f"New rule: id={new_rule.id!r}; rule={new_rule.rule!r}; "
+        f"evidence={new_rule.evidence!r}\n\n"
+        "Existing active rules:\n"
+        f"{rules}"
+    )
+
+
+def _reconciliation_system_prompt() -> str:
+    """Return the common system prompt for reconciliation classifiers.
+
+    Returns:
+        str: System instruction for structured reconciliation classification.
+    """
+
+    return (
+        "You are a strict memory reconciliation classifier. Return only the "
+        "structured decision. You do not write user-facing text."
+    )
+
+
+async def plan_semantic_write_llm_primary(
+    fact: SemanticFact,
+    existing_records: list[StoreRecord],
+    *,
+    llm_client: BaseLLMClient | None,
+) -> SemanticReconciliationPlan:
+    """Return semantic reconciliation using an LLM primary path.
+
+    Args:
+        fact (SemanticFact): New semantic fact to reconcile.
+        existing_records (list[StoreRecord]): Existing semantic records.
+        llm_client (BaseLLMClient | None): Optional classifier client.
+
+    Returns:
+        SemanticReconciliationPlan: Final reconciliation plan.
+    """
+
+    deterministic = plan_semantic_write(fact, existing_records)
+    collision_records = filter_semantic_collision_candidates(fact, existing_records)
+    if not collision_records or llm_client is None:
+        return deterministic
+    if deterministic.bump_record is not None:
+        return deterministic
+
+    try:
+        decision: SemanticReconciliationDecision = await llm_client.generate_structured(
+            prompt=_semantic_reconciliation_prompt(fact, collision_records),
+            response_schema=SemanticReconciliationDecision,
+            system_instruction=_reconciliation_system_prompt(),
+        )
+    except Exception:
+        logger.warning(
+            "Semantic reconciliation LLM classifier failed; using deterministic fallback.",
+            exc_info=True,
+        )
+        return deterministic
+
+    if decision.confidence == "low" or decision.action == "coexist":
+        return SemanticReconciliationPlan()
+
+    valid_indexes = [
+        index
+        for index in sorted(set(decision.record_indexes))
+        if 0 <= index < len(collision_records)
+    ]
+    if decision.action == "bump":
+        if len(valid_indexes) != 1:
+            return deterministic
+        return SemanticReconciliationPlan(
+            bump_record=collision_records[valid_indexes[0]]
+        )
+
+    if decision.action == "supersede":
+        if not valid_indexes:
+            return deterministic
+        return SemanticReconciliationPlan(
+            supersede_records=[collision_records[index] for index in valid_indexes]
+        )
+
+    return deterministic
+
+
 def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
     """Return the coarse polarity of a procedural preference.
 
@@ -393,3 +573,56 @@ def plan_procedural_rule_write(
             replace_indexes=sorted(set(replace_indexes)),
         )
     return ProceduralReconciliationPlan(action="append")
+
+
+async def plan_procedural_rule_write_llm_primary(
+    new_rule: ProceduralRule,
+    existing_rules: list[ProceduralRule],
+    *,
+    llm_client: BaseLLMClient | None,
+) -> ProceduralReconciliationPlan:
+    """Return procedural reconciliation using an LLM primary path.
+
+    Args:
+        new_rule (ProceduralRule): New procedural rule to reconcile.
+        existing_rules (list[ProceduralRule]): Existing procedural rules.
+        llm_client (BaseLLMClient | None): Optional classifier client.
+
+    Returns:
+        ProceduralReconciliationPlan: Final reconciliation plan.
+    """
+
+    deterministic = plan_procedural_rule_write(new_rule, existing_rules)
+    if not existing_rules or llm_client is None:
+        return deterministic
+
+    try:
+        decision: ProceduralReconciliationDecision = (
+            await llm_client.generate_structured(
+                prompt=_procedural_reconciliation_prompt(new_rule, existing_rules),
+                response_schema=ProceduralReconciliationDecision,
+                system_instruction=_reconciliation_system_prompt(),
+            )
+        )
+    except Exception:
+        logger.warning(
+            "Procedural reconciliation LLM classifier failed; using deterministic fallback.",
+            exc_info=True,
+        )
+        return deterministic
+
+    if decision.confidence == "low":
+        return deterministic
+    if decision.action == "append":
+        return ProceduralReconciliationPlan(action="append")
+    if decision.action == "skip":
+        return ProceduralReconciliationPlan(action="skip")
+
+    valid_indexes = [
+        index
+        for index in sorted(set(decision.replace_indexes))
+        if 0 <= index < len(existing_rules)
+    ]
+    if not valid_indexes:
+        return deterministic
+    return ProceduralReconciliationPlan(action="replace", replace_indexes=valid_indexes)

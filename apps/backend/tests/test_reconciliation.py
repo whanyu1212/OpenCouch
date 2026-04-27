@@ -2,15 +2,58 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
+import pytest
+
 from agent.memory.models import EntityRef, SemanticFact
 from agent.memory.procedural import build_procedural_rule
 from agent.memory.reconciliation import (
     filter_active_semantic_records,
     is_active_semantic_record_value,
+    plan_procedural_rule_write_llm_primary,
     plan_procedural_rule_write,
+    plan_semantic_write_llm_primary,
     plan_semantic_write,
 )
 from agent.memory.store import StoreRecord
+from services.llm.base import BaseLLMClient, StructuredResponseT
+
+
+class _FakeReconciliationLLM(BaseLLMClient):
+    """Fake structured client for reconciliation classifier tests."""
+
+    def __init__(self, decision: dict[str, Any]) -> None:
+        self.decision = decision
+        self.structured_calls = 0
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "unused"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls += 1
+        return cast(StructuredResponseT, response_schema(**self.decision))
 
 
 def _semantic_fact(
@@ -162,5 +205,75 @@ def test_procedural_rule_replaces_conflicting_old_rule() -> None:
 
     plan = plan_procedural_rule_write(new_rule, [existing])
 
+    assert plan.action == "replace"
+    assert plan.replace_indexes == [0]
+
+
+@pytest.mark.asyncio
+async def test_llm_semantic_reconciliation_can_supersede_without_marker() -> None:
+    existing = _store_record(
+        _semantic_fact(
+            fact_id="fact-old",
+            object_identifier="sister moved out",
+            evidence_quote="My sister moved out last month.",
+        )
+    )
+    new_fact = _semantic_fact(
+        fact_id="fact-new",
+        object_identifier="sister moved back in",
+        evidence_quote="My sister moved back in this week.",
+    )
+    new_fact.category = "context"  # type: ignore[assignment]
+    new_fact.predicate = "EXPERIENCED"  # type: ignore[assignment]
+    new_fact.object.type = "Event"
+    existing.value["category"] = "context"
+    existing.value["predicate"] = "EXPERIENCED"
+    existing.value["object"]["type"] = "Event"
+    llm = _FakeReconciliationLLM(
+        {
+            "action": "supersede",
+            "record_indexes": [0],
+            "reason": "new living situation replaces the older one",
+            "confidence": "high",
+        }
+    )
+
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=llm,
+    )
+
+    assert llm.structured_calls == 1
+    assert plan.bump_record is None
+    assert plan.supersede_records == [existing]
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_reconciliation_can_replace_weaker_rule() -> None:
+    existing = build_procedural_rule(
+        rule_text="Use a gentle tone.",
+        evidence=["Please be gentle."],
+    )
+    new_rule = build_procedural_rule(
+        rule_text="Use a direct tone instead of a gentle one.",
+        evidence=["Be direct with me, not gentle."],
+    )
+    llm = _FakeReconciliationLLM(
+        {
+            "action": "replace",
+            "replace_indexes": [0],
+            "reason": "new rule explicitly replaces older tone preference",
+            "confidence": "high",
+        }
+    )
+
+    plan = await plan_procedural_rule_write_llm_primary(
+        new_rule,
+        [existing],
+        llm_client=llm,
+    )
+
+    assert llm.structured_calls == 1
     assert plan.action == "replace"
     assert plan.replace_indexes == [0]

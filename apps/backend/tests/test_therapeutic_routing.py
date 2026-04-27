@@ -494,6 +494,32 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
+    async def test_pending_exercise_selection_choice_routes_to_guided(self) -> None:
+        """A numbered reply to offered exercise options returns to the node."""
+
+        runtime = _MockRuntime(llm_client=None)
+        state: Any = {
+            "message": "2",
+            "history": [],
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
+                "exercise_type": None,
+                "exercise_step": None,
+                "exercise_selection_options": [
+                    "grounding_box_breathing",
+                    "self_compassion_break",
+                ],
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+
+    @pytest.mark.asyncio
     async def test_command_update_contains_modality(self) -> None:
         """The dispatcher's Command carries top-level ``therapeutic_approach``.
 

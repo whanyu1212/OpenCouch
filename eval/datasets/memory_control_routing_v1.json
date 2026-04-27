@@ -1,0 +1,91 @@
+[
+  {
+    "id": "hard_yes_list_saved_memory",
+    "routing_tier": "deterministic",
+    "message": "What do you remember about me?",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "list",
+    "notes": "Explicit memory listing should route without an LLM classifier call."
+  },
+  {
+    "id": "hard_yes_memory_status",
+    "routing_tier": "deterministic",
+    "message": "Is recall on?",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "status",
+    "notes": "Explicit recall status request should route directly."
+  },
+  {
+    "id": "hard_yes_disable_recall",
+    "routing_tier": "deterministic",
+    "message": "Don't bring up past sessions unless I ask.",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "set_recall",
+    "expected_enabled": false,
+    "notes": "Explicit recall opt-out remains deterministic."
+  },
+  {
+    "id": "hard_yes_forget_indexed_fact",
+    "routing_tier": "deterministic",
+    "message": "Delete memory #2.",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "forget_by_index",
+    "expected_target_kind": "fact",
+    "notes": "Indexed deletion command should route directly to confirmation flow."
+  },
+  {
+    "id": "hard_no_ordinary_remembering",
+    "routing_tier": "deterministic",
+    "message": "I keep remembering the argument from last night.",
+    "expected_outcome": "pass_through",
+    "notes": "Reflective use of remembering should not become memory control."
+  },
+  {
+    "id": "hard_no_memory_skill_support",
+    "routing_tier": "deterministic",
+    "message": "Help me remember to breathe before the meeting.",
+    "expected_outcome": "pass_through",
+    "notes": "A request for help with human memory should stay therapeutic."
+  },
+  {
+    "id": "llm_positive_stop_bringing_that_up",
+    "routing_tier": "llm",
+    "message": "Can you stop bringing that up unless I ask?",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "set_recall",
+    "expected_enabled": false,
+    "notes": "Ambiguous phrasing should route via the LLM classifier."
+  },
+  {
+    "id": "llm_positive_keep_response_preference",
+    "routing_tier": "llm",
+    "message": "Could you keep in mind that I prefer shorter replies?",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "save_preference",
+    "expected_rule_contains": ["short", "repl"],
+    "notes": "A natural preference-save request should not require exact regex wording."
+  },
+  {
+    "id": "llm_positive_forget_concrete_topic",
+    "routing_tier": "llm",
+    "message": "Please don't remember the thing I said about my ex.",
+    "expected_outcome": "memory_control",
+    "expected_action_type": "forget_by_query",
+    "expected_query_contains_any": ["ex", "thing"],
+    "notes": "Concrete forget request should enter the existing confirmation flow."
+  },
+  {
+    "id": "llm_negative_do_not_save_new_fact",
+    "routing_tier": "llm",
+    "message": "Can you remember that my cat is named Miso?",
+    "expected_outcome": "pass_through",
+    "notes": "New autobiographical facts should continue through normal extraction."
+  },
+  {
+    "id": "llm_negative_human_memory_help",
+    "routing_tier": "llm",
+    "message": "Can you help me remember to call my doctor tomorrow?",
+    "expected_outcome": "pass_through",
+    "notes": "Personal reminder or memory-skill requests are not assistant memory control."
+  }
+]
