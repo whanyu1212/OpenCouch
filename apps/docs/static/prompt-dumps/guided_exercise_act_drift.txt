@@ -1,11 +1,11 @@
-VARIANT: mode=guided_exercise, modality=act, state=exercise_modality_drift
+VARIANT: response_style=guided_exercise, approach=act, state=exercise_modality_drift
 SOURCE: trimmed excerpt from apps/backend/.store/prompt_dumps/guided_exercise__act__exercise_modality_drift.txt
 
-This variant illustrates the modality-pinning behavior. The
-exercise was started under the ACT modality. On a mid-exercise
-side-turn the dispatcher would normally re-pick a modality, but
-exercise_state.exercise_modality is pinned at "act" — so ACT
-knowledge stays loaded even when the user briefly steps out.
+This variant illustrates the approach-pinning behavior. The
+exercise was started under the ACT approach. On a mid-exercise
+side-turn the dispatcher would normally re-pick an approach, but
+exercise_state.exercise_modality stores the pinned value "act" — so
+ACT knowledge stays loaded even when the user briefly steps out.
 
 ===== SYSTEM PROMPT =====
 # OpenCouch Soul

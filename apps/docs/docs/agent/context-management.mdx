@@ -56,25 +56,25 @@ same arc never appears twice on a single turn.
 | `crisis` / `crisis_audit` | `crisis_gate_node` | Fresh each turn |
 | `response_style`, `therapeutic_approach` | Dispatcher | Fresh each turn |
 | `session_progress` | Checkpointer + `_merge_dicts` reducer | `turn_count` increments; other fields persist via merge |
-| `exercise_state` | `guided_exercise_node` + dispatcher, `_merge_dicts` | `exercise_modality` pinned at exercise start; preserved across mid-exercise side-turns |
+| `exercise_state` | `guided_exercise_node` + dispatcher, `_merge_dicts` | `exercise_modality` stores the approach pinned at exercise start; preserved across mid-exercise side-turns |
 
 ---
 
-## Exercise modality continuity
+## Exercise approach continuity
 
-A guided exercise that started under, say, the `act` modality should
-keep that modality even when the user pauses mid-exercise to ask
-something clarifying. The `exercise_modality` field on
-`exercise_state` is pinned at exercise start and the dispatcher
-preserves it whenever an active exercise dispatches to `clarifying`,
-`psychoeducation`, or back to `guided_exercise`. Only an explicit
-exit clears `exercise_modality` (alongside `exercise_type` and
-`exercise_step`).
+A guided exercise that started under, say, the `act` approach should
+keep that approach even when the user pauses mid-exercise to ask
+something clarifying. The legacy-named `exercise_modality` field on
+`exercise_state` stores the pinned approach at exercise start and the
+dispatcher preserves it whenever an active exercise dispatches to
+`clarifying`, `psychoeducation`, or back to `guided_exercise`. Only an
+explicit exit clears `exercise_modality` alongside `exercise_type` and
+`exercise_step`.
 
-This is enforced in `agent/therapeutic/dispatcher.py` —
-`_active_exercise_modality()` reads the pinned modality, and the
-dispatcher's mid-exercise branches reuse it instead of letting the
-LLM pick a fresh one.
+This is enforced in `agent/therapeutic/dispatch/guards.py` and the
+dispatcher fallback logic: `_active_exercise_modality()` reads the
+pinned approach, and mid-exercise branches reuse it instead of letting
+the LLM pick a fresh one.
 
 ---
 
@@ -92,10 +92,10 @@ all exist but the inference logic is not yet wired into any node.
 
 ---
 
-## Prompt injection by mode
+## Prompt injection by response style
 
-Not every mode sees the same context. Click a cell to see which
-context fields are injected into each mode's prompt.
+Not every response style sees the same context. Click a cell to see
+which context fields are injected into each response prompt.
 
 <PromptInjectionMatrix />
 

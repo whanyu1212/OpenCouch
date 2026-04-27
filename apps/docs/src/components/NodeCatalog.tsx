@@ -275,7 +275,7 @@ const CATEGORY_META: Record<
 > = {
   SAFETY: {
     label: 'Safety',
-    blurb: 'Cannot be bypassed by mode or modality.',
+    blurb: 'Cannot be bypassed by response style or therapeutic approach.',
     hue: 'safety',
   },
   MEMORY: {

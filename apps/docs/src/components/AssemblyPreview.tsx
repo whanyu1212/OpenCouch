@@ -16,8 +16,8 @@ import styles from './PromptVisuals.module.css';
 type LayerId =
   | 'preamble'
   | 'core'
-  | 'mode'
-  | 'modality'
+  | 'response'
+  | 'approach'
   | 'instructions'
   | 'rules'
   | 'recall'
@@ -33,7 +33,7 @@ interface LayerDef {
 
 // Match each line against the most specific layer first. The first hit wins.
 // Order matters: e.g. "# Privacy Policy Notes" must match the core layer
-// before any later "# X Mode" header could.
+// before any later response-style header could.
 const LAYER_DEFS: LayerDef[] = [
   {
     id: 'task',
@@ -58,14 +58,14 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     id: 'instructions',
-    label: 'Mode instructions',
+    label: 'Response instructions',
     dot: '#3d9990',
-    source: 'agent/therapeutic/prompts.py',
+    source: 'agent/therapeutic/prompting/instructions.py',
     match: (l) => /^You are in [A-Z_]+ mode\./.test(l),
   },
   {
-    id: 'modality',
-    label: 'Modality',
+    id: 'approach',
+    label: 'Approach',
     dot: '#2d7a74',
     source: 'agent/prompts/sources/modalities/*.md',
     match: (l) =>
@@ -74,8 +74,8 @@ const LAYER_DEFS: LayerDef[] = [
       ),
   },
   {
-    id: 'mode',
-    label: 'Mode knowledge',
+    id: 'response',
+    label: 'Response knowledge',
     dot: '#3d9990',
     source: 'agent/prompts/sources/response_modes/*.md',
     match: (l) =>
@@ -97,8 +97,8 @@ const LAYER_DEFS: LayerDef[] = [
 
 const LAYER_ORDER: LayerId[] = [
   'core',
-  'mode',
-  'modality',
+  'response',
+  'approach',
   'instructions',
   'rules',
   'recall',
@@ -122,8 +122,8 @@ const SCENARIOS: ScenarioMeta[] = [
     file: 'prompt-dumps/supportive_mi.txt',
     sub: 'response_style=supportive · approach=motivational_interviewing',
     blurb:
-      'The default therapeutic turn — soul + identity + boundaries + privacy + supportive mode + MI overlay + recall hint.',
-    expects: ['core', 'mode', 'modality', 'instructions', 'recall', 'task'],
+      'The default therapeutic turn — soul + identity + boundaries + privacy + supportive response style + MI overlay + recall hint.',
+    expects: ['core', 'response', 'approach', 'instructions', 'recall', 'task'],
   },
   {
     id: 'reflective_cbt_rules',
@@ -132,16 +132,16 @@ const SCENARIOS: ScenarioMeta[] = [
     sub: 'response_style=reflective · approach=cbt · procedural rules loaded',
     blurb:
       'Same skeleton, plus a "Style rules" block injected near the end of the system prompt when the user has saved procedural preferences.',
-    expects: ['core', 'mode', 'modality', 'instructions', 'rules', 'recall', 'task'],
+    expects: ['core', 'response', 'approach', 'instructions', 'rules', 'recall', 'task'],
   },
   {
     id: 'guided_exercise_act_drift',
-    label: 'Guided exercise · ACT (modality pinned)',
+    label: 'Guided exercise · ACT (approach pinned)',
     file: 'prompt-dumps/guided_exercise_act_drift.txt',
     sub: 'response_style=guided_exercise · approach=act · mid-exercise side-turn',
     blurb:
-      'Mid-exercise side-turn: the dispatcher could re-pick a modality, but exercise_state.exercise_modality is pinned at "act" so ACT framing stays loaded.',
-    expects: ['core', 'mode', 'modality', 'instructions', 'recall', 'task'],
+      'Mid-exercise side-turn: the dispatcher could re-pick an approach, but exercise_state.exercise_modality is pinned at "act" so ACT framing stays loaded.',
+    expects: ['core', 'response', 'approach', 'instructions', 'recall', 'task'],
   },
   {
     id: 'crisis_response',
@@ -149,8 +149,8 @@ const SCENARIOS: ScenarioMeta[] = [
     file: 'prompt-dumps/crisis_response.txt',
     sub: 'response_style=crisis_response · approach=pfa+dbt_skills',
     blurb:
-      'Crisis path uses a different layer set: core + crisis policy + crisis_response mode + PFA + DBT-skills. No procedural rules, no recall hint — by design.',
-    expects: ['core', 'mode', 'modality', 'instructions', 'task'],
+      'Crisis path uses a different layer set: core + crisis policy + crisis_response style + PFA + DBT-skills. No procedural rules, no recall hint — by design.',
+    expects: ['core', 'response', 'approach', 'instructions', 'task'],
   },
 ];
 

@@ -10,49 +10,65 @@ import TerminalWindow from '@site/src/components/TerminalWindow';
 ## Prerequisites
 
 - Python 3.12+
-- [uv](https://docs.astral.sh/uv/) for dependency management
-- A Gemini or OpenAI API key for LLM-backed modes (optional — the
-  CLI runs in deterministic mode without one)
+- [uv](https://docs.astral.sh/uv/) for backend dependency management
+- pnpm for the web and docs apps
+- A Gemini or OpenAI API key for LLM-backed runs
+
+Deterministic CLI mode works without external model keys.
 
 ## Install
 
 <TerminalWindow title="bash — install">
 {`git clone https://github.com/whanyu1212/OpenCouch.git
-cd OpenCouch/apps/backend
+cd OpenCouch
+pnpm install
+cd apps/backend
 uv sync`}
 </TerminalWindow>
 
-## Eval-driven development
+## Environment
 
-:::info For developers and contributors only
-End users do not need to configure this section — it powers internal observability and regression tracking during development.
-:::
+OpenCouch loads local environment files from the repo root and
+`apps/backend` (`.env`, then `.env.local`). Real model runs need at
+least one provider:
 
-To enable LangSmith tracing for local text runs, add the following to your `.env` before starting the CLI or API:
+<TerminalWindow title="env — text models">
+{`# Defaults to openai when unset.
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
 
-<TerminalWindow title="env — LangSmith tracing">
-{`LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=...
-LANGSMITH_PROJECT=opencouch-dev
-
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=...
-LANGCHAIN_PROJECT=opencouch-dev`}
+# Alternative provider.
+# LLM_PROVIDER=gemini
+# GEMINI_API_KEY=...
+# GOOGLE_API_KEY=...`}
 </TerminalWindow>
 
-With tracing enabled, OpenCouch emits LangGraph text runs to LangSmith for observability and evaluation workflows. The existing `eval/runners/*` scripts remain the source of truth for behavioral regression checks; LangSmith adds trace inspection, run filtering, and experiment review.
+Optional surfaces need additional variables:
+
+<TerminalWindow title="env — optional surfaces">
+{`# Web voice via LiveKit + OpenAI Realtime.
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+OPENAI_API_KEY=...
+
+# Telegram dogfood gateway.
+OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
+OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
+OPENCOUCH_TELEGRAM_OWNER_ID=alice
+OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast`}
+</TerminalWindow>
 
 ## Run the CLI
 
-### Deterministic mode (no API key needed)
+### Deterministic mode
 
-No LLM calls, in-memory only. Good for verifying the pipeline works
-and testing the CLI flow and slash commands.
+No LLM calls, in-memory only. Good for verifying the graph and slash
+commands.
 
-<TerminalWindow title="bash — deterministic mode">
-{`uv run python -m opencouch_cli \\
+<TerminalWindow title="bash — deterministic CLI">
+{`cd apps/backend
+uv run python -m opencouch_cli \\
     --mode deterministic \\
     --memory-mode guest \\
     --thread-id scratch`}
@@ -60,88 +76,79 @@ and testing the CLI flow and slash commands.
 
 ### Full mode with persistent memory
 
-Real LLM, SQLite-backed storage. Facts, session arcs, and style
-rules survive CLI restart.
+Real LLM, SQLite-backed storage. Facts, session arcs, and style rules
+survive restart.
 
-<TerminalWindow title="bash — persistent memory mode">
-{`uv run python -m opencouch_cli \\
+<TerminalWindow title="bash — persistent CLI">
+{`cd apps/backend
+uv run python -m opencouch_cli \\
     --mode auto \\
     --memory-mode persistent \\
     --user-id alice \\
     --thread-id alice-s1`}
 </TerminalWindow>
 
-### Resume a prior session
+Reuse the same `--user-id` and `--thread-id` to resume a conversation.
+Use the same `--user-id` with a new `--thread-id` to start a fresh
+session that still has access to the user's long-term memory.
 
-Use the same `--user-id` and `--thread-id` to pick up where you
-left off. The LangGraph checkpointer restores the transcript and
-the memory store has your prior facts and arcs.
+## Run the Web App
 
-<TerminalWindow title="bash — resume session">
-{`uv run python -m opencouch_cli \\
-    --mode auto \\
-    --memory-mode persistent \\
-    --user-id alice \\
-    --thread-id alice-s1`}
+Start the backend and frontend in separate terminals:
+
+<TerminalWindow title="bash — API server">
+{`cd apps/backend
+uv run uvicorn main:app --port 8000 --reload`}
 </TerminalWindow>
 
-### Start a new session with the same memory
-
-Same user, different thread. The agent sees your prior memory
-(semantic facts, episodic arcs, procedural rules) but starts a
-fresh conversation. First-turn episodic catch-up fires
-automatically.
-
-<TerminalWindow title="bash — new thread, same user memory">
-{`uv run python -m opencouch_cli \\
-    --mode auto \\
-    --memory-mode persistent \\
-    --user-id alice \\
-    --thread-id alice-s2`}
+<TerminalWindow title="bash — web UI">
+{`# From the repository root
+pnpm --dir apps/web dev`}
 </TerminalWindow>
 
-### Voice mode
+Open `http://localhost:3000`. The web app talks to
+`http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` in
+`apps/web/.env.local` if the API runs somewhere else.
 
-LiveKit-native voice runtime. Requires LiveKit credentials
-(`LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`) plus
-`OPENAI_API_KEY` for the realtime model.
+## Voice Mode
 
-<TerminalWindow title="bash — voice (browser room)">
-{`# Terminal 1: backend
-uv run python run_server.py
+The current browser voice path is LiveKit-first. Start the API server,
+then run the LiveKit worker:
 
-# Terminal 2: agent worker
-uv run python -m voice.livekit.agent start
+<TerminalWindow title="bash — LiveKit voice">
+{`# Terminal 1: API server
+cd apps/backend
+uv run uvicorn main:app --port 8000 --reload
 
-# Open the test page (token-dispatch flow)
-open "http://127.0.0.1:8080/api/voice/livekit/test?room=my-room&dispatch=1"`}
+# Terminal 2: LiveKit worker
+cd apps/backend
+uv run python -m voice.livekit.agent dev`}
 </TerminalWindow>
 
-For prompt / tool smoke tests without a LiveKit room:
+For prompt and tool smoke tests without a browser room:
 
-<TerminalWindow title="bash — voice (console)">
-{`# Spoken (uses your mic)
+<TerminalWindow title="bash — voice console">
+{`cd apps/backend
+
+# Spoken, uses your mic
 uv run python -m voice.livekit.agent console
 
-# Text-only (fastest)
+# Text-only
 uv run python -m voice.livekit.agent console --text`}
 </TerminalWindow>
 
-The voice runtime uses agent handoffs (`TherapeuticAgent` ↔
-`CrisisAgent`) and bounded `GroundingTask`s for exercises rather
-than running the full LangGraph text agent on every spoken turn.
-Memory loads at session start, refreshes selectively mid-session,
-and persists via a transcript replay on disconnect. See the
-[Voice (LiveKit)](/docs/voice) page for the full architecture.
+The standalone LiveKit test page is still available from the backend
+at `/api/voice/livekit/test`; the Next.js voice page is the preferred
+dogfood surface. See [Voice (LiveKit)](/docs/voice) for the full
+architecture.
 
-### Telegram dogfood gateway
+## Telegram Gateway
 
-The Telegram gateway is a standalone local process for direct-message
-text dogfood. It uses the same persistent text runtime as the CLI/API,
-but FastAPI does not need to be running.
+The Telegram gateway is a standalone process for direct-message
+dogfood. FastAPI does not need to be running.
 
 Create a bot with `@BotFather`, DM it once, then get your numeric
-Telegram sender ID:
+Telegram sender id:
 
 <TerminalWindow title="bash — Telegram getUpdates">
 {`curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"`}
@@ -162,22 +169,25 @@ OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \\
 OPENCOUCH_TELEGRAM_OWNER_ID="alice" \\
 OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast \\
 OPENCOUCH_MEMORY_MODE=persistent \\
+OPENCOUCH_TELEGRAM_THREAD_ROTATION_ENABLED=true \\
 uv run python -m channels.gateway telegram`}
 </TerminalWindow>
 
 Use `/start` or `/help` for the static intro, send normal messages to
-talk, and use `/end` to close the active session manually. Restarting
-the gateway does not require sending `/start` again.
+talk, and use `/end` to close the active session manually. After
+`/end`, the next normal message starts a fresh session; `/start` is
+not required again. See [Telegram Gateway](/docs/system/telegram) for
+thread rotation and rendering details.
 
-## Slash commands
+## Slash Commands
 
 Once inside the text CLI:
 
 | Command | What it does |
 |---|---|
 | `/help` | List all commands |
-| `/status` | Thread id, mode, turn count |
-| `/history [n]` | Recent messages with mode column |
+| `/status` | Thread id, response tier, turn count, and active response LLM |
+| `/history [n]` | Recent messages with response-style metadata |
 | `/context` | Session context snapshot |
 | `/memory status` | Per-namespace counts, recall toggle |
 | `/memory list` | Semantic facts + episodic arcs |
@@ -187,34 +197,67 @@ Once inside the text CLI:
 | `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
 | `/memory purge-crisis [days]` | Retention-purge crisis log |
 | `/debug state` | Raw graph state as JSON |
-| `/end` | Summarize session and save to episodic memory |
+| `/end` | Summarize session and save session-end memory |
 | `/exit` | End session with save prompt |
 
-## Run the tests
+## Tests and Evals
 
 :::info For developers and contributors only
-The test suite and eval harnesses below are for verifying changes during development. End users can skip this section.
+End users do not need to run these checks.
 :::
 
+Run backend tests from `apps/backend`:
+
 <TerminalWindow title="bash — backend tests">
-{`uv run pytest tests/`}
+{`cd apps/backend
+uv run pytest tests/`}
 </TerminalWindow>
 
-### Observability & evaluation
+Run frontend checks from the repo root:
 
-If LangSmith tracing is enabled, these eval runs also emit traces to your configured LangSmith project, which makes it easier to inspect failures and compare behavior across prompt or model changes.
+<TerminalWindow title="bash — web checks">
+{`pnpm --dir apps/web lint
+pnpm --dir apps/web build`}
+</TerminalWindow>
+
+Run eval harnesses from `apps/backend`:
 
 <TerminalWindow title="bash — eval harnesses">
-{`# Retrieval quality (token-recall baseline, no API key needed)
-uv run python eval/runners/retrieval_eval.py --mode token-only
+{`cd apps/backend
 
-# All five harnesses (requires API key)
-uv run python eval/runners/crisis_gate_eval.py --mode auto
-uv run python eval/runners/therapeutic_routing_eval.py --mode auto
-uv run python eval/runners/extraction_eval.py --mode auto
-uv run python eval/runners/summarization_eval.py --mode auto
-uv run python eval/runners/retrieval_eval.py --mode auto`}
+# No API key needed
+uv run python ../../eval/runners/retrieval_eval.py --mode token-only
+
+# LLM-backed examples
+uv run python ../../eval/runners/crisis_gate_eval.py --mode hybrid
+uv run python ../../eval/runners/therapeutic_routing_eval.py --mode hybrid
+uv run python ../../eval/runners/therapeutic_behavior_eval.py --mode hybrid
+uv run python ../../eval/runners/exercise_selection_eval.py --mode hybrid
+uv run python ../../eval/runners/grounded_lookup_routing_eval.py --mode hybrid
+uv run python ../../eval/runners/memory_control_routing_eval.py --mode hybrid
+uv run python ../../eval/runners/memory_write_policy_eval.py --mode hybrid`}
 </TerminalWindow>
 
-See the module docstring in `opencouch_cli/app.py` for all seven
-CLI invocation patterns and detailed flag descriptions.
+See [Routing & Classifiers](/docs/agent/routing-classifiers) for the
+current eval map.
+
+## Eval-driven Observability
+
+To enable LangSmith tracing for local text runs, add this to `.env`
+before starting the CLI or API:
+
+<TerminalWindow title="env — LangSmith tracing">
+{`LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=opencouch-dev
+
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=...
+LANGCHAIN_PROJECT=opencouch-dev`}
+</TerminalWindow>
+
+The `eval/runners/*` scripts remain the source of truth for behavioral
+regression checks. LangSmith adds trace inspection, run filtering, and
+experiment review.

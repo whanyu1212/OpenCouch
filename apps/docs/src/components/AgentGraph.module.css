@@ -272,18 +272,18 @@
 }
 [data-theme='dark'] .branchArrow { color: #6b9e99; }
 
-/* ── Mode sections (inside expanded router step) ───────────────────────────── */
+/* ── Response style sections (inside expanded router step) ───────────────────────────── */
 
-.modeSection {
+.responseStyleSection {
   margin-top: 10px;
   padding-left: 4px;
 }
 
-.modeSectionHeader {
+.responseStyleSectionHeader {
   margin-bottom: 6px;
 }
 
-.modeGridLabel {
+.responseStyleGridLabel {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.54rem;
   font-weight: 600;
@@ -291,15 +291,15 @@
   text-transform: uppercase;
   color: var(--oc-text-muted, #a0a49e);
 }
-[data-theme='dark'] .modeGridLabel { color: #6b9e99; }
+[data-theme='dark'] .responseStyleGridLabel { color: #6b9e99; }
 
-/* Conditional modes — vertical list with condition labels */
+/* Conditional responses — vertical list with condition labels */
 
-.conditionalMode {
+.conditionalResponse {
   margin-bottom: 4px;
 }
 
-.modeChip {
+.responseStyleChip {
   appearance: none;
   -webkit-appearance: none;
   font: inherit;
@@ -315,30 +315,30 @@
   gap: 10px;
   transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.modeChip:hover {
+.responseStyleChip:hover {
   background: rgba(33, 95, 90, 0.06);
   border-color: rgba(33, 95, 90, 0.25);
 }
-[data-theme='dark'] .modeChip {
+[data-theme='dark'] .responseStyleChip {
   border-color: rgba(120, 184, 175, 0.14);
   background: rgba(120, 184, 175, 0.03);
 }
-[data-theme='dark'] .modeChip:hover {
+[data-theme='dark'] .responseStyleChip:hover {
   background: rgba(120, 184, 175, 0.08);
   border-color: rgba(120, 184, 175, 0.30);
 }
 
-.modeChipActive {
+.responseStyleChipActive {
   background: rgba(33, 95, 90, 0.08) !important;
   border-color: var(--ifm-color-primary) !important;
   box-shadow: 0 0 0 2px rgba(33, 95, 90, 0.06);
 }
-[data-theme='dark'] .modeChipActive {
+[data-theme='dark'] .responseStyleChipActive {
   background: rgba(120, 184, 175, 0.10) !important;
   box-shadow: 0 0 0 2px rgba(120, 184, 175, 0.08);
 }
 
-.modeChipLabel {
+.responseStyleChipLabel {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.70rem;
   font-weight: 600;
@@ -346,44 +346,44 @@
   white-space: nowrap;
 }
 
-.modeCondition {
+.responseCondition {
   font-size: 0.62rem;
   color: var(--oc-text-muted, #a0a49e);
   line-height: 1.3;
 }
-[data-theme='dark'] .modeCondition { color: #6b9e99; }
+[data-theme='dark'] .responseCondition { color: #6b9e99; }
 
-/* Therapeutic modes — grid of chips */
+/* Therapeutic response styles — grid of chips */
 
-.modeGrid {
+.responseStyleGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
 }
 
 @media (min-width: 520px) {
-  .modeGrid { grid-template-columns: repeat(4, 1fr); }
+  .responseStyleGrid { grid-template-columns: repeat(4, 1fr); }
 }
 
-.modeGrid .modeChip {
+.responseStyleGrid .responseStyleChip {
   justify-content: center;
   text-align: center;
 }
 
-/* Therapeutic modes — bolder to show they're the primary targets */
-.modeChipTherapeutic {
+/* Therapeutic response styles — bolder to show they're the primary targets */
+.responseStyleChipTherapeutic {
   border-color: rgba(33, 95, 90, 0.20);
   background: rgba(33, 95, 90, 0.04);
 }
-[data-theme='dark'] .modeChipTherapeutic {
+[data-theme='dark'] .responseStyleChipTherapeutic {
   border-color: rgba(120, 184, 175, 0.24);
   background: rgba(120, 184, 175, 0.05);
 }
-.modeChipTherapeutic:hover {
+.responseStyleChipTherapeutic:hover {
   background: rgba(33, 95, 90, 0.08);
   border-color: var(--ifm-color-primary);
 }
-[data-theme='dark'] .modeChipTherapeutic:hover {
+[data-theme='dark'] .responseStyleChipTherapeutic:hover {
   background: rgba(120, 184, 175, 0.10);
   border-color: #78b8af;
 }

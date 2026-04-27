@@ -1,4 +1,4 @@
-VARIANT: mode=reflective, modality=cbt, state=rules_on
+VARIANT: response_style=reflective, approach=cbt, state=rules_on
 SOURCE: trimmed excerpt from apps/backend/.store/prompt_dumps/reflective__cbt__rules_on.txt
 
 This variant shows what changes when the user has saved procedural

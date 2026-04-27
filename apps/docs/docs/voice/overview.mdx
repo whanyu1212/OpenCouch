@@ -23,7 +23,8 @@ into the prompt at session start, refreshed selectively
 mid-session via semantic retrieval, and persisted via the shared
 session-end seam on disconnect. The LangGraph crisis gate is not
 in the voice hot path; voice has its own deterministic crisis
-safety net plus an LLM-driven `crisis_check` tool.
+safety net plus a model-invoked `crisis_check` tool that applies
+the deterministic crisis policy.
 :::
 
 <VoiceArchitecture />
@@ -208,7 +209,7 @@ All tools are LiveKit `@function_tool()` declarations. They share
 | `cancel_memory_deletion` | TherapeuticAgent | Clears the pending deletion. |
 | `start_grounding_exercise` | TherapeuticAgent | Enters `GroundingTask` for a voice-allowlisted exercise. |
 | `answer_grounded_factual_lookup` | TherapeuticAgent | Explicit factual lookup using the shared search-grounded backend helper. Says "I can't verify that" when no search-capable LLM is configured rather than guessing. |
-| `crisis_check` | TherapeuticAgent | Deterministic rules-based escalation check. Level 3 → `CrisisAgent`; level 2 → `CrisisAgent`; level 1 → ask to clarify; level 0 → continue. |
+| `crisis_check` | TherapeuticAgent | Model-invoked deterministic escalation check. Level 3 → `CrisisAgent`; level 2 → `CrisisAgent`; level 1 → ask to clarify; level 0 → continue. |
 | `provide_crisis_resources` | CrisisAgent | Verified local hotlines via the same lookup the text agent uses. Asks for location if not stated; never infers from IP / timezone / accent. Falls back to emergency / 988 guidance when search fails. |
 | `de_escalate` | CrisisAgent | Hands control back to a fresh `TherapeuticAgent` with `therapeutic_instructions` restored. |
 

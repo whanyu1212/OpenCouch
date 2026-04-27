@@ -24,7 +24,7 @@ Click any step below to see what it does.
 
 The parent graph has **12 named nodes** plus the therapeutic subgraph
 (compiled as a single parent-level node) which hides 8 internal nodes
-(dispatcher + 7 mode nodes). The crisis gate routes between branches
+(dispatcher + 7 response nodes). The crisis gate routes between branches
 via `Command(goto=...)`. Three additional gates branch downstream:
 `memory_control_gate_node`, `grounded_lookup_gate_node`, and the
 crisis-side `crisis_resource_lookup_node`. The two extractors fan out
@@ -62,16 +62,16 @@ node's inputs, outputs, skip conditions, and source file.
 
 ## Therapeutic subgraph
 
-The dispatcher picks exactly one mode per turn:
+The dispatcher picks exactly one therapeutic response style per turn:
 
-| Mode | When it fires |
+| Response style | When it fires |
 |---|---|
 | `supportive` | Default — user sharing feelings, seeking support, or greeting |
 | `reflective` | User describing a recurring pattern they've already named |
 | `clarifying` | Ambiguous message — agent needs context before responding |
 | `psychoeducation` | User describes a reaction AND seeks understanding |
 | `technique` | User wants structured therapeutic work without launching a named exercise |
-| `guided_exercise` | User requests a structured technique ([12 exercises](/docs/agent/guided-exercises)) |
+| `guided_exercise` | User requests a structured exercise ([13 exercises](/docs/agent/guided-exercises)) |
 | `closing` | User signals wind-down ("I should go", "thanks, this helped") |
 
 The dispatcher is **LLM-primary** with deterministic regex overrides
@@ -79,7 +79,7 @@ for unambiguous exercise opt-out (`"never mind"`, `"quit the
 exercise"`) and a regex fallback for the no-LLM path. When a guided
 exercise is active, the dispatcher preserves the pinned
 `exercise_modality` across mid-exercise clarifying or psychoeducation
-turns so the modality doesn't drift.
+turns so the pinned approach does not drift.
 
 ## Design principles
 
@@ -151,8 +151,9 @@ for the full breakdown.
 | `agent/working_memory.py` | `WorkingMemoryEntry` types, factory functions, formatters |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` with `TherapeuticSubgraphOutput` |
-| `agent/therapeutic/dispatcher.py` | LLM-primary mode + modality classification with regex overrides |
-| `agent/therapeutic/prompts.py` | Knowledge composition + on-demand working memory formatting |
+| `agent/therapeutic/dispatch/` | LLM-primary response-style + therapeutic-approach classification with deterministic overrides/fallbacks |
+| `agent/therapeutic/prompting/` | Therapeutic prompt composition, instructions, and on-demand working memory formatting |
+| `agent/therapeutic/exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and node implementation |
 | `agent/nodes/load_memory.py` | Hybrid retrieval + query embedding |
 | `agent/nodes/crisis_gate.py` | LLM-primary crisis classification + branch routing |
 | `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup before crisis response |
@@ -172,20 +173,20 @@ for the full breakdown.
 | `agent/audit/sqlite_crisis_log.py` | SQLite-backed crisis log with retention purge |
 | `agent/persistence.py` | `PersistentAgentRuntime` — SQLite-backed thread state |
 
-## Adding a new therapeutic mode
+## Adding a new therapeutic response style
 
-1. Create `agent/prompts/sources/response_modes/your_mode.md` with the mode's
-   knowledge content
-2. Create `agent/therapeutic/your_mode.py` with the response node
+1. Create `agent/prompts/sources/response_modes/your_style.md` with the
+   response style's knowledge content
+2. Create `agent/therapeutic/your_style.py` with the response node
    function
-3. Add a knowledge tuple and instructions block in
-   `agent/therapeutic/prompts.py`
+3. Add prompt-source wiring in `agent/therapeutic/prompting/sources.py`
+   and instructions in `agent/therapeutic/prompting/instructions.py`
 4. Register the node in `agent/therapeutic/graph.py`
    (`subgraph.add_node(...)`)
 5. Update the LLM dispatcher prompt in
-   `agent/therapeutic/dispatcher.py` to teach the classifier when to
-   pick the new mode, and add a deterministic regex fallback if the
-   mode has unambiguous trigger phrases
+   `agent/therapeutic/dispatch/prompt.py` to teach the classifier when to
+   pick the new response style, and add a deterministic regex fallback
+   if the style has unambiguous trigger phrases
 6. Add cases to `eval/datasets/therapeutic_routing_v0.json`
 7. Add a `STAGE_LABELS` entry in `agent/models.py` if the
    node name differs from the stage label vocabulary

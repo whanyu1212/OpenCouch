@@ -194,14 +194,14 @@ html[data-theme='dark'] .navbar {
   text-decoration: none !important;
 }
 
-/* Brand icon — inline SVG couch matching the favicon */
+/* Brand icon uses the same glyph as the favicon. */
 .navbar__brand::before {
   content: '';
   display: inline-block;
   width: 22px;
   height: 22px;
   flex-shrink: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Crect x='4' y='14' width='24' height='8' rx='3' fill='%23215f5a'/%3E%3Cpath d='M6 14V9a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v5' fill='%233d8b84'/%3E%3Crect x='2' y='11' width='4' height='11' rx='2' fill='%23215f5a'/%3E%3Crect x='26' y='11' width='4' height='11' rx='2' fill='%23215f5a'/%3E%3Crect x='7' y='22' width='2.5' height='4' rx='1' fill='%2378b8af'/%3E%3Crect x='22.5' y='22' width='2.5' height='4' rx='1' fill='%2378b8af'/%3E%3C/svg%3E");
+  background-image: url("../../static/img/opencouch-glyph-1024.png");
   background-size: contain;
   background-repeat: no-repeat;
 }

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import Link from '@docusaurus/Link';
 import styles from './TherapyApproach.module.css';
 
-/* ── Modalities ─────────────────────────────────────────────────────────────── */
+/* ── Therapeutic approaches ────────────────────────────────────────────────── */
 
-interface Modality {
+interface Approach {
   id: string;
   label: string;
   full: string;
@@ -13,12 +14,12 @@ interface Modality {
   avoid: string[];
 }
 
-const MODALITIES: Modality[] = [
+const APPROACHES: Approach[] = [
   {
     id: 'motivational_interviewing',
     label: 'MI ✓',
     full: 'Motivational Interviewing',
-    role: 'Active — default for supportive mode',
+    role: 'Active — default for supportive style',
     desc: 'Partnership over authority. Reflective listening, respect for autonomy, evoking the user\'s own reasons and next steps. OARS: open questions, affirmations, reflections, summaries.',
     goodFor: ['Ambivalence', 'Stuck feelings', 'Exploring change', 'Building self-awareness'],
     avoid: ['Lecturing', 'Rushing to fix', 'Forcing change talk', 'Coach-script tone'],
@@ -79,23 +80,23 @@ const MODALITIES: Modality[] = [
   },
 ];
 
-/* ── Response modes ─────────────────────────────────────────────────────────── */
+/* ── Response styles ───────────────────────────────────────────────────────── */
 
-interface Mode {
+interface ResponseStyle {
   id: string;
   label: string;
   when: string;
   goal: string;
 }
 
-const MODES: Mode[] = [
-  // ── Therapeutic modes (dispatched per turn by the therapeutic subgraph) ──
+const RESPONSE_STYLES: ResponseStyle[] = [
+  // ── Therapeutic response styles (dispatched per turn by the subgraph) ──
   { id: 'supportive', label: 'Supportive', when: 'Default — user seeking emotional support, sharing feelings, or greeting', goal: 'Validate before suggesting. Reflect emotional state. One helpful next step. Concise.' },
   { id: 'reflective', label: 'Reflective', when: 'User is describing a recurring pattern they\'ve already named', goal: 'Name 1–2 patterns carefully. Tentative, testable. Preserve user\'s framing.' },
   { id: 'clarifying', label: 'Clarifying', when: 'Ambiguous message — agent doesn\'t know what "it" refers to', goal: 'One context-gathering question. About context, not content. No assumptions.' },
   { id: 'psychoeducation', label: 'Psychoeducation', when: 'User describes a reaction AND seeks understanding ("why am I crying?")', goal: 'One short normalizing explanation. Pivot back to user\'s experience. No clinical jargon.' },
   { id: 'technique', label: 'Technique', when: 'User wants structured therapeutic work without launching a named exercise (examine a thought, weigh evidence, work through a dilemma)', goal: 'Collaborative step-by-step shaped by the active therapeutic_approach. No free-form lecturing.' },
-  { id: 'guided_exercise', label: 'Guided exercise', when: 'User explicitly requests a structured technique (12 exercises available)', goal: 'One exercise at a time. Multi-turn step tracking with pinned modality. Check pace between steps.' },
+  { id: 'guided_exercise', label: 'Guided exercise', when: 'User explicitly requests a structured exercise (13 exercises available)', goal: 'One exercise at a time. Multi-turn step tracking with a pinned approach. Check pace between steps.' },
   { id: 'closing', label: 'Closing', when: 'User signals wind-down ("I should go", "thanks, this helped")', goal: 'Warm wrap-up. Don\'t ask a new question or pivot to a new topic.' },
 ];
 
@@ -118,8 +119,8 @@ const PRINCIPLES: Principle[] = [
 /* ── Component ──────────────────────────────────────────────────────────────── */
 
 export default function TherapyApproach() {
-  const [activeModality, setActiveModality] = useState<string | null>(null);
-  const mod = activeModality ? MODALITIES.find(m => m.id === activeModality) ?? null : null;
+  const [activeApproach, setActiveApproach] = useState<string | null>(null);
+  const mod = activeApproach ? APPROACHES.find(m => m.id === activeApproach) ?? null : null;
 
   return (
     <div className={styles.root}>
@@ -136,37 +137,37 @@ export default function TherapyApproach() {
         </div>
       </section>
 
-      {/* ── Modalities ─────────────────────────────────────────── */}
-      <section className={styles.modalitySection}>
+      {/* ── Therapeutic approaches ─────────────────────────────── */}
+      <section className={styles.approachSection}>
         <h3 className={styles.sectionTitle}>Therapeutic approaches</h3>
         <p className={styles.sectionSub}>
           Designed as overlays and stances — not full treatments. All seven approaches are wired and selected per turn by the LLM dispatcher based on the user&apos;s message context. Click to see what each is good for and what to avoid.
         </p>
-        <div className={styles.modalityRow}>
-          {MODALITIES.map(m => (
+        <div className={styles.approachRow}>
+          {APPROACHES.map(m => (
             <button
               key={m.id}
-              className={[styles.modalityCard, activeModality === m.id ? styles.modalityActive : ''].join(' ')}
-              onClick={() => setActiveModality(p => p === m.id ? null : m.id)}
+              className={[styles.approachCard, activeApproach === m.id ? styles.approachActive : ''].join(' ')}
+              onClick={() => setActiveApproach(p => p === m.id ? null : m.id)}
             >
-              <span className={styles.modalityAbbr}>{m.label}</span>
-              <span className={styles.modalityFull}>{m.full}</span>
-              <span className={styles.modalityRole}>{m.role}</span>
+              <span className={styles.approachAbbr}>{m.label}</span>
+              <span className={styles.approachFull}>{m.full}</span>
+              <span className={styles.approachRole}>{m.role}</span>
             </button>
           ))}
         </div>
 
         {mod && (
-          <div className={styles.modalityDetail} key={mod.id}>
-            <p className={styles.modalityDesc}>{mod.desc}</p>
-            <div className={styles.modalityColumns}>
-              <div className={styles.modalityCol}>
+          <div className={styles.approachDetail} key={mod.id}>
+            <p className={styles.approachDesc}>{mod.desc}</p>
+            <div className={styles.approachColumns}>
+              <div className={styles.approachCol}>
                 <span className={styles.colLabel}>Good for</span>
                 <ul className={styles.tagList}>
                   {mod.goodFor.map(g => <li key={g} className={styles.tagGood}>{g}</li>)}
                 </ul>
               </div>
-              <div className={styles.modalityCol}>
+              <div className={styles.approachCol}>
                 <span className={styles.colLabel}>Avoid</span>
                 <ul className={styles.tagList}>
                   {mod.avoid.map(a => <li key={a} className={styles.tagAvoid}>{a}</li>)}
@@ -177,18 +178,18 @@ export default function TherapyApproach() {
         )}
       </section>
 
-      {/* ── Response modes ─────────────────────────────────────── */}
-      <section className={styles.modesSection}>
-        <h3 className={styles.sectionTitle}>Therapeutic response modes</h3>
+      {/* ── Response styles ────────────────────────────────────── */}
+      <section className={styles.responseStylesSection}>
+        <h3 className={styles.sectionTitle}>Therapeutic response styles</h3>
         <p className={styles.sectionSub}>
-          Seven modes dispatched per turn by the therapeutic subgraph. The LLM classifier is the primary path; deterministic regex fires only for explicit exercise opt-out and as a fallback when no LLM is configured. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <a href="/docs/philosophy/crisis-gate">Crisis Gate</a>).
+          Seven response styles are dispatched per turn by the therapeutic subgraph. The LLM classifier is the primary path; deterministic regex fires only for explicit exercise opt-out and as a fallback when no LLM is configured. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <Link to="/docs/philosophy/crisis-gate">Crisis Gate</Link>).
         </p>
-        <div className={styles.modeTable}>
-          {MODES.map(m => (
-            <div key={m.id} className={styles.modeRow}>
-              <span className={styles.modeName}>{m.label}</span>
-              <span className={styles.modeWhen}>{m.when}</span>
-              <span className={styles.modeGoal}>{m.goal}</span>
+        <div className={styles.responseStyleTable}>
+          {RESPONSE_STYLES.map(m => (
+            <div key={m.id} className={styles.responseStyleRow}>
+              <span className={styles.responseStyleName}>{m.label}</span>
+              <span className={styles.responseStyleWhen}>{m.when}</span>
+              <span className={styles.responseStyleGoal}>{m.goal}</span>
             </div>
           ))}
         </div>

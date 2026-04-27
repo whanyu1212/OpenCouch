@@ -76,7 +76,7 @@ flow runs.
 summary. The user said "don't save my conversation" — asking for a
 rating on that path would be inconsistent.
 
-### HTTP `POST /threads/{id}/end`
+### HTTP `POST /api/threads/{id}/end`
 
 The endpoint accepts an optional body:
 
@@ -167,5 +167,5 @@ constraint on the opaque `id`.
 | `agent/audit/sqlite_session_feedback.py` | SQLite backend with CHECK constraints and retention purge |
 | `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
-| `api/routes/threads.py` | `POST /threads/{id}/end` body handling |
+| `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |
 | `opencouch_cli/app.py` | `_prompt_for_session_feedback`, `_summarize_and_render` |

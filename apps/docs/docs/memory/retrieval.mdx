@@ -89,11 +89,12 @@ records re-embed lazily on the next write.
 
 ---
 
-## load_memory cleanup
+## load_memory structure
 
-`load_memory_node` was refactored down from ~500 LoC to ~370 while
-keeping behavior identical. A `test_memory_retrieval_parity.py` suite
-verifies that the in-memory and SQLite stores produce the same
+`load_memory_node` owns the turn-level retrieval orchestration:
+semantic and episodic search, procedural profile loading, first-turn
+episodic catch-up, and diagnostics. A `test_memory_retrieval_parity.py`
+suite verifies that the in-memory and SQLite stores produce the same
 ranked results for the same input — so the retrieval algorithm is
 backend-agnostic by contract, not by accident.
 
@@ -102,11 +103,13 @@ backend-agnostic by contract, not by accident.
 ## Eval harness
 
 ```bash
+# From apps/backend.
+
 # Token-recall baseline (no API key needed)
-uv run python eval/runners/retrieval_eval.py --mode token-only
+uv run python ../../eval/runners/retrieval_eval.py --mode token-only
 
 # Compare all three scorers (requires API key)
-uv run python eval/runners/retrieval_eval.py --mode hybrid --verbose
+uv run python ../../eval/runners/retrieval_eval.py --mode hybrid --verbose
 ```
 
 17 hand-curated cases across 6 categories. Output is a scorer

@@ -27,9 +27,9 @@ runtime by the graph.
 | Layer | Question it answers | Source | Per turn? |
 |---|---|---|---|
 | **Core** | Who is this system? What are the hard rules? | `soul.md`, `identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/shared.py`) | Never changes |
-| **Mode** | What response shape is this turn? | `response_modes/*.md` — one file per mode (7 files: support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check) | Selected by dispatcher / crisis gate |
-| **Modality** | What therapy framework overlay? | `modalities/*.md` — 8 files: motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, picked by dispatcher |
-| **Instructions** | How should it respond on this turn specifically? | Mode-specific blocks in `agent/therapeutic/prompts.py` and `agent/prompts/crisis.py` | Per mode |
+| **Response style** | What response shape is this turn? | `response_modes/*.md` — support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check | Selected by dispatcher / crisis gate |
+| **Therapeutic approach** | What therapeutic framework overlay? | `modalities/*.md` — motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, picked by dispatcher |
+| **Instructions** | How should it respond on this turn specifically? | `agent/therapeutic/prompting/instructions.py` and `agent/prompts/crisis.py` | Per response style |
 | **Working memory** | What does it know about the user? | Semantic + episodic entries from `load_memory_node` | Re-retrieved each turn |
 | **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
 
@@ -45,7 +45,7 @@ The crisis branch composes a tighter prompt: `CORE_SOURCES` +
 classifier prompt) + recent history. Memory layers are skipped on
 crisis turns by design.
 
-The `safety_check` mode is the response shape used when the crisis
+The `safety_check` response style is used when the crisis
 classifier returns level 1 (ambiguous distress, `needs_clarification`)
 — a one-question safety probe inside the therapeutic branch rather
 than a full crisis response.
@@ -57,9 +57,9 @@ than a full crisis response.
 | Property | How layers enforce it |
 |---|---|
 | Safety policy can't be overwritten | Core layer (including `policy/boundaries.md` + `policy/privacy.md`) is always first; no style/approach can weaken it |
-| Mode knowledge is reviewable | Each mode's knowledge is a standalone `.md` in `agent/prompts/sources/response_modes/` |
+| Response knowledge is reviewable | Each response style's knowledge is a standalone `.md` in `agent/prompts/sources/response_modes/` |
 | Procedural rules can't be overridden | Injected last as system prompt suffix; safety-conflict rules ("skip the safety check") are dropped by the procedural extractor |
-| Each layer has a clear owner | `agent/prompts/sources/` for content, `agent/therapeutic/prompts.py` and `agent/prompts/crisis.py` for assembly |
+| Each layer has a clear owner | `agent/prompts/sources/` for content, `agent/therapeutic/prompting/` and `agent/prompts/crisis.py` for assembly |
 
 ---
 
@@ -70,12 +70,15 @@ than a full crisis response.
 | `agent/prompts/__init__.py` | Re-exports `compose_sources`, `CORE_SOURCES`, crisis prompt builders |
 | `agent/prompts/shared.py` | `CORE_SOURCES` tuple, `load_prompt_source()`, `compose_sources()`, `format_recent_history()` |
 | `agent/prompts/crisis.py` | Crisis classifier + crisis response prompt builders |
-| `agent/therapeutic/prompts.py` | `_knowledge_for_mode()`, per-mode instruction blocks, `build_*_system_prompt()` for each therapeutic mode |
+| `agent/therapeutic/prompting/sources.py` | `_knowledge_for_mode()` and response-style / approach source selection |
+| `agent/therapeutic/prompting/instructions.py` | Per-response-style instruction blocks |
+| `agent/therapeutic/prompting/builders.py` | `build_*_system_prompt()` functions for therapeutic response nodes |
+| `agent/therapeutic/prompts.py` | Compatibility re-export wrapper for older imports |
 | `agent/prompts/sources/soul.md` | Identity, voice, tone, pacing, directness |
 | `agent/prompts/sources/identity.md` | Product boundaries and positioning |
 | `agent/prompts/sources/policy/` | Safety + privacy + crisis policy (3 files) |
-| `agent/prompts/sources/response_modes/` | One file per response mode (7 files) |
-| `agent/prompts/sources/modalities/` | 8 modality knowledge files, dynamically loaded per turn |
+| `agent/prompts/sources/response_modes/` | One file per response style (7 files) |
+| `agent/prompts/sources/modalities/` | 8 therapeutic-approach knowledge files, dynamically loaded per turn |
 | `agent/prompts/sources/session_stages.md` | Stage-aware response guidance (not yet wired into the graph) |
 | `agent/prompts/sources/cross_session_continuity.md` | First-turn catch-up framing |
 | `agent/nodes/load_memory.py` | Populates `working_memory` and `procedural_profile.procedural_rules` |
@@ -93,8 +96,7 @@ which combinations the dispatcher can actually pick.
 
 ## Live assembly
 
-Real (trimmed) excerpts from `apps/backend/.store/prompt_dumps/` —
-the same dumps that the prompt-snapshot tests check in. Pick a
+Real (trimmed) excerpts generated from backend prompt dumps. Pick a
 scenario, hit play, and watch which layers light up as the
 animation walks past each section header. The "skipped" rows show
 which layers a given scenario deliberately omits (e.g., the crisis

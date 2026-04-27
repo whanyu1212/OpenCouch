@@ -135,10 +135,15 @@ consistent text:
 | `crisis_response` | generating crisis reply |
 | `crisis_log` | writing crisis log |
 | `load_memory` | loading memory |
+| `memory_profile_load` | loading profile memory |
+| `memory_graph_load` | querying graph memory |
+| `memory_profile_save` | saving profile memory |
+| `memory_graph_save` | writing graph memory |
 | `therapeutic` | generating therapeutic reply |
 | `extract_facts` | extracting facts |
 | `extract_procedural` | extracting style rules |
 | `finalize` | finalizing turn |
+| `session_stage` | reading context |
 | `response_generation` | generating |
 
 Unknown stages fall through to their raw name so future additions

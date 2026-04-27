@@ -12,7 +12,13 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'System',
-      items: ['backend/overview', 'backend/runtime']
+      items: [
+        'backend/overview',
+        'backend/runtime',
+        'system/api-reference',
+        'system/web-ui',
+        'system/telegram',
+      ]
     },
     {
       type: 'category',
@@ -29,11 +35,12 @@ const sidebars: SidebarsConfig = {
             'agent/tools',
           ],
         },
+        'agent/routing-classifiers',
         'agent/prompt-assembly',
         'agent/context-management',
         {
           type: 'category',
-          label: 'Therapeutic Modes',
+          label: 'Therapeutic Responses',
           collapsed: false,
           items: ['agent/scenarios', 'agent/guided-exercises'],
         },

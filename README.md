@@ -2,7 +2,7 @@
 
 <img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
-**An open-source mental health support agent with persistent memory, crisis safety, and natural voice.**
+**An open-source mental health support companion for reflective conversations, guided practice, memory continuity, and crisis-aware safety.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)

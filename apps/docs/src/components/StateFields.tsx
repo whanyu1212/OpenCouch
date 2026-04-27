@@ -72,7 +72,7 @@ const GROUPS: GroupDef[] = [
       { name: 'exercise_state', type: 'Annotated[ExerciseState, _merge_dicts]', setBy: 'guided_exercise_node + dispatcher', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Active guided-exercise continuity. Cleared by the dispatcher when the user exits or the exercise completes.' },
       { name: 'exercise_state.exercise_type', type: 'str | None', setBy: 'guided_exercise_node', lifecycle: 'reducer', desc: 'Active exercise identifier (e.g., "grounding_5_4_3_2_1").' },
       { name: 'exercise_state.exercise_step', type: 'int | None', setBy: 'guided_exercise_node', lifecycle: 'reducer', desc: 'Current step index. Cleared when the exercise completes or the user exits.' },
-      { name: 'exercise_state.exercise_modality', type: 'str | None', setBy: 'guided_exercise_node + dispatcher', lifecycle: 'reducer', desc: 'Modality pinned at exercise start. Preserved across mid-exercise clarifying / psychoeducation turns to prevent drift.' },
+      { name: 'exercise_state.exercise_modality', type: 'str | None', setBy: 'guided_exercise_node + dispatcher', lifecycle: 'reducer', desc: 'Legacy-named field that stores the approach pinned at exercise start. Preserved across mid-exercise clarifying / psychoeducation turns to prevent drift.' },
       { name: 'memory_control.pending_action', type: 'dict | None', setBy: 'memory_control_node', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Carries a destructive memory action across turns so the next reply can confirm or cancel without LLM inference.' },
     ],
   },
@@ -91,7 +91,7 @@ const GROUPS: GroupDef[] = [
     label: 'Routing & response',
     blurb: 'Whichever node wins the route writes these. Returned via AgentOutput.',
     fields: [
-      { name: 'response_text', type: 'str', setBy: 'reply node (mode / crisis_response / memory_control / grounded_answer)', lifecycle: 'turn', desc: 'Generated reply for the turn.' },
+      { name: 'response_text', type: 'str', setBy: 'reply node (response style / crisis_response / memory_control / grounded_answer)', lifecycle: 'turn', desc: 'Generated reply for the turn.' },
       { name: 'response_style', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'supportive · reflective · clarifying · psychoeducation · technique · guided_exercise · closing · safety_check · crisis_response · memory_control · grounded_lookup' },
       { name: 'response_style_source', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'Which decision point picked it: crisis_gate, therapeutic_dispatch, memory_control_gate, grounded_lookup_gate.' },
       { name: 'response_style_type', type: 'ModeType', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC · OPERATIONAL · CRISIS' },

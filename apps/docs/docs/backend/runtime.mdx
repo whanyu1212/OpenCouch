@@ -8,7 +8,7 @@ import RuntimeLayers from '@site/src/components/RuntimeLayers';
 
 # Runtime & Persistence
 
-Two entry points, one pipeline. The stateless layer is for
+Two text-runtime layers, one pipeline. The stateless layer is for
 single-turn requests. The persistent layer adds thread-aware
 checkpointing, candidate buffering, an inactivity sweeper, and the
 shared session-end seam (`/end`, timeout, shutdown, API end-session).
@@ -37,6 +37,15 @@ text-mode `/end`. The 20-min inactivity sweeper and session-end
 candidate buffering described below are therefore text-only;
 voice has its own shutdown persistence path.
 See [Voice (LiveKit)](/docs/voice) for the full picture.
+:::
+
+:::note Telegram adds an optional session registry
+The Telegram gateway uses the persistent text runtime. When thread
+rotation is enabled, the channel also owns a Telegram-specific session
+registry that maps one chat to rotating runtime thread ids, recovers
+orphan rows on startup, and reclaims closed checkpoints after a grace
+period. See [Telegram Gateway](/docs/system/telegram) for the channel
+details.
 :::
 
 ---

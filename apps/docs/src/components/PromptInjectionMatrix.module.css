@@ -43,9 +43,9 @@
   color: var(--oc-accent) !important;
 }
 
-/* ── Mode label cell ────────────────────────────────────────────────────────── */
+/* ── Response style label cell ────────────────────────────────────────────────────────── */
 
-.modeCell {
+.responseStyleCell {
   background: var(--oc-surface-1);
   padding: 9px 12px;
   font-family: var(--ifm-font-family-monospace);
@@ -57,10 +57,10 @@
   transition: background var(--oc-duration-fast) var(--oc-ease-out);
 }
 
-.modeCellActive {
+.responseStyleCellActive {
   background: var(--oc-surface-2) !important;
 }
-[data-theme='dark'] .modeCellActive {
+[data-theme='dark'] .responseStyleCellActive {
   background: var(--oc-surface-2) !important;
 }
 
@@ -112,5 +112,5 @@
 @media (max-width: 560px) {
   .matrix { grid-template-columns: minmax(90px, 1fr) repeat(5, 1fr); }
   .headerCell { font-size: 0.6rem; padding: 8px 4px; }
-  .modeCell { font-size: 0.66rem; padding: 8px; }
+  .responseStyleCell { font-size: 0.66rem; padding: 8px; }
 }

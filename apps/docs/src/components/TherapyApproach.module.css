@@ -69,17 +69,17 @@
   color: var(--oc-text-secondary);
 }
 
-/* ── Modality cards ─────────────────────────────────────────────────────────── */
+/* ── Approach cards ─────────────────────────────────────────────────────────── */
 
-.modalitySection {}
+.approachSection {}
 
-.modalityRow {
+.approachRow {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
   gap: 8px;
 }
 
-.modalityCard {
+.approachCard {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -99,20 +99,20 @@
               transform var(--oc-duration-fast) var(--oc-ease-out);
 }
 
-.modalityCard:hover {
+.approachCard:hover {
   border-color: var(--oc-accent);
   box-shadow: var(--oc-shadow-md);
   transform: translateY(-1px);
 }
 
-.modalityActive {
+.approachActive {
   border-color: var(--oc-accent) !important;
   background: var(--oc-accent-subtle) !important;
   box-shadow: var(--oc-shadow-md), 0 0 0 2px var(--oc-accent-glow) !important;
   transform: translateY(-1px) !important;
 }
 
-.modalityAbbr {
+.approachAbbr {
   font-family: var(--ifm-font-family-monospace);
   font-size: 1rem;
   font-weight: 800;
@@ -120,22 +120,22 @@
   letter-spacing: -0.02em;
 }
 
-.modalityFull {
+.approachFull {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.7rem;
   font-weight: 600;
   color: var(--oc-text-primary);
 }
 
-.modalityRole {
+.approachRole {
   font-size: 0.66rem;
   color: var(--oc-text-muted);
   margin-top: 2px;
 }
 
-/* ── Modality detail ────────────────────────────────────────────────────────── */
+/* ── Approach detail ────────────────────────────────────────────────────────── */
 
-.modalityDetail {
+.approachDetail {
   margin-top: 14px;
   padding: 18px 20px;
   border: 1px solid var(--oc-accent);
@@ -151,20 +151,20 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.modalityDesc {
+.approachDesc {
   font-size: 0.84rem;
   line-height: 1.6;
   color: var(--oc-text-primary);
   margin: 0 0 16px;
 }
 
-.modalityColumns {
+.approachColumns {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
 }
 
-.modalityCol {}
+.approachCol {}
 
 .colLabel {
   display: block;
@@ -220,11 +220,11 @@
   color: #f09090;
 }
 
-/* ── Response modes table ───────────────────────────────────────────────────── */
+/* ── Response styles table ───────────────────────────────────────────────────── */
 
-.modesSection {}
+.responseStylesSection {}
 
-.modeTable {
+.responseStyleTable {
   display: grid;
   grid-template-columns: 140px 1fr 1fr;
   border: 1px solid var(--oc-border);
@@ -234,7 +234,7 @@
   line-height: 1.5;
 }
 
-.modeRow {
+.responseStyleRow {
   display: grid;
   grid-template-columns: subgrid;
   grid-column: 1 / -1;
@@ -244,36 +244,36 @@
   transition: background var(--oc-duration-fast) var(--oc-ease-out);
 }
 
-.modeRow:last-child { border-bottom: none; }
+.responseStyleRow:last-child { border-bottom: none; }
 
-.modeRow:hover {
+.responseStyleRow:hover {
   background: var(--oc-accent-subtle);
 }
 
-.modeRow:nth-child(odd) {
+.responseStyleRow:nth-child(odd) {
   background: rgba(0, 0, 0, 0.015);
 }
 
-[data-theme='dark'] .modeRow:nth-child(odd) {
+[data-theme='dark'] .responseStyleRow:nth-child(odd) {
   background: rgba(255, 255, 255, 0.015);
 }
 
-.modeRow:nth-child(odd):hover {
+.responseStyleRow:nth-child(odd):hover {
   background: var(--oc-accent-subtle);
 }
 
 /* All three cells use the same font — no monospace/body mismatch. */
 
-.modeName {
+.responseStyleName {
   font-weight: 700;
   color: var(--oc-text-primary);
 }
 
-.modeWhen {
+.responseStyleWhen {
   color: var(--oc-text-muted);
 }
 
-.modeGoal {
+.responseStyleGoal {
   color: var(--oc-text-secondary);
 }
 
@@ -281,11 +281,11 @@
 
 @media (max-width: 640px) {
   .root { gap: 36px; }
-  .modeTable { grid-template-columns: 1fr; }
-  .modeRow {
+  .responseStyleTable { grid-template-columns: 1fr; }
+  .responseStyleRow {
     grid-template-columns: 1fr;
     gap: 2px;
   }
-  .modalityColumns { grid-template-columns: 1fr; }
+  .approachColumns { grid-template-columns: 1fr; }
   .principleGrid { grid-template-columns: 1fr; }
 }

@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import {useEffect} from 'react';
 
@@ -77,13 +78,13 @@ const cards = [
   {
     title: 'Agent',
     href: '/docs/agent/graph',
-    description: 'Modes, subgraphs, and how execution is structured.',
+    description: 'Response styles, therapeutic approaches, and graph routing.',
     icon: AgentIcon,
   },
   {
     title: 'Prompt Assembly',
     href: '/docs/agent/prompt-assembly',
-    description: 'How soul, policy, mode, modality, and task layers compose.',
+    description: 'How identity, policy, response, approach, memory, and task layers compose.',
     icon: PromptIcon,
   }
 ];
@@ -107,7 +108,7 @@ const flowSteps = [
   {
     label: 'Where you already are',
     n: '04',
-    body: 'Web chat first, then voice, WhatsApp, Telegram, and SMS — built in order of what actually matters to reach people.'
+    body: 'Web chat, LiveKit voice, and Telegram DMs are already dogfood surfaces. WhatsApp and Discord are planned next.'
   },
   {
     label: 'AGPL-3.0 licensed',
@@ -124,6 +125,8 @@ const stats = [
 ];
 
 export default function Home(): JSX.Element {
+  const glyphSrc = useBaseUrl('/img/opencouch-glyph-1024.png');
+
   useEffect(() => {
     const nodes = Array.from(
       document.querySelectorAll<HTMLElement>('[data-reveal]')
@@ -173,14 +176,7 @@ export default function Home(): JSX.Element {
             <div className="hero-copy">
               <p className="hero__eyebrow">Open Source</p>
               <h1 className="hero__title">
-                <svg className="hero__logo" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                  <rect x="4" y="14" width="24" height="8" rx="3" fill="#215f5a"/>
-                  <path d="M6 14V9a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v5" fill="#3d8b84"/>
-                  <rect x="2" y="11" width="4" height="11" rx="2" fill="#215f5a"/>
-                  <rect x="26" y="11" width="4" height="11" rx="2" fill="#215f5a"/>
-                  <rect x="7" y="22" width="2.5" height="4" rx="1" fill="#78b8af"/>
-                  <rect x="22.5" y="22" width="2.5" height="4" rx="1" fill="#78b8af"/>
-                </svg>
+                <img className="hero__logo" src={glyphSrc} alt="" aria-hidden="true" />
                 OpenCouch
               </h1>
               <p className="hero__subtitle">
