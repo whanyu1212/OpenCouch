@@ -191,12 +191,18 @@ function generateThreadId(): string {
   return `web-${rand}`;
 }
 
+// Note: `isSetup` and `threadId` are intentionally NOT persisted.
+// - `isSetup`: every fresh page load returns to the landing screen so the
+//   user makes an explicit choice about identity and memory mode.
+// - `threadId`: per-session ephemeral; persisting it caused stale thread
+//   IDs to bleed across mode switches (e.g., incognito → persistent
+//   carrying over the ID). The form auto-generates a fresh one if blank.
+// The remembered fields below act as prefill defaults for the setup form,
+// not as a way to skip past it.
 type PersistedSessionState = Pick<
   SessionState,
-  | "isSetup"
   | "sessionMode"
   | "userId"
-  | "threadId"
   | "responseModelTier"
   | "transcriptionLanguageSelected"
 >;
@@ -299,7 +305,9 @@ export const useSessionStore = create<SessionState>()(
     set({
       isSetup: false,
       sessionMode: "persistent",
-      threadId: generateThreadId(),
+      // Clear the threadId so the setup form opens with an empty input.
+      // startSession() generates a fresh one if the user leaves it blank.
+      threadId: "",
       messages: [],
       chatLoading: false,
       memoryFacts: [],
@@ -372,10 +380,8 @@ export const useSessionStore = create<SessionState>()(
       name: "opencouch-web-session",
       storage: createJSONStorage(() => localStorage),
       partialize: (state): PersistedSessionState => ({
-        isSetup: state.isSetup,
         sessionMode: state.sessionMode,
         userId: state.userId,
-        threadId: state.threadId,
         responseModelTier: state.responseModelTier,
         transcriptionLanguageSelected: state.transcriptionLanguageSelected,
       }),
@@ -384,6 +390,12 @@ export const useSessionStore = create<SessionState>()(
         return {
           ...current,
           ...saved,
+          // Always start at the landing screen — even if an older deploy
+          // stored isSetup: true in localStorage, drop it on rehydration.
+          isSetup: false,
+          // Drop any persisted threadId from older deploys; threadId is
+          // ephemeral and should never carry across reloads/mode switches.
+          threadId: "",
           messages: [],
           chatLoading: false,
           memoryFacts: [],

@@ -4,7 +4,6 @@ import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { useSessionStore, useSessionStoreHydrated } from "@/lib/session";
 import { SessionSetup } from "@/components/session-setup";
-import { Sidebar } from "@/components/sidebar";
 import { CommandPalette } from "@/components/command-palette";
 import { ThreadDrawer } from "@/components/thread-drawer";
 import { CommandActionsProvider } from "@/lib/command-actions";
@@ -18,21 +17,21 @@ const DynamicVoiceSessionProvider = dynamic(
 );
 
 /**
- * AppShell — conditionally renders the setup screen or the
- * sidebar + page content based on session state.
+ * AppShell — chooses between the landing setup screen and the main
+ * conversation layout.
  *
- * When isSetup is false, the full viewport shows the session
- * setup screen. Once the user picks a mode and starts, the
- * normal sidebar + content layout appears.
- *
- * The LiveKit voice session provider is loaded only when voice is needed
- * so chat, memory, and state routes do not pay for the voice bundle.
+ * Pages own their own chrome via `<ConversationShell>` — a slim icon
+ * NavRail on desktop and a bottom tab bar on mobile. AppShell just wires
+ * up the providers (command palette, thread drawer, optional LiveKit
+ * provider) and the hydration loader.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const hydrated = useSessionStoreHydrated();
   const isSetup = useSessionStore((s) => s.isSetup);
   const voiceConnected = useSessionStore((s) => s.voiceConnected);
-  const voiceFinalizationStatus = useSessionStore((s) => s.voiceFinalization.status);
+  const voiceFinalizationStatus = useSessionStore(
+    (s) => s.voiceFinalization.status
+  );
   const pathname = usePathname();
 
   if (!hydrated) {
@@ -57,8 +56,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const content = (
     <CommandActionsProvider>
-      <Sidebar />
-      <main className="flex-1 flex flex-col min-w-0">{children}</main>
+      <main className="flex-1 flex min-w-0">{children}</main>
       <CommandPalette />
       <ThreadDrawer />
     </CommandActionsProvider>

@@ -3,6 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { getThreadState } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
+import { CouchLogo } from "@/components/logo";
+import {
+  ConversationShell,
+  MobileTabBar,
+  SessionPill,
+} from "@/components/conversation-shell";
 
 /**
  * State Inspector — displays the full agent state dict for the current
@@ -76,11 +82,15 @@ export default function StateInspectorPage() {
     : null;
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Header */}
-      <header className="px-6 py-3.5 border-b border-oc-border flex items-center justify-between shrink-0">
+    <ConversationShell>
+      {/* Desktop top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-app-top-wrap">
+      <header className="oc-app-top">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-lg text-oc-teal-900">State Inspector</h1>
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-app-top-title">State</h2>
           {turnCount != null && (
             <span className="text-[12px] font-mono text-oc-text-dim">
               turn {String(turnCount)}
@@ -92,7 +102,7 @@ export default function StateInspectorPage() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -105,12 +115,34 @@ export default function StateInspectorPage() {
           <button
             onClick={fetchState}
             disabled={loading}
-            className="text-[13px] font-mono text-oc-teal-600 hover:text-oc-teal-500 transition-colors disabled:opacity-50"
+            className="oc-tab-chip"
           >
             {loading ? "loading…" : "refresh"}
           </button>
+          <SessionPill />
         </div>
       </header>
+      </div>
+
+      {/* Mobile top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-mobile-top-wrap">
+      <header className="oc-mobile-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-mobile-top-title">State</h2>
+        </div>
+        <button
+          onClick={fetchState}
+          disabled={loading}
+          className="oc-tab-chip"
+          style={{ padding: "4px 8px", fontSize: 9.5 }}
+        >
+          {loading ? "loading…" : "refresh"}
+        </button>
+      </header>
+      </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
@@ -188,7 +220,12 @@ export default function StateInspectorPage() {
           </div>
         )}
       </div>
-    </div>
+
+      {/* Mobile bottom tab bar */}
+      <div className="oc-mobile-tabbar-wrap">
+        <MobileTabBar />
+      </div>
+    </ConversationShell>
   );
 }
 

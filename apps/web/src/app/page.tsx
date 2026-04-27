@@ -22,49 +22,172 @@ import { useCommandActions } from "@/lib/command-actions";
 import { resolveSlashCommand } from "@/lib/slash-commands";
 import { CouchLogo } from "@/components/logo";
 import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
+import {
+  ConversationShell,
+  MobileTabBar,
+  SessionPill,
+} from "@/components/conversation-shell";
 
-const CONVERSATION_STARTERS = [
+const PROMPT_CARDS = [
   {
+    id: "checkin",
     label: "Check in",
+    description: "What feels most worth putting down first today?",
     prompt: "Hi. What feels most worth putting down first today?",
-    icon: "💬",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <path d="M11 20A7 7 0 0 1 4 13c0-7 8-9 16-9 0 8-2 16-9 16z" />
+        <path d="M4 20l9-9" />
+      </svg>
+    ),
   },
   {
+    id: "breath",
     label: "Breathing exercise",
+    description: "I'm feeling wound up. Can we do a breathing exercise?",
     prompt: "I'm feeling wound up. Can we do a breathing exercise?",
-    icon: "🌬️",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <path d="M3 8h12a3 3 0 1 0-3-3" />
+        <path d="M3 12h17a3 3 0 1 1-3 3" />
+        <path d="M3 16h9" />
+      </svg>
+    ),
   },
   {
+    id: "examine",
     label: "Examine a thought",
+    description: "I have a thought that keeps pulling at me. Can we look?",
     prompt: "I have a thought that keeps pulling at me. Can we do a thought record?",
-    icon: "💭",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M15 9l-2 5-5 2 2-5z" />
+      </svg>
+    ),
   },
   {
+    id: "stuck",
     label: "I'm stuck",
+    description: "I've been stuck all week and can't make myself do anything.",
     prompt: "I've been stuck all week and can't make myself do anything. Can we try something small?",
-    icon: "🧱",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <circle cx="12" cy="6" r="2" />
+        <path d="M12 8v13M5 16a7 7 0 0 0 14 0" />
+        <path d="M3 16h4M17 16h4" />
+      </svg>
+    ),
   },
   {
+    id: "selfcomp",
     label: "Self-compassion",
+    description: "I'm being really hard on myself. Help me reframe.",
     prompt: "I'm being really hard on myself right now. Is there something we can do about that?",
-    icon: "🤲",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z" />
+      </svg>
+    ),
   },
   {
+    id: "letgo",
     label: "Let go of a thought",
+    description: "I want to try sitting with a thought instead of arguing with it.",
     prompt: "I want to try letting go of a thought instead of arguing with it. Can we do that?",
-    icon: "🍃",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" />
+        <path d="M19 15l.7 2L22 18l-2.3.5L19 21l-.7-2.5L16 18l2.3-1z" />
+      </svg>
+    ),
   },
   {
+    id: "patterns",
     label: "Reflect on patterns",
+    description: "I've been noticing a pattern in how I react to stress.",
     prompt: "I've been noticing a pattern in how I react to stress. Can we explore it?",
-    icon: "🔍",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <path d="M3 7c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2" />
+        <path d="M3 13c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2" />
+        <path d="M3 19c2 0 2 0 4 0s2 0 4 0 2 0 4 0 2 0 4 0" />
+      </svg>
+    ),
   },
   {
+    id: "memrecall",
     label: "What do you know?",
+    description: "What do you remember about me from past conversations?",
     prompt: "What do you remember about me from our past conversations?",
-    icon: "🧠",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 3 3" />
+        <path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-3 3" />
+        <path d="M9 4v16M15 4v16" />
+      </svg>
+    ),
   },
 ];
+
+const IconClock = ({ size = 12 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+
+const IconSend = ({ size = 16 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M4 12l16-8-6 16-3-6-7-2z" />
+  </svg>
+);
+
+const IconPlus = ({ size = 14 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+function friendlyThreadName(threadId: string): string {
+  if (!threadId) return "thread";
+  if (threadId.length <= 24 && !threadId.includes(":")) return threadId;
+  if (threadId.includes(":")) {
+    const parts = threadId.split(":");
+    return parts[parts.length - 1].slice(-14);
+  }
+  return threadId.slice(0, 16) + "…";
+}
 
 export default function TextChatPage() {
   const {
@@ -88,7 +211,7 @@ export default function TextChatPage() {
     bumpMemoryRefreshVersion,
     responseModelTier,
   } = useSessionStore();
-  const { runAction } = useCommandActions();
+  const { runAction, startNewSession, isBusy } = useCommandActions();
   const [input, setInput] = useState("");
   const [stages, setStages] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -98,13 +221,9 @@ export default function TextChatPage() {
   const activeStreamIdRef = useRef(0);
   const loadingRef = useRef(isLoading);
 
-  // Empty state data
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
   const [recentThreads, setRecentThreads] = useState<ThreadSummary[]>([]);
   const lastLoadedThread = useRef<string | null>(null);
-
-  // Track the session's original thread so the user can navigate back
-  // after clicking into a past thread from the empty state.
   const [originThread, setOriginThread] = useState<string | null>(null);
 
   useEffect(() => {
@@ -123,9 +242,6 @@ export default function TextChatPage() {
     };
   }, [threadId, closeActiveSocket]);
 
-  // Load history when thread changes — NOT on every re-mount.
-  // Messages live in Zustand so they survive tab switches. We only
-  // reload from the backend when the threadId actually changes.
   useEffect(() => {
     if (lastLoadedThread.current === threadId) return;
     lastLoadedThread.current = threadId;
@@ -148,7 +264,6 @@ export default function TextChatPage() {
       });
   }, [threadId, sessionMode, clearMessages, setMessages]);
 
-  // Load memory status and existing facts for empty state / memory refreshes.
   useEffect(() => {
     if (sessionMode === "incognito") return;
     getMemoryStatus(threadId, userId)
@@ -179,185 +294,192 @@ export default function TextChatPage() {
     });
   }, [messages, stages]);
 
-  const sendMessage = useCallback((text?: string) => {
-    const msg = (text || input).trim();
-    if (!msg) return;
-    const slashCommand = resolveSlashCommand(msg);
-    if (!slashCommand && isLoading) return;
+  const sendMessage = useCallback(
+    (text?: string) => {
+      const msg = (text || input).trim();
+      if (!msg) return;
+      const slashCommand = resolveSlashCommand(msg);
+      if (!slashCommand && isLoading) return;
 
-    clearLastEndedSession();
-    setNotice(null);
-    setInput("");
-    setStages([]);
-    setOriginThread(null);
+      clearLastEndedSession();
+      setNotice(null);
+      setInput("");
+      setStages([]);
+      setOriginThread(null);
 
-    if (inputRef.current) {
-      inputRef.current.style.height = "auto";
-    }
+      if (inputRef.current) {
+        inputRef.current.style.height = "auto";
+      }
 
-    if (slashCommand) {
-      if (slashCommand.kind === "unsupported") {
-        addMessage({ role: "assistant", content: slashCommand.message });
+      if (slashCommand) {
+        if (slashCommand.kind === "unsupported") {
+          addMessage({ role: "assistant", content: slashCommand.message });
+          return;
+        }
+
+        void runAction(slashCommand.actionId)
+          .then((handled) => {
+            if (!handled && slashCommand.disabledMessage) {
+              addMessage({
+                role: "assistant",
+                content: slashCommand.disabledMessage,
+              });
+            }
+          })
+          .catch(() => {
+            addMessage({
+              role: "assistant",
+              content: "Could not run that shortcut.",
+            });
+          });
         return;
       }
 
-      void runAction(slashCommand.actionId)
-        .then((handled) => {
-          if (!handled && slashCommand.disabledMessage) {
-            addMessage({
-              role: "assistant",
-              content: slashCommand.disabledMessage,
-            });
-          }
-        })
-        .catch(() => {
-          addMessage({
-            role: "assistant",
-            content: "Could not run that shortcut.",
-          });
-        });
-      return;
-    }
+      setIsLoading(true);
+      addMessage({ role: "user", content: msg });
 
-    setIsLoading(true);
-    addMessage({ role: "user", content: msg });
+      let done = false;
+      let streamingStarted = false;
+      closeActiveSocket();
+      const streamId = activeStreamIdRef.current + 1;
+      activeStreamIdRef.current = streamId;
+      const isCurrentStream = () => activeStreamIdRef.current === streamId;
 
-    let done = false;
-    let streamingStarted = false;
-    closeActiveSocket();
-    const streamId = activeStreamIdRef.current + 1;
-    activeStreamIdRef.current = streamId;
-    const isCurrentStream = () => activeStreamIdRef.current === streamId;
-
-    const ws = createChatStream({
-      message: msg,
-      threadId,
-      userId,
-      responseModelTier,
-      onEvent: (event: StreamEvent) => {
-        if (!isCurrentStream()) return;
-        if (event.type === "status") {
-          setStages((prev) => [...prev, event.stage]);
-        } else if (event.type === "chunk") {
-          // v0.9 token streaming: chunks arrive in real time as the LLM
-          // generates tokens. First chunk creates the message; subsequent
-          // chunks append to it.
-          if (!streamingStarted) {
-            streamingStarted = true;
-            addMessage({ role: "assistant", content: event.text });
-            setStages([]);
-            setIsLoading(false);
-            inputRef.current?.focus();
-          } else {
-            appendToLastMessage(event.text);
-          }
-        } else if (event.type === "done") {
-          done = true;
-          const resp = event.response as ChatResponse;
-          if (streamingStarted) {
-            updateLastMessage({
-              content: resp.response_text,
-              responseStyle: resp.response_style,
-              responseStyleSource: resp.response_style_source,
-              therapeuticApproach: resp.therapeutic_approach,
-              responseType: resp.response_type,
-              crisis: resp.crisis,
-              diagnostics: resp.diagnostics,
-            });
-          } else {
-            addMessage({
-              role: "assistant",
-              content: resp.response_text,
-              responseStyle: resp.response_style,
-              responseStyleSource: resp.response_style_source,
-              therapeuticApproach: resp.therapeutic_approach,
-              responseType: resp.response_type,
-              crisis: resp.crisis,
-              diagnostics: resp.diagnostics,
-            });
-            setStages([]);
-            setIsLoading(false);
-            inputRef.current?.focus();
-          }
-
-          const semanticWrites = Number(resp.diagnostics?.semantic_writes ?? 0);
-          const proceduralWrites = Number(resp.diagnostics?.procedural_writes ?? 0);
-          const memoryControlTurn =
-            resp.response_style === "memory_control" ||
-            resp.diagnostics?.memory_control_ms != null;
-          if (
-            sessionMode === "persistent" &&
-            (semanticWrites > 0 || proceduralWrites > 0 || memoryControlTurn)
-          ) {
-            bumpMemoryRefreshVersion();
-          }
-          if (
-            sessionMode === "persistent" &&
-            (semanticWrites > 0 || memoryControlTurn)
-          ) {
-            getMemoryFacts(threadId, userId || undefined)
-              .then((facts) => {
-                if (!isCurrentStream()) return;
-                setMemoryFacts(facts);
-                const currentFactCount = useSessionStore.getState().memoryFacts.length;
-                addUnseenMemories(Math.max(0, facts.length - currentFactCount));
-              })
-              .catch(() => {
-                if (!isCurrentStream()) return;
-                setNotice("Reply completed, but memory refresh failed.");
+      const ws = createChatStream({
+        message: msg,
+        threadId,
+        userId,
+        responseModelTier,
+        onEvent: (event: StreamEvent) => {
+          if (!isCurrentStream()) return;
+          if (event.type === "status") {
+            setStages((prev) => [...prev, event.stage]);
+          } else if (event.type === "chunk") {
+            if (!streamingStarted) {
+              streamingStarted = true;
+              addMessage({ role: "assistant", content: event.text });
+              setStages([]);
+              setIsLoading(false);
+              inputRef.current?.focus();
+            } else {
+              appendToLastMessage(event.text);
+            }
+          } else if (event.type === "done") {
+            done = true;
+            const resp = event.response as ChatResponse;
+            if (streamingStarted) {
+              updateLastMessage({
+                content: resp.response_text,
+                responseStyle: resp.response_style,
+                responseStyleSource: resp.response_style_source,
+                therapeuticApproach: resp.therapeutic_approach,
+                responseType: resp.response_type,
+                crisis: resp.crisis,
+                diagnostics: resp.diagnostics,
               });
-          }
+            } else {
+              addMessage({
+                role: "assistant",
+                content: resp.response_text,
+                responseStyle: resp.response_style,
+                responseStyleSource: resp.response_style_source,
+                therapeuticApproach: resp.therapeutic_approach,
+                responseType: resp.response_type,
+                crisis: resp.crisis,
+                diagnostics: resp.diagnostics,
+              });
+              setStages([]);
+              setIsLoading(false);
+              inputRef.current?.focus();
+            }
 
-          ws.close();
-        }
-      },
-      onProtocolError: () => {
-        if (!isCurrentStream()) return;
+            const semanticWrites = Number(resp.diagnostics?.semantic_writes ?? 0);
+            const proceduralWrites = Number(
+              resp.diagnostics?.procedural_writes ?? 0
+            );
+            const memoryControlTurn =
+              resp.response_style === "memory_control" ||
+              resp.diagnostics?.memory_control_ms != null;
+            if (
+              sessionMode === "persistent" &&
+              (semanticWrites > 0 || proceduralWrites > 0 || memoryControlTurn)
+            ) {
+              bumpMemoryRefreshVersion();
+            }
+            if (
+              sessionMode === "persistent" &&
+              (semanticWrites > 0 || memoryControlTurn)
+            ) {
+              getMemoryFacts(threadId, userId || undefined)
+                .then((facts) => {
+                  if (!isCurrentStream()) return;
+                  setMemoryFacts(facts);
+                  const currentFactCount =
+                    useSessionStore.getState().memoryFacts.length;
+                  addUnseenMemories(
+                    Math.max(0, facts.length - currentFactCount)
+                  );
+                })
+                .catch(() => {
+                  if (!isCurrentStream()) return;
+                  setNotice("Reply completed, but memory refresh failed.");
+                });
+            }
+
+            ws.close();
+          }
+        },
+        onProtocolError: () => {
+          if (!isCurrentStream()) return;
+          done = true;
+          setStages([]);
+          setIsLoading(false);
+          setNotice(
+            "The chat stream sent an unreadable response. Please try again."
+          );
+        },
+      });
+      activeSocketRef.current = ws;
+
+      ws.onerror = () => {
+        if (!isCurrentStream() || done) return;
         done = true;
         setStages([]);
         setIsLoading(false);
-        setNotice("The chat stream sent an unreadable response. Please try again.");
-      },
-    });
-    activeSocketRef.current = ws;
+        setNotice(
+          "Connection error. Check that the backend is running on the configured API URL."
+        );
+      };
 
-    ws.onerror = () => {
-      if (!isCurrentStream() || done) return;
-      done = true;
-      setStages([]);
-      setIsLoading(false);
-      setNotice(
-        "Connection error. Check that the backend is running on the configured API URL."
-      );
-    };
-
-    ws.onclose = () => {
-      if (!isCurrentStream()) return;
-      activeSocketRef.current = null;
-      if (!done && loadingRef.current) {
-        setStages([]);
-        setIsLoading(false);
-        setNotice("The chat connection closed before the reply finished.");
-      }
-    };
-  }, [
-    input,
-    isLoading,
-    threadId,
-    userId,
-    responseModelTier,
-    sessionMode,
-    addMessage,
-    appendToLastMessage,
-    updateLastMessage,
-    closeActiveSocket,
-    setIsLoading,
-    setMemoryFacts,
-    addUnseenMemories,
-    clearLastEndedSession,
-    bumpMemoryRefreshVersion,
-    runAction,
-  ]);
+      ws.onclose = () => {
+        if (!isCurrentStream()) return;
+        activeSocketRef.current = null;
+        if (!done && loadingRef.current) {
+          setStages([]);
+          setIsLoading(false);
+          setNotice("The chat connection closed before the reply finished.");
+        }
+      };
+    },
+    [
+      input,
+      isLoading,
+      threadId,
+      userId,
+      responseModelTier,
+      sessionMode,
+      addMessage,
+      appendToLastMessage,
+      updateLastMessage,
+      closeActiveSocket,
+      setIsLoading,
+      setMemoryFacts,
+      addUnseenMemories,
+      clearLastEndedSession,
+      bumpMemoryRefreshVersion,
+      runAction,
+    ]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -378,68 +500,85 @@ export default function TextChatPage() {
     ? Object.values(memoryStatus.counts).reduce((a, b) => a + b, 0)
     : 0;
 
-  // Filter recent threads: exclude current, show only those with turns
   const otherThreads = recentThreads.filter(
     (t) => t.thread_id !== threadId && t.turn_count > 0
   );
 
+  const showWelcome = messages.length === 0 && !isLoading;
+  const isPersistent = sessionMode === "persistent";
+  const memoryCountText =
+    isPersistent && totalFacts > 0
+      ? `I remember ${totalFacts} thing${totalFacts === 1 ? "" : "s"} from our past time together. Start anywhere.`
+      : isPersistent
+        ? "Fresh thread — start anywhere."
+        : "Incognito · nothing saved this session.";
+
+  const greetingFirstName =
+    isPersistent && userId ? userId.split(/[\s_-]/)[0] : null;
+
   return (
-    <div className="flex h-screen">
-    <div className="flex flex-col flex-1 min-w-0">
-      {/* Header */}
-      <header className="px-6 py-3.5 border-b border-oc-border flex items-center justify-between shrink-0">
+    <ConversationShell withWash={isPersistent}>
+      {/* Desktop top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-app-top-wrap">
+      <header className="oc-app-top">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-lg text-oc-teal-900">Chat</h1>
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-app-top-title">Chat</h2>
           {turnCount > 0 && (
             <span className="text-[12px] font-mono text-oc-text-dim">
               {turnCount} turn{turnCount !== 1 ? "s" : ""}
             </span>
           )}
-          {originThread && originThread !== threadId && (
-            <button
-              onClick={() => {
-                setThreadId(originThread);
-                setOriginThread(null);
-              }}
-              className="flex items-center gap-1.5 text-[12px] font-mono text-oc-teal-700 hover:text-oc-teal-600 px-2.5 py-1.5 rounded-lg border border-oc-teal-200 bg-oc-teal-50 hover:bg-oc-teal-100 transition-all animate-fadeIn"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-              back to current session
-            </button>
-          )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {isLoading && (
             <span className="text-[12px] font-mono text-oc-cta">thinking…</span>
           )}
-          <MemoryToggleButton />
           {messages.length > 0 && !isLoading && (
             <button
+              type="button"
               onClick={() => clearMessages()}
-              aria-label="Clear chat"
-              className="flex items-center gap-1.5 text-[12px] font-mono text-oc-text-muted hover:text-oc-red transition-colors"
+              className="oc-tab-chip"
+              title="Clear chat"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-                <path d="M10 11v6M14 11v6" />
-              </svg>
-              clear chat
+              clear
             </button>
           )}
+          <MemoryToggleButton />
+          <SessionPill />
         </div>
       </header>
+      </div>
 
+      {/* Mobile top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-mobile-top-wrap">
+      <header className="oc-mobile-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-mobile-top-title">Chat</h2>
+        </div>
+        <button
+          type="button"
+          className="oc-tab-chip"
+          onClick={() => void startNewSession()}
+          disabled={isBusy}
+          style={{ padding: "4px 8px", fontSize: 9.5 }}
+        >
+          <IconPlus size={11} /> new
+        </button>
+      </header>
+      </div>
+
+      {/* Notice banner */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {notice ?? ""}
       </div>
-
       {notice && (
-        <div
-          className="mx-6 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800"
-        >
+        <div className="mx-4 mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800 md:mx-6">
           <div className="flex items-start justify-between gap-3">
             <span>{notice}</span>
             <button
@@ -454,206 +593,206 @@ export default function TextChatPage() {
         </div>
       )}
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
-        {/* ── Empty state ── */}
-        {messages.length === 0 && !isLoading && (
-          <div className="flex items-center justify-center h-full animate-fadeIn">
-            <div className="w-full max-w-lg">
-              {/* Greeting */}
-              <div className="text-center mb-8">
-                <div className="w-14 h-14 rounded-xl bg-oc-accent-glow flex items-center justify-center mx-auto mb-4">
-                  <CouchLogo className="w-8 h-8" />
-                </div>
-                <p className="font-display text-xl text-oc-text">
-                  {sessionMode === "incognito"
-                    ? "Private session"
-                    : userId
-                      ? `Welcome back, ${userId}`
-                      : "What\u2019s on your mind?"}
-                </p>
-                <p className="text-oc-text-muted text-sm mt-1.5 font-mono">
-                  {sessionMode === "incognito"
-                    ? "incognito · nothing is saved"
-                    : totalFacts > 0
-                      ? `${totalFacts} memories across ${Object.keys(memoryStatus?.counts || {}).filter(k => (memoryStatus?.counts[k] ?? 0) > 0).length} layers`
-                      : "start a conversation to begin building memory"}
-                </p>
-              </div>
+      {/* Origin-thread back button */}
+      {originThread && originThread !== threadId && (
+        <div className="mx-4 mt-3 md:mx-6 animate-fadeIn">
+          <button
+            onClick={() => {
+              setThreadId(originThread);
+              setOriginThread(null);
+            }}
+            className="flex items-center gap-1.5 text-[12px] font-mono text-oc-teal-700 hover:text-oc-teal-600 px-2.5 py-1.5 rounded-lg border border-oc-teal-200 bg-oc-teal-50 hover:bg-oc-teal-100 transition-all"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            back to current session
+          </button>
+        </div>
+      )}
 
-              {/* Memory snapshot — persistent mode only */}
-              {sessionMode === "persistent" && memoryStatus && totalFacts > 0 && (
-                <div className="flex justify-center gap-3 mb-8 animate-slideUp" style={{ animationDelay: "50ms" }}>
-                  {Object.entries(memoryStatus.counts).map(([kind, count]) => (
-                    <div
-                      key={kind}
-                      className="flex items-center gap-2 px-3 py-2 bg-oc-bg-card border border-oc-border rounded-lg"
-                    >
-                      <span className="text-lg font-display text-oc-teal-700 tabular-nums">{count}</span>
-                      <span className="text-[12px] font-mono text-oc-text-muted">{kind}</span>
+      {/* Scrollable content */}
+      <div ref={scrollRef} className="oc-chat-scroll">
+        {showWelcome ? (
+          <div
+            className="oc-chat-inner oc-chat-inner--narrow animate-fadeIn"
+            style={{ paddingTop: 28 }}
+          >
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div className="oc-welcome-eyebrow">
+                ⌘ {isPersistent ? (greetingFirstName ? `welcome back, ${greetingFirstName}` : "welcome back") : "private session"}
+              </div>
+              <h1 className="oc-welcome-title">
+                What&rsquo;s <em>here</em>
+                {greetingFirstName ? <>, {greetingFirstName}</> : null}?
+              </h1>
+              <p className="oc-welcome-sub">
+                {isPersistent && totalFacts > 0 ? (
+                  <>
+                    I remember <b>{totalFacts} thing{totalFacts === 1 ? "" : "s"}</b>{" "}
+                    from our past time together. Start anywhere.
+                  </>
+                ) : (
+                  memoryCountText
+                )}
+              </p>
+            </div>
+
+            <div className="oc-prompts-grid">
+              {PROMPT_CARDS.slice(0, 4).map((card) => (
+                <button
+                  key={card.id}
+                  type="button"
+                  className="oc-prompt-card"
+                  onClick={() => sendMessage(card.prompt)}
+                >
+                  <span className="oc-prompt-icon">{card.icon}</span>
+                  <span className="oc-prompt-body">
+                    <span className="oc-prompt-title">{card.label}</span>
+                    <span className="oc-prompt-desc">{card.description}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {isPersistent && otherThreads.length > 0 && (
+              <div className="oc-recents">
+                <div className="oc-recents-eyebrow">Recent threads</div>
+                {otherThreads.slice(0, 3).map((t) => (
+                  <button
+                    key={t.thread_id}
+                    type="button"
+                    className="oc-recents-row"
+                    onClick={() => {
+                      if (!originThread) setOriginThread(threadId);
+                      setThreadId(t.thread_id);
+                    }}
+                  >
+                    <IconClock size={12} />
+                    <span className="name">{friendlyThreadName(t.thread_id)}</span>
+                    <span className="preview">
+                      {t.message_count} message{t.message_count === 1 ? "" : "s"}
+                    </span>
+                    <span className="turns">
+                      {t.turn_count} turn{t.turn_count !== 1 ? "s" : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="oc-chat-inner">
+            <div className="space-y-4">
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className="animate-slideUp"
+                  style={{ animationDelay: `${Math.min(i * 30, 200)}ms` }}
+                >
+                  {msg.role === "user" ? (
+                    <div className="oc-bubble oc-bubble--user">
+                      <div className="oc-bubble-body">{msg.content}</div>
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Conversation starters */}
-              <div className="space-y-2 mb-8 animate-slideUp" style={{ animationDelay: "100ms" }}>
-                <p className="text-[11px] font-mono uppercase tracking-widest text-oc-text-dim text-center mb-3">
-                  Try one of these
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {CONVERSATION_STARTERS.map((starter) => (
-                    <button
-                      key={starter.label}
-                      onClick={() => sendMessage(starter.prompt)}
-                      className="text-left p-3.5 rounded-xl border border-oc-border bg-oc-bg hover:bg-oc-teal-50 hover:border-oc-teal-200 transition-all group"
-                    >
-                      <div className="flex items-start gap-2.5">
-                        <span className="text-base mt-0.5">{starter.icon}</span>
-                        <div>
-                          <p className="text-[14px] font-medium text-oc-text group-hover:text-oc-teal-800 transition-colors">
-                            {starter.label}
-                          </p>
-                          <p className="text-[12px] text-oc-text-muted mt-0.5 leading-relaxed line-clamp-2">
-                            {starter.prompt}
-                          </p>
-                        </div>
+                  ) : (
+                    <div className="oc-bubble">
+                      <div className="oc-bubble-mark">
+                        <CouchLogo variant="mono" className="w-3.5 h-3.5" />
                       </div>
-                    </button>
-                  ))}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="oc-bubble-body">{msg.content}</div>
+                        {msg.responseStyle && <StateStrip msg={msg} />}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              ))}
 
-              {/* Recent sessions — persistent mode only */}
-              {sessionMode === "persistent" && otherThreads.length > 0 && (
-                <div className="animate-slideUp" style={{ animationDelay: "150ms" }}>
-                  <p className="text-[11px] font-mono uppercase tracking-widest text-oc-text-dim text-center mb-3">
-                    Recent sessions
-                  </p>
-                  <div className="space-y-1.5">
-                    {otherThreads.slice(0, 3).map((t) => (
-                      <button
-                        key={t.thread_id}
-                        onClick={() => {
-                          if (!originThread) setOriginThread(threadId);
-                          setThreadId(t.thread_id);
-                        }}
-                        className="w-full flex items-center justify-between px-4 py-2.5 rounded-lg border border-oc-border hover:bg-oc-warm-50 hover:border-oc-border-strong transition-all text-left"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4 text-oc-text-dim shrink-0">
-                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-                          </svg>
-                          <span className="text-[13px] font-mono text-oc-text-secondary truncate">
-                            {t.thread_id}
-                          </span>
-                        </div>
-                        <span className="text-[12px] font-mono text-oc-text-dim shrink-0 ml-2">
-                          {t.turn_count} turn{t.turn_count !== 1 ? "s" : ""}
-                        </span>
-                      </button>
-                    ))}
+              {isLoading && (
+                <div
+                  className="oc-bubble animate-fadeIn"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <div className="oc-bubble-mark">
+                    <CouchLogo variant="mono" className="w-3.5 h-3.5" />
+                  </div>
+                  <div
+                    className="oc-bubble-body"
+                    style={{ minWidth: 180 }}
+                  >
+                    {stages.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
+                        {stages.map((s, i) => (
+                          <div
+                            key={i}
+                            className="animate-fadeIn"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 12,
+                              color: "var(--color-oc-muted)",
+                            }}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.4"
+                              className="w-3.5 h-3.5"
+                              style={{ color: "var(--color-oc-green)" }}
+                            >
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            <span>{s}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 12,
+                        color: "var(--color-oc-cta)",
+                      }}
+                    >
+                      <span className="relative flex h-3.5 w-3.5 items-center justify-center shrink-0">
+                        <span className="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-oc-cta opacity-50" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-cta" />
+                      </span>
+                      <span>{stages.length === 0 ? "starting…" : "processing…"}</span>
+                    </div>
                   </div>
                 </div>
               )}
             </div>
           </div>
         )}
-
-        {/* ── Message list ── */}
-        <div className="space-y-5 max-w-2xl mx-auto">
-          {messages.map((msg, i) => {
-            const userTurnIndex = msg.role === "user"
-              ? messages.slice(0, i + 1).filter((m) => m.role === "user").length
-              : null;
-
-            return (
-              <div key={i} className="animate-slideUp" style={{ animationDelay: `${Math.min(i * 30, 200)}ms` }}>
-                {/* User message */}
-                {msg.role === "user" && (
-                  <div className="flex items-start gap-3 justify-end">
-                    <div className="bg-oc-teal-50 border border-oc-teal-100 rounded-2xl rounded-tr-md px-4 py-3 max-w-[80%]">
-                      <p className="text-[15px] leading-relaxed text-oc-teal-900 whitespace-pre-wrap">
-                        {msg.content}
-                      </p>
-                    </div>
-                    <div className="w-7 h-7 rounded-full bg-oc-teal-100 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="text-[11px] font-mono font-bold text-oc-teal-700">
-                        {userTurnIndex}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Assistant message */}
-                {msg.role === "assistant" && (
-                  <div className="flex items-start gap-3">
-                    <div className="w-7 h-7 rounded-full bg-oc-warm-200 flex items-center justify-center shrink-0 mt-0.5">
-                      <CouchLogo variant="mono" className="w-4 h-4 text-oc-warm-700" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="bg-oc-bg-card border border-oc-border rounded-2xl rounded-tl-md px-4 py-3 max-w-[90%]">
-                        <p className="text-[15px] leading-relaxed text-oc-text whitespace-pre-wrap">
-                          {msg.content}
-                        </p>
-                      </div>
-                      {msg.responseStyle && <StateStrip msg={msg} />}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Loading indicator with live pipeline stages */}
-          {isLoading && (
-            <div
-              className="flex items-start gap-3 animate-fadeIn"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <div className="w-7 h-7 rounded-full bg-oc-warm-200 flex items-center justify-center shrink-0 mt-0.5">
-                <span className="text-[11px] font-display font-bold text-oc-warm-700">O</span>
-              </div>
-              <div className="bg-oc-bg-card border border-oc-border rounded-2xl rounded-tl-md px-4 py-3 min-w-[180px]">
-                {/* Completed stages */}
-                {stages.length > 0 && (
-                  <div className="space-y-1.5 mb-2">
-                    {stages.map((s, i) => (
-                      <div key={i} className="flex items-center gap-2 animate-fadeIn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5 text-oc-green shrink-0">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        <span className="text-[12px] font-mono text-oc-text-muted">{s}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* Active spinner for next stage */}
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-3.5 w-3.5 items-center justify-center shrink-0">
-                    <span className="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-oc-cta opacity-50" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-cta" />
-                  </span>
-                  <span className="text-[12px] font-mono text-oc-cta">
-                    {stages.length === 0 ? "starting…" : "processing…"}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
-      {/* Input */}
-      <div className="px-6 py-3.5 border-t border-oc-border shrink-0 bg-oc-bg">
-        <div className="max-w-2xl mx-auto">
-          {sessionMode === "persistent" &&
+      {/* Composer */}
+      <div className="oc-composer-bar">
+        <div style={{ width: "100%", maxWidth: 680 }}>
+          {isPersistent &&
           lastEndedSession?.threadId === threadId ? (
             <SessionEndedCard session={lastEndedSession} />
           ) : null}
-          <div className="flex gap-2.5 items-end">
+          <div className="oc-composer">
+            <button
+              type="button"
+              className="oc-composer-attach"
+              title="Attach"
+              aria-label="Attach (not yet supported)"
+              disabled
+            >
+              <IconPlus size={16} />
+            </button>
             <label htmlFor="chat-input" className="sr-only">
               Message
             </label>
@@ -663,29 +802,32 @@ export default function TextChatPage() {
               value={input}
               onChange={handleInput}
               onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
+              placeholder="Say what's on your mind…"
               disabled={isLoading}
               autoFocus
               rows={1}
-              className="flex-1 bg-oc-bg-input border border-oc-border rounded-xl px-4 py-3 text-[15px] placeholder:text-oc-text-dim focus:outline-none focus:border-oc-teal-400 focus:ring-2 focus:ring-oc-accent-subtle transition-all disabled:opacity-50 resize-none overflow-hidden"
+              className="oc-composer-input"
             />
             <button
+              type="button"
               onClick={() => sendMessage()}
               disabled={isLoading || !input.trim()}
               aria-label="Send message"
-              className="bg-oc-teal-700 text-white px-4 py-3 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
+              className="oc-composer-send"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
+              <IconSend size={16} />
             </button>
           </div>
         </div>
       </div>
-    </div>
-    <MemoryPanel />
-    </div>
+
+      {/* Mobile bottom tab bar */}
+      <div className="oc-mobile-tabbar-wrap">
+        <MobileTabBar />
+      </div>
+
+      <MemoryPanel />
+    </ConversationShell>
   );
 }
 
@@ -726,7 +868,6 @@ function SessionEndedCard({
   );
 }
 
-
 /* ── State Strip ── diagnostic pills under assistant messages ── */
 
 function StateStrip({ msg }: { msg: ChatMessage }) {
@@ -764,7 +905,15 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
         {msg.responseStyle === "memory_control" ? (
           <Pill variant="muted">memory</Pill>
         ) : null}
-        <Pill variant={safetyLabel === "safe" ? "green" : safetyLabel === "crisis" ? "red" : "amber"}>
+        <Pill
+          variant={
+            safetyLabel === "safe"
+              ? "green"
+              : safetyLabel === "crisis"
+                ? "red"
+                : "amber"
+          }
+        >
           {safetyLabel}
         </Pill>
         {diag.grounded_lookup_status != null ? (
@@ -796,7 +945,11 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
             <div className="flex items-center gap-1.5 font-mono text-[13px]">
               <span className="text-oc-teal-300">crisis_gate</span>
               <span className="text-oc-warm-600">→</span>
-              <span className={safetyLabel === "safe" ? "text-emerald-400" : "text-red-400"}>
+              <span
+                className={
+                  safetyLabel === "safe" ? "text-emerald-400" : "text-red-400"
+                }
+              >
                 {safetyLabel}
               </span>
               <span className="text-oc-warm-600">→</span>
@@ -825,7 +978,9 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
               <span className="text-oc-warm-500 font-mono text-[11px] uppercase tracking-widest w-16 shrink-0 pt-px">
                 reason
               </span>
-              <span className="text-oc-warm-400 italic text-[13px]">{crisis.reason}</span>
+              <span className="text-oc-warm-400 italic text-[13px]">
+                {crisis.reason}
+              </span>
             </div>
           )}
 
@@ -840,9 +995,20 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
               <TimingRow label="memory_control" ms={diag.memory_control_ms} />
               <TimingRow label="lookup_gate" ms={diag.grounded_lookup_gate_ms} />
               <TimingRow label="grounded_lookup" ms={diag.grounded_lookup_ms} />
-              <TimingRow label="crisis_resources" ms={diag.crisis_resource_lookup_ms} />
-              <TimingRow label="extract_facts" ms={diag.extract_facts_ms} extra={diag.semantic_writes} />
-              <TimingRow label="extract_rules" ms={diag.extract_procedural_ms} extra={diag.procedural_writes} />
+              <TimingRow
+                label="crisis_resources"
+                ms={diag.crisis_resource_lookup_ms}
+              />
+              <TimingRow
+                label="extract_facts"
+                ms={diag.extract_facts_ms}
+                extra={diag.semantic_writes}
+              />
+              <TimingRow
+                label="extract_rules"
+                ms={diag.extract_procedural_ms}
+                extra={diag.procedural_writes}
+              />
               <TimingRow label="total" ms={diag.turn_total_ms} bold />
             </div>
           </div>
@@ -852,27 +1018,65 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
               memory
             </span>
             <div className="flex flex-wrap gap-4 font-mono text-[12px] text-oc-warm-400">
-              <span>sem: <span className="text-oc-teal-300">{String(diag.semantic_hits ?? 0)}</span>/{String(diag.semantic_store_size ?? 0)}</span>
-              <span>epi: <span className="text-oc-teal-300">{String(diag.episodic_hits ?? 0)}</span>/{String(diag.episodic_store_size ?? 0)}</span>
-              <span>proc: <span className="text-oc-teal-300">{String(diag.procedural_count ?? 0)}</span></span>
-              <span>recall: <span className={diag.proactive_recall ? "text-emerald-400" : "text-oc-warm-600"}>{diag.proactive_recall ? "on" : "off"}</span></span>
+              <span>
+                sem:{" "}
+                <span className="text-oc-teal-300">
+                  {String(diag.semantic_hits ?? 0)}
+                </span>
+                /{String(diag.semantic_store_size ?? 0)}
+              </span>
+              <span>
+                epi:{" "}
+                <span className="text-oc-teal-300">
+                  {String(diag.episodic_hits ?? 0)}
+                </span>
+                /{String(diag.episodic_store_size ?? 0)}
+              </span>
+              <span>
+                proc:{" "}
+                <span className="text-oc-teal-300">
+                  {String(diag.procedural_count ?? 0)}
+                </span>
+              </span>
+              <span>
+                recall:{" "}
+                <span
+                  className={
+                    diag.proactive_recall ? "text-emerald-400" : "text-oc-warm-600"
+                  }
+                >
+                  {diag.proactive_recall ? "on" : "off"}
+                </span>
+              </span>
               {diag.grounded_lookup_status != null ? (
-                <span>lookup: <span className="text-oc-teal-300">{String(diag.grounded_lookup_status)}</span></span>
+                <span>
+                  lookup:{" "}
+                  <span className="text-oc-teal-300">
+                    {String(diag.grounded_lookup_status)}
+                  </span>
+                </span>
               ) : null}
             </div>
           </div>
 
-          {(diag.extract_facts_reason != null || diag.extract_procedural_reason != null) && (
+          {(diag.extract_facts_reason != null ||
+            diag.extract_procedural_reason != null) && (
             <div className="flex items-start gap-3">
               <span className="text-oc-warm-500 font-mono text-[11px] uppercase tracking-widest w-16 shrink-0 pt-px">
                 notes
               </span>
               <div className="space-y-1 text-[12px] font-mono text-oc-warm-500">
                 {diag.extract_facts_reason != null && (
-                  <div><span className="text-oc-teal-400">facts:</span> {String(diag.extract_facts_reason)}</div>
+                  <div>
+                    <span className="text-oc-teal-400">facts:</span>{" "}
+                    {String(diag.extract_facts_reason)}
+                  </div>
                 )}
                 {diag.extract_procedural_reason != null && (
-                  <div><span className="text-oc-teal-400">rules:</span> {String(diag.extract_procedural_reason)}</div>
+                  <div>
+                    <span className="text-oc-teal-400">rules:</span>{" "}
+                    {String(diag.extract_procedural_reason)}
+                  </div>
                 )}
               </div>
             </div>
@@ -883,14 +1087,27 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
   );
 }
 
-
-function TimingRow({ label, ms, extra, bold }: { label: string; ms: unknown; extra?: unknown; bold?: boolean }) {
+function TimingRow({
+  label,
+  ms,
+  extra,
+  bold,
+}: {
+  label: string;
+  ms: unknown;
+  extra?: unknown;
+  bold?: boolean;
+}) {
   if (ms == null && extra == null && !bold) return null;
 
   const formatted = ms != null ? `${Number(ms).toFixed(0)}ms` : "—";
   const writes = extra != null ? ` (${String(extra)}w)` : "";
   return (
-    <div className={`flex justify-between text-[12px] ${bold ? "text-oc-warm-200" : "text-oc-warm-500"}`}>
+    <div
+      className={`flex justify-between text-[12px] ${
+        bold ? "text-oc-warm-200" : "text-oc-warm-500"
+      }`}
+    >
       <span>{label}</span>
       <span className="tabular-nums">
         {formatted}
@@ -900,8 +1117,13 @@ function TimingRow({ label, ms, extra, bold }: { label: string; ms: unknown; ext
   );
 }
 
-
-function Pill({ children, variant }: { children: React.ReactNode; variant: "teal" | "muted" | "green" | "red" | "amber" }) {
+function Pill({
+  children,
+  variant,
+}: {
+  children: React.ReactNode;
+  variant: "teal" | "muted" | "green" | "red" | "amber";
+}) {
   const styles = {
     teal: "bg-oc-teal-50 text-oc-teal-700 border-oc-teal-200/60",
     muted: "bg-oc-warm-100 text-oc-warm-600 border-oc-warm-200",
@@ -911,7 +1133,9 @@ function Pill({ children, variant }: { children: React.ReactNode; variant: "teal
   };
 
   return (
-    <span className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border ${styles[variant]}`}>
+    <span
+      className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border ${styles[variant]}`}
+    >
       {children}
     </span>
   );

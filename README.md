@@ -24,6 +24,7 @@
 ---
 
 ## Table of Contents
+- [Table of Contents](#table-of-contents)
 - [📖 Overview](#-overview)
 - [Screenshots](#screenshots)
 - [✨ Key Features](#-key-features)
@@ -72,7 +73,6 @@ A closed beta is planned.
 </table>
 
 ## ✨ Key Features
-
 - Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
 - Crisis gate runs before every response, with a SQLite audit trail.
 - Local eval runners, plus Opik as the primary trace surface for regression tracking.
@@ -178,7 +178,7 @@ Open [localhost:3000](http://localhost:3000) in your browser.
 **Optional Terminal 3 — LiveKit Voice Worker:**
 ```bash
 cd apps/backend
-uv run python -m voice.livekit.agent dev
+uv run python -m voice.livekit.agent start
 ```
 
 ### 3. Telegram Gateway

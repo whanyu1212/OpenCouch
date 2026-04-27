@@ -125,7 +125,7 @@ uv run uvicorn main:app --port 8000 --reload
 
 # Terminal 2: LiveKit worker
 cd apps/backend
-uv run python -m voice.livekit.agent dev`}
+uv run python -m voice.livekit.agent start`}
 </TerminalWindow>
 
 For prompt and tool smoke tests without a browser room:

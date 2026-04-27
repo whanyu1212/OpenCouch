@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, JetBrains_Mono } from "next/font/google";
-import { DM_Serif_Display } from "next/font/google";
+import { Geist, JetBrains_Mono, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 
@@ -9,9 +8,9 @@ const geist = Geist({
   subsets: ["latin"],
 });
 
-const dmSerif = DM_Serif_Display({
-  variable: "--font-dm-serif",
-  weight: "400",
+const sourceSerif = Source_Serif_4({
+  variable: "--font-source-serif",
+  weight: ["400", "500", "600", "700"],
   subsets: ["latin"],
 });
 
@@ -37,7 +36,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geist.variable} ${dmSerif.variable} ${jetbrains.variable} h-full antialiased`}
+      className={`${geist.variable} ${sourceSerif.variable} ${jetbrains.variable} h-full antialiased`}
     >
       <body className="min-h-full flex bg-oc-bg text-oc-text font-body">
         <AppShell>{children}</AppShell>
