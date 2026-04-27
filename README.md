@@ -271,6 +271,9 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, and shared response-generation internals are now split into focused modules while preserving public compatibility imports
+- **Exercise routing cleanup** — guided-exercise selection remains LLM-primary and option-aware, ambiguous requests can offer choices instead of defaulting to grounding, and voice exercise eligibility now comes from the shared exercise registry
+- **Therapeutic eval coverage** — latest regression pass is green across full backend tests plus therapeutic routing, therapeutic behavior, exercise flow, exercise memory, and exercise selection evals
 - **Telegram session rotation hardening** — rotated Telegram sessions now recover orphaned registry rows on startup, preserve interrupted turn markers for finalization, avoid blocking foreground chats during sweeps, and retry transient lease/liveness races before showing maintenance copy
 - **Telegram Markdown rendering** — Telegram replies now render common response Markdown as safe Telegram HTML, including bold, italic, code, headings, and HTTP(S) links, with chunk splitting that preserves HTML tag balance
 - **Behavior eval stabilization** — full deterministic + hybrid eval sweep is green across crisis, therapeutic routing, behavior, long trajectories, memory trajectories, summarization, and procedural writer checks

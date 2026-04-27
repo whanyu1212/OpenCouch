@@ -32,15 +32,16 @@ from livekit.agents import AgentTask, RunContext, function_tool
 from agent.therapeutic.guided_exercise import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
-    EXERCISE_CONTINUUM,
+    EXERCISE_GRATITUDE,
+    EXERCISE_IMPROVE,
     EXERCISE_MUSCLE_RELAXATION,
-    EXERCISE_TINY_ACTION,
+    EXERCISE_SELF_COMPASSION,
     EXERCISE_STOP_TECHNIQUE,
-    EXERCISE_VALUES_COMPASS,
     ExerciseStep,
     _EXERCISE_DISPLAY_NAMES,
     _EXERCISE_REGISTRY,
     _EXERCISE_SELECTORS,
+    _VOICE_EXERCISE_IDS,
 )
 from voice.livekit.session_data import SessionData
 
@@ -51,19 +52,7 @@ logger = logging.getLogger(__name__)
 # Sequential worksheet-like exercises (thought records and behavioral
 # experiments) work better in text mode where the user can re-read prompts.
 # Voice mode favors body-based, verbal, and low-visual-load exercises.
-VOICE_EXERCISES: set[str] = {
-    EXERCISE_5_4_3_2_1,
-    EXERCISE_BOX_BREATHING,
-    EXERCISE_MUSCLE_RELAXATION,
-    EXERCISE_STOP_TECHNIQUE,
-    EXERCISE_TINY_ACTION,
-    EXERCISE_VALUES_COMPASS,
-    EXERCISE_CONTINUUM,
-    # The following are conversational enough for voice:
-    "self_compassion_break",
-    "emotion_regulation_improve",
-    "emotion_regulation_gratitude",
-}
+VOICE_EXERCISES: set[str] = set(_VOICE_EXERCISE_IDS)
 
 TEXT_EXERCISES: set[str] = set(_EXERCISE_REGISTRY)
 
@@ -72,9 +61,9 @@ _GENERIC_VOICE_EXERCISE_ROTATION: tuple[str, ...] = (
     EXERCISE_BOX_BREATHING,
     EXERCISE_STOP_TECHNIQUE,
     EXERCISE_MUSCLE_RELAXATION,
-    "self_compassion_break",
-    "emotion_regulation_improve",
-    "emotion_regulation_gratitude",
+    EXERCISE_SELF_COMPASSION,
+    EXERCISE_IMPROVE,
+    EXERCISE_GRATITUDE,
 )
 
 

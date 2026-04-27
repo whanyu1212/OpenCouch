@@ -752,6 +752,35 @@ class TestSelfCompassionFlow:
         assert delta["exercise_state"]["exercise_step"] == 1
         assert "not alone" in delta["response_text"].lower()
 
+    @pytest.mark.asyncio
+    async def test_clear_item_count_completion_bypasses_llm_hold(self) -> None:
+        """Clear sensory item lists should advance even if the LLM would hold."""
+
+        from agent.therapeutic.guided_exercise import (
+            EXERCISE_5_4_3_2_1,
+            run_guided_exercise_response_node,
+        )
+
+        llm = _StepClassifierLLM(
+            step_state="hold",
+            response_text="Good. Now four things you can hear.",
+        )
+        runtime = _MockRuntime(llm_client=llm)
+        state = _make_state(
+            "Right now. I can see my desk, lamp, and window.",
+            EXERCISE_5_4_3_2_1,
+            0,
+        )
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert llm.structured_calls == 0
+        assert delta["exercise_state"]["exercise_step"] == 1
+        assert "hear" in delta["response_text"].lower()
+
 
 class TestExitMidExercise:
     """Test exit from confirmation-based exercises."""
@@ -875,6 +904,33 @@ class TestRegistryCompleteness:
                 assert step.prompt_fallback, (
                     f"Empty fallback for {exercise_type} step {i}"
                 )
+
+    def test_definition_catalog_derives_legacy_indexes(self) -> None:
+        from agent.therapeutic.exercises.registry import (
+            ALL_EXERCISE_DEFINITIONS,
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_IMPROVE,
+            EXERCISE_STOP_TECHNIQUE,
+            _EXERCISE_DISPLAY_NAMES,
+            _EXERCISE_REGISTRY,
+            _EXERCISE_SELECTORS,
+            _EXERCISE_SELECTION_USE_CASES,
+            _VOICE_EXERCISE_IDS,
+        )
+
+        ids = [definition.id for definition in ALL_EXERCISE_DEFINITIONS]
+        assert len(ids) == len(set(ids))
+        assert set(_EXERCISE_REGISTRY) == set(ids)
+        assert set(_EXERCISE_DISPLAY_NAMES) == set(ids)
+        assert set(_EXERCISE_SELECTION_USE_CASES) == set(ids)
+        assert set(_VOICE_EXERCISE_IDS).issubset(ids)
+
+        selector_targets = [exercise_type for _, exercise_type in _EXERCISE_SELECTORS]
+        assert selector_targets[0] == EXERCISE_BOX_BREATHING
+        assert selector_targets[-2:] == [
+            EXERCISE_STOP_TECHNIQUE,
+            EXERCISE_IMPROVE,
+        ]
 
 
 # ── Memory write tests ───────────────────────────────────────────────

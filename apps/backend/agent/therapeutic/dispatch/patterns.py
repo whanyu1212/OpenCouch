@@ -1,0 +1,90 @@
+"""Compatibility exports for therapeutic dispatch regex and guard helpers.
+
+New code should import from ``regex_catalog``, ``guards``, or ``fallback``
+directly. This module preserves the older import surface used by tests and
+callers that still import dispatch helpers from ``patterns``.
+"""
+
+from __future__ import annotations
+
+from agent.therapeutic.dispatch.fallback import pick_therapeutic_mode
+from agent.therapeutic.dispatch.guards import (
+    _active_exercise_modality,
+    _has_active_exercise,
+    _has_pending_exercise_selection,
+    _is_active_exercise_clarification,
+    _is_advice_request_without_exercise_consent,
+    _is_bare_ack_to_open_question,
+    _is_coping_advice_without_exercise_consent,
+    _looks_like_pending_exercise_choice,
+    _matches_any,
+    _message_is_acceptance_of_offer,
+    _word_count,
+)
+from agent.therapeutic.dispatch.regex_catalog import (
+    ACCEPTANCE_PATTERNS,
+    ANAPHORIC_GUIDANCE_PATTERNS,
+    CLARIFYING_MAX_WORD_COUNT,
+    CONFUSION_PATTERNS,
+    COPING_ADVICE_REQUEST_PATTERNS,
+    EXERCISE_CONSENT_PATTERNS,
+    EXERCISE_EXIT_PATTERNS,
+    EXERCISE_OFFER_PATTERNS,
+    EXPLICIT_EXERCISE_REQUEST_PATTERNS,
+    INFORMATIONAL_WALKTHROUGH_NOUN_PATTERN,
+    INFORMATIONAL_WALKTHROUGH_PATTERN,
+    REFLECTIVE_PATTERNS,
+    SELF_REPORT_PATTERNS,
+    WALKTHROUGH_CONSENT_PATTERN,
+    WALKTHROUGH_HOWTO_CONSENT_PATTERN,
+    _ACTIVE_EXERCISE_CLARIFICATION_PATTERNS,
+    _BARE_ACKNOWLEDGMENT_PATTERNS,
+    _format_prompt_trigger_phrases,
+    _NOUN_PHRASE_COMPLETERS,
+    _OPEN_QUESTION_PATTERNS,
+    _PROMPT_GUIDED_EXERCISE_TRIGGERS,
+    _TERMINATOR,
+    _trigger_to_regex,
+    _TRIGGER_LIST_SENTENCE,
+    _WALKTHROUGH_NOUNS,
+)
+
+__all__ = [
+    "ACCEPTANCE_PATTERNS",
+    "ANAPHORIC_GUIDANCE_PATTERNS",
+    "CLARIFYING_MAX_WORD_COUNT",
+    "CONFUSION_PATTERNS",
+    "COPING_ADVICE_REQUEST_PATTERNS",
+    "EXERCISE_CONSENT_PATTERNS",
+    "EXERCISE_EXIT_PATTERNS",
+    "EXERCISE_OFFER_PATTERNS",
+    "EXPLICIT_EXERCISE_REQUEST_PATTERNS",
+    "INFORMATIONAL_WALKTHROUGH_NOUN_PATTERN",
+    "INFORMATIONAL_WALKTHROUGH_PATTERN",
+    "REFLECTIVE_PATTERNS",
+    "SELF_REPORT_PATTERNS",
+    "WALKTHROUGH_CONSENT_PATTERN",
+    "WALKTHROUGH_HOWTO_CONSENT_PATTERN",
+    "_ACTIVE_EXERCISE_CLARIFICATION_PATTERNS",
+    "_BARE_ACKNOWLEDGMENT_PATTERNS",
+    "_NOUN_PHRASE_COMPLETERS",
+    "_OPEN_QUESTION_PATTERNS",
+    "_PROMPT_GUIDED_EXERCISE_TRIGGERS",
+    "_TERMINATOR",
+    "_TRIGGER_LIST_SENTENCE",
+    "_WALKTHROUGH_NOUNS",
+    "_active_exercise_modality",
+    "_format_prompt_trigger_phrases",
+    "_has_active_exercise",
+    "_has_pending_exercise_selection",
+    "_is_active_exercise_clarification",
+    "_is_advice_request_without_exercise_consent",
+    "_is_bare_ack_to_open_question",
+    "_is_coping_advice_without_exercise_consent",
+    "_looks_like_pending_exercise_choice",
+    "_matches_any",
+    "_message_is_acceptance_of_offer",
+    "_trigger_to_regex",
+    "_word_count",
+    "pick_therapeutic_mode",
+]
