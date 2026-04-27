@@ -9,7 +9,8 @@ import PromptLayersVisual from '@site/src/components/PromptLayers';
 # Architecture
 
 Single Python backend. Explicit LangGraph agent graph. Three memory
-layers backed by SQLite. CLI-first development.
+layers backed by SQLite. Shared runtime for CLI, API, web text, and
+Telegram; separate LiveKit runtime for voice.
 
 ---
 
@@ -78,7 +79,7 @@ composition logic.
 |---|---|
 | `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
 | `agent/nodes/` | One file per graph node — crisis_gate, crisis_resource_lookup, crisis_response, crisis_log, memory_control_gate, memory_control, grounded_lookup_gate, grounded_answer, load_memory, finalize_turn, extract_facts, extract_procedural_rules, summarize_session, commit_session_memory |
-| `agent/therapeutic/` | Subgraph: dispatcher, 7 response-style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing), prompts |
+| `agent/therapeutic/` | Subgraph: dispatcher, 7 response-style nodes, exercise registry/state machine, prompt builders, and compatibility wrappers |
 | `agent/memory/` | Store protocol, embeddings, retrieval, dedup, write policy, reconciliation, procedural profile |
 | `agent/audit/` | Always-on safety records — crisis log, session feedback (in-memory + SQLite backends, models) |
 | `agent/safety/` | Crisis pattern tuples + `detect_crisis_override` (the deterministic safety override layer) |
@@ -86,10 +87,11 @@ composition logic.
 | `agent/tools/` | `find_local_crisis_resources` (web search for hotlines), `answer_grounded_lookup` (factual search grounding) |
 | `services/llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |
+| `channels/` | Standalone channel adapters, currently Telegram DM polling |
 | `voice/` | LiveKit-Agents voice runtime (`voice/livekit/agent.py`) — worker process, agent handoffs, bounded tasks, room transport |
-| `api/` | FastAPI routes (chat, threads, memory, voice token) |
+| `api/` | FastAPI routes (chat, threads, memory, voice token/finalization) |
 | `tests/` | Pytest suites for nodes, memory, retrieval, dispatcher, persistence |
-| `eval/` | Eval harnesses with curated datasets (crisis gate, retrieval, dispatcher, exercises, session trajectory) |
+| repo-root `eval/` | Eval harnesses with curated datasets (crisis gate, retrieval, dispatcher, exercises, memory policy, voice, session trajectory) |
 
 ---
 

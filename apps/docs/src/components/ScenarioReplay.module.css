@@ -129,14 +129,14 @@
   flex-shrink: 0;
 }
 
-.cardModes {
+.cardResponseStyles {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
   min-width: 0;
 }
 
-.cardMode {
+.cardResponseStyle {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.54rem;
   color: var(--oc-text-muted);
@@ -145,7 +145,7 @@
   padding: 1px 5px;
   white-space: nowrap;
 }
-[data-theme='dark'] .cardMode {
+[data-theme='dark'] .cardResponseStyle {
   background: var(--oc-accent-subtle);
   color: var(--oc-text-muted);
 }
@@ -300,7 +300,7 @@
   align-items: center;
 }
 
-/* ── Mode type pills ────────────────────────────────────────────────────────── */
+/* ── Response category pills ────────────────────────────────────────────────────────── */
 
 .pill {
   font-family: var(--ifm-font-family-monospace);
@@ -392,7 +392,7 @@
   .cardGrid { grid-template-columns: 1fr 1fr; gap: 6px; }
   .card { padding: 10px 12px; }
   .cardTitle { font-size: 0.68rem; }
-  .cardModes { display: none; }
+  .cardResponseStyles { display: none; }
   .turn { gap: 10px; }
   .turnMarker { width: 22px; }
   .turnNum { width: 20px; height: 20px; font-size: 0.58rem; }

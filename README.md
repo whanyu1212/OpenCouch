@@ -1,27 +1,18 @@
 <div align="center">
 
-<img src="apps/docs/static/img/favicon.svg" width="80" alt="OpenCouch Logo" />
+<img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
-# OpenCouch
-
-**An open-source mental health support agent with persistent memory, crisis safety, and natural voice.**
+**An open-source mental health support companion for reflective conversations, guided practice, memory continuity, and crisis-aware safety.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C?style=flat-square&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![LiveKit](https://img.shields.io/badge/LiveKit-voice-FF2E63?style=flat-square&logo=livekit&logoColor=white)](https://livekit.io/)
 [![OpenAI Realtime](https://img.shields.io/badge/OpenAI-Realtime-412991?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/docs/guides/realtime)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
 [Documentation](https://whanyu1212.github.io/OpenCouch/) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
-
-<br/>
-
-<p align="center">
-  <a href="https://github.com/whanyu1212/OpenCouch"><img src="apps/docs/static/img/landing_page.png" width="23.5%" alt="OpenCouch Landing Page" /></a>
-  <img src="apps/docs/static/img/chat_example.png" width="37%" alt="OpenCouch Text Chat" />
-  <img src="apps/docs/static/img/voice_example.png" width="38%" alt="OpenCouch Voice Chat" />
-</p>
 
 </div>
 
@@ -30,39 +21,40 @@
 > OpenCouch is a support assistant for difficult moments, reflective dialogue, and structured exercises, with memory continuity across sessions.
 
 > [!NOTE]
-> **Active Development:** OpenCouch is currently maintained by a solo developer. While stability is a priority, please anticipate occasional breaking changes as the architecture and features evolve.
+> **Active Development:** OpenCouch is currently maintained by a solo developer. While stability is a priority, please anticipate occasional breaking changes as the architecture and features evolve. Documentation may lag behind the code at times because the project moves quickly.
 
 ---
 
 ## Table of Contents
-- [OpenCouch](#opencouch)
-  - [Table of Contents](#table-of-contents)
-  - [📖 Overview](#-overview)
-  - [✨ Key Features](#-key-features)
-  - [🚀 Quick Start](#-quick-start)
-    - [1. Command Line Interface (CLI)](#1-command-line-interface-cli)
-    - [Eval-driven development](#eval-driven-development)
-      - [Observability \& evaluation](#observability--evaluation)
-    - [2. Web Interface](#2-web-interface)
-    - [3. Documentation Site](#3-documentation-site)
-  - [🧠 Architecture](#-architecture)
-  - [📁 Project Structure](#-project-structure)
-  - [📝 Changelog](#-changelog)
-  - [🤝 Contributing](#-contributing)
-    - [Development Setup](#development-setup)
-  - [🗺️ Roadmap](#️-roadmap)
+- [📖 Overview](#-overview)
+- [✨ Key Features](#-key-features)
+- [🚀 Quick Start](#-quick-start)
+  - [Environment](#environment)
+  - [1. Command Line Interface (CLI)](#1-command-line-interface-cli)
+  - [Eval-driven development](#eval-driven-development)
+    - [Observability \& evaluation](#observability--evaluation)
+  - [2. Web Interface](#2-web-interface)
+  - [3. Telegram Gateway](#3-telegram-gateway)
+  - [4. Documentation Site](#4-documentation-site)
+- [🧠 Architecture](#-architecture)
+  - [Supported Surfaces](#supported-surfaces)
+- [📁 Project Structure](#-project-structure)
+- [📝 Changelog](#-changelog)
+- [🤝 Contributing](#-contributing)
+  - [Development Setup](#development-setup)
+- [🗺️ Roadmap](#️-roadmap)
 
 ---
 
 ## 📖 Overview
 
-OpenCouch is a conversational support agent built on [LangGraph](https://langchain-ai.github.io/langgraph/) for text orchestration and the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) for low-latency voice. It supports eval-driven development with [LangSmith](https://www.langchain.com/langsmith) for observability and evaluation across the text graph.
+OpenCouch is an open-source support assistant for difficult moments, reflective dialogue, and structured exercises. The backend uses [LangGraph](https://langchain-ai.github.io/langgraph/) for the text runtime, FastAPI for APIs, and SQLite-backed persistence for memory and audit trails. The web UI is built with Next.js.
 
-The current voice tab is an **experimental Realtime speech preview**. It now uses a rewritten GA-style Realtime bridge with configurable voices, optional transcription language hints, and improved interruption handling, but it is still speech-only and does not yet expose full agentic actions from the text runtime.
+Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus optional [LangSmith](https://www.langchain.com/langsmith) tracing.
 
-The backend now also has an initial Google Cloud Run deployment path for close-beta preview and internal testing. That path is functional for API deployment, but it is not yet fully production-ready because persistence and final rollout hardening still need to be completed.
+Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime powers the low-latency model path. The older direct Realtime harness remains in the backend for experiments.
 
-It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (semantic facts, episodic arcs, and procedural rules) to retain continuity across sessions. An **always-on crisis safety gate**, seven response styles (including a technique style where the therapeutic approach drives the turn), and seven LLM-routed therapeutic approaches keep responses safe, grounded, and adaptive.
+The project is still in active development. A close-beta rollout is planned, and production hardening is ongoing.
 
 ## ✨ Key Features
 
@@ -70,12 +62,45 @@ It uses three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers (
 - **Safety by Default:** Evaluates every user input with a crisis gate before response generation, with a persistent audit trail.
 - **Traceable Execution:** Uses LangSmith to inspect graph execution, route selection, and per-turn text traces.
 - **Evaluation-Ready:** Combines local eval runners with LangSmith projects for regression tracking and failure analysis.
-- **Experimental Realtime Voice:** Supports low-latency speech conversations with configurable voices, optional language hints for transcription, and interruption handling via OpenAI Realtime.
-- **Guided Exercises:** Provides multi-turn, state-tracked exercises (e.g., grounding and reflection) for structured practice.
+- **LiveKit Voice:** Supports low-latency speech conversations through LiveKit sessions backed by OpenAI Realtime, with configurable voices, transcription language hints, and interruption handling.
+- **Telegram DM Gateway:** Runs a dogfood Telegram channel with session rotation, markdown rendering, allow-listing, and `/end` session closure.
+- **Guided Exercises:** Provides 13 multi-turn, state-tracked exercises for grounding, breathing, thought work, values reflection, and related structured practice.
 
 ---
 
 ## 🚀 Quick Start
+
+### Environment
+OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need at least one configured provider:
+
+```env
+# Text model provider. Defaults to openai when unset.
+LLM_PROVIDER=openai
+OPENAI_API_KEY=...
+
+# Alternative text provider.
+# LLM_PROVIDER=gemini
+# GEMINI_API_KEY=...
+# GOOGLE_API_KEY=...
+```
+
+Voice and Telegram are optional surfaces with additional configuration:
+
+```env
+# Web voice via LiveKit + OpenAI Realtime model.
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+OPENAI_API_KEY=...
+
+# Telegram dogfood gateway.
+OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
+OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
+OPENCOUCH_TELEGRAM_OWNER_ID=alice
+OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
+```
+
+Keep real `.env` files local and out of version control.
 
 ### 1. Command Line Interface (CLI)
 The CLI provides the fastest way to interact with OpenCouch locally.
@@ -89,7 +114,7 @@ uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread
 # Full text mode with persistent memory (Requires provider API keys)
 uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
 
-# Voice mode (Requires OPENAI_API_KEY in .env.local)
+# Voice mode (Requires LiveKit env vars plus OPENAI_API_KEY)
 uv run python -m opencouch_cli --voice
 ```
 
@@ -124,12 +149,33 @@ uv run uvicorn main:app --port 8000 --reload
 
 **Terminal 2 — Frontend:**
 ```bash
-cd apps/web
-pnpm install && pnpm dev
+# From the repository root
+pnpm install
+pnpm --dir apps/web dev
 ```
 Open [localhost:3000](http://localhost:3000) in your browser.
 
-### 3. Documentation Site
+**Optional Terminal 3 — LiveKit Voice Worker:**
+```bash
+cd apps/backend
+uv run python -m voice.livekit.agent dev
+```
+
+### 3. Telegram Gateway
+Run the standalone Telegram dogfood gateway. It does not require the FastAPI server.
+
+```bash
+cd apps/backend
+OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \
+OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \
+OPENCOUCH_TELEGRAM_OWNER_ID="alice" \
+OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER="fast" \
+uv run python -m channels.gateway telegram
+```
+
+See [`apps/backend/README.md`](apps/backend/README.md) for backend-specific commands.
+
+### 4. Documentation Site
 
 > **For developers and contributors only.** The hosted docs are available at the link below — running locally is only needed if you're editing documentation.
 
@@ -148,6 +194,14 @@ pnpm install && npx docusaurus start --port 3001
 
 OpenCouch uses a directed graph that enforces safety checks before therapeutic generation, then runs post-response memory evaluation on each turn and a separate session-end commit seam for episodic and buffered memory.
 
+### Supported Surfaces
+
+- **CLI:** Local text and voice harness for development and dogfooding.
+- **Web chat:** Next.js text UI backed by FastAPI REST and WebSocket streaming routes.
+- **Web voice:** LiveKit browser sessions with a LiveKit Agents worker and OpenAI Realtime model.
+- **Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
+- **Backend API:** FastAPI route layer used by the web UI and integration surfaces.
+
 ```mermaid
 flowchart TD
     %% Define Node Styles (Tinted for Light/Dark Mode)
@@ -159,17 +213,25 @@ flowchart TD
     classDef bgTask fill:#3B82F61A,stroke:#3B82F6,stroke-width:2px,stroke-dasharray: 5 5
     classDef dbNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
 
-    IN(["User message"]):::inputNode
+    subgraph SURF ["Runtime Surfaces"]
+        CLI["CLI"]:::inputNode
+        WEB["Next.js web chat"]:::inputNode
+        VOICE["LiveKit voice"]:::inputNode
+        TG["Telegram DM gateway<br/>thread rotation"]:::inputNode
+        API["FastAPI REST/WebSocket"]:::inputNode
+    end
+
+    IN(["User message / transcript"]):::inputNode
 
     subgraph GATE ["Safety Gate"]
-        CG{"crisis_gate<br/>regex + LLM"}:::gateNode
+        CG{"crisis_gate<br/>LLM + regex fallback"}:::gateNode
     end
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
-        MCG{"memory_control_gate<br/>recall • forget • inspect"}:::safeNode
+        MCG{"memory_control_gate<br/>LLM + deterministic fallback"}:::safeNode
         MC[["memory_control<br/>slash + natural language"]]:::safeNode
-        GLG{"grounded_lookup_gate<br/>current factual requests"}:::safeNode
+        GLG{"grounded_lookup_gate<br/>LLM + hard-yes fallback"}:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
         TS[["therapeutic_subgraph<br/>7 styles • 7 approaches"]]:::safeNode
@@ -213,6 +275,11 @@ flowchart TD
     DB[("SQLite .store/<br/>threads • memory • crisis log • feedback")]:::dbNode
 
     %% Logic Flows
+    CLI ==> IN
+    WEB ==> API
+    VOICE ==> API
+    API ==> IN
+    TG ==> IN
     IN ==> CG
     CG ==>|Safe| MCG
     CG -.->|Risk| RL
@@ -230,6 +297,7 @@ flowchart TD
     SS -.->|episodic arc| DB
 
     %% Subgraph Styling (Removes default gray background)
+    style SURF fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style GATE fill:none,stroke:#EF4444,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style SAFE fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style RISK fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
@@ -256,9 +324,10 @@ OpenCouch/
 │   │   │   └── therapeutic/    # Therapeutic subgraph, modes, prompt logic
 │   │   ├── services/llm/       # LLM adapters (Gemini, OpenAI, etc.)
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
-│   │   ├── voice/              # OpenAI Realtime voice handlers
+│   │   ├── voice/              # LiveKit voice worker + direct Realtime harness
+│   │   ├── channels/           # Telegram gateway and channel adapters
 │   │   ├── api/                # FastAPI REST + WebSocket routes
-│   │   └── tests/              # 720+ pytest unit/integration tests
+│   │   └── tests/              # 1100+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
 └── eval/                       # Evaluation harnesses + curated datasets
@@ -271,28 +340,14 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
-- **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, and shared response-generation internals are now split into focused modules while preserving public compatibility imports
-- **Exercise routing cleanup** — guided-exercise selection remains LLM-primary and option-aware, ambiguous requests can offer choices instead of defaulting to grounding, and voice exercise eligibility now comes from the shared exercise registry
-- **Therapeutic eval coverage** — latest regression pass is green across full backend tests plus therapeutic routing, therapeutic behavior, exercise flow, exercise memory, and exercise selection evals
-- **Telegram session rotation hardening** — rotated Telegram sessions now recover orphaned registry rows on startup, preserve interrupted turn markers for finalization, avoid blocking foreground chats during sweeps, and retry transient lease/liveness races before showing maintenance copy
-- **Telegram Markdown rendering** — Telegram replies now render common response Markdown as safe Telegram HTML, including bold, italic, code, headings, and HTTP(S) links, with chunk splitting that preserves HTML tag balance
-- **Behavior eval stabilization** — full deterministic + hybrid eval sweep is green across crisis, therapeutic routing, behavior, long trajectories, memory trajectories, summarization, and procedural writer checks
-- **Extraction eval fixes** — semantic extraction eval now grades session-held candidates correctly, prompt examples cover stable context/loss/support relationships, and narrow deterministic backstops recover high-precision facts the LLM may skip
-- **Memory package boundary cleanup** — moved the always-on audit backends (`crisis_log`, `session_feedback`, SQLite variants) into `agent/audit/`, updated imports across runtime/evals/tests, and added a dedicated `agent/memory/README.md` to map the subsystem
-- **Memory internals cleanup** — removed stale memory-package artifacts, split monolithic memory models into typed submodules, and centralized shared retrieval/policy logic
-- **Load-memory retrieval quality** — semantic recall now filters inactive facts before hybrid ranking and truncation, so dormant or superseded memory no longer crowds out active context
-- **Crisis gate cleanup** — deterministic crisis policy lives in `agent/safety`, shadow monitoring was removed, and the node now has direct standalone coverage
-- **Therapeutic knowledge enrichment** — CBT conversation arc template with 5-phase session shape, long-session guidance (second-pass routing, regulation gates, rupture detection), cross-session continuity, memory hooks for all 7 approaches, and a continuum technique exercise
-- **Technique response style** — 7th response style where the therapeutic approach drives the turn directly, resolving the style-vs-approach conflict where reflective instructions overrode CBT arc guidance
-- **Modality-specific episodic memory** — typed ModalityContext (CBT, MI, ACT, grief, IPT, DBT, PFA) attached to session arcs so cross-session retrieval surfaces structured therapeutic artifacts
-- **Architecture rename** — `mode` → `response_style`, `modality` → `therapeutic_approach` across the entire codebase for clearer terminology
-- **Prompt reorganization** — moved prompt sources into `agent/prompts/sources/`, deduplicated shared helpers into a single module
-- **Memory robustness** — Unicode-aware tokenizer, procedural rule cap, atomic batch writes, episodic date filter, enriched semantic triples, fail-loud owner_id validation
-- **CLI visual redesign** — "Midnight Journal" aesthetic with a therapeutic **sage + muted blue** palette, clearer primary/accent/brand role separation, Unicode block-art wordmark, and minimal left-bar info messages
-- **Memory system rewrite** — policy-based candidate extraction, session-end commit, repetition-gated promotion, reconciliation/supersession
-- **Response model tiers** — `fast` vs `quality` text-response switching in both web UI and CLI
-- **Crisis gate hardening** — LLM-primary architecture with regex fallback, shadow monitoring, and adversarial-resistant prompt
-- **Therapeutic dispatcher rewrite** — LLM-primary routing for all 7 response styles and 7 approaches, mid-exercise exit detection
+- **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, streaming, registry, and shared response-generation internals are split into focused modules while preserving compatibility imports.
+- **LLM-primary routing and policy gates** — therapeutic routing, grounded lookup, memory control, memory write policy, exercise continuation, and exercise selection now use LLM classifiers first with deterministic fallbacks.
+- **Guided exercise improvements** — 13 state-tracked exercises share a registry, ambiguous exercise requests can offer options instead of defaulting to grounding, and exercise eval coverage tracks selection, flow, and memory behavior.
+- **Web UI hardening** — Next.js lint/build now run in CI, persisted session setup avoids hydration flashes, REST and WebSocket failures surface in the UI, and LiveKit voice loading is route-aware.
+- **LiveKit voice path** — browser voice sessions use LiveKit token issuance, a LiveKit Agents worker, OpenAI Realtime model backing, transcript/finalization handling, and the existing crisis/memory runtime.
+- **Telegram dogfood gateway** — direct-message support includes allow-listing, `/end`, Markdown-to-HTML rendering, session rotation, startup recovery, lease retry handling, and non-blocking sweeps.
+- **Memory and audit cleanup** — memory internals, audit backends, extraction policy, and retrieval quality were reorganized for clearer subsystem boundaries and more stable eval behavior.
+- **Regression coverage** — backend tests and deterministic/hybrid eval runners cover crisis, therapeutic routing, behavior, exercises, long trajectories, memory trajectories, summarization, extraction, and procedural writer checks.
 
 ---
 
@@ -302,6 +357,8 @@ We welcome contributions. Please review the contribution guidelines before submi
 
 ### Development Setup
 
+Backend:
+
 ```bash
 cd apps/backend && uv sync --group dev
 
@@ -309,9 +366,22 @@ cd apps/backend && uv sync --group dev
 uv run pytest tests/
 
 # Run evaluation checks
-uv run python eval/runners/crisis_gate_eval.py --mode deterministic
-uv run python eval/runners/therapeutic_routing_eval.py --mode deterministic
+uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
+uv run python ../../eval/runners/therapeutic_routing_eval.py --mode deterministic
+```
 
+Web:
+
+```bash
+# From the repository root
+pnpm install
+pnpm --dir apps/web lint
+pnpm --dir apps/web build
+```
+
+Repository hooks:
+
+```bash
 # Run linters and formatters
 pre-commit run --all-files
 ```
@@ -331,11 +401,12 @@ pre-commit run --all-files
 | Status | Component | Initiative |
 |:---|:---|:---|
 | ✅ **Shipped** | **Web Frontend** | Next.js UI with chat, threading, and memory inspection |
-| ✅ **Shipped** | **Voice Chat** | OpenAI Realtime integration with crisis gate and memory |
-| ✅ **Shipped** | **Guided Exercises** | 12 interactive exercises with multi-turn state tracking |
+| ✅ **Shipped** | **Voice Chat** | LiveKit voice sessions backed by OpenAI Realtime, crisis gate, and memory |
+| ✅ **Shipped** | **Guided Exercises** | 13 interactive exercises with multi-turn state tracking |
 | ✅ **Shipped** | **Session Feedback** | End-of-session rating system via UI and CLI |
 | ✅ **Shipped** | **API Layer** | FastAPI REST + WebSocket streaming |
-| ⏳ **Planned** | **Messaging Channels** | Adapters for Telegram, WhatsApp, and Discord |
+| ✅ **Dogfood** | **Telegram Gateway** | Direct-message gateway with allow-listing, Markdown rendering, and thread rotation |
+| ⏳ **Planned** | **Additional Messaging Channels** | WhatsApp and Discord adapters |
 | ⏳ **Planned** | **Graph Memory** | Graphiti + Neo4j for entity-relationship reasoning |
 | ⏳ **Planned** | **Consolidation** | Background fact merging, dormant marking, and undo support |
 | ⏳ **Planned** | **Acoustic Safety** | Paralinguistic crisis detection (prosodic flatness, etc.) |

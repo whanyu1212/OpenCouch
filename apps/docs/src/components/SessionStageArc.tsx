@@ -15,7 +15,7 @@ const STAGES: Stage[] = [
     label: 'Opening',
     icon: '\u25CB',  // ○
     guidance: 'Orient, validate, and avoid jumping too fast into heavy structure.',
-    signals: ['Early turns (1–2)', 'Orientation or supportive_conversation mode active', 'No strong deepening cues'],
+    signals: ['Early turns (1–2)', 'Supportive response style active', 'No strong deepening cues'],
   },
   {
     id: 'deepening',

@@ -14,7 +14,7 @@ const fileIndex: Record<string, FileInfo> = {
     kind: 'markdown',
     summary: 'Core character and values',
     excerpt:
-      'Defines who OpenCouch is at its most fundamental level — grounded, warm, direct, and honest about its limits. Sets the emotional register and the non-negotiable stance that no mode or modality can override.',
+      'Defines who OpenCouch is at its most fundamental level — grounded, warm, direct, and honest about its limits. Sets the emotional register and the non-negotiable stance that no response style or therapeutic approach can override.',
   },
   'identity.md': {
     name: 'identity.md',
@@ -40,23 +40,23 @@ const fileIndex: Record<string, FileInfo> = {
   'response_modes/support.md': {
     name: 'response_modes/support.md',
     kind: 'markdown',
-    summary: 'Default supportive_conversation mode',
+    summary: 'Default supportive response style',
     excerpt:
       'Active when no crisis or safety check is needed. Validates before suggesting, reflects the user\'s emotional state, offers one helpful next step. Replies stay concise and grounded.',
   },
   'crisis_response.md': {
     name: 'response_modes/crisis_response.md',
     kind: 'markdown',
-    summary: 'Crisis response mode',
+    summary: 'Crisis response style',
     excerpt:
       'Activates when a risk signal is confirmed. Prioritises immediate safety, avoids clinical distance, encourages offline human support and emergency services where appropriate.',
   },
-  'modes.py': {
-    name: 'prompts/modes.py',
+  'sources.py': {
+    name: 'therapeutic/prompting/sources.py',
     kind: 'code',
-    summary: 'Mode system prompt builder',
+    summary: 'Prompt source selector',
     excerpt:
-      'Python code that reads the active mode\'s markdown, applies any approach overlay, and assembles the combined system prompt section. Enforces that only catalog-approved combinations are built.',
+      'Python code that chooses response-style knowledge and therapeutic-approach overlays before builders assemble the final system prompt.',
   },
   'pfa.md': {
     name: 'modalities/pfa.md + dbt_skills.md',
@@ -87,7 +87,7 @@ const fileIndex: Record<string, FileInfo> = {
       'Acceptance and Commitment Therapy techniques: cognitive defusion, values clarification, willingness over control. Helps users relate differently to difficult thoughts rather than trying to eliminate them.',
   },
   'builders.py': {
-    name: 'prompts/builders.py',
+    name: 'therapeutic/prompting/builders.py',
     kind: 'code',
     summary: 'Node task prompt builder',
     excerpt:
@@ -141,23 +141,23 @@ const layers = [
     n: '1',
     label: 'Core',
     tag: 'always present',
-    desc: "The permanent foundation: who OpenCouch is, what it will and won't do, and the hard safety and privacy boundaries that no mode can override.",
+    desc: "The permanent foundation: who OpenCouch is, what it will and won't do, and the hard safety and privacy boundaries that no response style can override.",
     files: ['soul.md', 'identity.md', 'policy/boundaries.md', 'policy/privacy.md'],
     dot: '#215f5a',
   },
   {
     n: '2',
-    label: 'Mode',
+    label: 'Response',
     tag: 'graph-selected',
-    desc: 'The response mode selected by the graph. Shapes the goal and tone of the entire response — supportive_conversation, crisis_response, orientation, guided_exercise, pattern_reflection, psychoeducation, and more.',
-    files: ['response_modes/support.md', 'crisis_response.md', 'modes.py'],
+    desc: 'The response style selected by the graph. Shapes the goal and tone of the turn — supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing, safety_check, or crisis_response.',
+    files: ['response_modes/support.md', 'crisis_response.md', 'sources.py'],
     dot: '#2d7a74',
   },
   {
     n: '3',
     label: 'Approach',
     tag: 'optional overlay',
-    desc: 'A therapeutic technique lens selected by the modality_selector based on semantic signals. MI is applied as a baseline to certain modes automatically, not as a selectable overlay.',
+    desc: 'A therapeutic lens selected by the LLM dispatcher as therapeutic_approach: MI, CBT, ACT, DBT skills, grief support, IPT, or PFA.',
     files: ['pfa.md', 'cbt.md', 'grief_support.md', 'act.md'],
     dot: '#3d9990',
   },
@@ -181,8 +181,8 @@ const layers = [
 
 const legend = [
   { color: '#215f5a', label: 'Core — immutable' },
-  { color: '#2d7a74', label: 'Mode — graph-selected' },
-  { color: '#3d9990', label: 'Modality — optional' },
+  { color: '#2d7a74', label: 'Response — graph-selected' },
+  { color: '#3d9990', label: 'Approach — optional' },
   { color: '#78b8af', label: 'Task — node-built' },
   { color: '#a8cdc9', label: 'Context — runtime state' },
 ];

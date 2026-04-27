@@ -353,7 +353,7 @@
 .matrixTable tr:last-child td { border-bottom: none; }
 .matrixTable tbody tr:hover td { background: var(--oc-accent-subtle); }
 
-.matrixModeCell {
+.matrixResponseStyleCell {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.76rem;
   font-weight: 500;

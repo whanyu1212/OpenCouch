@@ -1,4 +1,4 @@
-VARIANT: mode=supportive, modality=motivational_interviewing, state=default
+VARIANT: response_style=supportive, approach=motivational_interviewing, state=default
 SOURCE: trimmed excerpt from apps/backend/.store/prompt_dumps/supportive__motivational_interviewing__default.txt
 
 ===== SYSTEM PROMPT =====

@@ -15,20 +15,20 @@ LLM.
 
 ## How it works
 
-1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured technique.
-2. **Keyword selector** picks the exercise based on the user's message (e.g., "breathing" → box breathing, "stuck" → tiny action). Defaults to 5-4-3-2-1 grounding when no keyword matches. Selectors run in priority order — overlapping triggers like "improve" (IMPROVE the moment) come before "behavioral experiment" because the latter contains "prove".
+1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured exercise or practice.
+2. **Exercise selector chooses selected vs. ambiguous.** With an LLM client, selection is LLM-primary: clear requests start the matching exercise, while ambiguous requests return two or three options instead of silently defaulting to 5-4-3-2-1. Without an LLM, deterministic selector groups provide a fallback.
 3. **Step-state classifier** (regex, not LLM) evaluates each user response as `complete` / `hold` / `stuck` / `exit`.
 4. **Node advances or holds** based on the classifier — the LLM never decides state transitions.
 5. **Exercise clears** on natural completion or user-initiated exit.
 
-### Modality continuity
+### Approach continuity
 
-The therapeutic modality picked at exercise start (e.g., `act` for a
+The therapeutic approach picked at exercise start (e.g., `act` for a
 values-clarification exercise) is pinned on `exercise_state.exercise_modality`.
 If the user pauses mid-exercise to ask a clarifying or
 psychoeducation question, the dispatcher preserves the pinned
-modality instead of letting the LLM pick a fresh one. Without this
-pin, mid-exercise side-turns produced "modality drift" where a
+approach instead of letting the LLM pick a fresh one. Without this
+pin, mid-exercise side-turns produced approach drift where a
 grounding exercise could silently re-route through `cbt` or
 `motivational_interviewing` framing.
 
@@ -69,5 +69,5 @@ Click any exercise to see its steps and trigger keywords. Use the filter tabs to
 
 
 :::tip Adding a new exercise
-Define steps in `guided_exercise.py`, register in `_EXERCISE_REGISTRY`, add trigger keywords to `_EXERCISE_SELECTORS`, and add LLM guidance to `agent/prompts/sources/response_modes/guided_exercise.md`. No dispatcher or graph changes needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
+Define an `ExerciseDefinition` under `agent/therapeutic/exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_modes/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
 :::

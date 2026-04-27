@@ -10,7 +10,7 @@ const config: Config = {
   organizationName: 'whanyu1212',
   projectName: 'OpenCouch',
   trailingSlash: false,
-  favicon: 'img/favicon.svg',
+  favicon: 'img/opencouch-glyph-1024.png',
 
   markdown: {
     mermaid: true,
@@ -103,7 +103,7 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'https://github.com/opencouch',
+          href: 'https://github.com/whanyu1212/OpenCouch',
           label: 'GitHub',
           position: 'right',
           className: 'navbar__link--github',

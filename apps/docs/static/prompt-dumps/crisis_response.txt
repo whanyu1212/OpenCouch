@@ -1,4 +1,4 @@
-VARIANT: mode=crisis_response, modality=pfa+dbt_skills, state=resources_found
+VARIANT: response_style=crisis_response, approach=pfa+dbt_skills, state=resources_found
 SOURCE: synthesized from agent/prompts/crisis.py (build_crisis_response_*)
 
 The crisis response prompt is composed from a different layer set

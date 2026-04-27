@@ -12,6 +12,11 @@ A mental health support agent that **remembers you across sessions**,
 **checks for safety before every response**, and **adapts its style
 to how you prefer to be supported**.
 
+:::note Active development
+OpenCouch moves quickly. These docs are kept close to the code, but
+some pages may lag briefly after larger refactors or dogfood changes.
+:::
+
 ---
 
 ## How a turn flows
@@ -35,8 +40,8 @@ The therapeutic path can end in one of four ways:
   `grounded_answer_node` runs a search-grounded LLM call and
   replies with sources. No therapeutic framing.
 - **Therapeutic turn** (the default) → memory loads, the dispatcher
-  picks one of seven response styles + a therapeutic approach, and
-  the matching mode node generates the reply.
+  picks one of seven response styles plus a therapeutic approach, and
+  the matching response node generates the reply.
 - **Crisis turn** (when `crisis_gate_node` raises level ≥ 2) →
   region-aware hotline lookup, crisis reply, audit log. Memory is
   never loaded on this branch.
@@ -76,7 +81,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       <strong>Adaptive response</strong>
     </div>
-    <p>Seven response styles — supportive, reflective, clarifying, psychoeducation, technique, guided exercise, closing — paired with a therapeutic approach (CBT, ACT, DBT skills, MI, IPT, grief, PFA) by an LLM-primary dispatcher per turn. Mid-exercise modality is pinned so it never drifts on side-turns.</p>
+    <p>Seven response styles — supportive, reflective, clarifying, psychoeducation, technique, guided exercise, closing — paired with a therapeutic approach (CBT, ACT, DBT skills, MI, IPT, grief, PFA) by an LLM-primary dispatcher per turn. A guided exercise pins its starting approach in <code>exercise_state.exercise_modality</code> so side-turns do not drift.</p>
   </div>
 
   <div className="doc-card">

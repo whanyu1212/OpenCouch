@@ -18,7 +18,7 @@ interface StepDef {
   branch?: { condition: string; targetA: string; targetB: string; crisis?: boolean };
 }
 
-interface ModeDef {
+interface ResponseStyleDef {
   id: string;
   label: string;
   detail: Detail;
@@ -54,7 +54,7 @@ const STEPS: StepDef[] = [
     },
     detail: {
       what: 'Hard safety boundary. Runs BEFORE memory retrieval — there is no path that loads context without first passing the safety check. Returns a Command(goto=...) that routes the turn.',
-      how: 'Layer 1: deterministic override (imminent risk, idiomatic safe). Layer 2: regex ladder for clear patterns. Layer 3: optional LLM classifier for ambiguous cases. Layer 4: policy normalization. Output: CrisisAssessment with level 0–3 and routing decision.',
+      how: 'Layer 1: deterministic hard overrides for imminent risk and idiomatic-safe wording. Layer 2: LLM classifier for ambiguous cases. Layer 3: deterministic fallback when no LLM is configured or parsing fails. Layer 4: policy normalization. Output: CrisisAssessment with level 0–3 and routing decision.',
       emits: 'state.crisis + state.routing.route ("crisis" | "therapeutic")',
     },
   },
@@ -75,14 +75,14 @@ const STEPS: StepDef[] = [
   {
     id: 'therapeutic',
     label: 'therapeutic_subgraph',
-    sub: 'Dispatcher picks one of 7 response styles, mode node generates response',
+    sub: 'Dispatcher picks one of 7 response styles, response node generates reply',
     badges: [
       { label: 'subgraph' },
       { label: 'all nodes retry', retry: true },
     ],
     detail: {
       what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and exercise state flow back to the parent — preventing reducer double-counting on history/transcript.',
-      how: 'Dispatcher is LLM-primary: deterministic regex only fires for explicit exercise opt-out, the LLM picks mode + therapeutic_approach for everything else, regex fallback runs when no LLM is configured. Mid-exercise side-turns (clarifying / psychoeducation) preserve the pinned exercise_modality.',
+      how: 'Dispatcher is LLM-primary: deterministic regex only fires for explicit exercise opt-out, the LLM picks response_style + therapeutic_approach for everything else, and regex fallback runs when no LLM is configured. Mid-exercise side-turns preserve the approach stored in exercise_modality.',
       emits: 'response_style + response_style_source + response_style_type + response_kind + response_text + therapeutic_approach + exercise_state',
     },
   },
@@ -96,7 +96,7 @@ const STEPS: StepDef[] = [
     ],
     detail: {
       what: 'Appends the assistant response to transcript and history as a 1-element list. The operator.add reducer handles merging with the accumulated state from the checkpoint. Empty/whitespace responses produce an empty delta to keep the transcript clean.',
-      how: 'Reads state.response.text, stamps the routing mode onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
+      how: 'Reads state.response.text, stamps routing metadata onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
       emits: 'state.transcript += [assistant_turn], state.history += [assistant_turn]',
     },
   },
@@ -122,20 +122,20 @@ const STEPS: StepDef[] = [
     sub: 'Normalized public response returned to the API layer',
     detail: {
       what: 'state_to_output extracts the public response shape from the final state. The checkpoint stores the full accumulated state for the next turn — including the reducer-merged transcript, diagnostics, and progress.',
-      how: 'Extracts response_text, crisis assessment, mode, mode_type, mode_source, diagnostics (including turn_total_ms stamped by the runtime).',
+      how: 'Extracts response_text, crisis assessment, response_style, response_style_type, response_style_source, diagnostics (including turn_total_ms stamped by the runtime).',
       emits: 'AgentOutput',
     },
   },
 ];
 
-/* ── Therapeutic modes ────────────────────────────────────────────────────── */
+/* ── Therapeutic response styles ──────────────────────────────────────────── */
 
-const THERAPEUTIC_MODES: ModeDef[] = [
+const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
   {
     id: 'supportive', label: 'supportive',
     detail: {
       what: 'Default — user sharing feelings, seeking support, or greeting. Three sub-strategies: hold_space (venting), strengths_based (progress), supportive_guidance (validate + next step).',
-      how: 'Reachable from all routing layers. Most common mode.',
+      how: 'Reachable from all routing layers. Most common response style.',
       emits: 'response.kind = THERAPEUTIC',
     },
   },
@@ -143,7 +143,7 @@ const THERAPEUTIC_MODES: ModeDef[] = [
     id: 'reflective', label: 'reflective',
     detail: {
       what: 'User describing a recurring pattern they\'ve already named. Reflects on themes, connections, cycles.',
-      how: 'Regex fast path fires on "always", "every time", "pattern" keywords.',
+      how: 'Picked by the LLM dispatcher when the user is already naming a pattern. Regex fallback covers no-LLM runs.',
       emits: 'response.kind = THERAPEUTIC',
     },
   },
@@ -151,7 +151,7 @@ const THERAPEUTIC_MODES: ModeDef[] = [
     id: 'clarifying', label: 'clarifying',
     detail: {
       what: 'Ambiguous or very short message — agent needs context before responding.',
-      how: 'Regex fast path fires on messages < 3 words or confusion markers ("huh?", "ok").',
+      how: 'Picked by the LLM dispatcher when the next useful move is one small clarifying question. Regex fallback covers no-LLM runs.',
       emits: 'response.kind = THERAPEUTIC',
     },
   },
@@ -174,8 +174,8 @@ const THERAPEUTIC_MODES: ModeDef[] = [
   {
     id: 'guided_exercise', label: 'guided_exercise',
     detail: {
-      what: 'Multi-turn structured technique. exercise_state (type + step + pinned modality) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns (clarifying, psychoeducation) preserve the modality so it does not drift.',
-      how: 'Active-exercise context is passed to the LLM dispatcher; explicit exit phrases fire deterministically. 12 exercises across grounding, breathing, thought work, behavioral activation, acceptance, and self-compassion.',
+      what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_modality) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
+      how: 'Active-exercise context is passed to the LLM dispatcher; explicit exit phrases fire deterministically. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
       emits: 'response_kind = THERAPEUTIC + exercise_state.{exercise_type, exercise_step, exercise_modality}',
     },
   },
@@ -221,8 +221,8 @@ export default function AgentGraph() {
     setActive(p => p === id ? null : id);
   }, []);
 
-  const activeModeId = active?.startsWith('mode:') ? active.replace('mode:', '') : null;
-  const isTherapeuticExpanded = active === 'therapeutic' || activeModeId !== null;
+  const activeResponseStyleId = active?.startsWith('style:') ? active.replace('style:', '') : null;
+  const isTherapeuticExpanded = active === 'therapeutic' || activeResponseStyleId !== null;
 
   return (
     <div className={styles.root}>
@@ -298,32 +298,32 @@ export default function AgentGraph() {
                 <>
                   {isActive && <DetailPanel detail={step.detail} key={`d-${step.id}`} />}
 
-                  <div className={styles.modeSection}>
-                    <div className={styles.modeSectionHeader}>
-                      <span className={styles.modeGridLabel}>Therapeutic modes — dispatcher picks exactly one per turn</span>
+                  <div className={styles.responseStyleSection}>
+                    <div className={styles.responseStyleSectionHeader}>
+                      <span className={styles.responseStyleGridLabel}>Therapeutic responses — dispatcher picks exactly one per turn</span>
                     </div>
-                    <div className={styles.modeGrid}>
-                      {THERAPEUTIC_MODES.map(m => {
-                        const mActive = activeModeId === m.id;
+                    <div className={styles.responseStyleGrid}>
+                      {THERAPEUTIC_RESPONSE_STYLES.map(m => {
+                        const responseStyleActive = activeResponseStyleId === m.id;
                         return (
                           <button
                             key={m.id}
                             className={[
-                              styles.modeChip,
-                              styles.modeChipTherapeutic,
-                              mActive ? styles.modeChipActive : '',
+                              styles.responseStyleChip,
+                              styles.responseStyleChipTherapeutic,
+                              responseStyleActive ? styles.responseStyleChipActive : '',
                             ].join(' ')}
-                            onClick={(e) => { e.stopPropagation(); toggle(`mode:${m.id}`); }}
+                            onClick={(e) => { e.stopPropagation(); toggle(`style:${m.id}`); }}
                           >
-                            <span className={styles.modeChipLabel}>{m.label}</span>
+                            <span className={styles.responseStyleChipLabel}>{m.label}</span>
                           </button>
                         );
                       })}
                     </div>
-                    {activeModeId && THERAPEUTIC_MODES.find(m => m.id === activeModeId) && (
+                    {activeResponseStyleId && THERAPEUTIC_RESPONSE_STYLES.find(m => m.id === activeResponseStyleId) && (
                       <DetailPanel
-                        detail={THERAPEUTIC_MODES.find(m => m.id === activeModeId)!.detail}
-                        key={`d-${activeModeId}`}
+                        detail={THERAPEUTIC_RESPONSE_STYLES.find(m => m.id === activeResponseStyleId)!.detail}
+                        key={`d-${activeResponseStyleId}`}
                       />
                     )}
                   </div>
