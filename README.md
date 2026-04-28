@@ -358,6 +358,8 @@ OpenCouch/
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Session experience refresh** — the web app now has a responsive session setup flow, desktop nav rail, mobile tab bar, session pill controls, refreshed chat/voice surfaces, and a lightweight memory-model diagram for persistent vs incognito sessions.
+- **LiveKit prewarm path** — the voice worker preloads blocking VAD/runtime assets and supports a one-time first-output warmup request from the browser to reduce initial voice-session latency.
 - **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, streaming, registry, and shared response-generation internals are split into focused modules while preserving compatibility imports.
 - **LLM-primary routing and policy gates** — therapeutic routing, grounded lookup, memory control, memory write policy, exercise continuation, and exercise selection now use LLM classifiers first with deterministic fallbacks.
 - **Guided exercise improvements** — 13 state-tracked exercises share a registry, ambiguous exercise requests can offer options instead of defaulting to grounding, and exercise eval coverage tracks selection, flow, and memory behavior.
