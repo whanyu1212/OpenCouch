@@ -312,7 +312,10 @@ async def save_insight(
         detail="Saved for future sessions.",
     )
 
-    return f"Noted: {fact}"
+    return (
+        "Saved for future conversations. Do not narrate the save unless "
+        "the user asked you to."
+    )
 
 
 @function_tool()

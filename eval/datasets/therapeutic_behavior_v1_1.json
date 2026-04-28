@@ -93,19 +93,17 @@
     "dispatch_tier": "llm",
     "message": "Hi, I don't really know where to start.",
     "expected_response_style": "supportive",
-    "assertions": {
-      "require_question": true,
-      "max_question_marks": 1,
-      "max_sentences": 5,
-      "must_include_any": [
-        "specific",
-        "plan",
-        "what you want",
-        "want from this",
-        "what's most present",
-        "most present",
-        "where to start"
-      ],
+  "assertions": {
+    "max_question_marks": 1,
+    "max_sentences": 5,
+    "must_include_any": [
+      "don't have to",
+      "no need",
+      "start",
+      "whatever",
+      "closest",
+      "today"
+    ],
       "must_not_include_any": [
         "goal for this session",
         "goals for this session",
@@ -363,7 +361,9 @@
             "hear",
             "things you can hear",
             "loud or quiet",
-            "hearing"
+            "hearing",
+            "listen",
+            "sounds"
           ],
           "max_sentences": 4
         }

@@ -19,6 +19,44 @@ _DEFAULT_CLARIFYING_REPLY = (
     "It sounds like something's on your mind. "
     "Can you help me understand a bit more about what brought this up today?"
 )
+_DEFAULT_SAFETY_CLARIFYING_REPLY = (
+    "I'm really glad you said that. "
+    "Are you feeling at risk of hurting yourself right now?"
+)
+
+
+def _needs_safety_clarification(state: AgentState) -> bool:
+    """Return whether this clarifying turn is a safety check.
+
+    Args:
+        state: Current graph state for the turn.
+
+    Returns:
+        Whether the crisis gate marked this turn as level-1 ambiguous risk.
+    """
+
+    crisis = state.get("crisis")
+    if crisis is None:
+        return False
+    if isinstance(crisis, dict):
+        return bool(crisis.get("needs_clarification", False))
+    return bool(getattr(crisis, "needs_clarification", False))
+
+
+def _default_clarifying_reply(state: AgentState) -> str:
+    """Return the deterministic clarifying fallback for this state.
+
+    Args:
+        state: Current graph state for the turn.
+
+    Returns:
+        Safety-check fallback for level-1 crisis ambiguity, otherwise the
+        ordinary clarifying fallback.
+    """
+
+    if _needs_safety_clarification(state):
+        return _DEFAULT_SAFETY_CLARIFYING_REPLY
+    return _DEFAULT_CLARIFYING_REPLY
 
 
 async def run_clarifying_response_node(
@@ -46,7 +84,7 @@ async def run_clarifying_response_node(
         runtime,
         mode="clarifying",
         system_prompt_builder=build_clarifying_system_prompt,
-        fallback_text=_DEFAULT_CLARIFYING_REPLY,
+        fallback_text=_default_clarifying_reply(state),
         logger=logger,
         failure_message=(
             "Clarifying response LLM call failed; using deterministic fallback."

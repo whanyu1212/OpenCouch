@@ -9,8 +9,8 @@
     "expect_process_stage_in": ["orient", "identify"],
     "expect_agent_kind_in": ["understanding", "reflective"],
     "expect_guidance_contains_any": [
-      "smallest useful next target",
-      "formulation fits"
+      "choose one place to start",
+      "let them correct it"
     ]
   },
   {
@@ -40,7 +40,7 @@
     "expect_process_stage_in": ["hold"],
     "expect_agent_kind_in": ["hold_space"],
     "expect_guidance_contains_any": [
-      "hold space without becoming passive"
+      "Stay close without becoming passive"
     ]
   },
   {

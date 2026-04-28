@@ -247,6 +247,36 @@ async def test_llm_semantic_policy_can_require_repetition_without_marker() -> No
 
 
 @pytest.mark.asyncio
+async def test_llm_semantic_policy_reason_is_capped_after_prefix() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="context",
+            predicate="EXPERIENCED",
+            object_type="Concern",
+            object_identifier="long-running work pressure",
+            evidence_quote="Work pressure has been building for months.",
+        ),
+        message="Work pressure has been building for months.",
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_at_session_end",
+            "reason": "x" * 235,
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_semantic_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
+
+    assert len(decision.reason) <= 240
+    assert decision.reason.startswith("llm_policy: ")
+    assert decision.reason.endswith("...")
+
+
+@pytest.mark.asyncio
 async def test_llm_procedural_policy_can_commit_durable_natural_request() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
@@ -273,3 +303,32 @@ async def test_llm_procedural_policy_can_commit_durable_natural_request() -> Non
     assert llm.structured_calls == 1
     assert decision.action == "commit_now"
     assert decision.policy_version == "phase1_llm_v1"
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_policy_reason_is_capped_after_prefix() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses.",
+            evidence=["From now on, be more direct with me."],
+        ),
+        message="From now on, be more direct with me.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "x" * 235,
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_procedural_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
+
+    assert len(decision.reason) <= 240
+    assert decision.reason.startswith("llm_policy: ")
+    assert decision.reason.endswith("...")

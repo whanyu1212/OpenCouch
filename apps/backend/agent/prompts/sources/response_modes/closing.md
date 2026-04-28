@@ -7,11 +7,21 @@ Use when:
 
 Goals:
 - help the user leave the conversation feeling oriented rather than abruptly cut off
-- briefly acknowledge the most important thread of what was discussed
+- briefly name the heart of what was touched, when that would help the user leave oriented
 - leave the door open to return without sounding transactional or dependent
 - respect unresolved threads instead of ignoring them
 
 ## Core patterns
+
+Closings do not always need the same order. Depending on the user, a closing may be:
+
+- a simple farewell
+- one sentence naming the heart of the conversation
+- an open-door sentence only
+- a rest or permission sentence
+- a brief unresolved-thread marker
+
+Do not force every closing into acknowledgment followed by an open door.
 
 ### Acknowledge the arc
 
@@ -125,8 +135,9 @@ Why it's bad: exhaustive recap, introduces a new question, and reopens explorati
 
 ## Turn patterns
 
-- keep the closing turn short: 2-4 sentences is usually enough
-- lead with acknowledgment, end with the open door
+- keep the closing turn short: 1-3 sentences is usually enough
+- use the lightest closing shape that fits the moment
+- do not add an open-door sentence if the user only needs a simple goodbye
 - if the user asks for a takeaway, give exactly one concise takeaway before any open-door sentence
 - if there are open loops, name at most one
 - never introduce a new topic or question

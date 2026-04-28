@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from agent.models import CrisisAssessment
 from agent.prompts import build_crisis_response_system_prompt
 from agent.state import AgentState
 from agent.therapeutic.dispatcher import build_therapeutic_dispatch_system_prompt
@@ -60,6 +61,7 @@ def _make_state(
     rules: list[str] | None = None,
     recall_enabled: bool | None = None,
     working_memory: list[Any] | None = None,
+    crisis: CrisisAssessment | None = None,
 ) -> AgentState:
     """Build a minimal AgentState with procedural fields configured.
 
@@ -90,6 +92,8 @@ def _make_state(
         "session_memory": session_memory,
         "procedural_profile": procedural_profile,
     }
+    if crisis is not None:
+        state["crisis"] = crisis
     return cast(AgentState, state)
 
 
@@ -296,6 +300,24 @@ class TestTherapeuticBuilderInjection:
             )
 
 
+def test_clarifying_prompt_adds_safety_check_for_level_one_crisis() -> None:
+    """Level-1 crisis ambiguity should use safety-check clarification guidance."""
+
+    state = _make_state(
+        crisis=CrisisAssessment(
+            level=1,
+            confidence="medium",
+            needs_clarification=True,
+        )
+    )
+
+    prompt = build_clarifying_system_prompt(state)
+
+    assert "Clarification Mode" in prompt
+    assert "Include exactly one direct safety question" in prompt
+    assert "Do not provide hotline, 988, emergency-services" in prompt
+
+
 def test_technique_prompt_requires_attuned_opening_before_structure() -> None:
     state = _make_state()
     state["therapeutic_approach"] = "cbt"
@@ -318,6 +340,8 @@ def test_closing_prompt_handles_wrap_up_takeaway_requests() -> None:
     assert "start a new exercise" in prompt
     assert "reopen" in prompt
     assert "exploration" in prompt
+    assert "Use the lightest closing shape that fits the moment" in prompt
+    assert "only when it fits" in prompt
 
 
 def test_closing_prompt_handles_one_word_acknowledgments_quietly() -> None:
@@ -339,16 +363,18 @@ def test_supportive_prompt_handles_low_content_opening_orientation() -> None:
     prompt = build_supportive_system_prompt(_make_state())
 
     assert "for low-content openings" in prompt
-    assert "We don't need a plan" in prompt
-    assert "is there something specific you want from this session" in prompt
+    assert "offer an easy entry point rather than an intake-style question" in prompt
+    assert (
+        "use an orientation question only when it lowers effort for the user" in prompt
+    )
     assert "do not use session-plan framing" in prompt
     assert "respond to that content first" in prompt
     assert "goals for the session" in prompt
-    assert "Exception: for low-content session openings" in prompt
-    assert "ask exactly one" in prompt
-    assert 'a question ending in "?"' in prompt
+    assert "For low-content session openings, offer an easy entry point" in prompt
+    assert "question is optional" in prompt
+    assert "If you ask, ask exactly one" in prompt
     assert "Good low-content opening" in prompt
-    assert "it does not actually ask the optional orientation question" in prompt
+    assert "Avoid low-content openings that sound like intake" in prompt
 
 
 def test_supportive_prompt_breaks_uniform_response_shape() -> None:

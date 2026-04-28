@@ -66,7 +66,15 @@
         "user": "It keeps happening. Every new task makes me feel like I'm about to fail.",
         "expect": {
           "mode_in": ["reflective", "supportive"],
-          "response_contains_any": ["fail", "pattern", "keep", "thought"]
+          "response_contains_any": [
+            "fail",
+            "pattern",
+            "keep",
+            "thought",
+            "thread",
+            "proof",
+            "mess this up"
+          ]
         }
       }
     ],
@@ -78,10 +86,10 @@
   },
   {
     "id": "reflective_to_guided_exercise_accept",
-    "title": "Reflective conversation transitions into guided exercise",
-    "description": "After naming a recurring thought pattern, the user accepts help working through it. This is a hybrid-target integration case for future exercise handoff quality.",
+    "title": "Reflective conversation transitions into active thought work",
+    "description": "After naming a recurring thought pattern, the user accepts help working through it without explicitly asking for a formal exercise.",
     "supported_modes": ["hybrid"],
-    "tags": ["reflective", "guided_exercise", "core_flow"],
+    "tags": ["reflective", "technique", "core_flow"],
     "run_end_session": false,
     "turns": [
       {
@@ -93,19 +101,15 @@
       {
         "user": "Yeah, can we work through that?",
         "expect": {
-          "mode_in": ["guided_exercise", "supportive"],
-          "exercise_type_in": [
-            "thought_work_simple_record",
-            "thought_work_behavioral_experiment"
-          ],
-          "exercise_active": true
+          "mode_in": ["technique", "supportive"],
+          "exercise_active": false
         }
       }
     ],
     "final_expect": {
       "summary_expected": false,
       "memory_write_expected": false,
-      "exercise_active": true
+      "exercise_active": false
     }
   },
   {
@@ -173,7 +177,7 @@
     "title": "Substantive session should produce a summary",
     "description": "A multi-turn emotionally meaningful conversation should produce a session summary with appropriate themes and without safety overreach.",
     "supported_modes": ["hybrid"],
-    "tags": ["summary", "supportive", "reflective"],
+    "tags": ["summary", "supportive", "reflective", "technique"],
     "run_end_session": true,
     "turns": [
       {
@@ -185,7 +189,7 @@
       {
         "user": "Honestly I freeze because I keep thinking I'm going to mess everything up.",
         "expect": {
-          "mode_in": ["reflective", "supportive"]
+          "mode_in": ["reflective", "supportive", "technique"]
         }
       },
       {

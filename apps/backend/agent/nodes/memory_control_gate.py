@@ -191,6 +191,22 @@ def _detect_memory_control_action(message: str) -> dict[str, Any] | None:
     ):
         return {"type": "set_recall", "enabled": False}
 
+    if "unless i ask" in lowered and any(
+        phrase in lowered
+        for phrase in (
+            "stop bringing",
+            "don't bring",
+            "do not bring",
+            "stop mentioning",
+            "don't mention",
+            "do not mention",
+            "stop using",
+            "don't use",
+            "do not use",
+        )
+    ):
+        return {"type": "set_recall", "enabled": False}
+
     if any(
         phrase in lowered
         for phrase in (
@@ -208,6 +224,31 @@ def _detect_memory_control_action(message: str) -> dict[str, Any] | None:
     indexed = _detect_indexed_forget(lowered)
     if indexed is not None:
         return indexed
+
+    if any(
+        lowered.startswith(prefix)
+        for prefix in (
+            "please don't remember",
+            "please do not remember",
+            "don't remember",
+            "do not remember",
+            "can you not remember",
+            "could you not remember",
+        )
+    ):
+        query = _extract_after_marker(
+            stripped,
+            (
+                "please don't remember",
+                "please do not remember",
+                "don't remember",
+                "do not remember",
+                "can you not remember",
+                "could you not remember",
+            ),
+        )
+        if query:
+            return {"type": "forget_by_query", "query": query}
 
     if any(verb in lowered for verb in ("forget", "delete", "remove")) and any(
         noun in lowered

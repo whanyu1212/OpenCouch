@@ -26,6 +26,37 @@ from agent.therapeutic.prompting.instructions import (
 )
 from agent.therapeutic.prompting.sources import _knowledge_for_mode
 
+_SAFETY_CHECK_FILE = "response_modes/safety_check.md"
+_SAFETY_CHECK_OVERRIDE = """
+Safety-check override:
+- The crisis classifier marked this turn as concerning but ambiguous
+  (level 1). Include exactly one direct safety question before ordinary
+  support continues.
+- In clarifying mode, these safety-check instructions override the
+  ordinary clarifying guidance about open-ended context questions.
+- Do not provide hotline, 988, emergency-services, ER, or crisis-line
+  guidance unless crisis response is active or the user says they may
+  act on self-harm thoughts.
+""".strip()
+
+
+def _crisis_needs_safety_clarification(state: AgentState) -> bool:
+    """Return whether the current turn needs a safety clarification.
+
+    Args:
+        state: Current agent state.
+
+    Returns:
+        Whether the crisis gate marked this turn as level-1 ambiguous risk.
+    """
+
+    crisis = state.get("crisis")
+    if crisis is None:
+        return False
+    if isinstance(crisis, dict):
+        return bool(crisis.get("needs_clarification", False))
+    return bool(getattr(crisis, "needs_clarification", False))
+
 
 def _compose_system_prompt_with_state(
     knowledge: str,
@@ -56,9 +87,16 @@ def _compose_system_prompt_with_state(
     if _has_episodic_context(state):
         continuity_block = "\n\n" + _load_knowledge_file(_CONTINUITY_FILE)
 
+    safety_block = ""
+    if _crisis_needs_safety_clarification(state):
+        safety_block = "\n\n" + _SAFETY_CHECK_OVERRIDE
+
     rules_block = _format_procedural_rules_block(state)
     recall_block = _format_recall_toggle_constraint(state)
-    return f"{knowledge}\n\n{instructions}{continuity_block}{rules_block}{recall_block}"
+    return (
+        f"{knowledge}\n\n{instructions}{safety_block}"
+        f"{continuity_block}{rules_block}{recall_block}"
+    )
 
 
 def _read_approach(state: AgentState) -> str | None:
@@ -119,7 +157,11 @@ def build_clarifying_system_prompt(state: AgentState) -> str:
         System prompt for clarifying-mode responses.
     """
 
-    knowledge = _compose(*_knowledge_for_mode("clarifying"))
+    files = _knowledge_for_mode("clarifying")
+    if _crisis_needs_safety_clarification(state):
+        files = (*files, _SAFETY_CHECK_FILE)
+
+    knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _CLARIFYING_INSTRUCTIONS, state)
 
 
