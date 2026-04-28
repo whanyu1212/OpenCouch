@@ -3,11 +3,15 @@
 import { useSyncExternalStore } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type {
-  EndSessionResponse,
-  MemoryFact,
-  ResponseModelTier,
-  TranscriptionLanguageOption,
+import {
+  createChatStream,
+  getMemoryFacts,
+  type ChatResponse,
+  type EndSessionResponse,
+  type MemoryFact,
+  type ResponseModelTier,
+  type StreamEvent,
+  type TranscriptionLanguageOption,
 } from "./api";
 
 /**
@@ -106,6 +110,8 @@ const IDLE_VOICE_FINALIZATION_STATE: VoiceFinalizationState = {
 // LiveKit Room is non-reactive and kept outside Zustand state to avoid
 // re-rendering subscribers on SDK object mutation.
 let _voiceRoom: VoiceRoomHandle | null = null;
+let _chatSocket: WebSocket | null = null;
+let _chatStreamId = 0;
 
 interface SessionState {
   /** Whether the user has completed setup for this session */
@@ -119,6 +125,12 @@ interface SessionState {
   messages: ChatMessage[];
   /** Whether the agent is currently generating a response */
   chatLoading: boolean;
+  /** Whether at least one assistant chunk has arrived for the active text turn */
+  chatStreamingStarted: boolean;
+  /** Current streamed pipeline stages for the active text turn */
+  chatStages: string[];
+  /** User-facing chat notice/error message */
+  chatNotice: string | null;
 
   /** Live memory panel state */
   memoryFacts: MemoryFact[];
@@ -153,6 +165,9 @@ interface SessionState {
   updateLastMessage: (updates: Partial<ChatMessage>) => void;
   clearMessages: () => void;
   setChatLoading: (loading: boolean) => void;
+  setChatStreamingStarted: (started: boolean) => void;
+  setChatStages: (stages: string[]) => void;
+  setChatNotice: (notice: string | null) => void;
   /** Start a session with the given mode */
   startSession: (mode: SessionMode, userId: string, threadId: string) => void;
   /** Reset to setup screen with a new thread */
@@ -224,6 +239,9 @@ export const useSessionStore = create<SessionState>()(
   threadId: "",
   messages: [],
   chatLoading: false,
+  chatStreamingStarted: false,
+  chatStages: [],
+  chatNotice: null,
   memoryFacts: [],
   memoryPanelOpen: false,
   memoryUnseenCount: 0,
@@ -243,7 +261,19 @@ export const useSessionStore = create<SessionState>()(
   voiceError: null,
 
   setUserId: (id: string) => set({ userId: id }),
-  setThreadId: (id: string) => set({ threadId: id }),
+  setThreadId: (id: string) => {
+    cancelActiveChatStream({ resetLoading: true });
+    set({
+      threadId: id,
+      messages: [],
+      chatStages: [],
+      chatNotice: null,
+      chatStreamingStarted: false,
+      memoryFacts: [],
+      memoryUnseenCount: 0,
+      lastEndedSession: null,
+    });
+  },
   setMessages: (msgs: ChatMessage[]) => set({ messages: msgs }),
   addMessage: (msg: ChatMessage) =>
     set((state) => ({ messages: [...state.messages, msg] })),
@@ -267,6 +297,10 @@ export const useSessionStore = create<SessionState>()(
     }),
   clearMessages: () => set({ messages: [] }),
   setChatLoading: (loading: boolean) => set({ chatLoading: loading }),
+  setChatStreamingStarted: (chatStreamingStarted: boolean) =>
+    set({ chatStreamingStarted }),
+  setChatStages: (chatStages: string[]) => set({ chatStages }),
+  setChatNotice: (chatNotice: string | null) => set({ chatNotice }),
 
   setMemoryFacts: (facts: MemoryFact[]) => set({ memoryFacts: facts }),
   setMemoryPanelOpen: (open: boolean) =>
@@ -285,21 +319,30 @@ export const useSessionStore = create<SessionState>()(
   clearLastEndedSession: () => set({ lastEndedSession: null }),
   setResponseModelTier: (tier) => set({ responseModelTier: tier }),
 
-  startSession: (mode: SessionMode, userId: string, threadId: string) =>
+  startSession: (mode: SessionMode, userId: string, threadId: string) => {
+    cancelActiveChatStream({ resetLoading: true });
     set({
       isSetup: true,
       sessionMode: mode,
       userId: mode === "incognito" ? "" : (userId.trim() || "web-user"),
-      threadId: mode === "incognito" ? generateThreadId() : (threadId.trim() || generateThreadId()),
+      threadId:
+        mode === "incognito"
+          ? generateThreadId()
+          : (threadId.trim() || generateThreadId()),
       messages: [],
       chatLoading: false,
+      chatStreamingStarted: false,
+      chatStages: [],
+      chatNotice: null,
       memoryFacts: [],
       memoryUnseenCount: 0,
       lastEndedSession: null,
       voiceSessionInfo: null,
       voiceActivities: [],
-    }),
+    });
+  },
   newSession: () => {
+    cancelActiveChatStream({ resetLoading: true });
     // Tear down any active voice session when resetting
     get().voiceDisconnect();
     set({
@@ -310,6 +353,9 @@ export const useSessionStore = create<SessionState>()(
       threadId: "",
       messages: [],
       chatLoading: false,
+      chatStreamingStarted: false,
+      chatStages: [],
+      chatNotice: null,
       memoryFacts: [],
       memoryUnseenCount: 0,
       lastEndedSession: null,
@@ -398,6 +444,9 @@ export const useSessionStore = create<SessionState>()(
           threadId: "",
           messages: [],
           chatLoading: false,
+          chatStreamingStarted: false,
+          chatStages: [],
+          chatNotice: null,
           memoryFacts: [],
           memoryPanelOpen: false,
           memoryUnseenCount: 0,
@@ -416,6 +465,202 @@ export const useSessionStore = create<SessionState>()(
     }
   )
 );
+
+interface CancelActiveChatStreamOptions {
+  resetLoading?: boolean;
+}
+
+export function cancelActiveChatStream({
+  resetLoading = false,
+}: CancelActiveChatStreamOptions = {}): void {
+  _chatStreamId += 1;
+  _chatSocket?.close(1000, "client_cancelled");
+  _chatSocket = null;
+
+  if (resetLoading) {
+    useSessionStore.setState({
+      chatLoading: false,
+      chatStreamingStarted: false,
+      chatStages: [],
+    });
+  }
+}
+
+interface StartTextChatStreamOptions {
+  message: string;
+  threadId: string;
+  userId: string;
+  sessionMode: SessionMode;
+  responseModelTier: ResponseModelTier;
+}
+
+export function startTextChatStream({
+  message,
+  threadId,
+  userId,
+  sessionMode,
+  responseModelTier,
+}: StartTextChatStreamOptions): boolean {
+  const msg = message.trim();
+  if (!msg || useSessionStore.getState().chatLoading) {
+    return false;
+  }
+
+  cancelActiveChatStream();
+  const streamId = _chatStreamId + 1;
+  _chatStreamId = streamId;
+  const isCurrentStream = () => _chatStreamId === streamId;
+
+  let done = false;
+  let streamingStarted = false;
+
+  useSessionStore.setState((state) => ({
+    lastEndedSession: null,
+    chatNotice: null,
+    chatStages: [],
+    chatLoading: true,
+    chatStreamingStarted: false,
+    messages: [...state.messages, { role: "user", content: msg }],
+  }));
+
+  const ws = createChatStream({
+    message: msg,
+    threadId,
+    userId,
+    responseModelTier,
+    onEvent: (event: StreamEvent) => {
+      if (!isCurrentStream()) return;
+      if (event.type === "status") {
+        useSessionStore.setState((state) => ({
+          chatStages: [...state.chatStages, event.stage],
+        }));
+        return;
+      }
+
+      if (event.type === "chunk") {
+        if (!streamingStarted) {
+          streamingStarted = true;
+          useSessionStore.setState((state) => ({
+            chatStreamingStarted: true,
+            chatStages: [],
+            messages: [
+              ...state.messages,
+              { role: "assistant", content: event.text },
+            ],
+          }));
+        } else {
+          useSessionStore.getState().appendToLastMessage(event.text);
+        }
+        return;
+      }
+
+      done = true;
+      const resp = event.response as ChatResponse;
+      if (streamingStarted) {
+        useSessionStore.getState().updateLastMessage({
+          content: resp.response_text,
+          responseStyle: resp.response_style,
+          responseStyleSource: resp.response_style_source,
+          therapeuticApproach: resp.therapeutic_approach,
+          responseType: resp.response_type,
+          crisis: resp.crisis,
+          diagnostics: resp.diagnostics,
+        });
+      } else {
+        useSessionStore.getState().addMessage({
+          role: "assistant",
+          content: resp.response_text,
+          responseStyle: resp.response_style,
+          responseStyleSource: resp.response_style_source,
+          therapeuticApproach: resp.therapeutic_approach,
+          responseType: resp.response_type,
+          crisis: resp.crisis,
+          diagnostics: resp.diagnostics,
+        });
+      }
+
+      useSessionStore.setState({
+        chatLoading: false,
+        chatStreamingStarted: false,
+        chatStages: [],
+      });
+
+      const semanticWrites = Number(resp.diagnostics?.semantic_writes ?? 0);
+      const proceduralWrites = Number(resp.diagnostics?.procedural_writes ?? 0);
+      const memoryControlTurn =
+        resp.response_style === "memory_control" ||
+        resp.diagnostics?.memory_control_ms != null;
+      if (
+        sessionMode === "persistent" &&
+        (semanticWrites > 0 || proceduralWrites > 0 || memoryControlTurn)
+      ) {
+        useSessionStore.getState().bumpMemoryRefreshVersion();
+      }
+      if (
+        sessionMode === "persistent" &&
+        (semanticWrites > 0 || memoryControlTurn)
+      ) {
+        void getMemoryFacts(threadId, userId || undefined)
+          .then((facts) => {
+            if (!isCurrentStream()) return;
+            useSessionStore.getState().setMemoryFacts(facts);
+            const currentFactCount = useSessionStore.getState().memoryFacts.length;
+            useSessionStore
+              .getState()
+              .addUnseenMemories(Math.max(0, facts.length - currentFactCount));
+          })
+          .catch(() => {
+            if (!isCurrentStream()) return;
+            useSessionStore
+              .getState()
+              .setChatNotice("Reply completed, but memory refresh failed.");
+          });
+      }
+
+      ws.close();
+    },
+    onProtocolError: () => {
+      if (!isCurrentStream()) return;
+      done = true;
+      useSessionStore.setState({
+        chatStages: [],
+        chatLoading: false,
+        chatStreamingStarted: false,
+        chatNotice:
+          "The chat stream sent an unreadable response. Please try again.",
+      });
+    },
+  });
+
+  _chatSocket = ws;
+
+  ws.onerror = () => {
+    if (!isCurrentStream() || done) return;
+    done = true;
+    useSessionStore.setState({
+      chatStages: [],
+      chatLoading: false,
+      chatStreamingStarted: false,
+      chatNotice:
+        "Connection error. Check that the backend is running on the configured API URL.",
+    });
+  };
+
+  ws.onclose = () => {
+    if (!isCurrentStream()) return;
+    _chatSocket = null;
+    if (!done && useSessionStore.getState().chatLoading) {
+      useSessionStore.setState({
+        chatStages: [],
+        chatLoading: false,
+        chatStreamingStarted: false,
+        chatNotice: "The chat connection closed before the reply finished.",
+      });
+    }
+  };
+
+  return true;
+}
 
 function getPersistApi() {
   return (useSessionStore as typeof useSessionStore & SessionStorePersistApi)

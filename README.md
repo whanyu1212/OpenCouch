@@ -24,24 +24,24 @@
 ---
 
 ## Table of Contents
-- [Table of Contents](#table-of-contents)
 - [📖 Overview](#-overview)
-- [Screenshots](#screenshots)
 - [✨ Key Features](#-key-features)
+- [Screenshots](#screenshots)
 - [🚀 Quick Start](#-quick-start)
+  - [Prerequisites](#prerequisites)
   - [Environment](#environment)
-  - [1. Command Line Interface (CLI)](#1-command-line-interface-cli)
-  - [Eval-driven development](#eval-driven-development)
-    - [Observability \& evaluation](#observability--evaluation)
-  - [2. Web Interface](#2-web-interface)
-  - [3. Telegram Gateway](#3-telegram-gateway)
-  - [4. Documentation Site](#4-documentation-site)
+  - [One-command local stack](#one-command-local-stack)
+  - [Manual web stack](#manual-web-stack)
+  - [CLI](#cli)
+  - [Telegram Gateway](#telegram-gateway)
+  - [Documentation Site](#documentation-site)
 - [🧠 Architecture](#-architecture)
   - [Supported Surfaces](#supported-surfaces)
 - [📁 Project Structure](#-project-structure)
+- [🧪 Development \& Validation](#-development--validation)
+  - [Observability](#observability)
 - [📝 Changelog](#-changelog)
 - [🤝 Contributing](#-contributing)
-  - [Development Setup](#development-setup)
 - [🗺️ Roadmap](#️-roadmap)
 
 ---
@@ -55,6 +55,14 @@ Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired la
 Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime powers the low-latency model path. The older direct Realtime harness remains in the backend for experiments.
 
 A closed beta is planned.
+
+## ✨ Key Features
+- Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
+- Crisis gate runs before every response, with a SQLite audit trail.
+- Local eval runners, plus Opik as the primary trace surface for regression tracking.
+- LiveKit voice in the browser, backed by OpenAI Realtime — configurable voices, transcription hints, interruption handling.
+- Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.
+- 13 guided exercises with multi-turn state tracking — grounding, breathing, thought work, values reflection, and others.
 
 ## Screenshots
 
@@ -72,17 +80,14 @@ A closed beta is planned.
   </tr>
 </table>
 
-## ✨ Key Features
-- Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
-- Crisis gate runs before every response, with a SQLite audit trail.
-- Local eval runners, plus Opik as the primary trace surface for regression tracking.
-- LiveKit voice in the browser, backed by OpenAI Realtime — configurable voices, transcription hints, interruption handling.
-- Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.
-- 13 guided exercises with multi-turn state tracking — grounding, breathing, thought work, values reflection, and others.
-
 ---
 
 ## 🚀 Quick Start
+
+### Prerequisites
+- Docker Desktop running for the one-command local stack.
+- `uv` and `pnpm` for manual backend/web development.
+- Provider keys only for real model runs. Deterministic CLI and many local checks can run without external API keys.
 
 ### Environment
 OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need at least one configured provider:
@@ -116,72 +121,72 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 
 Keep real `.env` files local and out of version control.
 
-### 1. Command Line Interface (CLI)
-The CLI provides the fastest way to interact with OpenCouch locally.
+### One-command local stack
+Use this for the full local web + voice development stack:
 
 ```bash
-cd apps/backend && uv sync
-
-# Deterministic text mode (No API key needed, useful for local validation)
-uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread-id scratch
-
-# Full text mode with persistent memory (Requires provider API keys)
-uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
-
-# Voice mode (Requires LiveKit env vars plus OPENAI_API_KEY)
-uv run python -m opencouch_cli --voice
+docker compose up --build
 ```
 
-### Eval-driven development
+This starts:
+- backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
+- LiveKit voice worker: `python -m voice.livekit.agent start`
+- Next.js web UI: [localhost:3000](http://localhost:3000)
 
-> **For developers and contributors only.** End users do not need to configure this section — it powers internal observability and regression tracking during development.
+The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
 
-#### Observability & evaluation
+For text-only development without LiveKit credentials, start just the API and web UI:
 
-To enable Opik-backed observability and evaluation for local text runs, add the following to `.env` before running the CLI or API:
-
-```env
-# Primary external trace backend.
-OPIK_API_KEY=...
-OPIK_WORKSPACE=...
-OPIK_PROJECT_NAME=opencouch-dev
-
-# Optional secondary LangSmith / LangChain tracing.
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=...
-LANGSMITH_PROJECT=opencouch-dev
-
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=...
-LANGCHAIN_PROJECT=opencouch-dev
+```bash
+docker compose up --build api web
 ```
 
-### 2. Web Interface
-Run the full stack with the Next.js frontend and FastAPI backend.
+Stop everything with:
 
-**Terminal 1 — API Server:**
+```bash
+docker compose down
+```
+
+### Manual web stack
+Use this when you want each process in its own terminal. The manual stack uses port `8000` for the API because the web client defaults to `http://localhost:8000/api`; the Compose stack uses container-friendly port `8080` and sets `NEXT_PUBLIC_API_URL` for the web container.
+
+Terminal 1 — API server:
 ```bash
 cd apps/backend
 uv run uvicorn main:app --port 8000 --reload
 ```
 
-**Terminal 2 — Frontend:**
+Terminal 2 — frontend:
 ```bash
-# From the repository root
 pnpm install
 pnpm --dir apps/web dev
 ```
+
 Open [localhost:3000](http://localhost:3000) in your browser.
 
-**Optional Terminal 3 — LiveKit Voice Worker:**
+Optional terminal 3 — LiveKit voice worker:
 ```bash
 cd apps/backend
 uv run python -m voice.livekit.agent start
 ```
 
-### 3. Telegram Gateway
+### CLI
+The CLI is the fastest way to interact with the backend locally.
+
+```bash
+cd apps/backend && uv sync
+
+# Deterministic text mode: no API key needed.
+uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread-id scratch
+
+# Full text mode with persistent memory.
+uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
+
+# Voice mode: requires LiveKit env vars plus OPENAI_API_KEY.
+uv run python -m opencouch_cli --voice
+```
+
+### Telegram Gateway
 Run the standalone Telegram dogfood gateway. It does not require the FastAPI server.
 
 ```bash
@@ -195,7 +200,7 @@ uv run python -m channels.gateway telegram
 
 See [`apps/backend/README.md`](apps/backend/README.md) for backend-specific commands.
 
-### 4. Documentation Site
+### Documentation Site
 
 > **For developers and contributors only.** The hosted docs are available at the link below — running locally is only needed if you're editing documentation.
 
@@ -354,10 +359,68 @@ OpenCouch/
 
 ---
 
+## 🧪 Development & Validation
+
+Backend:
+
+```bash
+cd apps/backend && uv sync --group dev
+
+# Run the test suite before opening a PR.
+uv run pytest tests/
+
+# Run core deterministic evaluation checks.
+uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
+uv run python ../../eval/runners/therapeutic_routing_eval.py --mode deterministic
+```
+
+Web:
+
+```bash
+pnpm install
+pnpm --dir apps/web lint
+pnpm --dir apps/web build
+```
+
+Repository hooks:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+### Observability
+
+For local development traces and eval review, add Opik credentials to `.env` before running the CLI or API:
+
+```env
+OPIK_API_KEY=...
+OPIK_WORKSPACE=...
+OPIK_PROJECT_NAME=opencouch-dev
+```
+
+LangSmith / LangChain tracing can be enabled as a secondary backend:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=opencouch-dev
+
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+LANGCHAIN_API_KEY=...
+LANGCHAIN_PROJECT=opencouch-dev
+```
+
+---
+
 ## 📝 Changelog
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Route-persistent text streaming** — active text replies keep streaming while you move between Chat, Voice, Memory, and State, and Voice start is blocked until the text turn finishes.
+- **One-command local dev stack** — Docker Compose now starts the FastAPI backend, LiveKit voice worker, and Next.js web UI together with bind-mounted source and container-managed dependency caches.
+- **OpenAI hybrid prompt stabilization** — text and LiveKit voice prompts now share tighter safety, support, closing, guided-exercise, and continuity behavior; ambiguous level-1 safety language asks a direct check without premature emergency-resource escalation, and the OpenAI hybrid eval sweep passes across routing, behavior, trajectory, memory, and voice runners.
 - **Session experience refresh** — the web app now has a responsive session setup flow, desktop nav rail, mobile tab bar, session pill controls, refreshed chat/voice surfaces, and a lightweight memory-model diagram for persistent vs incognito sessions.
 - **LiveKit prewarm path** — the voice worker preloads blocking VAD/runtime assets and supports a one-time first-output warmup request from the browser to reduce initial voice-session latency.
 - **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, streaming, registry, and shared response-generation internals are split into focused modules while preserving compatibility imports.
@@ -373,38 +436,7 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
 ## 🤝 Contributing
 
-We welcome contributions. Please review the contribution guidelines before submitting a Pull Request.
-
-### Development Setup
-
-Backend:
-
-```bash
-cd apps/backend && uv sync --group dev
-
-# Run the test suite (must pass before opening a PR)
-uv run pytest tests/
-
-# Run evaluation checks
-uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
-uv run python ../../eval/runners/therapeutic_routing_eval.py --mode deterministic
-```
-
-Web:
-
-```bash
-# From the repository root
-pnpm install
-pnpm --dir apps/web lint
-pnpm --dir apps/web build
-```
-
-Repository hooks:
-
-```bash
-# Run linters and formatters
-pre-commit run --all-files
-```
+We welcome contributions. Run the relevant checks in [Development & Validation](#-development--validation) before submitting a Pull Request.
 
 **Branch Conventions:**
 - `feature/*` for new capabilities

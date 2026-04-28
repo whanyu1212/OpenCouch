@@ -2,18 +2,16 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  createChatStream,
   getHistory,
   getMemoryStatus,
   getMemoryFacts,
   getThreads,
-  type ChatResponse,
-  type StreamEvent,
   type Message,
   type MemoryStatus,
   type ThreadSummary,
 } from "@/lib/api";
 import {
+  startTextChatStream,
   useSessionStore,
   type ChatMessage,
   type EndedSessionResult,
@@ -198,58 +196,40 @@ export default function TextChatPage() {
     messages,
     setMessages,
     addMessage,
-    appendToLastMessage,
-    updateLastMessage,
     clearMessages,
     chatLoading: isLoading,
-    setChatLoading: setIsLoading,
+    chatStreamingStarted,
+    chatStages: stages,
+    chatNotice: notice,
+    setChatNotice: setNotice,
     setMemoryFacts,
-    addUnseenMemories,
     memoryRefreshVersion,
     lastEndedSession,
     clearLastEndedSession,
-    bumpMemoryRefreshVersion,
     responseModelTier,
   } = useSessionStore();
   const { runAction, startNewSession, isBusy } = useCommandActions();
   const [input, setInput] = useState("");
-  const [stages, setStages] = useState<string[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const activeSocketRef = useRef<WebSocket | null>(null);
-  const activeStreamIdRef = useRef(0);
-  const loadingRef = useRef(isLoading);
 
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
   const [recentThreads, setRecentThreads] = useState<ThreadSummary[]>([]);
-  const lastLoadedThread = useRef<string | null>(null);
   const [originThread, setOriginThread] = useState<string | null>(null);
 
   useEffect(() => {
-    loadingRef.current = isLoading;
-  }, [isLoading]);
-
-  const closeActiveSocket = useCallback(() => {
-    activeStreamIdRef.current += 1;
-    activeSocketRef.current?.close();
-    activeSocketRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      closeActiveSocket();
-    };
-  }, [threadId, closeActiveSocket]);
-
-  useEffect(() => {
-    if (lastLoadedThread.current === threadId) return;
-    lastLoadedThread.current = threadId;
-    clearMessages();
     if (sessionMode === "incognito") return;
+    if (messages.length > 0) return;
+    let cancelled = false;
     getHistory(threadId)
       .then((history) => {
-        if (history.length > 0) {
+        const state = useSessionStore.getState();
+        if (
+          !cancelled &&
+          state.threadId === threadId &&
+          state.messages.length === 0 &&
+          history.length > 0
+        ) {
           setMessages(
             history.map((m: Message) => ({
               role: m.role,
@@ -260,9 +240,16 @@ export default function TextChatPage() {
         }
       })
       .catch(() => {
-        setNotice("Could not load chat history. Check that the backend is running.");
+        if (!cancelled) {
+          setNotice(
+            "Could not load chat history. Check that the backend is running."
+          );
+        }
       });
-  }, [threadId, sessionMode, clearMessages, setMessages]);
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, sessionMode, messages.length, setMessages, setNotice]);
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
@@ -276,7 +263,14 @@ export default function TextChatPage() {
       .catch(() => {
         setNotice("Could not load memory facts.");
       });
-  }, [threadId, userId, sessionMode, setMemoryFacts, memoryRefreshVersion]);
+  }, [
+    threadId,
+    userId,
+    sessionMode,
+    setMemoryFacts,
+    memoryRefreshVersion,
+    setNotice,
+  ]);
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
@@ -285,7 +279,7 @@ export default function TextChatPage() {
       .catch(() => {
         setNotice("Could not load recent sessions.");
       });
-  }, [sessionMode, threadId]);
+  }, [sessionMode, threadId, setNotice]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -304,7 +298,6 @@ export default function TextChatPage() {
       clearLastEndedSession();
       setNotice(null);
       setInput("");
-      setStages([]);
       setOriginThread(null);
 
       if (inputRef.current) {
@@ -335,131 +328,16 @@ export default function TextChatPage() {
         return;
       }
 
-      setIsLoading(true);
-      addMessage({ role: "user", content: msg });
-
-      let done = false;
-      let streamingStarted = false;
-      closeActiveSocket();
-      const streamId = activeStreamIdRef.current + 1;
-      activeStreamIdRef.current = streamId;
-      const isCurrentStream = () => activeStreamIdRef.current === streamId;
-
-      const ws = createChatStream({
+      const started = startTextChatStream({
         message: msg,
         threadId,
         userId,
+        sessionMode,
         responseModelTier,
-        onEvent: (event: StreamEvent) => {
-          if (!isCurrentStream()) return;
-          if (event.type === "status") {
-            setStages((prev) => [...prev, event.stage]);
-          } else if (event.type === "chunk") {
-            if (!streamingStarted) {
-              streamingStarted = true;
-              addMessage({ role: "assistant", content: event.text });
-              setStages([]);
-              setIsLoading(false);
-              inputRef.current?.focus();
-            } else {
-              appendToLastMessage(event.text);
-            }
-          } else if (event.type === "done") {
-            done = true;
-            const resp = event.response as ChatResponse;
-            if (streamingStarted) {
-              updateLastMessage({
-                content: resp.response_text,
-                responseStyle: resp.response_style,
-                responseStyleSource: resp.response_style_source,
-                therapeuticApproach: resp.therapeutic_approach,
-                responseType: resp.response_type,
-                crisis: resp.crisis,
-                diagnostics: resp.diagnostics,
-              });
-            } else {
-              addMessage({
-                role: "assistant",
-                content: resp.response_text,
-                responseStyle: resp.response_style,
-                responseStyleSource: resp.response_style_source,
-                therapeuticApproach: resp.therapeutic_approach,
-                responseType: resp.response_type,
-                crisis: resp.crisis,
-                diagnostics: resp.diagnostics,
-              });
-              setStages([]);
-              setIsLoading(false);
-              inputRef.current?.focus();
-            }
-
-            const semanticWrites = Number(resp.diagnostics?.semantic_writes ?? 0);
-            const proceduralWrites = Number(
-              resp.diagnostics?.procedural_writes ?? 0
-            );
-            const memoryControlTurn =
-              resp.response_style === "memory_control" ||
-              resp.diagnostics?.memory_control_ms != null;
-            if (
-              sessionMode === "persistent" &&
-              (semanticWrites > 0 || proceduralWrites > 0 || memoryControlTurn)
-            ) {
-              bumpMemoryRefreshVersion();
-            }
-            if (
-              sessionMode === "persistent" &&
-              (semanticWrites > 0 || memoryControlTurn)
-            ) {
-              getMemoryFacts(threadId, userId || undefined)
-                .then((facts) => {
-                  if (!isCurrentStream()) return;
-                  setMemoryFacts(facts);
-                  const currentFactCount =
-                    useSessionStore.getState().memoryFacts.length;
-                  addUnseenMemories(
-                    Math.max(0, facts.length - currentFactCount)
-                  );
-                })
-                .catch(() => {
-                  if (!isCurrentStream()) return;
-                  setNotice("Reply completed, but memory refresh failed.");
-                });
-            }
-
-            ws.close();
-          }
-        },
-        onProtocolError: () => {
-          if (!isCurrentStream()) return;
-          done = true;
-          setStages([]);
-          setIsLoading(false);
-          setNotice(
-            "The chat stream sent an unreadable response. Please try again."
-          );
-        },
       });
-      activeSocketRef.current = ws;
-
-      ws.onerror = () => {
-        if (!isCurrentStream() || done) return;
-        done = true;
-        setStages([]);
-        setIsLoading(false);
-        setNotice(
-          "Connection error. Check that the backend is running on the configured API URL."
-        );
-      };
-
-      ws.onclose = () => {
-        if (!isCurrentStream()) return;
-        activeSocketRef.current = null;
-        if (!done && loadingRef.current) {
-          setStages([]);
-          setIsLoading(false);
-          setNotice("The chat connection closed before the reply finished.");
-        }
-      };
+      if (started) {
+        inputRef.current?.focus();
+      }
     },
     [
       input,
@@ -469,14 +347,8 @@ export default function TextChatPage() {
       responseModelTier,
       sessionMode,
       addMessage,
-      appendToLastMessage,
-      updateLastMessage,
-      closeActiveSocket,
-      setIsLoading,
-      setMemoryFacts,
-      addUnseenMemories,
       clearLastEndedSession,
-      bumpMemoryRefreshVersion,
+      setNotice,
       runAction,
     ]
   );
@@ -534,7 +406,9 @@ export default function TextChatPage() {
         </div>
         <div className="flex items-center gap-2.5">
           {isLoading && (
-            <span className="text-[12px] font-mono text-oc-cta">thinking…</span>
+            <span className="text-[12px] font-mono text-oc-cta">
+              {chatStreamingStarted ? "replying…" : "thinking…"}
+            </span>
           )}
           {messages.length > 0 && !isLoading && (
             <button
@@ -708,7 +582,7 @@ export default function TextChatPage() {
                 </div>
               ))}
 
-              {isLoading && (
+              {isLoading && !chatStreamingStarted && (
                 <div
                   className="oc-bubble animate-fadeIn"
                   role="status"

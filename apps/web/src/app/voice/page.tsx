@@ -158,6 +158,7 @@ export default function VoicePage() {
     userId,
     threadId,
     sessionMode,
+    chatLoading,
     voiceConnected,
     voiceAgentSpeaking,
     voiceReadyToSpeak,
@@ -236,6 +237,11 @@ export default function VoicePage() {
       return;
     }
 
+    if (chatLoading) {
+      setVoiceError("Wait for the current text reply to finish before starting voice.");
+      return;
+    }
+
     if (sessionMode !== "incognito" && !userId.trim()) {
       setVoiceError(
         "LiveKit voice currently requires a persistent session with a user id."
@@ -260,6 +266,7 @@ export default function VoicePage() {
   }, [
     clearVoiceActivities,
     clearVoiceTranscripts,
+    chatLoading,
     resetVoiceOutputWarmup,
     session,
     sessionMode,
@@ -382,6 +389,7 @@ export default function VoicePage() {
     voiceFinalization.threadId === threadId &&
     voiceFinalization.status === "completed";
   const connectDisabled =
+    chatLoading ||
     session.connectionState === ConnectionState.Connecting ||
     isSavingDisconnectedSession;
   const latestTranscript = voiceTranscripts[voiceTranscripts.length - 1] ?? null;
@@ -560,6 +568,11 @@ export default function VoicePage() {
                 unlock automatically when that finishes.
               </p>
             )}
+            {chatLoading && (
+              <p className="text-[12px] font-mono text-oc-teal-700 mb-3 -mt-3">
+                Text reply in progress. Voice unlocks when it finishes.
+              </p>
+            )}
             <button
               type="button"
               className="oc-voice-cta"
@@ -569,7 +582,9 @@ export default function VoicePage() {
               <IconMic size={16} />
               {isSavingDisconnectedSession
                 ? "Saving memory…"
-                : session.connectionState === ConnectionState.Connecting
+                : chatLoading
+                  ? "Replying…"
+                  : session.connectionState === ConnectionState.Connecting
                   ? "Connecting…"
                   : "Connect & speak"}
             </button>

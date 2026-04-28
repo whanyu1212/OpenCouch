@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-04-29 — Route-Persistent Text Streaming
+
+### Web chat and voice navigation
+- Moved active text chat streaming into shared session state so an in-progress reply continues while navigating between Chat, Voice, Memory, and State instead of being cancelled by route unmounts
+- Kept chat status, notices, partial assistant text, and final response metadata synchronized through the shared store so returning to Chat shows the current or completed reply
+- Blocked starting a LiveKit voice session while a text reply is still in progress, matching the existing busy-session guard used for thread switching and session reset
+
+## 2026-04-28 — Local Dev Compose Stack
+
+### Developer workflow
+- Added a root `compose.yml` that starts the backend API, LiveKit voice worker, and Next.js web UI together with `docker compose up --build`
+- Added a backend development Dockerfile that keeps the Python environment outside the bind-mounted source tree, so the API can run with `uvicorn --reload` inside Compose without hiding the container virtualenv
+- Configured Compose to reuse backend and web dependency caches through named volumes while keeping source files bind-mounted for local iteration
+
+### Documentation
+- Documented the one-command Compose path, service URLs, required voice environment variables, and shutdown command in the root README
+- Added the text-only Compose path for API + web development without LiveKit credentials, and clarified Docker Desktop and port expectations
+
+## 2026-04-28 — OpenAI Hybrid Prompt Stabilization
+
+### Text and voice prompt behavior
+- Refined the shared therapeutic prompt sources for support, closing, guided exercise, CBT continuity, session staging, and voice-facing response behavior so text and LiveKit voice stay aligned on the same therapeutic boundaries
+- Added explicit level-1 ambiguous safety-check guidance so concerning but unclear user language asks one direct safety question without prematurely escalating to hotline, 988, emergency-services, ER, or crisis-line guidance
+- Kept safety-clarification turns on the normal LLM-primary therapeutic routing path instead of forcing a broad clarifying-mode override, preserving supportive responses for non-crisis ambiguity
+- Fixed guided-exercise resume handling so requests like returning to the grounding step hold or resume the current exercise instead of being treated as an exit
+
+### Eval and memory-policy stability
+- Capped prefixed LLM write-policy reasons after adding the `llm_policy` marker, preventing valid model reasons from exceeding the policy schema length limit
+- Updated text, voice, behavior, and trajectory eval expectations to accept semantically valid OpenAI wording and response-style choices while keeping safety and routing assertions strict
+- Expanded regression coverage for ambiguous safety checks, level-1 crisis non-escalation, exercise resume classification, and write-policy reason length bounds
+
+### Validation
+- OpenAI hybrid evals passed for crisis gate (`46/46`), therapeutic routing (`54/54`), therapeutic behavior (`19/19`), short session trajectories (`8/8`), long session trajectories (`39/39`), extraction (`33/33`), summarization (`13/13`), procedural writer (`18/18`), exercise selection (`31/31`), memory-control routing (`11/11`), and grounded lookup routing (`14/14`)
+- Voice evals passed for therapeutic process (`5/5`), memory control (`6/6`), and lookup tools (`5/5`)
+- Deterministic support evals passed for memory write policy (`8/8`), exercise flow (`32/32`), and exercise memory (`10/10`), with retrieval hybrid completing successfully
+- Focused backend tests passed (`234 passed`) and `pre-commit run --all-files` completed successfully
+
 ## 2026-04-28 — Session Experience Refresh + LiveKit Prewarm
 
 ### Web session experience
