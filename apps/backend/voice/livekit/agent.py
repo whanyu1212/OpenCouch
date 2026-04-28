@@ -100,12 +100,42 @@ logger = logging.getLogger(__name__)
 
 _VOICE_USER_ID_ENV = "OPENCOUCH_VOICE_USER_ID"
 _VOICE_THREAD_ID_ENV = "OPENCOUCH_VOICE_THREAD_ID"
+_VOICE_OUTPUT_WARMUP_TOPIC = "opencouch.voice_output_warmup"
 # ── Runtime singleton ───────────────────────────────────────────────
 # Initialized once per worker process in the prewarm function.
 # Shared across all voice sessions in this worker.
 
 _runtime: PersistentAgentRuntime | None = None
 _llm_client = None  # BaseLLMClient | None — for memory extraction
+
+
+def _prewarm_process(proc: agents.JobProcess) -> None:
+    """Preload blocking voice assets for a LiveKit worker process.
+
+    Loads the Silero VAD weights and warms the OpenCouch runtime
+    (SQLite connections, embedding provider, control LLM client) so
+    the first session on this worker does not pay the load cost.
+
+    Args:
+        proc (agents.JobProcess): LiveKit job process shared state.
+
+    Returns:
+        None.
+    """
+
+    proc.userdata["vad"] = silero.VAD.load()
+    logger.info("livekit agent: prewarmed Silero VAD")
+
+    try:
+        asyncio.run(_ensure_runtime())
+        logger.info("livekit agent: prewarmed runtime + LLM client")
+    except Exception:
+        # Lazy init in _ensure_runtime() is the safety net — worker can
+        # still serve sessions, just with cold-start cost on the first one.
+        logger.warning(
+            "livekit agent: runtime prewarm failed; will lazy-init on first session",
+            exc_info=True,
+        )
 
 
 async def _ensure_runtime() -> PersistentAgentRuntime:
@@ -1660,7 +1690,11 @@ class CrisisAgent(Agent):
 
 # ── AgentServer and session entrypoint ──────────────────────────────
 
-server = AgentServer(shutdown_process_timeout=45.0)
+server = AgentServer(
+    shutdown_process_timeout=45.0,
+    initialize_process_timeout=45.0,
+    setup_fnc=_prewarm_process,
+)
 
 
 @server.rtc_session(agent_name="opencouch-voice")
@@ -1742,11 +1776,12 @@ async def opencouch_voice(ctx: agents.JobContext):
     )
 
     # ── Create session with RealtimeModel ───────────────────────
+    vad = ctx.proc.userdata.get("vad") or silero.VAD.load()
     session = AgentSession[SessionData](
         llm=_build_realtime_model(
             transcription_language=transcription_language,
         ),
-        vad=silero.VAD.load(),
+        vad=vad,
         turn_handling=_build_turn_handling(),
         userdata=userdata,
     )
@@ -1859,7 +1894,66 @@ async def opencouch_voice(ctx: agents.JobContext):
 
     session.on("close", _on_session_close)
 
+    output_warmup_requested = False
+    output_warmup_tasks: set[asyncio.Task[None]] = set()
+    output_warmup_registered = False
+
+    async def _handle_output_warmup(reader, participant_identity: str) -> None:
+        nonlocal output_warmup_requested
+
+        try:
+            await reader.read_all()
+        except Exception:
+            logger.warning("livekit session: failed to read output warmup request")
+            return
+
+        if participant is not None and participant_identity != participant.identity:
+            return
+        if output_warmup_requested:
+            return
+
+        output_warmup_requested = True
+        logger.info("livekit session: warming first voice output")
+        session.generate_reply(
+            instructions=(
+                "Say exactly: \"I'm here when you're ready.\" "
+                "Keep it brief and do not ask a question."
+            ),
+            tools=[],
+            allow_interruptions=True,
+        )
+
+    def _on_output_warmup(reader, participant_identity: str) -> None:
+        task = asyncio.create_task(
+            _handle_output_warmup(reader, participant_identity),
+            name="livekit_voice_output_warmup",
+        )
+        output_warmup_tasks.add(task)
+        task.add_done_callback(output_warmup_tasks.discard)
+
+    try:
+        ctx.room.register_text_stream_handler(
+            _VOICE_OUTPUT_WARMUP_TOPIC,
+            _on_output_warmup,
+        )
+        output_warmup_registered = True
+    except ValueError:
+        logger.warning(
+            "livekit session: output warmup text stream handler already registered"
+        )
+
     async def _on_shutdown() -> None:
+        if output_warmup_registered:
+            try:
+                ctx.room.unregister_text_stream_handler(_VOICE_OUTPUT_WARMUP_TOPIC)
+            except ValueError:
+                pass
+
+        if output_warmup_tasks:
+            for task in output_warmup_tasks:
+                task.cancel()
+            await asyncio.gather(*output_warmup_tasks, return_exceptions=True)
+
         if finalization_task is not None:
             await asyncio.shield(finalization_task)
         else:

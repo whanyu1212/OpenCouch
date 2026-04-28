@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-04-28 — Session Experience Refresh + LiveKit Prewarm
+
+### Web session experience
+- Reworked the setup landing screen into a responsive desktop/mobile session-start experience with persistent/incognito mode cards, persisted identity prefill, and a lightweight memory-model diagram explaining user ID, thread ID, local memory, and incognito behavior
+- Added a shared conversation shell for chat and voice with a slim desktop nav rail, mobile bottom tab bar, route-aware top bars, session controls, previous-session access, and explicit end-session actions
+- Refreshed the chat, voice, memory, and state pages with the updated warm clinical visual system, including welcome prompts, composer styling, voice stage controls, memory/state surfaces, and mobile-friendly chrome
+- Moved text response-tier and session controls into the session pill flow so the main conversation canvas has more room on desktop and mobile
+
+### LiveKit voice startup
+- Added LiveKit worker prewarm for blocking voice assets, including Silero VAD loading and OpenCouch runtime/LLM client initialization, so the first session on a worker avoids more cold-start cost
+- Added a browser-to-worker output warmup stream path that requests one first-response warmup per LiveKit session without changing the user-facing conversation flow
+- Kept LiveKit voice session finalization and memory write-back aligned with the existing crisis/memory runtime while tightening docs around voice identity and thread semantics
+
+### Documentation and validation
+- Updated README, quickstart, and backend runtime docs to describe the current web session experience, LiveKit worker usage, and memory ownership behavior
+- Web lint passed for the frontend changes (`pnpm --filter web lint`)
+- Focused pre-commit checks passed for the touched session setup and backend router files during the UI/revert work
+
 ## 2026-04-27 — Therapeutic Subgraph Refactor + Exercise Routing Cleanup
 
 ### Therapeutic subgraph structure

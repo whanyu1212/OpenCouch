@@ -117,6 +117,29 @@ $ opencouch --thread-id s1 --user-id alice   # facts written to "alice"
 $ opencouch --thread-id s2 --user-id alice   # sees alice's facts from s1`}
 </TerminalWindow>
 
+## Identity and thread fallbacks
+
+`PersistentAgentRuntime` does not generate thread ids. Its text turn
+methods require callers to pass `thread_id`, and the runtime carries
+that value as `session_id` inside graph state. Defaults live at the
+caller boundary:
+
+| Surface | Missing `thread_id` | Missing `user_id` | Memory owner |
+|---|---|---|---|
+| Runtime API | No runtime fallback; caller must provide one | Accepted as `None` | `user_id` if set, otherwise `session_id` (`thread_id`) |
+| HTTP / WebSocket text API | Request validation fails | Accepted as `None` | `user_id` if set, otherwise `thread_id` |
+| CLI text | Generates `local-<12 uuid hex>` | Persistent mode falls back to the active thread id; guest mode ignores `--user-id` | `user_id` if set, otherwise active `thread_id` |
+| Web UI | Blank setup field generates `web-<8 random base36>` | Blank persistent setup uses `web-user`; incognito clears `user_id` | `user_id` if set, otherwise `thread_id` |
+| LiveKit browser voice | Token route generates `voice-<12 uuid hex>` | Token route uses `voice-user` | Voice memory writes are under `user_id`; records keep `thread_id` provenance |
+| LiveKit worker direct session | Env / metadata may supply one; otherwise generates `voice-<12 uuid hex>` | Env / metadata may supply one; otherwise uses `voice-user` | Voice memory writes are under `user_id`; records keep `thread_id` provenance |
+| Telegram, rotation off | Uses `telegram:dm:<chat_id>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
+| Telegram, rotation on | Uses `telegram:dm:<chat_id>:session:<ulid>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
+
+The generated thread id is never derived from the user id. The fallback
+goes the other direction: when no stable `user_id` is supplied, memory
+ownership falls back to the thread/session id so each thread stays
+isolated by default.
+
 ---
 
 ## WorkflowContext

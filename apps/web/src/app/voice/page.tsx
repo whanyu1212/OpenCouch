@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  StartAudio,
   useAgent,
+  useAudioPlayback,
   useSessionContext,
 } from "@livekit/components-react";
 import { ConnectionState } from "livekit-client";
@@ -12,19 +12,34 @@ import {
   type TranscriptionLanguageOption,
 } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
+import { CouchLogo } from "@/components/logo";
+import {
+  ConversationShell,
+  MobileTabBar,
+  SessionPill,
+} from "@/components/conversation-shell";
 
+// `preConnectBuffer: true` lets the mic capture speech locally while the
+// LiveKit worker is still cold-starting the agent. The buffer is forwarded
+// to the agent over the `lk.agent.pre-connect-audio-buffer` byte stream
+// once it joins, removing the "click connect, then dead air" gap on the
+// first turn.
 const VOICE_SESSION_START_OPTIONS = {
   tracks: {
     microphone: {
       enabled: true,
       publishOptions: {
-        preConnectBuffer: false,
+        preConnectBuffer: true,
       },
     },
   },
 } as const;
 
 const ENABLE_VOICE_DEBUG = process.env.NEXT_PUBLIC_ENABLE_VOICE_DEBUG === "true";
+const VOICE_OUTPUT_WARMUP_TOPIC = "opencouch.voice_output_warmup";
+const VOICE_OUTPUT_WARMUP_TIMEOUT_MS = 6_000;
+
+type VoiceOutputWarmupStatus = "idle" | "requested" | "speaking" | "done";
 
 function formatVoiceTimestamp(value: string | null | undefined): string {
   if (!value) {
@@ -62,6 +77,13 @@ function safeServerHost(value: string | null | undefined): string {
   }
 }
 
+function languageLabel(value: string): string {
+  const match = TRANSCRIPTION_LANGUAGE_OPTIONS.find(
+    (option) => option.value === value
+  );
+  return match?.label ?? "auto detect";
+}
+
 function VoiceDebugRow({
   label,
   value,
@@ -82,6 +104,53 @@ function VoiceDebugRow({
       </p>
     </div>
   );
+}
+
+const IconMic = ({ size = 16 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0" />
+    <path d="M12 18v3" />
+  </svg>
+);
+
+function VoiceOrb({
+  size = 280,
+  active = false,
+}: {
+  size?: number;
+  active?: boolean;
+}) {
+  return (
+    <div
+      className={`oc-orb-wrap${active ? " oc-orb-active" : ""}`}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <div className="oc-orb-ring" />
+      <div className="oc-orb-ring oc-orb-ring-2" />
+      <div className="oc-orb-core">
+        <IconMic size={size * 0.18} />
+      </div>
+    </div>
+  );
+}
+
+function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 export default function VoicePage() {
@@ -106,17 +175,64 @@ export default function VoicePage() {
   } = useSessionStore();
   const session = useSessionContext();
   const agent = useAgent();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const { canPlayAudio, startAudio } = useAudioPlayback(session.room);
+  const [voiceOutputWarmupStatus, setVoiceOutputWarmupStatus] =
+    useState<VoiceOutputWarmupStatus>("idle");
+  const voiceOutputWarmupRequestedRef = useRef(false);
+  const voiceOutputWarmupTimeoutRef = useRef<number | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+
+  // Live call timer — derived from `connectedAt` so we don't need an effect
+  // to reset state when the call ends. The interval ticks `now` purely to
+  // re-render the formatted timer; React skips the update when the deps are
+  // stable, so disconnect drops back to 00:00 with no cascade.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!voiceConnected) return;
+    const interval = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [voiceConnected]);
+  const connectedAtMs = voiceSessionInfo?.connectedAt
+    ? Date.parse(voiceSessionInfo.connectedAt)
+    : NaN;
+  const callElapsedMs =
+    voiceConnected && Number.isFinite(connectedAtMs)
+      ? Math.max(0, now - connectedAtMs)
+      : 0;
+
+  const clearVoiceOutputWarmupTimeout = useCallback(() => {
+    if (voiceOutputWarmupTimeoutRef.current !== null) {
+      window.clearTimeout(voiceOutputWarmupTimeoutRef.current);
+      voiceOutputWarmupTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetVoiceOutputWarmup = useCallback(() => {
+    voiceOutputWarmupRequestedRef.current = false;
+    clearVoiceOutputWarmupTimeout();
+    setVoiceOutputWarmupStatus("idle");
+  }, [clearVoiceOutputWarmupTimeout]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
+    return () => {
+      clearVoiceOutputWarmupTimeout();
+    };
+  }, [clearVoiceOutputWarmupTimeout]);
+
+  useEffect(() => {
+    transcriptScrollRef.current?.scrollTo({
+      top: transcriptScrollRef.current.scrollHeight,
       behavior: "smooth",
     });
   }, [voiceTranscripts]);
 
   const connect = useCallback(async () => {
-    if (session.connectionState === ConnectionState.Connecting || session.isConnected) {
+    if (
+      session.connectionState === ConnectionState.Connecting ||
+      session.isConnected
+    ) {
       return;
     }
 
@@ -130,17 +246,21 @@ export default function VoicePage() {
     setVoiceError(null);
     clearVoiceTranscripts();
     clearVoiceActivities();
+    resetVoiceOutputWarmup();
 
     try {
       await session.start(VOICE_SESSION_START_OPTIONS);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Unable to start LiveKit voice session.";
+        error instanceof Error
+          ? error.message
+          : "Unable to start LiveKit voice session.";
       setVoiceError(message);
     }
   }, [
     clearVoiceActivities,
     clearVoiceTranscripts,
+    resetVoiceOutputWarmup,
     session,
     sessionMode,
     setVoiceError,
@@ -149,8 +269,105 @@ export default function VoicePage() {
 
   const disconnect = useCallback(() => {
     voiceDisconnect();
+    resetVoiceOutputWarmup();
     void session.end();
-  }, [session, voiceDisconnect]);
+  }, [resetVoiceOutputWarmup, session, voiceDisconnect]);
+
+  const allowAudioPlayback = useCallback(async () => {
+    try {
+      await startAudio();
+      setVoiceError(null);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to start audio playback.";
+      setVoiceError(message);
+    }
+  }, [setVoiceError, startAudio]);
+
+  useEffect(() => {
+    if (
+      !voiceConnected ||
+      !canPlayAudio ||
+      !voiceReadyToSpeak ||
+      agent.isPending ||
+      voiceOutputWarmupRequestedRef.current
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const requestTimeout = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      voiceOutputWarmupRequestedRef.current = true;
+      setVoiceOutputWarmupStatus("requested");
+      clearVoiceOutputWarmupTimeout();
+      voiceOutputWarmupTimeoutRef.current = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        setVoiceOutputWarmupStatus("done");
+        voiceOutputWarmupTimeoutRef.current = null;
+      }, VOICE_OUTPUT_WARMUP_TIMEOUT_MS);
+
+      void session.room.localParticipant
+        .sendText("warmup", { topic: VOICE_OUTPUT_WARMUP_TOPIC })
+        .catch((error) => {
+          if (cancelled) {
+            return;
+          }
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Unable to warm up voice output.";
+          setVoiceError(message);
+          clearVoiceOutputWarmupTimeout();
+          setVoiceOutputWarmupStatus("done");
+        });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(requestTimeout);
+    };
+  }, [
+    agent.isPending,
+    canPlayAudio,
+    clearVoiceOutputWarmupTimeout,
+    session.room,
+    setVoiceError,
+    voiceConnected,
+    voiceReadyToSpeak,
+  ]);
+
+  useEffect(() => {
+    if (voiceOutputWarmupStatus === "requested" && voiceAgentSpeaking) {
+      const transition = window.setTimeout(() => {
+        setVoiceOutputWarmupStatus("speaking");
+      }, 0);
+      return () => {
+        window.clearTimeout(transition);
+      };
+    }
+
+    if (voiceOutputWarmupStatus === "speaking" && !voiceAgentSpeaking) {
+      const transition = window.setTimeout(() => {
+        clearVoiceOutputWarmupTimeout();
+        setVoiceOutputWarmupStatus("done");
+      }, 0);
+      return () => {
+        window.clearTimeout(transition);
+      };
+    }
+  }, [
+    clearVoiceOutputWarmupTimeout,
+    voiceAgentSpeaking,
+    voiceOutputWarmupStatus,
+  ]);
 
   const isSavingDisconnectedSession =
     !voiceConnected &&
@@ -171,59 +388,22 @@ export default function VoicePage() {
   const latestActivity = voiceActivities[voiceActivities.length - 1] ?? null;
   const effectiveVoiceMemoryMode =
     voiceSessionInfo?.memoryMode || sessionMode;
-  const memoryStatusText =
-    effectiveVoiceMemoryMode === "incognito"
-      ? "memory off for this call"
-      : "memory can load and save";
-  const finalizationStatusText = (() => {
-    if (voiceConnected) {
-      return "active call";
+  const isPersistent = effectiveVoiceMemoryMode === "persistent";
+
+  const eyebrowState: "idle" | "ready" | "listening" | "speaking" = (() => {
+    if (!voiceConnected) return "idle";
+    if (voiceAgentSpeaking) return "speaking";
+    if (voiceReadyToSpeak && canPlayAudio && voiceOutputWarmupStatus === "done") {
+      return "listening";
     }
-    if (voiceFinalization.threadId !== threadId) {
-      return "no voice save pending";
-    }
-    if (voiceFinalization.status === "in_progress") {
-      return voiceFinalization.detail || "saving session memory";
-    }
-    if (voiceFinalization.status === "completed") {
-      return voiceFinalization.detail || "session memory saved";
-    }
-    if (voiceFinalization.status === "failed") {
-      return voiceFinalization.detail || "session memory save failed";
-    }
-    return "no voice save pending";
+    return "ready";
   })();
-  const finalizationToneClass =
-    finalizationFailedForCurrentThread
-      ? "border-oc-red/20 bg-oc-red-subtle text-oc-red"
-      : isSavingDisconnectedSession
-        ? "border-oc-teal-200 bg-oc-teal-50 text-oc-teal-800"
-        : finalizationCompletedForCurrentThread
-          ? "border-oc-green/20 bg-green-50 text-oc-green"
-          : "border-oc-border bg-white text-oc-text-secondary";
-  const showMemoryConsolidationNote =
-    effectiveVoiceMemoryMode !== "incognito" &&
-    (voiceConnected ||
-      isSavingDisconnectedSession ||
-      finalizationCompletedForCurrentThread ||
-      finalizationFailedForCurrentThread);
-  const memoryConsolidationToneClass =
-    finalizationFailedForCurrentThread
-      ? "border-oc-red/20 bg-oc-red-subtle text-oc-red"
-      : finalizationCompletedForCurrentThread
-        ? "border-oc-green/20 bg-green-50 text-oc-green"
-        : "border-oc-teal-200 bg-oc-teal-50 text-oc-teal-800";
-  const memoryConsolidationMessage = (() => {
-    if (isSavingDisconnectedSession) {
-      return "Please wait here while the transcript is consolidated into memory. This can take a little while; reconnecting before it finishes may mean the latest session memory is not ready yet.";
-    }
-    if (finalizationCompletedForCurrentThread) {
-      return "Memory consolidation finished. The saved summary and extracted memories are now available for future persistent sessions.";
-    }
-    if (finalizationFailedForCurrentThread) {
-      return "Memory consolidation did not finish cleanly. You can reconnect, but the latest voice session may not be saved yet.";
-    }
-    return "After you click Disconnect, keep this page open for a moment while the transcript is consolidated and saved into memory.";
+
+  const eyebrowLabel = (() => {
+    if (eyebrowState === "idle") return "agent · idle";
+    if (eyebrowState === "speaking") return "agent · speaking";
+    if (eyebrowState === "listening") return "agent · listening";
+    return "agent · warming up";
   })();
 
   const statusText = (() => {
@@ -233,8 +413,14 @@ export default function VoicePage() {
     if (!voiceConnected) {
       return "connect when you’re ready";
     }
+    if (!canPlayAudio) {
+      return "click Allow audio before speaking";
+    }
     if (!voiceReadyToSpeak || agent.isPending) {
       return "warming up audio path… one moment";
+    }
+    if (voiceOutputWarmupStatus !== "done") {
+      return "warming up voice output… one moment";
     }
     if (voiceAgentSpeaking) {
       return "agent speaking…";
@@ -245,361 +431,422 @@ export default function VoicePage() {
     return "ready — speak when you want";
   })();
 
+  const memoryConsolidationMessage = (() => {
+    if (isSavingDisconnectedSession) {
+      return "Please wait here while the transcript is consolidated into memory. This can take a little while; reconnecting before it finishes may mean the latest session memory is not ready yet.";
+    }
+    if (finalizationCompletedForCurrentThread) {
+      return "Memory consolidation finished. The saved summary and extracted memories are now available for future persistent sessions.";
+    }
+    if (finalizationFailedForCurrentThread) {
+      return "Memory consolidation did not finish cleanly. You can reconnect, but the latest voice session may not be saved yet.";
+    }
+    return null;
+  })();
+
+  const showMemoryConsolidationNote =
+    isPersistent && memoryConsolidationMessage !== null;
+
+  const consolidationToneClass = finalizationFailedForCurrentThread
+    ? "border-oc-red/20 bg-oc-red-subtle text-oc-red"
+    : finalizationCompletedForCurrentThread
+      ? "border-oc-green/20 bg-green-50 text-oc-green"
+      : "border-oc-teal-200 bg-oc-teal-50 text-oc-teal-800";
+
+  const callTimerText = formatElapsed(callElapsedMs);
+
   return (
-    <div className="flex flex-col h-screen">
-      <header className="px-6 py-3.5 border-b border-oc-border flex items-center justify-between shrink-0">
+    <ConversationShell withWash>
+      {/* Desktop top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-app-top-wrap">
+      <header className="oc-app-top">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-lg text-oc-teal-900">Voice</h1>
-          <span className="text-[11px] font-mono uppercase tracking-widest text-oc-teal-800 bg-oc-teal-50 border border-oc-teal-200 rounded-full px-2 py-1">
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-app-top-title">Voice</h2>
+          {voiceConnected && (
+            <span
+              className="text-[11px] font-mono"
+              style={{
+                color: "var(--color-oc-primary)",
+                letterSpacing: "0.06em",
+              }}
+            >
+              ● live · {callTimerText}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-oc-text-dim">
             livekit
           </span>
-          {voiceConnected && (
-            <span className="text-[12px] font-mono text-oc-green">connected</span>
-          )}
-          <span className="text-[12px] font-mono text-oc-text-dim">
-            {effectiveVoiceMemoryMode}
-          </span>
-          {voiceFinalization.threadId === threadId &&
-            voiceFinalization.status !== "idle" && (
-              <span
-                className={`rounded-full border px-2 py-1 text-[11px] font-mono ${finalizationToneClass}`}
-              >
-                {voiceFinalization.status.replace("_", " ")}
-              </span>
-            )}
+          <SessionPill />
         </div>
-        <div className="flex items-center gap-3 flex-wrap justify-end">
-          <label className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-oc-text-dim">
-            <span>transcript</span>
-            <select
-              value={transcriptionLanguageSelected}
-              onChange={(event) =>
-                setTranscriptionLanguageSelected(
-                  event.target.value as TranscriptionLanguageOption
-                )
-              }
-              disabled={voiceConnected}
-              className="rounded-lg border border-oc-border bg-white px-2.5 py-2 text-[12px] font-mono normal-case tracking-normal text-oc-text-secondary disabled:opacity-60"
-            >
-              {TRANSCRIPTION_LANGUAGE_OPTIONS.map((option) => (
-                <option key={option.label} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!voiceConnected ? (
+      </header>
+      </div>
+
+      {/* Mobile top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-mobile-top-wrap">
+      <header className="oc-mobile-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2
+            className="oc-mobile-top-title"
+            style={voiceConnected ? { fontStyle: "italic", fontWeight: 500 } : undefined}
+          >
+            {voiceConnected ? "listening" : "Voice"}
+          </h2>
+        </div>
+        {voiceConnected ? (
+          <span
+            className="text-[10px] font-mono"
+            style={{
+              color: "var(--color-oc-primary)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            ● live · {callTimerText}
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-oc-text-dim">
+            livekit
+          </span>
+        )}
+      </header>
+      </div>
+
+      {/* Voice stage — fills remaining height; pages use this whether
+          connected or not, swapping content + CTA. */}
+      <div className="oc-voice-stage">
+        <div
+          className={`oc-voice-eyebrow ${
+            eyebrowState !== "idle" ? "is-ready" : ""
+          }`}
+        >
+          <span className="dot" />
+          {eyebrowLabel}
+        </div>
+
+        <VoiceOrb size={280} active={voiceAgentSpeaking} />
+
+        {!voiceConnected ? (
+          <>
+            <h1 className="oc-voice-title">
+              Take a breath. <em>Begin when ready.</em>
+            </h1>
+            <p className="oc-voice-sub">
+              Voice runs with persistent memory.{" "}
+              {sessionMode === "incognito"
+                ? "Incognito · nothing is saved this call."
+                : "We won’t speak until you do."}
+            </p>
+            {finalizationCompletedForCurrentThread && (
+              <p className="text-[12px] font-mono text-oc-green mb-3 -mt-3">
+                {voiceFinalization.detail || "Previous voice session memory saved."}
+              </p>
+            )}
+            {finalizationFailedForCurrentThread && (
+              <p className="text-[12px] font-mono text-oc-red mb-3 -mt-3">
+                {voiceFinalization.detail ||
+                  "The previous voice session may still be finishing its memory save. You can reconnect, but the latest memory may not be ready yet."}
+              </p>
+            )}
+            {isSavingDisconnectedSession && (
+              <p className="text-[12px] font-mono text-oc-teal-700 mb-3 -mt-3">
+                Saving session memory from the previous call. Reconnect will
+                unlock automatically when that finishes.
+              </p>
+            )}
             <button
-              onClick={connect}
+              type="button"
+              className="oc-voice-cta"
+              onClick={() => void connect()}
               disabled={connectDisabled}
-              className="bg-oc-teal-700 text-white px-5 py-2.5 rounded-xl text-[15px] font-medium hover:bg-oc-teal-600 transition-all shadow-sm disabled:opacity-60"
             >
+              <IconMic size={16} />
               {isSavingDisconnectedSession
                 ? "Saving memory…"
                 : session.connectionState === ConnectionState.Connecting
-                ? "Connecting…"
-                : "Connect"}
+                  ? "Connecting…"
+                  : "Connect & speak"}
             </button>
-          ) : (
-            <button
-              onClick={disconnect}
-              className="bg-oc-red-subtle text-oc-red border border-oc-red/20 px-5 py-2.5 rounded-xl text-[15px] font-medium hover:bg-red-100 transition-all"
+
+            {/* Language picker — quiet inline control, not a card */}
+            <label
+              className="mt-5 flex items-center gap-2"
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--color-oc-text-dim)",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
             >
-              Disconnect
-            </button>
-          )}
-        </div>
-      </header>
-
-      <div className="flex-1 px-6">
-        <div className="flex h-full w-full flex-col items-center justify-center">
-          {!voiceConnected ? (
-            <div className="w-full max-w-2xl text-center animate-fadeIn">
-              <div className="w-24 h-24 rounded-2xl bg-oc-accent-glow flex items-center justify-center mx-auto mb-6">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  className="w-12 h-12 text-oc-accent"
-                >
-                  <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
-                  <path d="M19 10v2a7 7 0 01-14 0v-2" />
-                  <line x1="12" y1="19" x2="12" y2="23" />
-                  <line x1="8" y1="23" x2="16" y2="23" />
-                </svg>
-              </div>
-              <p className="font-display text-xl text-oc-text-secondary mb-2">
-                Start a LiveKit voice session
-              </p>
-              <p className="mx-auto max-w-xl text-oc-text-muted text-sm font-mono">
-                This voice page now runs on the LiveKit Session API instead of manual room
-                event wiring, so room connection, agent lifecycle, and transcript updates stay
-                aligned with LiveKit’s frontend model.
-              </p>
-              <p className="mx-auto mt-3 max-w-xl text-oc-text-dim text-[12px] font-mono">
-                The agent now stays quiet on connect. Once the status switches to ready,
-                you speak first.
-              </p>
-              {isSavingDisconnectedSession && (
-                <p className="mx-auto mt-3 max-w-xl text-oc-teal-700 text-[12px] font-mono">
-                  Saving session memory from the previous call. Reconnect will unlock
-                  automatically when that finishes.
-                </p>
-              )}
-              {finalizationCompletedForCurrentThread && (
-                <p className="mx-auto mt-3 max-w-xl text-oc-green text-[12px] font-mono">
-                  {voiceFinalization.detail || "Previous voice session memory saved."}
-                </p>
-              )}
-              {finalizationFailedForCurrentThread && (
-                <p className="mx-auto mt-3 max-w-xl text-oc-red text-[12px] font-mono">
-                  {voiceFinalization.detail ||
-                    "The previous voice session may still be finishing its memory save. You can reconnect now, but the latest memory may not be ready yet."}
-                </p>
-              )}
-              <p className="mx-auto mt-3 max-w-xl text-oc-text-dim text-[12px] font-mono">
-                Current mode:{" "}
-                <span className="text-oc-teal-700">{sessionMode}</span> · user{" "}
-                <span className="text-oc-teal-700">{userId || "none"}</span> · thread{" "}
-                <span className="text-oc-teal-700">{threadId}</span>
-              </p>
-              <p className="mx-auto mt-2 max-w-xl text-oc-text-dim text-[12px] font-mono">
-                Transcription language:{" "}
-                <span className="text-oc-teal-700">
-                  {transcriptionLanguageSelected || "auto detect"}
-                </span>
-              </p>
-              {sessionMode === "incognito" && (
-                <p className="mx-auto mt-3 max-w-xl text-oc-text-dim text-[12px] font-mono">
-                  Incognito voice will not load or save memory for this call.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="w-full max-w-2xl text-center animate-fadeIn">
-              <div className="flex items-center justify-center gap-1.5 h-28 mb-6">
-                {Array.from({ length: 7 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`w-1.5 rounded-full transition-all duration-300 ${
-                      voiceAgentSpeaking ? "bg-oc-teal-400" : "bg-oc-warm-300"
-                    }`}
-                    style={{
-                      height: voiceAgentSpeaking
-                        ? `${20 + Math.sin((i + 1) * 0.7) * 50}%`
-                        : "12%",
-                      ...(voiceAgentSpeaking
-                        ? {
-                            animation: "waveBar 0.8s ease-in-out infinite",
-                            animationDelay: `${i * 0.08}s`,
-                          }
-                        : {}),
-                    }}
-                  />
+              <span>transcript</span>
+              <select
+                value={transcriptionLanguageSelected}
+                onChange={(event) =>
+                  setTranscriptionLanguageSelected(
+                    event.target.value as TranscriptionLanguageOption
+                  )
+                }
+                disabled={voiceConnected}
+                className="rounded-lg border border-oc-border bg-white px-2.5 py-1.5 text-[12px] font-mono normal-case tracking-normal text-oc-text-secondary disabled:opacity-60"
+              >
+                {TRANSCRIPTION_LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.label} value={option.value}>
+                    {option.label}
+                  </option>
                 ))}
-              </div>
-              <p className="text-oc-text-muted text-[15px] font-mono">{statusText}</p>
-              <p className="mt-3 text-oc-text-dim text-[12px] font-mono">
-                {voiceReadyToSpeak
-                  ? "livekit session api · shared room lifecycle · browser mic published directly"
-                  : "livekit session api · warming the browser audio path before you speak"}
-              </p>
-              <div className="mt-5 flex items-center justify-center">
-                <StartAudio
-                  label="Allow audio"
-                  room={session.room}
-                  className="rounded-xl border border-oc-border bg-white px-4 py-2 text-[13px] font-mono text-oc-text-secondary shadow-sm"
-                />
-              </div>
-            </div>
-          )}
+              </select>
+            </label>
 
-          <div className="mt-8 grid w-full max-w-3xl gap-3 text-left sm:grid-cols-2">
-            <div className="rounded-2xl border border-oc-border bg-oc-bg-card/70 px-5 py-4 shadow-sm">
-              <p className="text-[11px] font-mono uppercase tracking-widest text-oc-text-dim">
-                Connection
-              </p>
-              <p className="mt-2 text-sm font-medium text-oc-text-secondary">
-                {voiceConnected ? "LiveKit room connected" : "Not connected"}
-              </p>
-              <p className="mt-1 text-[12px] font-mono text-oc-text-dim">
-                state {session.connectionState}
-                {voiceSessionInfo?.roomName ? ` · room ${voiceSessionInfo.roomName}` : ""}
-              </p>
+            {/* Single meta line — replaces the four debug cards. */}
+            <div className="oc-voice-meta">
+              <span>
+                language <b>{languageLabel(transcriptionLanguageSelected)}</b>
+              </span>
+              <span className="sep">·</span>
+              <span>
+                memory <b>{isPersistent ? "persistent" : "off"}</b>
+              </span>
+              {voiceSessionInfo?.roomName && (
+                <>
+                  <span className="sep">·</span>
+                  <span>
+                    room <b>{voiceSessionInfo.roomName}</b>
+                  </span>
+                </>
+              )}
             </div>
-
-            <div className="rounded-2xl border border-oc-border bg-oc-bg-card/70 px-5 py-4 shadow-sm">
-              <p className="text-[11px] font-mono uppercase tracking-widest text-oc-text-dim">
-                Memory
+          </>
+        ) : (
+          <>
+            {latestTranscript ? (
+              <p
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontStyle: "italic",
+                  fontSize: 22,
+                  color: "var(--color-oc-ink-2)",
+                  lineHeight: 1.4,
+                  maxWidth: 360,
+                  margin: "0 auto",
+                  textAlign: "center",
+                }}
+              >
+                &ldquo;
+                <span
+                  style={{
+                    color:
+                      latestTranscript.role === "user"
+                        ? "var(--color-oc-primary)"
+                        : "var(--color-oc-ink-2)",
+                  }}
+                >
+                  {clipVoiceText(latestTranscript.text, 140)}
+                </span>
+                &rdquo;
               </p>
-              <p className="mt-2 text-sm font-medium text-oc-text-secondary">
-                {effectiveVoiceMemoryMode}
-              </p>
-              <p className="mt-1 text-[12px] font-mono text-oc-text-dim">
-                {memoryStatusText}
-                {voiceSessionInfo?.identity ? ` · participant ${voiceSessionInfo.identity}` : ""}
-              </p>
-            </div>
-
-            <div className={`rounded-2xl border px-5 py-4 shadow-sm ${finalizationToneClass}`}>
-              <p className="text-[11px] font-mono uppercase tracking-widest opacity-70">
-                Finalization
-              </p>
-              <p className="mt-2 text-sm font-medium">{finalizationStatusText}</p>
-              <p className="mt-1 text-[12px] font-mono opacity-70">
-                updated {formatVoiceTimestamp(voiceFinalization.updatedAt)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-oc-border bg-oc-bg-card/70 px-5 py-4 shadow-sm">
-              <p className="text-[11px] font-mono uppercase tracking-widest text-oc-text-dim">
-                Agent
-              </p>
-              <p className="mt-2 text-sm font-medium text-oc-text-secondary">
+            ) : (
+              <p
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontStyle: "italic",
+                  fontSize: 22,
+                  color: "var(--color-oc-muted)",
+                  lineHeight: 1.4,
+                  maxWidth: 320,
+                  margin: "0 auto",
+                  textAlign: "center",
+                }}
+              >
                 {statusText}
               </p>
-              <p className="mt-1 text-[12px] font-mono text-oc-text-dim">
-                agent {agent.state}
-                {voiceAgentSpeaking ? " · speaking" : ""}
-              </p>
+            )}
+            <div className="mt-6 flex items-center gap-3">
+              {!canPlayAudio && (
+                <button
+                  type="button"
+                  className="oc-voice-cta oc-voice-cta--secondary"
+                  onClick={() => {
+                    void allowAudioPlayback();
+                  }}
+                >
+                  Allow audio
+                </button>
+              )}
+              <button
+                type="button"
+                className="oc-voice-cta oc-voice-cta--danger"
+                onClick={disconnect}
+              >
+                End session
+              </button>
             </div>
-          </div>
 
-          {showMemoryConsolidationNote && (
-            <div
-              className={`mt-4 w-full max-w-3xl rounded-2xl border px-5 py-4 text-left shadow-sm ${memoryConsolidationToneClass}`}
-            >
-              <p className="text-[11px] font-mono uppercase tracking-widest opacity-70">
-                Memory Save Timing
-              </p>
-              <p className="mt-2 text-sm font-medium leading-relaxed">
-                {memoryConsolidationMessage}
-              </p>
-            </div>
-          )}
-
-          {ENABLE_VOICE_DEBUG && (
-            <details className="mt-4 w-full max-w-3xl rounded-2xl border border-dashed border-oc-border bg-white/70 px-5 py-4 text-left shadow-sm">
-              <summary className="cursor-pointer text-[11px] font-mono uppercase tracking-widest text-oc-text-dim">
-                Voice Debug
-              </summary>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <VoiceDebugRow label="connection" value={session.connectionState} />
-                <VoiceDebugRow label="session connected" value={session.isConnected} />
-                <VoiceDebugRow label="store connected" value={voiceConnected} />
-                <VoiceDebugRow label="agent state" value={agent.state} />
-                <VoiceDebugRow label="agent pending" value={agent.isPending} />
-                <VoiceDebugRow label="ready to speak" value={voiceReadyToSpeak} />
-                <VoiceDebugRow label="agent speaking" value={voiceAgentSpeaking} />
-                <VoiceDebugRow label="memory mode" value={effectiveVoiceMemoryMode} />
-                <VoiceDebugRow label="room" value={voiceSessionInfo?.roomName} />
-                <VoiceDebugRow label="participant" value={voiceSessionInfo?.identity} />
-                <VoiceDebugRow
-                  label="server host"
-                  value={safeServerHost(voiceSessionInfo?.serverUrl)}
-                />
-                <VoiceDebugRow
-                  label="connected at"
-                  value={formatVoiceTimestamp(voiceSessionInfo?.connectedAt)}
-                />
-                <VoiceDebugRow label="user id" value={userId || "none"} />
-                <VoiceDebugRow label="thread id" value={threadId} />
-                <VoiceDebugRow
-                  label="transcript language"
-                  value={transcriptionLanguageSelected || "auto detect"}
-                />
-                <VoiceDebugRow
-                  label="finalization"
-                  value={voiceFinalization.status}
-                />
-                <VoiceDebugRow
-                  label="finalization detail"
-                  value={voiceFinalization.detail}
-                />
-                <VoiceDebugRow
-                  label="finalization updated"
-                  value={formatVoiceTimestamp(voiceFinalization.updatedAt)}
-                />
-                <VoiceDebugRow
-                  label="transcript count"
-                  value={voiceTranscripts.length}
-                />
-                <VoiceDebugRow
-                  label="activity count"
-                  value={voiceActivities.length}
-                />
-                <VoiceDebugRow
-                  label="latest activity"
-                  value={
-                    latestActivity
-                      ? `${latestActivity.label}: ${latestActivity.status}`
-                      : null
-                  }
-                />
-                <VoiceDebugRow
-                  label="latest transcript"
-                  value={
-                    latestTranscript
-                      ? `${latestTranscript.role}: ${clipVoiceText(latestTranscript.text, 120)}`
-                      : null
-                  }
-                />
-              </div>
-              <p className="mt-3 text-[11px] font-mono text-oc-text-dim">
-                Developer-only readout. Enable with{" "}
-                <span className="text-oc-teal-700">
-                  NEXT_PUBLIC_ENABLE_VOICE_DEBUG=true
+            {latestActivity && (
+              <div className="oc-voice-meta" style={{ marginTop: 18 }}>
+                <span>
+                  {latestActivity.label} <b>{latestActivity.status}</b>
                 </span>
-                . Tokens and raw credentials are intentionally not shown.
-              </p>
-            </details>
-          )}
-
-          {voiceError && (
-            <div className="mt-5 w-full max-w-2xl px-5 py-3 bg-oc-red-subtle border border-oc-red/20 rounded-xl text-oc-red text-[15px]">
-              {voiceError}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
+      {/* Memory consolidation note — surfaced inline, not as a card. */}
+      {showMemoryConsolidationNote && (
+        <div className="px-6 pb-4 flex justify-center">
+          <div
+            className={`max-w-2xl rounded-2xl border px-4 py-3 text-[13px] leading-relaxed ${consolidationToneClass}`}
+          >
+            {memoryConsolidationMessage}
+          </div>
+        </div>
+      )}
+
+      {voiceError && (
+        <div className="px-6 pb-4 flex justify-center">
+          <div className="max-w-2xl rounded-2xl border border-oc-red/20 bg-oc-red-subtle px-4 py-3 text-[13px] text-oc-red">
+            {voiceError}
+          </div>
+        </div>
+      )}
+
+      {/* Transcript scroller — shown only when there's content; also kept on
+          desktop when connected so the user can review what was said. */}
       {voiceTranscripts.length > 0 && (
-        <div className="border-t border-oc-border shrink-0 bg-oc-bg-card/50">
-          <div className="px-6 py-2.5 border-b border-oc-border-subtle flex items-center justify-between gap-3">
+        <div className="border-t border-oc-line-2 bg-white/40 backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-oc-line-2 md:px-6">
             <span className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-dim">
               Transcript
             </span>
             <span className="text-[10px] font-mono uppercase tracking-widest text-oc-text-dim/80">
-              4o-transcribe
+              {languageLabel(transcriptionLanguageSelected)}
             </span>
           </div>
           <div
-            ref={scrollRef}
-            className="max-h-52 overflow-y-auto px-6 py-3 space-y-2.5"
+            ref={transcriptScrollRef}
+            className="max-h-44 overflow-y-auto px-4 py-2.5 space-y-2 md:px-6"
           >
             {voiceTranscripts.map((t, i) => (
               <div
                 key={t.itemId ? `${t.role}:${t.itemId}` : `${t.role}:${i}`}
-                className="flex items-start gap-3 text-[15px] animate-fadeIn"
+                className="flex items-start gap-3 text-[14.5px] animate-fadeIn"
               >
                 <span
-                  className={`text-[12px] font-mono font-medium w-16 shrink-0 pt-0.5 ${
+                  className={`text-[11px] font-mono font-medium w-14 shrink-0 pt-1 ${
                     t.role === "user"
-                      ? "text-oc-cta"
+                      ? "text-oc-primary"
                       : t.role === "assistant"
-                        ? "text-oc-accent"
+                        ? "text-oc-cta"
                         : "text-oc-text-dim"
                   }`}
                 >
                   {t.role}
                 </span>
-                <span className="text-oc-text-secondary leading-relaxed">{t.text}</span>
+                <span className="text-oc-ink-2 leading-relaxed">{t.text}</span>
               </div>
             ))}
           </div>
         </div>
       )}
-    </div>
+
+      {/* Verbose debug overlay — replaces the four always-visible status cards. */}
+      {ENABLE_VOICE_DEBUG && (
+        <details className="mx-4 mb-4 rounded-2xl border border-dashed border-oc-border bg-white/70 px-5 py-4 text-left shadow-sm md:mx-6">
+          <summary className="cursor-pointer text-[11px] font-mono uppercase tracking-widest text-oc-text-dim">
+            Voice debug
+          </summary>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <VoiceDebugRow label="connection" value={session.connectionState} />
+            <VoiceDebugRow label="session connected" value={session.isConnected} />
+            <VoiceDebugRow label="store connected" value={voiceConnected} />
+            <VoiceDebugRow label="agent state" value={agent.state} />
+            <VoiceDebugRow label="agent pending" value={agent.isPending} />
+            <VoiceDebugRow label="ready to speak" value={voiceReadyToSpeak} />
+            <VoiceDebugRow label="can play audio" value={canPlayAudio} />
+            <VoiceDebugRow
+              label="output warmup"
+              value={voiceOutputWarmupStatus}
+            />
+            <VoiceDebugRow label="agent speaking" value={voiceAgentSpeaking} />
+            <VoiceDebugRow label="memory mode" value={effectiveVoiceMemoryMode} />
+            <VoiceDebugRow label="room" value={voiceSessionInfo?.roomName} />
+            <VoiceDebugRow
+              label="participant"
+              value={voiceSessionInfo?.identity}
+            />
+            <VoiceDebugRow
+              label="server host"
+              value={safeServerHost(voiceSessionInfo?.serverUrl)}
+            />
+            <VoiceDebugRow
+              label="connected at"
+              value={formatVoiceTimestamp(voiceSessionInfo?.connectedAt)}
+            />
+            <VoiceDebugRow label="user id" value={userId || "none"} />
+            <VoiceDebugRow label="thread id" value={threadId} />
+            <VoiceDebugRow
+              label="transcript language"
+              value={transcriptionLanguageSelected || "auto detect"}
+            />
+            <VoiceDebugRow
+              label="finalization"
+              value={voiceFinalization.status}
+            />
+            <VoiceDebugRow
+              label="finalization detail"
+              value={voiceFinalization.detail}
+            />
+            <VoiceDebugRow
+              label="finalization updated"
+              value={formatVoiceTimestamp(voiceFinalization.updatedAt)}
+            />
+            <VoiceDebugRow
+              label="transcript count"
+              value={voiceTranscripts.length}
+            />
+            <VoiceDebugRow
+              label="activity count"
+              value={voiceActivities.length}
+            />
+            <VoiceDebugRow
+              label="latest activity"
+              value={
+                latestActivity
+                  ? `${latestActivity.label}: ${latestActivity.status}`
+                  : null
+              }
+            />
+            <VoiceDebugRow
+              label="latest transcript"
+              value={
+                latestTranscript
+                  ? `${latestTranscript.role}: ${clipVoiceText(latestTranscript.text, 120)}`
+                  : null
+              }
+            />
+          </div>
+          <p className="mt-3 text-[11px] font-mono text-oc-text-dim">
+            Developer-only readout. Enable with{" "}
+            <span className="text-oc-teal-700">
+              NEXT_PUBLIC_ENABLE_VOICE_DEBUG=true
+            </span>
+            . Tokens and raw credentials are intentionally not shown.
+          </p>
+        </details>
+      )}
+
+      {/* Mobile bottom tab bar */}
+      <div className="oc-mobile-tabbar-wrap">
+        <MobileTabBar />
+      </div>
+    </ConversationShell>
   );
 }

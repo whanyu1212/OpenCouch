@@ -16,6 +16,12 @@ import {
   type MemoryStatus,
 } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
+import { CouchLogo } from "@/components/logo";
+import {
+  ConversationShell,
+  MobileTabBar,
+  SessionPill,
+} from "@/components/conversation-shell";
 
 type Tab = "overview" | "facts" | "sessions" | "rules";
 
@@ -114,25 +120,56 @@ export default function MemoryPage() {
   ];
 
   return (
-    <div className="flex flex-col h-screen">
-      <header className="px-6 py-3.5 border-b border-oc-border shrink-0 flex items-center justify-between">
-        <h1 className="font-display text-lg text-oc-teal-900">Memory</h1>
+    <ConversationShell>
+      {/* Desktop top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-app-top-wrap">
+      <header className="oc-app-top">
+        <div className="flex items-center gap-3">
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-app-top-title">Memory</h2>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={loadAll}
+            disabled={loading}
+            className="oc-tab-chip"
+          >
+            {loading ? "loading…" : "refresh"}
+          </button>
+          <SessionPill />
+        </div>
+      </header>
+      </div>
+
+      {/* Mobile top bar — wrapper controls breakpoint visibility */}
+      <div className="oc-mobile-top-wrap">
+      <header className="oc-mobile-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="oc-mobile-mark">
+            <CouchLogo className="w-4 h-4" />
+          </span>
+          <h2 className="oc-mobile-top-title">Memory</h2>
+        </div>
         <button
           onClick={loadAll}
           disabled={loading}
-          className="text-[13px] font-mono text-oc-teal-600 hover:text-oc-teal-500 transition-colors disabled:opacity-50"
+          className="oc-tab-chip"
+          style={{ padding: "4px 8px", fontSize: 9.5 }}
         >
           {loading ? "loading…" : "refresh"}
         </button>
       </header>
+      </div>
 
       {/* Tabs */}
-      <div className="px-6 border-b border-oc-border flex gap-0 shrink-0">
+      <div className="px-4 md:px-6 border-b border-oc-line-2 flex gap-0 shrink-0 overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-4 py-3 text-[14px] font-medium border-b-2 transition-colors ${
+            className={`px-4 py-3 text-[14px] font-medium border-b-2 transition-colors whitespace-nowrap ${
               tab === t.key
                 ? "border-oc-teal-600 text-oc-teal-800"
                 : "border-transparent text-oc-text-muted hover:text-oc-text-secondary"
@@ -148,7 +185,7 @@ export default function MemoryPage() {
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
         {loading && (
           <div className="flex items-center gap-2 text-oc-text-muted text-sm font-mono">
             <div className="dot-pulse"><span /><span /><span /></div>
@@ -176,7 +213,12 @@ export default function MemoryPage() {
           </div>
         )}
       </div>
-    </div>
+
+      {/* Mobile bottom tab bar */}
+      <div className="oc-mobile-tabbar-wrap">
+        <MobileTabBar />
+      </div>
+    </ConversationShell>
   );
 }
 
