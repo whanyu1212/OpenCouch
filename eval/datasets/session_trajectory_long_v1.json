@@ -73,7 +73,7 @@
         "expect": {
           "allowed_modes": ["supportive", "reflective", "closing"],
           "response_type": "therapeutic",
-          "response_contains_any": ["fix", "weight", "heard", "named", "neat"],
+          "response_contains_any": ["fix", "weight", "heard", "named", "neat", "solution"],
           "response_not_contains": ["tell me a bit more", "which of these", "let's quickly"]
         }
       }
@@ -274,7 +274,7 @@
       {
         "turn": 5,
         "expect": {
-          "allowed_modes": ["guided_exercise", "supportive"]
+          "allowed_modes": ["guided_exercise", "supportive", "psychoeducation"]
         }
       },
       {
@@ -388,13 +388,13 @@
       {
         "turn": 1,
         "expect": {
-          "allowed_modes": ["guided_exercise", "supportive"]
+          "allowed_modes": ["guided_exercise", "supportive", "psychoeducation"]
         }
       },
       {
         "turn": 4,
         "expect": {
-          "allowed_modes": ["guided_exercise", "supportive", "technique"]
+          "allowed_modes": ["guided_exercise", "supportive", "technique", "psychoeducation"]
         }
       },
       {
@@ -523,7 +523,7 @@
       {
         "turn": 3,
         "expect": {
-          "allowed_modes": ["guided_exercise", "supportive", "technique"],
+          "allowed_modes": ["guided_exercise", "supportive", "technique", "psychoeducation"],
           "required_modalities": ["act"]
         }
       },
@@ -969,7 +969,7 @@
       {
         "turn": 4,
         "expect": {
-          "allowed_modes": ["supportive", "guided_exercise", "technique"],
+          "allowed_modes": ["supportive", "guided_exercise", "technique", "psychoeducation"],
           "needs_crisis_response": false,
           "needs_clarification": false
         }

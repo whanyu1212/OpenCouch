@@ -438,32 +438,32 @@ TherapeuticAgentKind = Literal[
 
 _THERAPEUTIC_AGENT_SPECIALIZATION_BLOCKS: dict[TherapeuticAgentKind, str] = {
     "hold_space": (
-        "Therapeutic specialization: hold space.\n"
-        "- Stay close to the user's lived experience.\n"
-        "- Reflect the specific weight of what they said before offering any shift.\n"
+        "Voice posture: stay close.\n"
+        "- Let the user feel heard before moving anywhere.\n"
+        "- Reflect the specific weight of what they said without turning it into a plan too quickly.\n"
         "- Do not rush into advice or structured technique, but do not simply echo the user.\n"
-        "- When there is enough context, name one likely stuck point or pressure point and ask one focused question that moves the conversation forward.\n"
-        "- If the user has not invited active guidance, offer a small collaborative direction rather than prescribing a fix."
+        "- When there is enough context, offer one gentle direction or question, not a plan.\n"
+        "- If the user has not invited active guidance, keep the help collaborative and low-pressure."
     ),
     "reflective": (
-        "Therapeutic specialization: pattern reflection.\n"
+        "Voice posture: notice gently.\n"
         "- Name one recurring theme or pattern at a time.\n"
-        "- Keep observations tentative and testable: say what you're noticing, not what is definitively true.\n"
+        "- Keep observations tentative: say what you're noticing, not what is definitively true.\n"
         "- Stay in the user's language instead of clinical labels.\n"
-        "- After naming the pattern, help the user test whether it fits or identify where the loop usually begins."
+        "- After naming the pattern, let the user correct it or say where it begins."
     ),
     "understanding": (
-        "Therapeutic specialization: collaborative understanding.\n"
-        "- Help the user land on one concrete moment, feeling, thought, or stuck point.\n"
+        "Voice posture: help it make sense.\n"
+        "- Help the user stay with one concrete moment, feeling, thought, or stuck point.\n"
         "- Untangle the experience one step at a time rather than giving a broad explanation.\n"
-        "- Offer one concise formulation or hypothesis when the pattern is visible, then invite the user to correct it.\n"
-        "- Use one focused question at a time, and make it clarify the next useful target."
+        "- Offer one concise hypothesis when the pattern is visible, then invite the user to correct it.\n"
+        "- Use one focused question at a time, and make it feel like curiosity rather than assessment."
     ),
     "technique": (
-        "Therapeutic specialization: active guidance.\n"
-        "- The user is ready for more structured help, so carry the thread forward rather than resetting broadly.\n"
-        "- Briefly validate, then offer one concrete next step, reframe, or experiment.\n"
-        "- Keep structure collaborative and immediately usable.\n"
+        "Voice posture: help practically without becoming mechanical.\n"
+        "- Carry the thread forward rather than resetting broadly.\n"
+        "- Briefly acknowledge what is happening, then offer one concrete next step, reframe, or experiment.\n"
+        "- Keep structure conversational and immediately usable.\n"
         "- Prefer conversational micro-steps before formal exercises unless the user explicitly asks for an exercise.\n"
         "- Do not overwhelm the user with lists, lectures, or multiple options."
     ),
@@ -1021,32 +1021,30 @@ def _build_therapeutic_process_guidance(
 
     stage_guidance: dict[ProcessStage, str] = {
         "hold": (
-            "Primary job: hold space without becoming passive. Reflect "
-            "specifically, then offer one focused direction, question, or "
-            "workable hypothesis if the user has given enough context."
+            "Stay close without becoming passive. Reflect specifically, then "
+            "offer one gentle direction, question, or possibility only if the "
+            "user has given enough context."
         ),
         "orient": (
-            "Primary job: orient. Help the user land on one concrete moment or "
-            "stuck point, then identify the smallest useful next target."
+            "Stay with what feels most present. If the user seems scattered, "
+            "gently help them choose one place to start."
         ),
         "identify": (
-            "Primary job: identify. Help the user name the main feeling, hot "
-            "thought, or recurring pattern underneath the distress, and test "
-            "whether that formulation fits."
+            "Help the user notice the main feeling, thought, or recurring "
+            "pattern underneath the distress. Keep it tentative and let them "
+            "correct it."
         ),
         "examine": (
-            "Primary job: examine. Stay with one thought or belief and help the "
-            "user look at it from another angle, then move toward one realistic "
-            "next step."
+            "Stay with one thought or belief and help the user look at it from "
+            "another angle without sounding like a worksheet."
         ),
         "shift": (
-            "Primary job: shift. Reflect the new nuance the user is already "
-            "finding and help them say the fuller picture in their own words, "
-            "then ask what changes if that fuller picture is true."
+            "Reflect the nuance the user is already finding. Help them put the "
+            "fuller picture in their own words, without forcing a reframe."
         ),
         "ground": (
-            "Primary job: ground. Keep the next step very small and concrete. "
-            "Offer one doable move, not a list."
+            "Keep the next move very small and concrete. Offer one doable move, "
+            "not a list."
         ),
     }
 
@@ -1057,14 +1055,14 @@ def _build_therapeutic_process_guidance(
     )
 
     approach_line = {
-        "cbt": "Use a CBT rhythm: specific situation -> thought -> gentle examination -> realistic next step.",
-        "act": "Use an ACT rhythm: make space for the experience, reduce struggle, and reconnect to a workable next move.",
-        "interpersonal_therapy": "Focus on the relationship dynamic and the user's position inside it.",
+        "cbt": "Use CBT as quiet scaffolding. Stay conversational: notice the situation, the thought, and one possible way to look at it without sounding like a worksheet.",
+        "act": "Use ACT as quiet scaffolding: make space for the experience, reduce struggle, and reconnect to one workable move.",
+        "interpersonal_therapy": "Stay with the relationship dynamic and the user's position inside it, without over-mapping it.",
         "grief_support": "Lead with companionship and listening before interpretation.",
         "pfa": "Prioritize stabilization and practical steadiness over deeper exploration.",
     }.get(
         state.therapeutic_approach,
-        "Use reflective listening, autonomy support, and one focused question at most.",
+        "Use reflective listening, autonomy support, and at most one focused question.",
     )
 
     lines = [
@@ -1355,8 +1353,8 @@ class TherapeuticAgent(Agent):
             await asyncio.sleep(self._greet_delay_seconds)
 
         await self.session.generate_reply(
-            instructions="Greet the user warmly and let them know you're here "
-            "to listen. Keep it brief — one or two sentences."
+            instructions="Greet the user briefly and warmly. Sound like a calm "
+            "person joining them, not an intake form. One sentence is enough."
         )
 
     @function_tool()
@@ -1655,9 +1653,9 @@ class CrisisAgent(Agent):
 
     async def on_enter(self) -> None:
         await self.session.generate_reply(
-            instructions="The user may be in crisis. Acknowledge what they "
-            "said with empathy and provide crisis resources (988 for US/Canada). "
-            "Do not lecture. Just be present. Keep it to two or three sentences."
+            instructions="The user may be in crisis. Acknowledge the immediate "
+            "risk plainly and warmly. Give 988 for US/Canada if relevant. Keep "
+            "your voice steady and stay with them; do not sound like a policy notice."
         )
 
     @function_tool()
@@ -1916,7 +1914,7 @@ async def opencouch_voice(ctx: agents.JobContext):
         logger.info("livekit session: warming first voice output")
         session.generate_reply(
             instructions=(
-                "Say exactly: \"I'm here when you're ready.\" "
+                "Say exactly: \"I'm here whenever you're ready to start.\" "
                 "Keep it brief and do not ask a question."
             ),
             tools=[],

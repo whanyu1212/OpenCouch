@@ -24,7 +24,7 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.models import DispatchDecision
 from agent.memory.store import OpenCouchMemoryStore
-from agent.models import AgentInput, ResponseCategory
+from agent.models import AgentInput, CrisisAssessment, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.dispatcher import (
@@ -43,6 +43,7 @@ from agent.therapeutic.dispatcher import (
     pick_therapeutic_mode,
     run_therapeutic_dispatch_node,
 )
+from agent.therapeutic.exercises.types import ExerciseStepDecision
 from agent.therapeutic.graph import (
     TherapeuticSubgraphInput,
     TherapeuticSubgraphOutput,
@@ -153,6 +154,48 @@ class _RecordingTextLLM(BaseLLMClient):
         raise RuntimeError("structured output not used by text-node prompt tests")
 
 
+class _FakeStepStateLLM(BaseLLMClient):
+    """Fake step classifier that returns a canned exercise-step decision."""
+
+    def __init__(self, step_state: str = "hold") -> None:
+        self.step_state = step_state
+        self.structured_calls = 0
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "fake text"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "fake text"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls += 1
+        return cast(
+            StructuredResponseT,
+            ExerciseStepDecision(
+                step_state=self.step_state,  # type: ignore[arg-type]
+                reasoning="fake step-state decision",
+                confidence="high",
+            ),
+        )
+
+
 class _MockRuntime:
     """Minimal runtime stand-in exposing only ``.context``.
 
@@ -242,6 +285,28 @@ class TestPickTherapeuticResponseStyle:
 
 class TestDispatchNode:
     """Integration tests for the dispatch node with mocked runtimes."""
+
+    @pytest.mark.asyncio
+    async def test_safety_clarification_still_uses_llm_classifier(self) -> None:
+        """Level-1 crisis ambiguity should keep the selected response style."""
+
+        fake = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="pfa",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state("I don't know how much longer I can do this.")
+        state["crisis"] = CrisisAssessment(
+            level=1,
+            confidence="medium",
+            needs_clarification=True,
+        )
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == SUPPORTIVE_NODE
+        assert cmd.update == {"therapeutic_approach": "pfa"}
+        assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
     async def test_llm_primary_classifies_reflective_message(self) -> None:
@@ -481,6 +546,34 @@ class TestDispatchNode:
 
         assert cmd.goto == GUIDED_EXERCISE_NODE
         assert fake.structured_calls == 1  # LLM was called
+
+    @pytest.mark.asyncio
+    async def test_active_exercise_stop_request_bypasses_llm(self) -> None:
+        """An explicit mid-exercise stop request exits to supportive mode."""
+
+        fake = _FakeDispatchLLM(response_style="closing")
+        runtime = _MockRuntime(llm_client=fake)
+
+        state: Any = {
+            "message": "Actually can we stop? I don't want to do this right now.",
+            "history": [],
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 0,
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.goto == SUPPORTIVE_NODE
+        assert fake.structured_calls == 0
+        update = cast(dict[str, Any], cmd.update)
+        assert update["exercise_state"]["exercise_type"] is None
+        assert update["exercise_state"]["exercise_step"] is None
 
     @pytest.mark.asyncio
     async def test_no_active_exercise_fast_path_when_fields_none(self) -> None:
@@ -977,6 +1070,34 @@ class TestEndToEndRouting:
         assert "things you can see around you right now" in prompt
 
     @pytest.mark.asyncio
+    async def test_guided_exercise_resume_request_holds_current_step(self) -> None:
+        """A request to resume the exercise should not be treated as exit."""
+
+        from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+
+        fake = _FakeStepStateLLM(step_state="exit")
+        runtime = _MockRuntime(llm_client=fake)
+        state: Any = {
+            "message": "Okay, let's go back to the grounding step.",
+            "history": [],
+            "session_progress": {"turn_count": 4},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 0,
+            },
+        }
+
+        delta = await run_guided_exercise_response_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert fake.structured_calls == 0
+        if "exercise_state" in delta:
+            assert delta["exercise_state"]["exercise_step"] == 0
+        assert delta["response_style"] == "guided_exercise"
+
+    @pytest.mark.asyncio
     async def test_guided_exercise_stuck_offers_rephrase(self) -> None:
         """An explicit 'I can't' response triggers the stuck/rephrase path.
 
@@ -1132,6 +1253,26 @@ class TestEndToEndRouting:
         # Critically: response text is NOT the bootstrap stub
         assert "Persistent mode is active" not in result.response_text
         assert "Guest mode is active" not in result.response_text
+
+    @pytest.mark.asyncio
+    async def test_level_one_crisis_does_not_escalate_to_crisis(self) -> None:
+        """Level-1 crisis ambiguity should stay therapeutic, not escalate."""
+
+        result = await run_agent(
+            AgentInput(
+                message=(
+                    "I don't know how much longer I can do this. "
+                    "Everything feels hopeless."
+                )
+            )
+        )
+
+        assert result.response_type == ResponseCategory.THERAPEUTIC
+        assert result.crisis.level == 1
+        assert result.crisis.needs_clarification is True
+        assert result.response_style in {"supportive", "clarifying"}
+        assert "emergency services" not in result.response_text.lower()
+        assert "hotline" not in result.response_text.lower()
 
 
 # ── Mid-exercise modality preservation tests ─────────────────────────

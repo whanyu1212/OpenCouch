@@ -34,7 +34,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agent.models import ModeType, ResponseCategory
+from agent.models import CrisisAssessment, ModeType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import (
     AgentState,
@@ -98,6 +98,7 @@ class TherapeuticSubgraphInput(TypedDict):
     message: str
     user_id: str | None
     session_id: str | None
+    crisis: CrisisAssessment
     history: list[dict[str, str]]
     working_memory: list[WorkingMemoryEntry]
     session_memory: SessionMemoryState

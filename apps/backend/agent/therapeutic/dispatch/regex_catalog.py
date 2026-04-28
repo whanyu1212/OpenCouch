@@ -70,8 +70,11 @@ CONFUSION_PATTERNS: tuple[str, ...] = (
 EXERCISE_EXIT_PATTERNS: tuple[str, ...] = (
     r"\bnever[\s-]?mind\b",
     r"\bnvm\b",
+    r"\b(?:can|could) we stop\b",
     r"\b(?:stop|end|skip|quit|cancel) (?:the |this )?(?:exercise|activity|technique)\b",
     r"\b(?:can|could) we just talk\b",
+    r"\bi don'?t want to (?:do|continue) "
+    r"(?:this|the exercise|the activity|the technique)\b",
     # Bare "quit", "cancel", "stop" are intentionally excluded — they
     # match non-exit content like "I should quit my job" or "I had to
     # cancel dinner" or "I need to stop spiraling."

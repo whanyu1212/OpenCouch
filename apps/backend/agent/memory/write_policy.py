@@ -34,6 +34,25 @@ from services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
+_POLICY_REASON_MAX_LENGTH = 240
+
+
+def _prefixed_policy_reason(prefix: str, reason: str) -> str:
+    """Return a schema-safe policy reason with a prefix.
+
+    Args:
+        prefix: Provenance prefix for the reason.
+        reason: Classifier-provided reason text.
+
+    Returns:
+        Reason text capped to the PolicyDecision schema limit.
+    """
+
+    value = f"{prefix}: {reason}"
+    if len(value) <= _POLICY_REASON_MAX_LENGTH:
+        return value
+    return value[: _POLICY_REASON_MAX_LENGTH - 3].rstrip() + "..."
+
 
 class SemanticWritePolicyDecision(BaseModel):
     """Structured output for semantic memory write-timing policy."""
@@ -299,7 +318,7 @@ def _clamp_semantic_policy_decision(
 
     return PolicyDecision(
         action=decision.action,
-        reason=f"llm_policy: {decision.reason}",
+        reason=_prefixed_policy_reason("llm_policy", decision.reason),
         policy_version="phase1_llm_v1",
     )
 
@@ -444,6 +463,6 @@ async def decide_procedural_candidate_llm_primary(
         return decide_procedural_candidate(candidate)
     return PolicyDecision(
         action=decision.action,
-        reason=f"llm_policy: {decision.reason}",
+        reason=_prefixed_policy_reason("llm_policy", decision.reason),
         policy_version="phase1_llm_v1",
     )

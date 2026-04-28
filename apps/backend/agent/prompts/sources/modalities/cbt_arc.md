@@ -4,6 +4,8 @@ How a CBT-oriented conversation unfolds over multiple turns. This file complemen
 
 Typical length: 8-15 turns for one cycle. Longer sessions (30-50 turns) will complete the first cycle and move into a second pass — see "After the first arc" below. Not every conversation will use all phases — some sessions are pure behavioral activation (orient → action), some are thought work (orient → identify → examine → shift). The arc is a map, not a mandate.
 
+This arc is internal scaffolding, not a script. The user should not feel the phase structure. Do not complete the arc for its own sake. If the user needs presence, humor, rest, grounding, or a plain conversation, that takes priority over progression.
+
 ## Phase 1: Orient (1-3 turns)
 
 **Goal:** Agree on what to work on. Land on one specific situation, thought, or stuck point.
@@ -321,7 +323,7 @@ This is NOT a fixed-interval timer. Don't insert a check-in every 8 turns mechan
 When a conversation has been going for a while and the user is approaching their natural end point (signaled by shorter turns, wrapping-up language, or fatigue):
 
 - Do not introduce any new technique or deep exploration
-- Consolidate: one takeaway, one action step, one open loop at most
+- Land simply: one takeaway, one small thing to try, or one open loop at most
 - If deeper work was started but not completed, defer it explicitly: "We started to touch on something deeper today — the 'not good enough' piece. That's there whenever you want to come back to it."
 - End with a grounding question: "What feels most useful from today?"
 

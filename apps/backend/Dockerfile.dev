@@ -1,0 +1,26 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/opencouch-backend-venv
+
+WORKDIR /workspace/apps/backend
+
+COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
+RUN uv sync --locked --no-dev
+
+WORKDIR /workspace
+
+COPY apps/backend ./apps/backend
+
+WORKDIR /workspace/apps/backend
+
+ENV PATH="/opt/opencouch-backend-venv/bin:$PATH" \
+    HOST=0.0.0.0 \
+    PORT=8080
+
+EXPOSE 8080
+
+CMD ["python", "run_server.py"]

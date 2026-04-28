@@ -92,7 +92,7 @@ def _chat_context(case: dict[str, Any]) -> ChatContext:
 
 
 def _check_static_prompt_contract() -> list[str]:
-    """Check the static anti-passivity prompt contract.
+    """Check the static voice prompt contract.
 
     Returns:
         Failure messages.
@@ -101,9 +101,9 @@ def _check_static_prompt_contract() -> list[str]:
     failures: list[str] = []
     prompt = build_voice_system_prompt()
     for expected in (
-        "Be actively collaborative",
-        "move one small step forward",
-        "do not become a passive echo",
+        "Do not make every reply follow reflection -> insight -> question",
+        "simple presence, warmth, or a short practical response",
+        "Do not rush to organize the conversation",
         "Active support does not mean jumping to a structured exercise",
         "Do not introduce grounding, breathing, or other structured exercises",
     ):

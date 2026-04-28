@@ -182,7 +182,7 @@ async def test_memory_control_gate_routes_pending_confirmation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_control_gate_llm_routes_ambiguous_recall_request() -> None:
+async def test_memory_control_gate_routes_unless_asked_recall_request() -> None:
     llm = _FakeMemoryControlLLM(
         {
             "action_type": "set_recall",
@@ -203,8 +203,33 @@ async def test_memory_control_gate_llm_routes_ambiguous_recall_request() -> None
         "type": "set_recall",
         "enabled": False,
     }
-    assert update["diagnostics"]["memory_control_classifier_path"] == "llm_primary"
-    assert len(llm.structured_calls) == 1
+    assert update["diagnostics"]["memory_control_classifier_path"] == "deterministic"
+    assert llm.structured_calls == []
+
+
+@pytest.mark.asyncio
+async def test_memory_control_gate_routes_do_not_remember_topic() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "none",
+            "reasoning": "should not be called",
+            "confidence": "high",
+        }
+    )
+
+    command = await run_memory_control_gate_node(
+        _state("Please don't remember the thing I said about my ex."),
+        cast(Any, _Runtime(llm_client=llm)),
+    )
+
+    assert command.goto == "memory_control_node"
+    update = _command_update(command)
+    assert update["memory_control_action"] == {
+        "type": "forget_by_query",
+        "query": "the thing I said about my ex",
+    }
+    assert update["diagnostics"]["memory_control_classifier_path"] == "deterministic"
+    assert llm.structured_calls == []
 
 
 @pytest.mark.asyncio

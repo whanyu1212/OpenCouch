@@ -201,7 +201,10 @@ async def test_save_insight_disallows_interruptions_before_writing() -> None:
 
     result = await save_insight(context, fact="I like green tea at night.")
 
-    assert result == "Noted: I like green tea at night."
+    assert result == (
+        "Saved for future conversations. Do not narrate the save unless "
+        "the user asked you to."
+    )
     assert interrupted == ["blocked"]
     assert len(store.put_calls) == 1
     assert store.put_calls[0]["namespace"] == ("user-1", "semantic")
@@ -1024,9 +1027,9 @@ def test_build_voice_system_prompt_is_active_without_premature_exercises() -> No
 
     prompt = build_voice_system_prompt()
 
-    assert "Be actively collaborative" in prompt
-    assert "move one small step forward" in prompt
-    assert "do not become a passive echo" in prompt
+    assert "Prioritize verbal brevity" in prompt
+    assert "simple presence, warmth, or a short practical response" in prompt
+    assert "Do not rush to organize the conversation" in prompt
     assert (
         "Do not introduce grounding, breathing, or other structured exercises" in prompt
     )
@@ -1067,7 +1070,7 @@ def test_therapeutic_process_state_holds_space_for_generic_distress() -> None:
     assert state.guidance_permission == "not_yet"
     assert state.process_stage == "hold"
     guidance = _build_therapeutic_process_guidance(state)
-    assert "hold space without becoming passive" in guidance.lower()
+    assert "stay close without becoming passive" in guidance.lower()
     assert "has not yet invited directive guidance" in guidance
 
 
@@ -1087,7 +1090,7 @@ def test_therapeutic_process_state_orients_when_vent_has_enough_context() -> Non
     assert state.guidance_permission == "not_yet"
     assert state.process_stage in {"orient", "identify"}
     guidance = _build_therapeutic_process_guidance(state)
-    assert "smallest useful next target" in guidance or "formulation fits" in guidance
+    assert "choose one place to start" in guidance or "let them correct it" in guidance
 
 
 def test_therapeutic_process_state_persists_guidance_permission() -> None:
@@ -1160,7 +1163,7 @@ def test_therapeutic_agent_specialization_blocks_discourage_passivity() -> None:
     )
 
     assert "do not simply echo the user" in hold_prompt
-    assert "one focused question that moves the conversation forward" in hold_prompt
+    assert "one gentle direction or question, not a plan" in hold_prompt
     assert "conversational micro-steps before formal exercises" in technique_prompt
 
 
@@ -1379,7 +1382,7 @@ async def test_therapeutic_agent_on_enter_generates_greeting_when_enabled() -> N
     await agent.on_enter()
 
     assert len(generated) == 1
-    assert "Greet the user warmly" in generated[0]
+    assert "Greet the user briefly and warmly" in generated[0]
 
 
 @pytest.mark.asyncio

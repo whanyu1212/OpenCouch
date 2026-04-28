@@ -29,6 +29,12 @@ _EXIT_PATTERNS: tuple[str, ...] = (
     r"\bnot (?:in the mood|into this|feeling (?:this|it))\b",
 )
 
+_RESUME_PATTERNS: tuple[str, ...] = (
+    r"\b(?:go|get|come) back to (?:the )?(?:grounding|exercise|step)\b",
+    r"\b(?:resume|continue) (?:the )?(?:grounding|exercise|step)\b",
+    r"\blet'?s (?:go|get|come) back\b.{0,40}\b(?:grounding|exercise|step)\b",
+)
+
 # Explicit "I can't" stuck signals. The user wants help with the step
 # itself but can't engage — the escalation ladder should offer to
 # rephrase or (after multiple turns) exit.
@@ -176,6 +182,9 @@ def _classify_step_state(
         Step-state classification for the current exercise turn.
     """
 
+    if _matches_any(message, _RESUME_PATTERNS):
+        return "hold"
+
     if _matches_any(message, _EXIT_PATTERNS):
         return "exit"
 
@@ -256,6 +265,8 @@ async def _classify_step_state_llm_primary(
 
     # High-precision local overrides keep explicit exits and stuck states
     # immediate even if the classifier is unavailable or permissive.
+    if _matches_any(message, _RESUME_PATTERNS):
+        return "hold"
     if _matches_any(message, _EXIT_PATTERNS):
         return "exit"
     if _matches_any(message, _STUCK_PATTERNS):
