@@ -66,9 +66,9 @@ def _make_state(
     """Build a minimal AgentState with procedural fields configured.
 
     The builders under test only read ``state["procedural_profile"]`` for
-    procedural rules and recall toggle, plus ``state["history"]`` and
-    ``state["working_memory"]`` for the user-prompt helpers (which
-    aren't exercised here). A partial dict is sufficient — AgentState
+    procedural rules and recall toggle, plus transcript-backed conversation
+    context and ``state["working_memory"]`` for the user-prompt helpers
+    (which aren't exercised here). A partial dict is sufficient — AgentState
     is a TypedDict so the type annotation is a type-checker assertion,
     not a runtime constructor.
     """

@@ -76,20 +76,3 @@ def format_recent_history(
         role = str(turn.get("role", "unknown") or "unknown")
         lines.append(f"{role}: {content}")
     return "\n".join(lines) or empty
-
-
-def get_user_turns(state: Mapping[str, Any]) -> list[str]:
-    """Return user-authored transcript turn contents.
-
-    Args:
-        state: Current graph state or state-like mapping.
-
-    Returns:
-        User message contents in transcript order.
-    """
-
-    return [
-        str(turn.get("content", "") or "")
-        for turn in get_transcript(state)
-        if turn.get("role") == "user" and turn.get("content")
-    ]

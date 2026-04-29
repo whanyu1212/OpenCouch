@@ -57,9 +57,9 @@ class TherapeuticSubgraphOutput(TypedDict):
     The compiled subgraph is registered as a single parent-graph node.
     If we let it default to the full ``AgentState`` output schema,
     LangGraph bubbles the entire accumulated state back to the parent
-    on subgraph completion. That becomes a problem once ``history`` and
-    ``transcript`` are reducer-backed: the parent sees those full lists
-    as a node delta and appends them again, duplicating the transcript.
+    on subgraph completion. That becomes a problem when ``transcript`` is
+    reducer-backed: the parent sees the full list as a node delta and appends
+    it again, duplicating the transcript.
 
     Restricting the subgraph's output schema to only the fields it owns
     keeps the parent merge semantic correct while preserving the full
@@ -83,7 +83,7 @@ class TherapeuticSubgraphInput(TypedDict):
     user_id: str | None
     session_id: str | None
     crisis: CrisisAssessment
-    history: list[dict[str, str]]
+    transcript: list[dict[str, str]]
     working_memory: list[WorkingMemoryEntry]
     session_memory: SessionMemoryState
     procedural_profile: ProceduralProfileState

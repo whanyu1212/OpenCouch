@@ -3,9 +3,8 @@
 Phase C of the LangGraph best-practice alignment plan. These tests
 verify that:
 
-1. ``history`` and ``transcript`` use ``operator.add`` reducers so
-   LangGraph accumulates turns via the checkpointer instead of
-   manual reconstruction every turn.
+1. ``transcript`` uses an ``operator.add`` reducer so LangGraph accumulates
+   turns via the checkpointer instead of manual reconstruction every turn.
 2. ``build_initial_state`` emits only the current user turn (not the
    full prior history) — the checkpointer restores prior turns.
 3. ``run_finalize_turn_node`` returns a single-element delta (not a

@@ -7,10 +7,9 @@ imports the smaller state fragments below to define its own input and output
 boundaries.
 
 LangGraph treats each top-level key as a channel. Reducer-backed channels can
-receive partial deltas from multiple nodes or turns: ``history`` and
-``transcript`` append list entries with ``operator.add``, while grouped dict
-channels use ``_merge_dicts`` so nodes can update only the nested fields they
-own.
+receive partial deltas from multiple nodes or turns: ``transcript`` appends
+list entries with ``operator.add``, while grouped dict channels use
+``_merge_dicts`` so nodes can update only the nested fields they own.
 """
 
 from __future__ import annotations
@@ -173,14 +172,13 @@ class AgentIdentityState(TypedDict):
 class AgentConversationState(TypedDict):
     """Conversation and working-memory channels used during a turn.
 
-    ``build_initial_state`` emits the current user turn into ``history`` and
-    ``transcript``. ``finalize_turn_node`` appends the assistant turn. Both
-    fields use ``operator.add`` so checkpointed history is extended instead of
+    ``build_initial_state`` emits the current user turn into ``transcript``.
+    ``finalize_turn_node`` appends the assistant turn. The transcript uses
+    ``operator.add`` so checkpointed conversation is extended instead of
     overwritten. ``load_memory_node`` owns ``working_memory`` for prompt-time
     semantic and episodic recall.
     """
 
-    history: Annotated[list[dict[str, str]], operator.add]
     transcript: NotRequired[Annotated[list[dict[str, str]], operator.add]]
     working_memory: list[WorkingMemoryEntry]
 
