@@ -73,8 +73,7 @@ def build_initial_state(
             checkpoint. When omitted, the function derives the count from
             ``agent_input.history``.
         include_input_history: Whether to inline ``agent_input.history`` into
-            ``history`` and ``transcript`` for one-shot callers without a
-            checkpointer.
+            ``transcript`` for one-shot callers without a checkpointer.
 
     Returns:
         An ``AgentGraphInputState`` seeded for the current turn.
@@ -112,7 +111,6 @@ def build_initial_state(
         user_id=agent_input.user_id,
         session_id=agent_input.session_id,
         installed_skills=list(agent_input.installed_skills),
-        history=visible_history,
         transcript=visible_history,
         working_memory=list(agent_input.working_memory),
         session_memory={"summary": ""},

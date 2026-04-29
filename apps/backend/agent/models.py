@@ -156,7 +156,7 @@ class ResponseReadyEvent(BaseModel):
     """Non-terminal event emitted when the reply is finalized.
 
     This fires after ``finalize_turn_node`` has appended the assistant
-    reply to transcript/history, but before post-response memory writers
+    reply to transcript, but before post-response memory writers
     finish. The output payload is intentionally partial: response text,
     routing, and crisis metadata are ready; tail diagnostics like
     ``turn_total_ms`` still land on the terminal ``DoneEvent``.

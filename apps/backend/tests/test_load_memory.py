@@ -1154,25 +1154,23 @@ class TestFinalizeTurnNode:
     """Tests for the terminal transcript-append node."""
 
     @pytest.mark.asyncio
-    async def test_appends_assistant_response_to_transcript_and_history(
+    async def test_appends_assistant_response_to_transcript(
         self,
     ) -> None:
-        """The node should return a single-turn delta for both transcript
-        and history.
+        """The node should return a single-turn transcript delta.
 
         v0.8 observability: the assistant turn dict also carries a
         ``response_style`` field sourced from top-level state. This state
         has no style set, so the mode resolves to ``None``.
 
-        Phase C changed transcript/history to reducer-backed fields, so
-        finalize_turn_node must emit ONLY the assistant turn. Returning
-        the full reconstructed transcript would duplicate prior entries
-        when the reducer merges the delta into checkpointed state.
+        The transcript is reducer-backed, so finalize_turn_node must emit
+        ONLY the assistant turn. Returning the full reconstructed transcript
+        would duplicate prior entries when the reducer merges the delta into
+        checkpointed state.
         """
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
-            "history": [{"role": "user", "content": "Hi"}],
             "response_text": "Hello, how can I help?",
         }
         runtime = _FakeRuntime({})
@@ -1185,7 +1183,6 @@ class TestFinalizeTurnNode:
             "content": "Hello, how can I help?",
             "response_style": None,
         }
-        assert delta["history"] == delta["transcript"]
 
     @pytest.mark.asyncio
     async def test_empty_response_text_returns_empty_delta(self) -> None:
@@ -1238,7 +1235,7 @@ class TestFinalizeTurnNode:
 
     @pytest.mark.asyncio
     async def test_does_not_touch_other_state_keys(self) -> None:
-        """The node's delta must contain only transcript and history.
+        """The node's delta must contain only transcript.
         This keeps it a focused single-responsibility node."""
 
         state: dict[str, Any] = {
@@ -1252,4 +1249,4 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert set(delta.keys()) == {"transcript", "history"}
+        assert set(delta.keys()) == {"transcript"}

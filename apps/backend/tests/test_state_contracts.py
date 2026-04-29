@@ -694,7 +694,7 @@ async def test_guided_exercise_completion_channel_contract() -> None:
 
 @pytest.mark.asyncio
 async def test_finalize_turn_channel_contract() -> None:
-    """Finalize should append transcript/history only."""
+    """Finalize should append transcript only."""
 
     state = _build_state("Hello")
     state["response_text"] = "Thanks for sharing that."
@@ -705,7 +705,7 @@ async def test_finalize_turn_channel_contract() -> None:
         cast(Any, _FakeRuntime()),
     )
 
-    _assert_exact_keys(delta, {"history", "transcript"})
+    _assert_exact_keys(delta, {"transcript"})
 
 
 @pytest.mark.asyncio

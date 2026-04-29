@@ -1,4 +1,4 @@
-"""Guard tests for reducer-backed transcript/history state.
+"""Guard tests for reducer-backed transcript state.
 
 Phase C of the LangGraph best-practice alignment plan. These tests
 verify that:
@@ -61,14 +61,6 @@ def _get_reducer(state_class: type, field: str) -> Any:
         return None
     metadata = getattr(inner, "__metadata__", ())
     return metadata[0] if metadata else None
-
-
-def test_history_uses_add_reducer() -> None:
-    """``AgentState.history`` should have ``operator.add`` as its reducer."""
-    reducer = _get_reducer(AgentState, "history")
-    assert reducer is operator.add, (
-        f"history reducer is {reducer!r}, expected operator.add"
-    )
 
 
 def test_session_progress_uses_merge_reducer() -> None:
@@ -167,9 +159,8 @@ def test_parent_graph_declares_explicit_input_and_output_schemas() -> None:
 # ── build_initial_state tests ──────────────────────────────────────────────
 
 
-def test_build_initial_state_emits_only_current_user_turn() -> None:
-    """build_initial_state should emit only the current user message in
-    history/transcript — not the full prior history.
+def test_build_initial_state_emits_only_current_user_turn_to_transcript() -> None:
+    """build_initial_state should emit only the current user message to transcript.
 
     The checkpointer is responsible for restoring prior turns via the
     reducer. Emitting the full history would cause duplication when
@@ -187,14 +178,7 @@ def test_build_initial_state_emits_only_current_user_turn() -> None:
     )
     state = build_initial_state(agent_input)
 
-    # history and transcript should contain ONLY the current user turn.
-    assert len(state["history"]) == 1, (
-        f"Expected 1 entry in history, got {len(state['history'])}. "
-        f"build_initial_state should not reconstruct the full prior history."
-    )
-    assert state["history"][0]["content"] == "How are you?"
-    assert state["history"][0]["role"] == MessageRole.USER.value
-
+    assert "history" not in state
     assert len(state.get("transcript", [])) == 1
     assert state["transcript"][0]["content"] == "How are you?"
 
@@ -312,17 +296,10 @@ class _GuidedExerciseLLM(BaseLLMClient):
 
 @pytest.mark.asyncio
 async def test_finalize_returns_single_element_delta() -> None:
-    """finalize_turn_node should return a 1-element list for transcript
-    and history — the reducer handles appending to the accumulated state.
-    """
+    """finalize_turn_node should return a 1-element transcript delta."""
 
     state: dict[str, Any] = {
         "transcript": [
-            {"role": "user", "content": "Hi"},
-            {"role": "assistant", "content": "Hello"},
-            {"role": "user", "content": "Help me"},
-        ],
-        "history": [
             {"role": "user", "content": "Hi"},
             {"role": "assistant", "content": "Hello"},
             {"role": "user", "content": "Help me"},
@@ -342,9 +319,6 @@ async def test_finalize_returns_single_element_delta() -> None:
     assert delta["transcript"][0]["role"] == MessageRole.ASSISTANT.value
     assert delta["transcript"][0]["content"] == "Of course, what's on your mind?"
     assert delta["transcript"][0]["response_style"] == "supportive"
-
-    assert len(delta["history"]) == 1
-    assert delta["history"] == delta["transcript"]
 
 
 # ── Multi-turn accumulation via checkpointer ───────────────────────────────

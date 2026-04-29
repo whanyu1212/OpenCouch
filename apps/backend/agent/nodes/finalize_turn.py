@@ -4,7 +4,7 @@ This node exists because transcript finalization is the one concern that
 spans both branches and runs last: regardless of whether the turn took
 the crisis path or the therapeutic path, the final assistant response
 lives in ``state["response_text"]`` and needs to be appended to
-``transcript`` + ``history`` so the next turn's ``get_history`` call in
+``transcript`` so the next turn's ``get_history`` call in
 :class:`agent.persistence.PersistentAgentRuntime` sees it.
 
 Why this isn't done in the runner, in ``extract_semantic_facts_node``,
@@ -23,8 +23,8 @@ or in ``build_initial_state``:
   the graph.
 
 The cleanest shape is one tiny node, one responsibility. Its delta
-contains exactly ``transcript`` and ``history`` - nothing else. It
-runs on both branches via the existing converge-before-END edges:
+contains exactly ``transcript`` - nothing else. It runs on both branches
+via the existing converge-before-END edges:
 
     crisis_resource_lookup_node → crisis_response_node → crisis_log_node
       → finalize_turn_node → memory_extraction_node → END
@@ -54,15 +54,14 @@ async def run_finalize_turn_node(
 ) -> dict[str, Any]:
     """Append the final assistant response to the transcript.
 
-    The user message was already emitted into ``transcript`` and
-    ``history`` by :func:`agent.graph.build_initial_state` at turn
-    start. Both fields use an ``operator.add`` reducer, so this node
-    returns a single-element list containing just the new assistant
-    turn — the reducer appends it to the accumulated state from
-    the checkpoint.
+    The user message was already emitted into ``transcript`` by
+    :func:`agent.graph.build_initial_state` at turn start. The field uses
+    an ``operator.add`` reducer, so this node returns a single-element list
+    containing just the new assistant turn — the reducer appends it to the
+    accumulated state from the checkpoint.
 
-    Returns a delta containing ``transcript`` and ``history`` with
-    the new assistant turn. If the response text is empty (which
+    Returns a delta containing ``transcript`` with the new assistant turn.
+    If the response text is empty (which
     should only happen if a branch short-circuits without producing
     a reply), returns an empty delta so the transcript stays clean.
 
@@ -91,9 +90,8 @@ async def run_finalize_turn_node(
     }
 
     # Return only the new assistant turn. The ``operator.add`` reducer
-    # on ``transcript`` and ``history`` appends it to the accumulated
-    # state from the checkpoint automatically.
+    # on ``transcript`` appends it to the accumulated state from the
+    # checkpoint automatically.
     return {
         "transcript": [assistant_turn],
-        "history": [assistant_turn],
     }

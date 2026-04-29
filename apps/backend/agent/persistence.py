@@ -1700,7 +1700,7 @@ class PersistentAgentRuntime:
             graph = self._get_graph()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Reducers restore transcript/history; only turn_count is needed here.
+            # Reducers restore transcript; only turn_count is needed here.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
@@ -2064,7 +2064,7 @@ class PersistentAgentRuntime:
             graph = self._get_graph()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Reducers restore transcript/history; only turn_count is needed here.
+            # Reducers restore transcript; only turn_count is needed here.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
