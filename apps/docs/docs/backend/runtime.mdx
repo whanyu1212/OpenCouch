@@ -63,10 +63,10 @@ persistent turn.
 |---|---|---|
 | `history` | `operator.add` | Each turn appends new entries; checkpointer accumulates |
 | `transcript` | `operator.add` | `finalize_turn_node` appends a 1-element delta |
-| `session_progress` | `_merge_dicts` | `turn_count` increments, `stage` persists, dispatcher intent merges in |
+| `session_progress` | `_merge_dicts` | `turn_count` increments while preserving sibling fields |
 | `session_memory` | `_merge_dicts` | Summary / active concerns / open loops merge across turns |
 | `procedural_profile` | `_merge_dicts` | Procedural rules + recall toggle merge |
-| `exercise_state` | `_merge_dicts` | `exercise_modality` pinned at start; preserved across mid-exercise side-turns |
+| `exercise_state` | `_merge_dicts` | Active exercise continuity; `exercise_therapeutic_approach` pins the approach used when guidance resumes |
 | `memory_control` | `_merge_dicts` | `pending_action` carries destructive deletes across turns |
 | `diagnostics` | `_merge_dicts` | Parallel extractors write independently; gate timings, retrieval path, and write counts merge |
 

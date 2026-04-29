@@ -165,6 +165,8 @@ SELF_COMPASSION_DEFINITION = ExerciseDefinition(
             priority=90,
         ),
     ),
+    selection_aliases=("self-compassion", "compassion break", "kinder to myself"),
+    fallback_suggestion_rank=30,
     voice_supported=True,
 )
 
@@ -189,6 +191,7 @@ IMPROVE_DEFINITION = ExerciseDefinition(
             priority=130,
         ),
     ),
+    selection_aliases=("IMPROVE", "IMPROVE the moment", "emotion regulation"),
     voice_supported=True,
 )
 
@@ -213,5 +216,6 @@ GRATITUDE_DEFINITION = ExerciseDefinition(
             priority=115,
         ),
     ),
+    selection_aliases=("gratitude", "gratitude exercise", "grateful"),
     voice_supported=True,
 )

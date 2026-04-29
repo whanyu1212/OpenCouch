@@ -1,11 +1,12 @@
-VARIANT: response_style=guided_exercise, approach=act, state=exercise_modality_drift
-SOURCE: trimmed excerpt from apps/backend/.store/prompt_dumps/guided_exercise__act__exercise_modality_drift.txt
+VARIANT: response_style=guided_exercise, approach=act, state=exercise_approach_drift
+SOURCE: trimmed excerpt from apps/backend/.store/prompt_dumps/guided_exercise__act__exercise_approach_drift.txt
 
 This variant illustrates the approach-pinning behavior. The
 exercise was started under the ACT approach. On a mid-exercise
 side-turn the dispatcher would normally re-pick an approach, but
-exercise_state.exercise_modality stores the pinned value "act" — so
-ACT knowledge stays loaded even when the user briefly steps out.
+exercise_state.exercise_therapeutic_approach stores the pinned value "act" — so
+ACT knowledge is restored when exercise guidance resumes after the
+user briefly steps out.
 
 ===== SYSTEM PROMPT =====
 # OpenCouch Soul
@@ -62,7 +63,7 @@ Guidelines:
   say, what to picture.
 
 Active exercise: leaves_on_a_stream (step 2 of 6)
-  Pinned modality: act
+  Pinned therapeutic approach: act
   Last step prompt: "Picture yourself sitting by a stream. Watch
                     leaves drift past on the surface."
 
@@ -85,10 +86,10 @@ user: Wait, why does this kind of thing actually help?
 
 Active exercise: leaves_on_a_stream (step 2). The user is
 mid-exercise and asked a clarifying / psychoeducation question.
-Modality "act" is pinned for the duration of the exercise — even
-if the response style flips briefly to clarifying or
-psychoeducation, ACT knowledge stays loaded so the framing stays
-coherent when guidance resumes.
+Approach "act" is pinned for the duration of the exercise. Clarifying
+side-turns reuse the pinned approach; psychoeducation side-turns may
+use a fresh top-level approach for the explanation, while the pinned
+exercise approach remains available so guidance resumes coherently.
 
 Current user message:
 user: Wait, why does this kind of thing actually help?

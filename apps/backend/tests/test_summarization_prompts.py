@@ -242,18 +242,18 @@ class TestSummarizationUserPrompt:
         assert user_lines >= 2  # both real messages rendered
 
 
-# ─── Modality context prompt tests ───────────────────────────────────
+# ─── Approach context prompt tests ───────────────────────────────────
 
 
-class TestSummarizationModalityPrompts:
+class TestSummarizationApproachPrompts:
     """Tests for approach_used / approach_context prompt additions."""
 
     def test_system_prompt_has_approach_context_section(self) -> None:
-        """The system prompt must contain the modality context instructions
+        """The system prompt must contain the approach context instructions
         so the LLM knows the new fields exist."""
 
         prompt = build_summarization_system_prompt()
-        assert "Modality context" in prompt
+        assert "Approach context" in prompt
         assert "approach_used" in prompt
         assert "approach_context" in prompt
 
@@ -267,7 +267,7 @@ class TestSummarizationModalityPrompts:
 
     def test_user_prompt_with_cbt_hint_injects_cbt_fields(self) -> None:
         """When approach_hint='cbt', the user prompt should list CBT-specific
-        field names and NOT include other modality fields."""
+        field names and NOT include other approach fields."""
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
         prompt = build_summarization_user_prompt(
@@ -280,11 +280,11 @@ class TestSummarizationModalityPrompts:
             approach_hint="cbt",
         )
 
-        assert "Dominant modality this session: cbt" in prompt
+        assert "Dominant therapeutic approach this session: cbt" in prompt
         assert "thought_examined" in prompt
         assert "action_step" in prompt
         assert "tool_used" in prompt
-        # Should NOT contain MI or other modality fields
+        # Should NOT contain MI or other approach fields
         assert "readiness_stage" not in prompt
         assert "values_identified" not in prompt
 
@@ -308,8 +308,8 @@ class TestSummarizationModalityPrompts:
         # Should NOT contain CBT fields
         assert "thought_examined" not in prompt
 
-    def test_user_prompt_without_hint_has_no_modality_block(self) -> None:
-        """Without approach_hint, no modality extraction block."""
+    def test_user_prompt_without_hint_has_no_approach_block(self) -> None:
+        """Without approach_hint, no approach extraction block."""
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
         prompt = build_summarization_user_prompt(
@@ -321,9 +321,9 @@ class TestSummarizationModalityPrompts:
             turn_count=3,
         )
 
-        assert "Dominant modality" not in prompt
+        assert "Dominant therapeutic approach" not in prompt
 
-    def test_user_prompt_with_none_hint_has_no_modality_block(self) -> None:
+    def test_user_prompt_with_none_hint_has_no_approach_block(self) -> None:
         """approach_hint='none' should be treated the same as absent."""
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
@@ -337,4 +337,4 @@ class TestSummarizationModalityPrompts:
             approach_hint="none",
         )
 
-        assert "Dominant modality" not in prompt
+        assert "Dominant therapeutic approach" not in prompt

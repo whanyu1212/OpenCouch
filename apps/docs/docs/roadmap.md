@@ -92,7 +92,7 @@ production telemetry layer is not yet in place.
 
 ### Clinical Review
 
-A trained clinician reviews the `agent/prompts/sources/response_modes/*.md`
+A trained clinician reviews the `agent/prompts/sources/response_styles/*.md`
 files, the prompt builders in `agent/therapeutic/prompting/`, and
 agent responses across dogfood sessions. This is the gate before
 "a trusted friend could try it" becomes a defensible claim. Calendar

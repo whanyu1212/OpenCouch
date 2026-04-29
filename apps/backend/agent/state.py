@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.models import Channel, CrisisAssessment, ModeType, ResponseCategory
+from agent.models import Channel, CrisisAssessment, ResponseStyleType, ResponseCategory
 from agent.working_memory import WorkingMemoryEntry
 
 
@@ -90,20 +90,13 @@ class ProceduralProfileState(TypedDict):
 
 
 class SessionProgressState(TypedDict):
-    """Session-level counters and coarse progress signals.
+    """Session-level counters.
 
     ``build_initial_state`` seeds ``turn_count`` for each turn, using
     checkpointed state when available. Persistent runtime summaries, feedback
-    records, and memory extractors read ``turn_count`` for provenance. Intent
-    and stage fields are reserved for dispatcher/session-progress ownership and
-    are reducer-backed so nodes can update them without resetting peers.
+    records, and memory extractors read ``turn_count`` for provenance.
     """
 
-    intent: NotRequired[str | None]
-    intent_source: NotRequired[str | None]
-    stage: NotRequired[str]
-    stage_source: NotRequired[str | None]
-    stage_reason: NotRequired[str]
     turn_count: int
     is_guest: NotRequired[bool]
 
@@ -114,12 +107,12 @@ class ExerciseState(TypedDict):
     ``guided_exercise`` owns writes to this channel when starting, advancing,
     completing, or exiting an exercise. The therapeutic dispatcher and prompt
     builders read it to keep side turns inside an active exercise and to reuse
-    the modality captured when the exercise began.
+    the therapeutic approach captured when the exercise began.
     """
 
     exercise_type: NotRequired[str | None]
     exercise_step: NotRequired[int | None]
-    exercise_modality: NotRequired[str | None]
+    exercise_therapeutic_approach: NotRequired[str | None]
     exercise_selection_options: NotRequired[list[str] | None]
 
 
@@ -128,11 +121,24 @@ class MemoryControlState(TypedDict):
 
     ``memory_control_node`` writes pending destructive actions here so the next
     turn can confirm or cancel them without relying on the LLM to infer which
-    record was meant. Other memory-control decisions are turn-scoped and live in
-    ``memory_control_action``.
+    record was meant. ``memory_control_gate_node`` writes the current turn's
+    explicit memory command into ``action``.
     """
 
     pending_action: NotRequired[dict[str, Any] | None]
+    action: NotRequired[dict[str, Any]]
+
+
+class GroundedLookupState(TypedDict):
+    """Explicit factual lookup scratch state.
+
+    ``grounded_lookup_gate_node`` writes the current turn's search query and
+    initial status. ``grounded_answer_node`` updates the status after attempting
+    the grounded response.
+    """
+
+    query: NotRequired[str]
+    status: NotRequired[str]
 
 
 class CrisisAuditState(TypedDict):
@@ -184,7 +190,7 @@ class AgentPersistentState(TypedDict):
 
     These grouped dicts are the long-lived channels inside LangGraph state.
     Nodes should return partial nested deltas for only the fields they own; the
-    ``_merge_dicts`` reducer preserves existing sibling keys from prior turns.
+    dict reducers preserve existing sibling keys from prior turns.
     """
 
     session_memory: Annotated[SessionMemoryState, _merge_dicts]
@@ -192,6 +198,7 @@ class AgentPersistentState(TypedDict):
     session_progress: Annotated[SessionProgressState, _merge_dicts]
     exercise_state: Annotated[ExerciseState, _merge_dicts]
     memory_control: Annotated[MemoryControlState, _merge_dicts]
+    grounded_lookup: Annotated[GroundedLookupState, _merge_dicts]
 
 
 class AgentCrisisState(TypedDict):
@@ -217,7 +224,7 @@ class AgentGraphOutputState(AgentCrisisState, TypedDict):
     therapeutic_approach: NotRequired[str | None]
     response_style: NotRequired[str]
     response_style_source: NotRequired[str | None]
-    response_style_type: NotRequired[ModeType]
+    response_style_type: NotRequired[ResponseStyleType]
     response_kind: NotRequired[ResponseCategory]
     response_text: NotRequired[str]
     should_persist_memory: NotRequired[bool]
@@ -229,18 +236,13 @@ class AgentPrivateState(TypedDict):
 
     These fields are available to nodes during graph execution but are not part
     of the public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
-    ``crisis_audit`` feeds the crisis log, ``memory_control_action`` carries the
-    current explicit memory command, and ``crisis_resource_lookup_node`` writes
-    ``inferred_location`` / ``found_resources`` / ``resource_lookup_status``.
-    Grounded factual lookup nodes use ``grounded_lookup_query`` and
-    ``grounded_lookup_status`` for explicit non-therapeutic search turns.
+    ``crisis_audit`` feeds the crisis log, and ``crisis_resource_lookup_node``
+    writes ``inferred_location`` / ``found_resources`` /
+    ``resource_lookup_status`` for crisis-resource lookup turns.
     """
 
     route: NotRequired[str]
     crisis_audit: NotRequired[CrisisAuditState]
-    memory_control_action: NotRequired[dict[str, Any]]
-    grounded_lookup_query: NotRequired[str]
-    grounded_lookup_status: NotRequired[str]
     inferred_location: NotRequired[str]
     found_resources: NotRequired[list[dict[str, str]]]
     resource_lookup_status: NotRequired[str]
@@ -265,8 +267,8 @@ class AgentGraphInputState(
 class AgentState(AgentGraphInputState):
     """Full internal state schema used by graph nodes.
 
-    Top-level nodes, therapeutic mode nodes, prompt builders, tests, and evals
-    use this type when reading or returning state-like dictionaries. It is not a
-    public API response shape; use ``AgentGraphOutputState`` and
+    Top-level nodes, therapeutic response nodes, prompt builders, tests, and
+    evals use this type when reading or returning state-like dictionaries. It
+    is not a public API response shape; use ``AgentGraphOutputState`` and
     ``agent.graph.state_to_output`` for caller-facing data.
     """

@@ -55,26 +55,28 @@ same arc never appears twice on a single turn.
 | `procedural_profile` | `load_memory_node` | Re-loaded each turn (merged via `_merge_dicts`) |
 | `crisis` / `crisis_audit` | `crisis_gate_node` | Fresh each turn |
 | `response_style`, `therapeutic_approach` | Dispatcher | Fresh each turn |
-| `session_progress` | Checkpointer + `_merge_dicts` reducer | `turn_count` increments; other fields persist via merge |
-| `exercise_state` | `guided_exercise_node` + dispatcher, `_merge_dicts` | `exercise_modality` stores the approach pinned at exercise start; preserved across mid-exercise side-turns |
+| `session_progress` | Checkpointer + `_merge_dicts` reducer | `turn_count` increments while preserving sibling fields |
+| `exercise_state` | `guided_exercise_node` + dispatcher, `_merge_dicts` | `exercise_therapeutic_approach` stores the approach pinned at exercise start; active exercise state survives side-turns |
 
 ---
 
 ## Exercise approach continuity
 
 A guided exercise that started under, say, the `act` approach should
-keep that approach even when the user pauses mid-exercise to ask
-something clarifying. The legacy-named `exercise_modality` field on
-`exercise_state` stores the pinned approach at exercise start and the
-dispatcher preserves it whenever an active exercise dispatches to
-`clarifying`, `psychoeducation`, or back to `guided_exercise`. Only an
-explicit exit clears `exercise_modality` alongside `exercise_type` and
+keep that approach when guided exercise instructions resume. The
+`exercise_therapeutic_approach` field on `exercise_state` stores the
+pinned approach at exercise start. The dispatcher reuses it when an
+active exercise routes back to `guided_exercise` or to a narrow
+`clarifying` side-turn. A `psychoeducation` side-turn preserves the
+active exercise state, but may use the LLM's fresh top-level approach
+for the explanation. Only an explicit exit clears
+`exercise_therapeutic_approach` alongside `exercise_type` and
 `exercise_step`.
 
 This is enforced in `agent/therapeutic/dispatch/guards.py` and the
-dispatcher fallback logic: `_active_exercise_modality()` reads the
-pinned approach, and mid-exercise branches reuse it instead of letting
-the LLM pick a fresh one.
+dispatcher fallback logic: `_active_exercise_therapeutic_approach()` reads the
+pinned approach, and exercise continuation / clarification branches reuse it
+instead of letting the LLM pick a fresh one.
 
 ---
 
@@ -83,11 +85,10 @@ the LLM pick a fresh one.
 <SessionStageArc />
 
 :::note Not yet dynamic
-The session stage is set to `"opening"` at the start of every turn.
 Dynamic stage inference (opening → deepening → working → closing)
-is a planned enhancement — the state field, knowledge file
-(`agent/prompts/sources/session_stages.md`), and reducer plumbing
-all exist but the inference logic is not yet wired into any node.
+is a planned enhancement. The knowledge file
+(`agent/prompts/sources/session_stages.md`) exists, but stage inference
+is not wired into graph state or any runtime node.
 :::
 
 ---

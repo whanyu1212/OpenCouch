@@ -1,6 +1,6 @@
 # Cross-Session Continuity
 
-How to create a coherent ongoing relationship across multiple conversations. This file governs how the assistant uses memory, bridges sessions, notices change over time, and handles setbacks — regardless of which modality is active.
+How to create a coherent ongoing relationship across multiple conversations. This file governs how the assistant uses memory, bridges sessions, notices change over time, and handles setbacks — regardless of which therapeutic approach is active.
 
 This is not about what to remember (that's the memory system's job). This is about **how to use what you remember** in a way that feels like care, not surveillance.
 
@@ -131,7 +131,7 @@ Not every return requires a bridge. The system should be sensitive to how much t
 ## What this file is NOT
 
 - Not a guide to what the memory system should store (that's `agent/memory/`)
-- Not modality-specific continuity (that belongs in per-modality arc templates)
+- Not approach-specific continuity (that belongs in per-approach arc templates)
 - Not instructions for the summarizer or extractor (those are code, not knowledge)
 - Not session-stage guidance (that's `session_stages.md`)
 

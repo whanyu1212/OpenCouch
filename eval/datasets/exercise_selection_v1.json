@@ -242,6 +242,13 @@
     "notes": "A named reply to pending options should resolve to the matching option."
   },
   {
+    "id": "fallback_offer_options_for_unspecified_exercise",
+    "selection_tier": "deterministic",
+    "message": "I need an exercise.",
+    "expected_outcome": "options",
+    "notes": "A broad exercise request should offer options instead of silently starting one exercise. Unit tests pin the exact no-LLM fallback menu; hybrid mode may vary the suggestions."
+  },
+  {
     "id": "llm_select_self_compassion_without_keyword",
     "selection_tier": "llm",
     "message": "I'm being really harsh with myself today.",

@@ -551,12 +551,14 @@ def _normalize_turn_record(
     procedural_profile = state.get("procedural_profile", {}) or {}
     working_memory = state.get("working_memory", []) or []
     found_resources = state.get("found_resources", []) or []
+    therapeutic_approach = (
+        state.get("therapeutic_approach") or output.therapeutic_approach
+    )
 
     return {
         "turn_index": turn_index,
         "user_text": user_text,
         "assistant_text": output.response_text,
-        "mode": output.response_style,
         "response_style": output.response_style,
         "response_type": output.response_type.value
         if output.response_type is not None
@@ -577,12 +579,12 @@ def _normalize_turn_record(
             for resource in found_resources
             if isinstance(resource, dict) and resource.get("phone")
         ],
+        # Optional session-progress fields: current graph state usually only
+        # writes turn_count, but hand-built tests may still include these.
         "session_intent": session_progress.get("intent"),
         "session_intent_source": session_progress.get("intent_source"),
         "session_stage": session_progress.get("stage"),
-        "modality": state.get("therapeutic_approach") or output.therapeutic_approach,
-        "therapeutic_approach": state.get("therapeutic_approach")
-        or output.therapeutic_approach,
+        "therapeutic_approach": therapeutic_approach,
         "exercise_active": exercise_state.get("exercise_type") is not None,
         "exercise_type": exercise_state.get("exercise_type"),
         "exercise_step": exercise_state.get("exercise_step"),
@@ -651,11 +653,13 @@ def _normalize_final_record(
     """Normalize the final eval artifact into the stable record shape.
 
     Carries forward key fields from the last turn so final assertions
-    can grade session-end state (mode, stage, intent, modality, response
-    text) without needing a separate replay.
+    can grade session-end state (response style, stage, intent, therapeutic
+    approach, response text) without needing a separate replay.
     """
 
     last = last_turn_record or {}
+    response_style = last.get("response_style")
+    therapeutic_approach = last.get("therapeutic_approach")
 
     return {
         "summary_text": None if stored_arc is None else stored_arc.summary,
@@ -687,10 +691,8 @@ def _normalize_final_record(
         # Carry forward from last turn for final grading.
         "session_intent": last.get("session_intent"),
         "session_stage": last.get("session_stage"),
-        "mode": last.get("mode", last.get("response_style")),
-        "response_style": last.get("mode", last.get("response_style")),
-        "modality": last.get("modality", last.get("therapeutic_approach")),
-        "therapeutic_approach": last.get("therapeutic_approach"),
+        "response_style": response_style,
+        "therapeutic_approach": therapeutic_approach,
         "assistant_text": last.get("assistant_text"),
         "needs_clarification": last.get("needs_clarification"),
         "needs_crisis_response": last.get("needs_crisis_response"),
@@ -710,17 +712,24 @@ def _check_turn_expectation(
 
     failures: list[str] = []
 
-    # ── Mode ─────────────────────────────────────────────────────────
-    if "mode_in" in expect and record["mode"] not in expect["mode_in"]:
+    # ── Response style ───────────────────────────────────────────────
+    response_style_in = expect.get("response_style_in")
+    if response_style_in and record["response_style"] not in response_style_in:
         failures.append(
-            f"FAIL [{case_id}] turn {turn_number}: expected mode_in={expect['mode_in']!r}, "
-            f"got mode={record['mode']!r}. user={record['user_text']!r}"
+            f"FAIL [{case_id}] turn {turn_number}: expected response_style_in="
+            f"{response_style_in!r}, got response_style={record['response_style']!r}. "
+            f"user={record['user_text']!r}"
         )
 
-    if "allowed_modes" in expect and record["mode"] not in expect["allowed_modes"]:
+    allowed_response_styles = expect.get("allowed_response_styles")
+    if (
+        allowed_response_styles
+        and record["response_style"] not in allowed_response_styles
+    ):
         failures.append(
-            f"FAIL [{case_id}] turn {turn_number}: expected allowed_modes="
-            f"{expect['allowed_modes']!r}, got mode={record['mode']!r}. "
+            f"FAIL [{case_id}] turn {turn_number}: expected allowed_response_styles="
+            f"{allowed_response_styles!r}, "
+            f"got response_style={record['response_style']!r}. "
             f"user={record['user_text']!r}"
         )
 
@@ -846,14 +855,15 @@ def _check_turn_expectation(
             f"{expect['allowed_session_stages']!r}, got {record['session_stage']!r}."
         )
 
-    # ── Modality ─────────────────────────────────────────────────────
+    # ── Therapeutic approach ─────────────────────────────────────────
+    required_approaches = expect.get("required_therapeutic_approaches")
     if (
-        "required_modalities" in expect
-        and record["modality"] not in expect["required_modalities"]
+        required_approaches
+        and record["therapeutic_approach"] not in required_approaches
     ):
         failures.append(
-            f"FAIL [{case_id}] turn {turn_number}: expected modality in "
-            f"{expect['required_modalities']!r}, got {record['modality']!r}."
+            f"FAIL [{case_id}] turn {turn_number}: expected therapeutic_approach in "
+            f"{required_approaches!r}, got {record['therapeutic_approach']!r}."
         )
 
     # ── Response type ────────────────────────────────────────────────
@@ -1328,21 +1338,26 @@ def _check_final_expectation(
             f"{expect['session_stage']!r}, got {record['session_stage']!r}."
         )
 
-    # ── Mode (from last turn) ────────────────────────────────────────
-    if "allowed_modes" in expect and record["mode"] not in expect["allowed_modes"]:
-        failures.append(
-            f"FAIL [{case_id}] final: expected mode in "
-            f"{expect['allowed_modes']!r}, got {record['mode']!r}."
-        )
-
-    # ── Modality (from last turn) ────────────────────────────────────
+    # ── Response style (from last turn) ──────────────────────────────
+    allowed_response_styles = expect.get("allowed_response_styles")
     if (
-        "required_modalities" in expect
-        and record["modality"] not in expect["required_modalities"]
+        allowed_response_styles
+        and record["response_style"] not in allowed_response_styles
     ):
         failures.append(
-            f"FAIL [{case_id}] final: expected modality in "
-            f"{expect['required_modalities']!r}, got {record['modality']!r}."
+            f"FAIL [{case_id}] final: expected response_style in "
+            f"{allowed_response_styles!r}, got {record['response_style']!r}."
+        )
+
+    # ── Therapeutic approach (from last turn) ────────────────────────
+    required_approaches = expect.get("required_therapeutic_approaches")
+    if (
+        required_approaches
+        and record["therapeutic_approach"] not in required_approaches
+    ):
+        failures.append(
+            f"FAIL [{case_id}] final: expected therapeutic_approach in "
+            f"{required_approaches!r}, got {record['therapeutic_approach']!r}."
         )
 
     # ── Crisis signals (from last turn) ──────────────────────────────
@@ -1519,8 +1534,10 @@ async def _run_case(
                 _log(
                     verbose,
                     "     "
-                    f"mode={record['mode']}, intent={record['session_intent']}, "
-                    f"stage={record['session_stage']}, modality={record['modality']}, "
+                    f"response_style={record['response_style']}, "
+                    f"intent={record['session_intent']}, "
+                    f"stage={record['session_stage']}, "
+                    f"approach={record['therapeutic_approach']}, "
                     f"writes={len(record['memory_writes'])}",
                 )
 

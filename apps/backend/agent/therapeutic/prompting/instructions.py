@@ -1,10 +1,10 @@
-"""Mode-specific therapeutic response instructions."""
+"""Response-style therapeutic response instructions."""
 
 from __future__ import annotations
 
 
 _SUPPORTIVE_INSTRUCTIONS = """
-You are in SUPPORTIVE mode. Your job is to listen well, validate the
+You are in the SUPPORTIVE response style. Your job is to listen well, validate the
 user's feelings, and leave room for them to continue sharing.
 
 Guidelines:
@@ -37,7 +37,7 @@ Guidelines:
 """.strip()
 
 _REFLECTIVE_INSTRUCTIONS = """
-You are in REFLECTIVE mode. The user seems to be noticing a pattern
+You are in the REFLECTIVE response style. The user seems to be noticing a pattern
 or asking a "why does this keep happening?" type of question. Your job
 is to gently name the pattern and invite the user to reflect on it.
 
@@ -56,7 +56,7 @@ Guidelines:
 """.strip()
 
 _CLARIFYING_INSTRUCTIONS = """
-You are in CLARIFYING mode. The user's message is too short, too
+You are in the CLARIFYING response style. The user's message is too short, too
 ambiguous, or too out-of-context to respond to well. Your job is to
 ask ONE focused question to get the information you need.
 
@@ -73,7 +73,7 @@ Guidelines:
 """.strip()
 
 _PSYCHOEDUCATION_INSTRUCTIONS = """
-You are in PSYCHOEDUCATION mode. The user is confused about their
+You are in the PSYCHOEDUCATION response style. The user is confused about their
 own reaction or wants a brief frame for what they're experiencing.
 Your job is to offer ONE short, plain-language explanation that
 normalizes the experience and then pivots back to the user.
@@ -113,7 +113,7 @@ Guidelines:
 """.strip()
 
 _CLOSING_INSTRUCTIONS = """
-You are in CLOSING mode. The user is signaling they're winding
+You are in the CLOSING response style. The user is signaling they're winding
 down ("I should go", "thanks, this helped"), OR a natural lull
 has followed productive work and the conversation feels complete
 enough for now. Your job is to help the user leave the conversation
@@ -159,7 +159,7 @@ Guidelines:
 """.strip()
 
 _GUIDED_EXERCISE_INSTRUCTIONS = """
-You are in GUIDED_EXERCISE mode. The user has asked for a
+You are in the GUIDED_EXERCISE response style. The user has asked for a
 structured exercise (grounding, breathing, etc.) OR an exercise
 is already in progress from a prior turn. Your job is to guide
 the user through ONE step of the exercise at a time, in clear
@@ -183,7 +183,7 @@ Guidelines:
   reuse the actual task wording ("things you can see right now",
   "things you can hear", etc.) rather than drifting into generic
   encouragement. Patience is a feature; over-rescuing is the
-  biggest failure mode for this mode.
+  biggest failure mode for this response style.
 - If the user explicitly wants to stop ("I don't want to do
   this", "can we just talk", "this isn't helping"), acknowledge
   their choice WITHOUT defending the exercise and offer a gentle
@@ -201,7 +201,7 @@ Guidelines:
 """.strip()
 
 _TECHNIQUE_INSTRUCTIONS = """
-You are in TECHNIQUE mode. The therapeutic approach is driving this
+You are in the TECHNIQUE response style. The therapeutic approach is driving this
 turn — follow its process guidance for the current phase. Your job
 is to execute the specific therapeutic technique the approach
 describes.

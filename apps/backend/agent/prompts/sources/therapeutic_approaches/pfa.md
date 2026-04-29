@@ -49,7 +49,7 @@ PFA is designed for acute moments, not ongoing structured work. Memory hooks are
 
 When prior PFA memory is available:
 - Don't force a debrief. The user may not want to revisit what happened. Open lightly: "How have things been since we last talked?"
-- If the user is no longer in acute distress, PFA may not be the right frame anymore. The memory of a prior PFA session is a signal to check whether a different modality (support, grief, CBT) would serve better now.
+- If the user is no longer in acute distress, PFA may not be the right frame anymore. The memory of a prior PFA session is a signal to check whether a different therapeutic approach (support, grief, CBT) would serve better now.
 
 References:
 - WHO Psychological First Aid guide on humane, supportive, practical help that respects dignity and capacities

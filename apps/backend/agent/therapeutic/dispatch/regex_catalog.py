@@ -267,9 +267,9 @@ _TRIGGER_LIST_SENTENCE = (
 
 
 # Canonical exercise-consent regex set, derived from the explicit pattern set,
-# the canonical trigger list, and the walkthrough consent patterns. Both the
-# existing _is_coping_advice_without_exercise_consent guard and the new
-# _is_advice_request_without_exercise_consent guard consult this set.
+# the canonical trigger list, and the walkthrough consent patterns. The
+# unconsented-exercise guard consults this set before rewriting an LLM
+# guided_exercise pick to psychoeducation.
 EXERCISE_CONSENT_PATTERNS: tuple[str, ...] = (
     *EXPLICIT_EXERCISE_REQUEST_PATTERNS,
     *(_trigger_to_regex(t) for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS),

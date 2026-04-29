@@ -57,11 +57,10 @@ const GROUPS: GroupDef[] = [
   {
     id: 'progress',
     label: 'Session progress',
-    blurb: 'Per-turn counters and stage labels that merge into the checkpoint.',
+    blurb: 'Per-turn counters that merge into the checkpoint.',
     fields: [
-      { name: 'session_progress', type: 'Annotated[SessionProgressState, _merge_dicts]', setBy: 'build_initial_state + nodes', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Per-turn (turn_count, stage) and dispatcher-owned (intent) fields merge with cross-turn fields from the checkpoint.' },
+      { name: 'session_progress', type: 'Annotated[SessionProgressState, _merge_dicts]', setBy: 'build_initial_state', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Turn-count continuity. The merge reducer preserves checkpointed counters and sibling flags.' },
       { name: 'session_progress.turn_count', type: 'int', setBy: 'build_initial_state', lifecycle: 'reducer', desc: 'Persistent callers derive from checkpoint; one-shot callers count from history.' },
-      { name: 'session_progress.stage', type: 'str', setBy: 'build_initial_state', lifecycle: 'reducer', desc: 'opening / deepening / stabilizing / closing. Currently always seeded as "opening" — dynamic stage inference is on the roadmap.' },
     ],
   },
   {
@@ -72,7 +71,7 @@ const GROUPS: GroupDef[] = [
       { name: 'exercise_state', type: 'Annotated[ExerciseState, _merge_dicts]', setBy: 'guided_exercise_node + dispatcher', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Active guided-exercise continuity. Cleared by the dispatcher when the user exits or the exercise completes.' },
       { name: 'exercise_state.exercise_type', type: 'str | None', setBy: 'guided_exercise_node', lifecycle: 'reducer', desc: 'Active exercise identifier (e.g., "grounding_5_4_3_2_1").' },
       { name: 'exercise_state.exercise_step', type: 'int | None', setBy: 'guided_exercise_node', lifecycle: 'reducer', desc: 'Current step index. Cleared when the exercise completes or the user exits.' },
-      { name: 'exercise_state.exercise_modality', type: 'str | None', setBy: 'guided_exercise_node + dispatcher', lifecycle: 'reducer', desc: 'Legacy-named field that stores the approach pinned at exercise start. Preserved across mid-exercise clarifying / psychoeducation turns to prevent drift.' },
+      { name: 'exercise_state.exercise_therapeutic_approach', type: 'str | None', setBy: 'guided_exercise_node + dispatcher', lifecycle: 'reducer', desc: 'Approach pinned at exercise start. Reused when guidance resumes and for narrow clarifying side-turns; psychoeducation side-turns keep the exercise active but may use a fresh top-level approach.' },
       { name: 'memory_control.pending_action', type: 'dict | None', setBy: 'memory_control_node', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Carries a destructive memory action across turns so the next reply can confirm or cancel without LLM inference.' },
     ],
   },
@@ -94,7 +93,7 @@ const GROUPS: GroupDef[] = [
       { name: 'response_text', type: 'str', setBy: 'reply node (response style / crisis_response / memory_control / grounded_answer)', lifecycle: 'turn', desc: 'Generated reply for the turn.' },
       { name: 'response_style', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'supportive · reflective · clarifying · psychoeducation · technique · guided_exercise · closing · safety_check · crisis_response · memory_control · grounded_lookup' },
       { name: 'response_style_source', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'Which decision point picked it: crisis_gate, therapeutic_dispatch, memory_control_gate, grounded_lookup_gate.' },
-      { name: 'response_style_type', type: 'ModeType', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC · OPERATIONAL · CRISIS' },
+      { name: 'response_style_type', type: 'ResponseStyleType', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC · OPERATIONAL · CRISIS' },
       { name: 'response_kind', type: 'ResponseCategory', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC or CRISIS — exposed publicly via AgentOutput.response_type.' },
       { name: 'therapeutic_approach', type: 'str | None', setBy: 'therapeutic_dispatch_node', lifecycle: 'turn', desc: 'motivational_interviewing · cbt · act · dbt_skills · grief_support · interpersonal_therapy · pfa · none' },
       { name: 'should_persist_memory', type: 'bool', setBy: 'guided_exercise_node', lifecycle: 'turn', desc: 'Set on exercise completion as a hint that the turn is worth summarizing.' },

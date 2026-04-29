@@ -80,5 +80,6 @@ TINY_ACTION_DEFINITION = ExerciseDefinition(
             priority=80,
         ),
     ),
+    selection_aliases=("tiny action", "small action", "motivation"),
     voice_supported=True,
 )

@@ -1,4 +1,4 @@
-"""System and task prompt builders for therapeutic response modes."""
+"""System and task prompt builders for therapeutic response styles."""
 
 from __future__ import annotations
 
@@ -24,15 +24,15 @@ from agent.therapeutic.prompting.instructions import (
     _SUPPORTIVE_INSTRUCTIONS,
     _TECHNIQUE_INSTRUCTIONS,
 )
-from agent.therapeutic.prompting.sources import _knowledge_for_mode
+from agent.therapeutic.prompting.sources import _knowledge_for_response_style
 
-_SAFETY_CHECK_FILE = "response_modes/safety_check.md"
+_SAFETY_CHECK_FILE = "response_styles/safety_check.md"
 _SAFETY_CHECK_OVERRIDE = """
 Safety-check override:
 - The crisis classifier marked this turn as concerning but ambiguous
   (level 1). Include exactly one direct safety question before ordinary
   support continues.
-- In clarifying mode, these safety-check instructions override the
+- In clarifying style, these safety-check instructions override the
   ordinary clarifying guidance about open-ended context questions.
 - Do not provide hotline, 988, emergency-services, ER, or crisis-line
   guidance unless crisis response is active or the user says they may
@@ -66,7 +66,7 @@ def _compose_system_prompt_with_state(
     """Assemble a system prompt from static + dynamic parts.
 
     The static parts are the knowledge-file composition and the
-    mode-specific instructions block. The dynamic parts are the
+    response-style instructions block. The dynamic parts are the
     procedural rules block, the recall toggle constraint (both
     read from state), and the cross-session continuity guidance
     (loaded only for returning users with episodic memory).
@@ -80,7 +80,7 @@ def _compose_system_prompt_with_state(
         state: Current graph state used for dynamic prompt blocks.
 
     Returns:
-        Full system prompt for a therapeutic response mode.
+        Full system prompt for a therapeutic response style.
     """
 
     continuity_block = ""
@@ -100,7 +100,7 @@ def _compose_system_prompt_with_state(
 
 
 def _read_approach(state: AgentState) -> str | None:
-    """Read the dispatcher-selected modality from top-level state.
+    """Read the dispatcher-selected therapeutic approach from top-level state.
 
     Args:
         state: Current graph state.
@@ -113,51 +113,51 @@ def _read_approach(state: AgentState) -> str | None:
 
 
 def build_supportive_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for supportive-mode responses.
+    """Build the system prompt for supportive responses.
 
-    Loads the modality overlay selected by the dispatcher (defaults to
-    MI if no modality was set, for backward compatibility).
+    Loads the therapeutic approach overlay selected by the dispatcher
+    (defaults to MI if no approach was set, for backward compatibility).
 
     Args:
         state: Current graph state.
 
     Returns:
-        System prompt for supportive-mode responses.
+        System prompt for supportive responses.
     """
 
-    modality = _read_approach(state) or "motivational_interviewing"
-    files = _knowledge_for_mode("supportive", modality)
+    approach = _read_approach(state) or "motivational_interviewing"
+    files = _knowledge_for_response_style("supportive", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _SUPPORTIVE_INSTRUCTIONS, state)
 
 
 def build_reflective_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for reflective-mode responses.
+    """Build the system prompt for reflective responses.
 
     Args:
         state: Current graph state.
 
     Returns:
-        System prompt for reflective-mode responses.
+        System prompt for reflective responses.
     """
 
-    modality = _read_approach(state)
-    files = _knowledge_for_mode("reflective", modality)
+    approach = _read_approach(state)
+    files = _knowledge_for_response_style("reflective", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _REFLECTIVE_INSTRUCTIONS, state)
 
 
 def build_clarifying_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for clarifying-mode responses.
+    """Build the system prompt for clarifying responses.
 
     Args:
         state: Current graph state.
 
     Returns:
-        System prompt for clarifying-mode responses.
+        System prompt for clarifying responses.
     """
 
-    files = _knowledge_for_mode("clarifying")
+    files = _knowledge_for_response_style("clarifying")
     if _crisis_needs_safety_clarification(state):
         files = (*files, _SAFETY_CHECK_FILE)
 
@@ -166,17 +166,17 @@ def build_clarifying_system_prompt(state: AgentState) -> str:
 
 
 def build_psychoeducation_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for psychoeducation-mode responses.
+    """Build the system prompt for psychoeducation responses.
 
     Args:
         state: Current graph state.
 
     Returns:
-        System prompt for psychoeducation-mode responses.
+        System prompt for psychoeducation responses.
     """
 
-    modality = _read_approach(state)
-    files = _knowledge_for_mode("psychoeducation", modality)
+    approach = _read_approach(state)
+    files = _knowledge_for_response_style("psychoeducation", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
         knowledge, _PSYCHOEDUCATION_INSTRUCTIONS, state
@@ -184,26 +184,26 @@ def build_psychoeducation_system_prompt(state: AgentState) -> str:
 
 
 def build_closing_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for closing-mode responses.
+    """Build the system prompt for closing responses.
 
     Args:
         state: Current graph state.
 
     Returns:
-        System prompt for closing-mode responses.
+        System prompt for closing responses.
     """
 
-    knowledge = _compose(*_knowledge_for_mode("closing"))
+    knowledge = _compose(*_knowledge_for_response_style("closing"))
     return _compose_system_prompt_with_state(knowledge, _CLOSING_INSTRUCTIONS, state)
 
 
 def build_guided_exercise_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for guided_exercise-mode responses.
+    """Build the system prompt for guided-exercise responses.
 
     Loads the base exercise knowledge plus the approach overlay (CBT for
     thought records, ACT for defusion, etc.). Prefers the stable
-    ``exercise_state.exercise_modality`` captured at exercise start over the
-    per-turn top-level ``therapeutic_approach`` — the latter can drift if
+    ``exercise_state.exercise_therapeutic_approach`` captured at exercise
+    start over the per-turn top-level ``therapeutic_approach`` — the latter can drift if
     the user takes a clarifying or psychoeducation side-turn mid-exercise.
 
     Args:
@@ -214,13 +214,13 @@ def build_guided_exercise_system_prompt(state: AgentState) -> str:
     """
 
     exercise_state = state.get("exercise_state", {})
-    # Only trust exercise_modality when an exercise is actually active.
+    # Only trust the pinned approach when an exercise is actually active.
     approach = (
-        exercise_state.get("exercise_modality")
+        exercise_state.get("exercise_therapeutic_approach")
         if exercise_state.get("exercise_type")
         else None
     ) or _read_approach(state)
-    files = _knowledge_for_mode("guided_exercise", approach)
+    files = _knowledge_for_response_style("guided_exercise", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
         knowledge, _GUIDED_EXERCISE_INSTRUCTIONS, state
@@ -228,9 +228,9 @@ def build_guided_exercise_system_prompt(state: AgentState) -> str:
 
 
 def build_technique_system_prompt(state: AgentState) -> str:
-    """Build the system prompt for technique-mode responses.
+    """Build the system prompt for technique responses.
 
-    In technique mode, the therapeutic approach drives the response
+    For technique responses, the therapeutic approach drives the response
     shape. The approach knowledge files are loaded as the primary
     behavioral guidance — the technique instructions just say "follow
     the approach's process guidance." This is the one response style
@@ -244,16 +244,16 @@ def build_technique_system_prompt(state: AgentState) -> str:
         state: Current graph state.
 
     Returns:
-        System prompt for technique-mode responses.
+        System prompt for technique responses.
     """
 
     approach = _read_approach(state)
     if not approach or approach == "none":
-        # No approach active — technique mode without an approach
+        # No approach active — technique without an approach
         # doesn't make sense. Fall back to supportive.
         return build_supportive_system_prompt(state)
 
-    files = _knowledge_for_mode("technique", approach)
+    files = _knowledge_for_response_style("technique", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(knowledge, _TECHNIQUE_INSTRUCTIONS, state)
 
@@ -261,21 +261,21 @@ def build_technique_system_prompt(state: AgentState) -> str:
 def build_therapeutic_response_prompt(
     state: AgentState,
     *,
-    mode: str,
+    response_style: str,
     step_directive: str | None = None,
 ) -> str:
-    """Build the user/task prompt for any therapeutic mode.
+    """Build the user/task prompt for any therapeutic response style.
 
-    All modes share the same user-prompt structure — the system
-    prompt (which differs per mode) is what shapes the response
+    All response styles share the same user-prompt structure — the system
+    prompt (which differs per style) is what shapes the response
     character. The user prompt provides the conversation context
     and current message.
 
     Args:
         state: Current graph state with history and working memory.
-        mode: The dispatched mode name, injected as context for
+        response_style: The dispatched response style, injected as context for
             observability in the prompt.
-        step_directive: For multi-turn modes (guided_exercise), an
+        step_directive: For multi-turn styles (guided_exercise), an
             explicit instruction about what the LLM should generate.
             This bridges the node's deterministic state transition
             to the LLM's prose generation — the node knows *which*
@@ -290,7 +290,7 @@ def build_therapeutic_response_prompt(
 
     return (
         f"Write the next assistant message for a mental health support "
-        f"conversation in {mode} mode.\n\n"
+        f"conversation in the {response_style} response style.\n\n"
         f"Recent conversation:\n{_format_recent_history(state)}\n"
         f"{memory_block}\n"
         f"Current user message:\nuser: {state['message']}"

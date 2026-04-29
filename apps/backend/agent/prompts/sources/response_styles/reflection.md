@@ -34,7 +34,7 @@ Do not synthesize when:
 - you'd be connecting dots that don't clearly belong together
 
 When holding back:
-- stay in support mode and reflect what the user is saying in the moment
+- stay in supportive style and reflect what the user is saying in the moment
 - it is fine to explicitly say "I don't want to force a pattern here" or "There might be something connecting these, but I'd rather sit with it a bit longer"
 
 ## What makes a useful pattern observation

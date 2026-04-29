@@ -39,9 +39,9 @@ the next node. There is no conditional edge for the crisis branch. This keeps
 the routing decision and the audit metadata in one place.
 
 `therapeutic_subgraph` is itself a compiled `StateGraph`, registered as one
-node in the parent graph. It handles therapeutic mode routing and response
-generation, then returns only the channels it owns to avoid duplicating
-reducer-backed transcript state in the parent graph.
+node in the parent graph. It handles therapeutic response-style routing and
+response generation, then returns only the channels it owns to avoid
+duplicating reducer-backed transcript state in the parent graph.
 
 ## Runtime Context
 
@@ -69,10 +69,10 @@ The state schema lives in `agent.state`.
 | --- | --- | --- |
 | Identity | `message`, `channel`, `user_id`, `session_id`, `installed_skills` | Turn input. |
 | Conversation | `history`, `transcript`, `working_memory` | `build_initial_state`, `load_memory_node`, `finalize_turn_node`. |
-| Persistent continuity | `session_memory`, `procedural_profile`, `session_progress`, `exercise_state`, `memory_control` | Memory load, dispatcher, guided exercise, memory-control confirmation, runtime session management. |
+| Persistent continuity | `session_memory`, `procedural_profile`, `session_progress`, `exercise_state`, `memory_control` | Memory load, turn counting, guided exercise, memory-control confirmation/action state, runtime session management. |
 | Crisis | `crisis` | `crisis_gate_node`. |
 | Output | `therapeutic_approach`, `response_style`, `response_style_source`, `response_style_type`, `response_kind`, `response_text`, `should_persist_memory`, `diagnostics` | Routing and response nodes. |
-| Private | `route`, `crisis_audit`, `memory_control_action`, `grounded_lookup_query`, `grounded_lookup_status`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, memory-control routing, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
+| Private | `route`, `crisis_audit`, `grounded_lookup_query`, `grounded_lookup_status`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
 
 Reducer-backed channels:
 
@@ -233,18 +233,12 @@ The therapeutic subgraph is assembled in `agent.therapeutic.graph`.
 ```text
 START
   -> therapeutic_dispatch_node
-       -> supportive_response_node
-       -> reflective_response_node
-       -> clarifying_response_node
-       -> psychoeducation_response_node
-       -> technique_response_node
+       -> therapeutic_response_node
        -> guided_exercise_response_node
-       -> closing_response_node
   -> END
 ```
 
-`therapeutic_dispatch_node` returns `Command(goto=...)`. The mode nodes do not
-route further; each terminates the subgraph.
+`therapeutic_dispatch_node` returns `Command(goto=...)`. Non-exercise response styles share `therapeutic_response_node`; guided exercises remain separate because they own exercise-state updates. Response nodes do not route further; each terminates the subgraph.
 
 The subgraph has explicit input and output schemas. This is intentional:
 
@@ -262,9 +256,9 @@ The dispatcher uses an LLM-primary strategy:
 2. Otherwise, call the structured LLM dispatcher when available.
 3. If the LLM is unavailable or fails, use narrow regex fallback heuristics.
 
-Modes:
+Response styles:
 
-| Mode | Use when |
+| Response style | Use when |
 | --- | --- |
 | `supportive` | The user is sharing feelings, venting, greeting, or needs validation without structure. |
 | `reflective` | The user names a recurring pattern or asks why a pattern keeps happening. |
@@ -279,7 +273,7 @@ The dispatcher also selects `therapeutic_approach`, such as `cbt`, `act`,
 `interpersonal_therapy`, `pfa`, or `none`. The response nodes use that approach
 to shape prompts, but the approach is not itself a route.
 
-Wrap-up takeaway requests stay inside `closing` mode. Examples include
+Wrap-up takeaway requests stay inside the `closing` style. Examples include
 "Before we wrap up, what's the main takeaway?", "What should I remember from
 this?", or "Can you put the main thing in one sentence?" The closing node should
 give one concise synthesis and avoid reopening exploration. This is distinct
@@ -288,14 +282,14 @@ memory, or require a separate recap node.
 
 ## Guided Exercises
 
-`guided_exercise_response_node` is the only therapeutic mode that owns
+`guided_exercise_response_node` is the only therapeutic response style that owns
 multi-turn exercise continuity.
 
 It reads and writes:
 
 - `exercise_state.exercise_type`
 - `exercise_state.exercise_step`
-- `exercise_state.exercise_modality`
+- `exercise_state.exercise_therapeutic_approach`
 
 Exercise starts set all three fields. Exercise continuation advances, holds,
 rephrases, exits, or completes based on the current step and user reply.
@@ -341,7 +335,7 @@ Per turn, it:
 - Builds a fresh turn input through `build_initial_state`.
 - Invokes the compiled graph with a `WorkflowContext`.
 - Tracks the maximum crisis level for the active session.
-- Tracks dominant therapeutic modality candidates in the session buffer.
+- Tracks dominant therapeutic approach candidates in the session buffer.
 - Persists runtime-owned active-session metadata.
 
 At session end, the runtime calls helpers outside the compiled graph:

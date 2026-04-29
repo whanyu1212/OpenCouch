@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from agent.state import AgentState
-from agent.therapeutic.exercises.registry import _EXERCISE_DISPLAY_NAMES
+from agent.therapeutic.exercises.registry import get_exercise_display_name
 from agent.therapeutic.exercises.types import (
     ExerciseStep,
     ExerciseStepDecision,
@@ -217,7 +217,7 @@ def _build_step_classifier_prompt(
     """
 
     message = state.get("message", "")
-    exercise_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, exercise_type)
+    exercise_name = get_exercise_display_name(exercise_type)
     return (
         "Classify the user's latest reply to the current guided-exercise step. "
         "Return exactly one step_state:\n"

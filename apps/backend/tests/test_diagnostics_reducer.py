@@ -1,10 +1,10 @@
-"""Guard tests for the diagnostics merge reducer and extractor parallelism.
+"""Guard tests for the diagnostics merge reducer and terminal memory extraction.
 
 Phase B of the LangGraph best-practice alignment plan. Tests verify:
 
 1. ``AgentState.diagnostics`` uses a merge reducer annotation.
 2. No node function spreads the existing diagnostics dict (all 4 sites).
-3. Both extractors fan out in parallel from ``finalize_turn_node``.
+3. Terminal memory extraction is represented by one graph node.
 4. A full turn produces merged diagnostics from all nodes.
 5. The reducer handles None values defensively.
 6. LangGraph actually resolves the reducer at graph compile time.
@@ -33,6 +33,7 @@ from agent.nodes.crisis_gate import _build_crisis_delta
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.load_memory import run_load_memory_node
+from agent.nodes.memory_extraction import run_memory_extraction_node
 from agent.models import CrisisAssessment
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, _merge_dicts
@@ -237,26 +238,35 @@ def test_no_diagnostics_spreading_in_codebase() -> None:
     )
 
 
-# ── Graph topology: parallel extractors ─────────────────────────────────────
+# ── Graph topology: terminal memory extraction ──────────────────────────────
 
 
-def test_extractors_fan_out_from_finalize() -> None:
-    """Both extractors should have edges from finalize_turn_node (parallel)."""
+@pytest.mark.asyncio
+async def test_memory_extraction_node_merges_extractor_diagnostics() -> None:
+    """The wrapper node should merge semantic and procedural diagnostics."""
+
+    state = _state_with_pre_existing_diagnostics()
+    delta = await run_memory_extraction_node(state, _FakeRuntime())  # type: ignore[arg-type]
+    diag = delta.get("diagnostics", {})
+
+    _assert_no_spread(diag, "memory_extraction_node")
+    assert "extract_facts_ms" in diag
+    assert "extract_facts_reason" in diag
+    assert "extract_procedural_ms" in diag
+    assert "extract_procedural_reason" in diag
+
+
+def test_memory_extraction_node_is_terminal_after_finalize() -> None:
+    """Top-level graph should have one terminal memory extraction node."""
 
     graph = build_agent_workflow()
     graph_def = graph.get_graph()
     edge_tuples = {(e.source, e.target) for e in graph_def.edges}
 
-    assert ("finalize_turn_node", "extract_semantic_facts_node") in edge_tuples
-    assert ("finalize_turn_node", "extract_procedural_rules_node") in edge_tuples
-
-    # Serial chain edge should NOT exist.
-    assert (
-        "extract_semantic_facts_node",
-        "extract_procedural_rules_node",
-    ) not in edge_tuples, (
-        "Extractors are still chained serially. Fan them out from finalize_turn_node."
-    )
+    assert ("finalize_turn_node", "memory_extraction_node") in edge_tuples
+    assert ("memory_extraction_node", "__end__") in edge_tuples
+    assert ("finalize_turn_node", "extract_semantic_facts_node") not in edge_tuples
+    assert ("finalize_turn_node", "extract_procedural_rules_node") not in edge_tuples
 
 
 # ── End-to-end: diagnostics merge across all nodes ──────────────────────────

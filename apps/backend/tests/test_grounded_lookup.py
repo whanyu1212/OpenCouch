@@ -11,7 +11,7 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.graph import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.models import AgentInput, ModeType, ResponseCategory
+from agent.models import AgentInput, ResponseStyleType, ResponseCategory
 from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.grounded_lookup_gate import (
     _detect_grounded_lookup_action,
@@ -188,10 +188,10 @@ async def test_grounded_lookup_gate_routes_explicit_search_request() -> None:
     assert llm.structured_calls == []
     assert command.update["route"] == "grounded_lookup"
     assert (
-        command.update["grounded_lookup_query"]
+        command.update["grounded_lookup"]["query"]
         == "Can you look up affordable counselling services in Singapore?"
     )
-    assert command.update["grounded_lookup_status"] == "not_attempted"
+    assert command.update["grounded_lookup"]["status"] == "not_attempted"
 
 
 @pytest.mark.asyncio
@@ -204,8 +204,8 @@ async def test_grounded_lookup_gate_passes_ordinary_support_to_memory_load() -> 
 
     assert command.goto == "load_memory_node"
     assert llm.structured_calls == []
-    assert command.update["grounded_lookup_query"] == ""
-    assert command.update["grounded_lookup_status"] == "not_attempted"
+    assert command.update["grounded_lookup"]["query"] == ""
+    assert command.update["grounded_lookup"]["status"] == "not_attempted"
 
 
 @pytest.mark.asyncio
@@ -218,7 +218,7 @@ async def test_grounded_lookup_gate_passes_subjective_check_without_llm_call() -
 
     assert command.goto == "load_memory_node"
     assert llm.structured_calls == []
-    assert command.update["grounded_lookup_query"] == ""
+    assert command.update["grounded_lookup"]["query"] == ""
 
 
 @pytest.mark.asyncio
@@ -236,7 +236,8 @@ async def test_grounded_lookup_gate_routes_ambiguous_factual_request_with_llm() 
     assert len(llm.structured_calls) == 1
     assert command.update["route"] == "grounded_lookup"
     assert (
-        command.update["grounded_lookup_query"] == "wearable evidence base for anxiety"
+        command.update["grounded_lookup"]["query"]
+        == "wearable evidence base for anxiety"
     )
     assert (
         command.update["diagnostics"]["grounded_lookup_classifier_path"]
@@ -258,7 +259,7 @@ async def test_grounded_lookup_gate_passes_ambiguous_low_confidence() -> None:
 
     assert command.goto == "load_memory_node"
     assert len(llm.structured_calls) == 1
-    assert command.update["grounded_lookup_query"] == ""
+    assert command.update["grounded_lookup"]["query"] == ""
 
 
 @pytest.mark.asyncio
@@ -269,7 +270,7 @@ async def test_grounded_lookup_gate_passes_ambiguous_without_llm() -> None:
     )
 
     assert command.goto == "load_memory_node"
-    assert command.update["grounded_lookup_query"] == ""
+    assert command.update["grounded_lookup"]["query"] == ""
     assert (
         command.update["diagnostics"]["grounded_lookup_classifier_path"]
         == "deterministic"
@@ -301,15 +302,15 @@ async def test_answer_grounded_lookup_uses_search_grounding() -> None:
 async def test_grounded_answer_node_returns_operational_response() -> None:
     llm = _FakeSearchLLM(["Official answer.\n\nSources:\n- Official source"])
     state = _state("Can you look up the current rule?")
-    state["grounded_lookup_query"] = "Can you look up the current rule?"
+    state["grounded_lookup"] = {"query": "Can you look up the current rule?"}
 
     delta = await run_grounded_answer_node(state, cast(Any, _Runtime(llm)))
 
     assert delta["route"] == "grounded_lookup"
-    assert delta["grounded_lookup_status"] == "answered"
+    assert delta["grounded_lookup"]["status"] == "answered"
     assert delta["response_style"] == "grounded_lookup"
     assert delta["response_style_source"] == "grounded_lookup_gate"
-    assert delta["response_style_type"] == ModeType.OPERATIONAL
+    assert delta["response_style_type"] == ResponseStyleType.OPERATIONAL
     assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
     assert delta["response_text"] == "Official answer.\n\nSources:\n- Official source"
 
@@ -317,11 +318,11 @@ async def test_grounded_answer_node_returns_operational_response() -> None:
 @pytest.mark.asyncio
 async def test_grounded_answer_node_does_not_guess_without_llm() -> None:
     state = _state("Can you look up the current rule?")
-    state["grounded_lookup_query"] = "Can you look up the current rule?"
+    state["grounded_lookup"] = {"query": "Can you look up the current rule?"}
 
     delta = await run_grounded_answer_node(state, cast(Any, _Runtime(None)))
 
-    assert delta["grounded_lookup_status"] == "search_unavailable"
+    assert delta["grounded_lookup"]["status"] == "search_unavailable"
     assert "don't want to guess" in delta["response_text"]
 
 

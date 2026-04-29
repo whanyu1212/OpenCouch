@@ -81,7 +81,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       <strong>Adaptive response</strong>
     </div>
-    <p>Seven response styles — supportive, reflective, clarifying, psychoeducation, technique, guided exercise, closing — paired with a therapeutic approach (CBT, ACT, DBT skills, MI, IPT, grief, PFA) by an LLM-primary dispatcher per turn. A guided exercise pins its starting approach in <code>exercise_state.exercise_modality</code> so side-turns do not drift.</p>
+    <p>Seven response styles — supportive, reflective, clarifying, psychoeducation, technique, guided exercise, closing — paired with a therapeutic approach (CBT, ACT, DBT skills, MI, IPT, grief, PFA) by an LLM-primary dispatcher per turn. A guided exercise pins its starting approach in <code>exercise_state.exercise_therapeutic_approach</code> so guidance resumes without approach drift after side-turns.</p>
   </div>
 
   <div className="doc-card">

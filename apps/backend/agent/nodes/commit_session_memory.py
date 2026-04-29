@@ -35,18 +35,18 @@ from agent.memory.reconciliation import (
     filter_semantic_collision_candidates,
     plan_semantic_write_llm_primary,
 )
-from agent.memory.store import MemoryStore, StoreRecord
-from agent.memory.text_tokens import tokenize_meaningful
-from agent.memory.write_policy import (
-    should_commit_implicit_procedural_preference,
-    should_commit_pattern,
-)
-from agent.nodes.extract_facts import (
+from agent.memory.service import (
     _bump_last_referenced_at,
     _fetch_existing_user_records,
     _mark_fact_superseded,
     _memory_write_to_semantic_fact,
     _write_new_fact,
+)
+from agent.memory.store import MemoryStore, StoreRecord
+from agent.memory.text_tokens import tokenize_meaningful
+from agent.memory.write_policy import (
+    should_commit_implicit_procedural_preference,
+    should_commit_pattern,
 )
 from agent.state import AgentState, resolve_owner_id
 

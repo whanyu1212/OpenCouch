@@ -513,7 +513,7 @@ async def run_memory_control_gate_node(
             return Command(
                 update={
                     "route": "memory_control",
-                    "memory_control_action": {"type": "confirm_pending"},
+                    "memory_control": {"action": {"type": "confirm_pending"}},
                     "diagnostics": {
                         "memory_control_gate_ms": round(
                             (time.monotonic() - start) * 1000, 2
@@ -526,7 +526,7 @@ async def run_memory_control_gate_node(
             return Command(
                 update={
                     "route": "memory_control",
-                    "memory_control_action": {"type": "cancel_pending"},
+                    "memory_control": {"action": {"type": "cancel_pending"}},
                     "diagnostics": {
                         "memory_control_gate_ms": round(
                             (time.monotonic() - start) * 1000, 2
@@ -537,8 +537,7 @@ async def run_memory_control_gate_node(
             )
         return Command(
             update={
-                "memory_control": {"pending_action": None},
-                "memory_control_action": {},
+                "memory_control": {"pending_action": None, "action": {}},
                 "diagnostics": {
                     "memory_control_gate_ms": round(
                         (time.monotonic() - start) * 1000, 2
@@ -565,7 +564,7 @@ async def run_memory_control_gate_node(
     if action is None:
         return Command(
             update={
-                "memory_control_action": {},
+                "memory_control": {"action": {}},
                 "diagnostics": diagnostics,
             },
             goto="grounded_lookup_gate_node",
@@ -574,7 +573,7 @@ async def run_memory_control_gate_node(
     return Command(
         update={
             "route": "memory_control",
-            "memory_control_action": action,
+            "memory_control": {"action": action},
             "diagnostics": diagnostics,
         },
         goto="memory_control_node",

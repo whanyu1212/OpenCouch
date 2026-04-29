@@ -11,7 +11,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.models import CrisisAssessment, ModeType, ResponseCategory
+from agent.models import CrisisAssessment, ResponseStyleType, ResponseCategory
 from agent.prompts import (
     build_crisis_classifier_prompt,
     build_crisis_classifier_system_prompt,
@@ -127,7 +127,7 @@ def _build_crisis_delta(
     if route == "crisis":
         delta["response_style"] = "safety_check"
         delta["response_style_source"] = "crisis_gate"
-        delta["response_style_type"] = ModeType.CRISIS
+        delta["response_style_type"] = ResponseStyleType.CRISIS
         delta["response_kind"] = ResponseCategory.CRISIS
     return delta
 

@@ -18,7 +18,7 @@ Use the fewest instructions needed. If the user resists, becomes playful, or nee
 
 ## Exercise subtypes
 
-The system infers one of four subtypes based on the user's language, modality, and session context.
+The system infers one of four subtypes based on the user's language, therapeutic approach, and session context.
 Each subtype has its own turn goal and response shape.
 
 ### Grounding
@@ -108,7 +108,7 @@ Why it's bad: labels the distortion, dumps the full thought record structure, an
 
 ### Acceptance and defusion
 
-Use when the user needs to step back from a thought or feeling rather than arguing with it. Often paired with the ACT modality.
+Use when the user needs to step back from a thought or feeling rather than arguing with it. Often paired with the ACT approach.
 
 Turn goal: help the user notice the thought or feeling without fusing with it. End with one small values-aligned step.
 
@@ -355,7 +355,7 @@ Why it's bad: labels the distortion, names the technique, uses clinical framing,
 
 ## Step transitions and exit conditions
 
-Guided exercises span multiple turns. The mode needs to track which step the user is on and make thoughtful decisions about when to advance, hold, or exit. Patience is a feature — over-rescuing (pulling the user out of the exercise at the first sign of friction) is the single biggest failure mode.
+Guided exercises span multiple turns. The response style needs to track which step the user is on and make thoughtful decisions about when to advance, hold, or exit. Patience is a feature — over-rescuing (pulling the user out of the exercise at the first sign of friction) is the single biggest failure mode.
 
 ### Detecting step state
 
@@ -396,7 +396,7 @@ If the user signals they want to stop the exercise ("I don't want to do this", "
 - do not try to redirect back to the exercise
 - do not argue that the exercise would help if they just kept going
 
-The next dispatcher turn will route to whatever mode fits the user's current state. This mode's job is just to exit gracefully.
+The next dispatcher turn will route to whatever response style fits the user's current state. This response style's job is just to exit gracefully.
 
 ### When an exercise naturally completes
 

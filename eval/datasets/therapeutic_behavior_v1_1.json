@@ -223,7 +223,7 @@
     "assertions": {
       "max_sentences": 5
     },
-    "notes": "Explicit wind-down should route to closing mode."
+    "notes": "Explicit wind-down should route to closing style."
   },
   {
     "id": "llm_supportive_memory_reference_discipline_recall_off",

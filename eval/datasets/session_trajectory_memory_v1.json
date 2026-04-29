@@ -411,7 +411,7 @@
       {
         "user": "What do you remember about me?",
         "expect": {
-          "allowed_modes": ["memory_control"],
+          "allowed_response_styles": ["memory_control"],
           "response_contains_any": ["Presentations", "presentations", "shorter responses"],
           "semantic_fact_count_delta": 0,
           "procedural_rule_count_delta": 0,
@@ -422,7 +422,7 @@
       {
         "user": "Don't bring up past sessions unless I ask.",
         "expect": {
-          "allowed_modes": ["memory_control"],
+          "allowed_response_styles": ["memory_control"],
           "response_contains_any": ["proactive recall off", "turned proactive recall off"],
           "proactive_recall_enabled": false,
           "semantic_fact_count_delta": 0,
@@ -433,7 +433,7 @@
       }
     ],
     "final_expectations": {
-      "allowed_modes": ["memory_control"],
+      "allowed_response_styles": ["memory_control"],
       "semantic_facts_total": 1,
       "procedural_rules_total": 1,
       "memory_write_expected": false
@@ -458,7 +458,7 @@
       {
         "user": "Forget what you remember about presentations.",
         "expect": {
-          "allowed_modes": ["memory_control"],
+          "allowed_response_styles": ["memory_control"],
           "response_contains_any": ["Do you want me to delete it", "delete it"],
           "semantic_fact_count_delta": 0,
           "procedural_rule_count_delta": 0,
@@ -468,7 +468,7 @@
       {
         "user": "Yes, delete it.",
         "expect": {
-          "allowed_modes": ["memory_control"],
+          "allowed_response_styles": ["memory_control"],
           "response_contains_any": ["Deleted that saved fact", "Deleted"],
           "semantic_fact_count_delta": 0,
           "procedural_rule_count_delta": 0,
@@ -477,7 +477,7 @@
       }
     ],
     "final_expectations": {
-      "allowed_modes": ["memory_control"],
+      "allowed_response_styles": ["memory_control"],
       "semantic_facts_total": 0,
       "procedural_rules_total": 0,
       "memory_write_expected": false

@@ -55,13 +55,15 @@ __all__ = [
     "EXERCISE_THOUGHT_RECORD",
     "EXERCISE_TINY_ACTION",
     "EXERCISE_VALUES_COMPASS",
-    "_DEFAULT_EXERCISE_OPTIONS",
-    "_EXERCISE_DEFINITIONS_BY_ID",
-    "_EXERCISE_DISPLAY_NAMES",
-    "_EXERCISE_REGISTRY",
-    "_EXERCISE_SELECTION_USE_CASES",
-    "_EXERCISE_SELECTORS",
-    "_VOICE_EXERCISE_IDS",
+    "fallback_suggestion_options",
+    "get_exercise_definition",
+    "get_exercise_display_name",
+    "get_exercise_steps",
+    "is_valid_exercise_type",
+    "iter_exercise_definitions",
+    "iter_exercise_selection_aliases",
+    "iter_exercise_selectors",
+    "voice_exercise_ids",
 ]
 
 
@@ -79,12 +81,6 @@ ALL_EXERCISE_DEFINITIONS: tuple[ExerciseDefinition, ...] = (
     VALUES_COMPASS_DEFINITION,
     GRATITUDE_DEFINITION,
     CONTINUUM_DEFINITION,
-)
-
-_DEFAULT_EXERCISE_OPTIONS: tuple[str, ...] = (
-    EXERCISE_5_4_3_2_1,
-    EXERCISE_BOX_BREATHING,
-    EXERCISE_SELF_COMPASSION,
 )
 
 
@@ -111,34 +107,35 @@ def _validate_catalog(definitions: tuple[ExerciseDefinition, ...]) -> None:
             raise ValueError(f"Exercise {definition.id} has empty use case")
         if not definition.steps:
             raise ValueError(f"Exercise {definition.id} has no steps")
+        if not definition.selection_aliases:
+            raise ValueError(f"Exercise {definition.id} has no selection aliases")
+        if (
+            definition.fallback_suggestion_rank is not None
+            and definition.fallback_suggestion_rank < 0
+        ):
+            raise ValueError(
+                f"Exercise {definition.id} has a negative fallback suggestion rank"
+            )
+        for alias in definition.selection_aliases:
+            if not alias.strip():
+                raise ValueError(f"Exercise {definition.id} has an empty alias")
         for step in definition.steps:
             if not step.prompt_fallback:
                 raise ValueError(f"Exercise {definition.id} has an empty step prompt")
 
-    missing_defaults = set(_DEFAULT_EXERCISE_OPTIONS).difference(ids)
-    if missing_defaults:
-        raise ValueError(
-            f"Default exercise options are not registered: {missing_defaults}"
-        )
+    fallback_options = [
+        definition.id
+        for definition in definitions
+        if definition.fallback_suggestion_rank is not None
+    ]
+    if len(fallback_options) < 2:
+        raise ValueError("At least two fallback suggestion exercises are required")
 
 
 _validate_catalog(ALL_EXERCISE_DEFINITIONS)
 
 _EXERCISE_DEFINITIONS_BY_ID: dict[str, ExerciseDefinition] = {
     definition.id: definition for definition in ALL_EXERCISE_DEFINITIONS
-}
-
-_EXERCISE_REGISTRY: dict[str, tuple[ExerciseStep, ...]] = {
-    definition.id: definition.steps for definition in ALL_EXERCISE_DEFINITIONS
-}
-
-_EXERCISE_DISPLAY_NAMES: dict[str, str] = {
-    definition.id: definition.display_name for definition in ALL_EXERCISE_DEFINITIONS
-}
-
-_EXERCISE_SELECTION_USE_CASES: dict[str, str] = {
-    definition.id: definition.selection_use_case
-    for definition in ALL_EXERCISE_DEFINITIONS
 }
 
 _EXERCISE_SELECTORS: tuple[tuple[tuple[str, ...], str], ...] = tuple(
@@ -158,3 +155,138 @@ _VOICE_EXERCISE_IDS: tuple[str, ...] = tuple(
     for definition in ALL_EXERCISE_DEFINITIONS
     if definition.voice_supported
 )
+
+_FALLBACK_SUGGESTION_OPTIONS: tuple[str, ...] = tuple(
+    definition.id
+    for definition in sorted(
+        (
+            definition
+            for definition in ALL_EXERCISE_DEFINITIONS
+            if definition.fallback_suggestion_rank is not None
+        ),
+        key=lambda definition: definition.fallback_suggestion_rank or 0,
+    )
+)
+
+
+def iter_exercise_definitions() -> tuple[ExerciseDefinition, ...]:
+    """Return all registered exercise definitions in catalog order.
+
+    Returns:
+        Tuple of registered exercise definitions.
+    """
+
+    return ALL_EXERCISE_DEFINITIONS
+
+
+def get_exercise_definition(exercise_type: str) -> ExerciseDefinition | None:
+    """Return the definition for an exercise type.
+
+    Args:
+        exercise_type: Exercise identifier to look up.
+
+    Returns:
+        Matching exercise definition, or ``None`` when unregistered.
+    """
+
+    return _EXERCISE_DEFINITIONS_BY_ID.get(exercise_type)
+
+
+def get_exercise_steps(exercise_type: str) -> tuple[ExerciseStep, ...] | None:
+    """Return the ordered steps for an exercise type.
+
+    Args:
+        exercise_type: Exercise identifier to look up.
+
+    Returns:
+        Tuple of exercise steps, or ``None`` when unregistered.
+    """
+
+    definition = get_exercise_definition(exercise_type)
+    if definition is None:
+        return None
+    return definition.steps
+
+
+def get_exercise_display_name(
+    exercise_type: str,
+    *,
+    default: str | None = None,
+) -> str:
+    """Return the user-facing display name for an exercise type.
+
+    Args:
+        exercise_type: Exercise identifier to look up.
+        default: Fallback value for unregistered exercise identifiers. When
+            omitted, the identifier itself is returned.
+
+    Returns:
+        Exercise display name or fallback value.
+    """
+
+    definition = get_exercise_definition(exercise_type)
+    if definition is None:
+        return exercise_type if default is None else default
+    return definition.display_name
+
+
+def is_valid_exercise_type(exercise_type: str | None) -> bool:
+    """Return whether an exercise identifier is registered.
+
+    Args:
+        exercise_type: Exercise identifier to check.
+
+    Returns:
+        ``True`` when the identifier exists in the catalog.
+    """
+
+    return exercise_type in _EXERCISE_DEFINITIONS_BY_ID
+
+
+def fallback_suggestion_options(limit: int = 3) -> tuple[str, ...]:
+    """Return deterministic fallback options for broad exercise requests.
+
+    Args:
+        limit: Maximum number of fallback options to return.
+
+    Returns:
+        Tuple of fallback exercise identifiers ordered by catalog rank.
+    """
+
+    if limit <= 0:
+        return ()
+    return _FALLBACK_SUGGESTION_OPTIONS[:limit]
+
+
+def iter_exercise_selectors() -> tuple[tuple[tuple[str, ...], str], ...]:
+    """Return deterministic exercise selectors in priority order.
+
+    Returns:
+        Tuple of ``(keyword_patterns, exercise_type)`` selector groups.
+    """
+
+    return _EXERCISE_SELECTORS
+
+
+def iter_exercise_selection_aliases() -> tuple[tuple[str, str], ...]:
+    """Return exercise selection aliases in catalog order.
+
+    Returns:
+        Tuple of ``(alias, exercise_type)`` pairs.
+    """
+
+    return tuple(
+        (alias, definition.id)
+        for definition in ALL_EXERCISE_DEFINITIONS
+        for alias in definition.selection_aliases
+    )
+
+
+def voice_exercise_ids() -> tuple[str, ...]:
+    """Return exercise identifiers marked as suitable for voice delivery.
+
+    Returns:
+        Tuple of voice-supported exercise identifiers.
+    """
+
+    return _VOICE_EXERCISE_IDS

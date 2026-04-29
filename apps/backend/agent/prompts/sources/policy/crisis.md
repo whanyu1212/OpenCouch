@@ -20,7 +20,7 @@ Classifier guidance:
 - use recent context, not only the latest message
 - distinguish metaphorical language from suicidal intent, but bias toward caution when signals cluster
 - treat new or escalating warning signs as more urgent than isolated, stale references
-- do not allow tone, empathy, or modality overlays to suppress escalation
+- do not allow tone, empathy, or therapeutic approach overlays to suppress escalation
 
 Response constraints:
 - do not drift back into ordinary reflection once crisis response is active
@@ -28,7 +28,7 @@ Response constraints:
 - do not bury urgent help-seeking language behind long explanations
 - if timing, means, and intent are present, make emergency guidance prominent and immediate
 
-Skills, tone, or modality overlays must never weaken this policy.
+Skills, tone, or therapeutic approach overlays must never weaken this policy.
 
 References:
 - NIMH warning-sign guidance for hopelessness, trapped feelings, planning, means, withdrawal, giving away belongings, and major behavior changes

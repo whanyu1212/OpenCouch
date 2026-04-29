@@ -1,4 +1,4 @@
-"""System prompt builders for therapeutic response modes.
+"""System prompt builders for therapeutic response styles.
 
 This module remains the public compatibility surface. Prompt source selection,
 state-context formatting, instruction text, and builders live under
@@ -36,9 +36,9 @@ from agent.therapeutic.prompting.instructions import (
     _TECHNIQUE_INSTRUCTIONS,
 )
 from agent.therapeutic.prompting.sources import (
-    _MODALITY_FILES,
-    _MODE_BASE_KNOWLEDGE,
-    _knowledge_for_mode,
+    _THERAPEUTIC_APPROACH_FILES,
+    _RESPONSE_STYLE_BASE_KNOWLEDGE,
+    _knowledge_for_response_style,
 )
 
 __all__ = [
@@ -46,8 +46,8 @@ __all__ = [
     "_CLOSING_INSTRUCTIONS",
     "_CONTINUITY_FILE",
     "_GUIDED_EXERCISE_INSTRUCTIONS",
-    "_MODALITY_FILES",
-    "_MODE_BASE_KNOWLEDGE",
+    "_THERAPEUTIC_APPROACH_FILES",
+    "_RESPONSE_STYLE_BASE_KNOWLEDGE",
     "_PSYCHOEDUCATION_INSTRUCTIONS",
     "_REFLECTIVE_INSTRUCTIONS",
     "_SUPPORTIVE_INSTRUCTIONS",
@@ -57,7 +57,7 @@ __all__ = [
     "_format_recall_toggle_constraint",
     "_format_working_memory",
     "_has_episodic_context",
-    "_knowledge_for_mode",
+    "_knowledge_for_response_style",
     "_read_approach",
     "build_clarifying_system_prompt",
     "build_closing_system_prompt",

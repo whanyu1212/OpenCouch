@@ -24,12 +24,14 @@ LLM.
 ### Approach continuity
 
 The therapeutic approach picked at exercise start (e.g., `act` for a
-values-clarification exercise) is pinned on `exercise_state.exercise_modality`.
-If the user pauses mid-exercise to ask a clarifying or
-psychoeducation question, the dispatcher preserves the pinned
-approach instead of letting the LLM pick a fresh one. Without this
-pin, mid-exercise side-turns produced approach drift where a
-grounding exercise could silently re-route through `cbt` or
+values-clarification exercise) is pinned on
+`exercise_state.exercise_therapeutic_approach`.
+If the user pauses mid-exercise to ask a clarifying question, or when
+the exercise guidance resumes, the dispatcher preserves the pinned
+approach instead of letting the LLM pick a fresh one. Psychoeducation
+side-turns preserve the active exercise state, but may use a fresh
+top-level approach for the explanation. Without the exercise pin,
+resuming guidance after a side-turn could silently drift into `cbt` or
 `motivational_interviewing` framing.
 
 ### Post-exercise check-in
@@ -69,5 +71,5 @@ Click any exercise to see its steps and trigger keywords. Use the filter tabs to
 
 
 :::tip Adding a new exercise
-Define an `ExerciseDefinition` under `agent/therapeutic/exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_modes/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
+Define an `ExerciseDefinition` under `agent/therapeutic/exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
 :::

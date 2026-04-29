@@ -9,24 +9,24 @@ from agent.working_memory import format_working_memory_entries
 
 _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
     (
-        "mode_guidance",
+        "response_style_guidance",
         (
             "You are the dispatcher for a mental health support conversation. "
-            "Your only job is to pick the single best therapeutic response mode "
+            "Your only job is to pick the single best therapeutic response style "
             "for the next turn, based on what the user just said and the recent "
             "conversation history.\n\n"
-            "The modes are:\n"
+            "The response styles are:\n"
             "- supportive: default warm validation. Use when the user is sharing "
             "feelings, venting, or describing a situation without asking a "
             "pattern question. Also use for session-opening greetings and "
             "general capability questions like 'Hi, what can you do for me?' — "
             "these are warm-up signals from someone reaching out for help, not "
             "literal requests for tool documentation. This is the most common "
-            "mode and the right default when in doubt.\n"
+            "response style and the right default when in doubt.\n"
             "- reflective: pattern-naming and gentle probing. Use when the user "
             "is describing a recurring pattern, asking 'why does this keep "
             "happening?' type questions, or surfacing a theme. Only pick this "
-            "mode when the user has ALREADY shown evidence of a pattern. Never "
+            "style when the user has ALREADY shown evidence of a pattern. Never "
             "introduce a pattern the user hasn't described.\n"
             "- psychoeducation: short, normalizing framing. Use when the user "
             "DESCRIBES a specific reaction (a bodily sensation, an emotional "
@@ -116,7 +116,7 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
             "continues, so route to supportive. Use closing only when the user "
             "is clearly leaving, stopping, pausing, or wrapping up. "
             "False-positive closings ('oh, I thought you were done') are "
-            "user-trust-damaging in a way that other false-positive mode "
+            "user-trust-damaging in a way that other false-positive style "
             "choices aren't, so err toward supportive when uncertain.\n"
             "- guided_exercise: start a structured exercise. Use when the "
             "user explicitly asks for an exercise or technique — grounding, "
@@ -182,7 +182,7 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
             "'yes please', 'sure', 'let's try it'). An acknowledgment-plus-"
             "question like 'yes, that makes sense, but how do I stop doing "
             "this?' is NOT an acceptance. If neither holds — for example, the "
-            "prior modality is dbt_skills and the user asks 'how do I stop "
+            "prior therapeutic_approach is dbt_skills and the user asks 'how do I stop "
             "doing this' — route to psychoeducation, not guided_exercise.\n\n"
         ),
     ),
@@ -238,7 +238,7 @@ def build_therapeutic_dispatch_system_prompt() -> str:
     """Build the system prompt for the LLM dispatcher.
 
     Returns:
-        The full system prompt string for mode and modality classification.
+        The full system prompt string for style and approach classification.
     """
 
     return "".join(text for _, text in _SYSTEM_PROMPT_SECTIONS)
@@ -284,7 +284,7 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
             f"(step {exercise_state.get('exercise_step', '?')}). "
             "If the user is responding to the exercise, pick guided_exercise. "
             "If the user is exiting, wrapping up, or changing topic, pick the "
-            "appropriate non-exercise mode.\n"
+            "appropriate non-exercise response style.\n"
         )
     else:
         exercise_block = ""
@@ -294,5 +294,5 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
         f"{memory_block}\n"
         f"{exercise_block}\n"
         f"Current user message:\nuser: {state['message']}\n\n"
-        "Which therapeutic mode should handle this turn?"
+        "Which therapeutic response_style should handle this turn?"
     )

@@ -154,7 +154,7 @@ async def test_memory_control_gate_routes_only_explicit_memory_commands() -> Non
     assert explicit.goto == "memory_control_node"
     explicit_update = _command_update(explicit)
     assert explicit_update["route"] == "memory_control"
-    assert explicit_update["memory_control_action"] == {"type": "list"}
+    assert explicit_update["memory_control"]["action"] == {"type": "list"}
     assert llm.structured_calls == []
 
 
@@ -178,7 +178,7 @@ async def test_memory_control_gate_routes_pending_confirmation() -> None:
 
     assert command.goto == "memory_control_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {"type": "confirm_pending"}
+    assert update["memory_control"]["action"] == {"type": "confirm_pending"}
 
 
 @pytest.mark.asyncio
@@ -199,7 +199,7 @@ async def test_memory_control_gate_routes_unless_asked_recall_request() -> None:
 
     assert command.goto == "memory_control_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {
+    assert update["memory_control"]["action"] == {
         "type": "set_recall",
         "enabled": False,
     }
@@ -224,7 +224,7 @@ async def test_memory_control_gate_routes_do_not_remember_topic() -> None:
 
     assert command.goto == "memory_control_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {
+    assert update["memory_control"]["action"] == {
         "type": "forget_by_query",
         "query": "the thing I said about my ex",
     }
@@ -250,7 +250,7 @@ async def test_memory_control_gate_llm_routes_ambiguous_preference() -> None:
 
     assert command.goto == "memory_control_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {
+    assert update["memory_control"]["action"] == {
         "type": "save_preference",
         "rule_text": "You prefer shorter replies when I am panicking.",
     }
@@ -274,7 +274,7 @@ async def test_memory_control_gate_llm_rejects_low_confidence_decision() -> None
 
     assert command.goto == "grounded_lookup_gate_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {}
+    assert update["memory_control"]["action"] == {}
     assert update["diagnostics"]["memory_control_classifier_path"] == "llm_primary"
 
 
@@ -296,7 +296,7 @@ async def test_memory_control_gate_llm_rejects_vague_delete_target() -> None:
 
     assert command.goto == "grounded_lookup_gate_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {}
+    assert update["memory_control"]["action"] == {}
 
 
 @pytest.mark.asyncio
@@ -310,7 +310,7 @@ async def test_memory_control_gate_llm_failure_falls_back_to_normal_route() -> N
 
     assert command.goto == "grounded_lookup_gate_node"
     update = _command_update(command)
-    assert update["memory_control_action"] == {}
+    assert update["memory_control"]["action"] == {}
     assert update["diagnostics"]["memory_control_classifier_path"] == "deterministic"
     assert update["diagnostics"]["memory_control_llm_failure_occurred"] is True
 
@@ -320,7 +320,7 @@ async def test_memory_control_node_lists_saved_memory() -> None:
     store = OpenCouchMemoryStore()
     await _seed_memory(store)
     state = _state("What do you remember about me?")
-    state["memory_control_action"] = {"type": "list"}
+    state["memory_control"]["action"] = {"type": "list"}
 
     delta = await run_memory_control_node(state, cast(Any, _Runtime(store=store)))
 
@@ -334,7 +334,7 @@ async def test_memory_control_node_lists_saved_memory() -> None:
 async def test_memory_control_node_updates_proactive_recall() -> None:
     store = OpenCouchMemoryStore()
     state = _state("Don't bring up past sessions unless I ask.")
-    state["memory_control_action"] = {"type": "set_recall", "enabled": False}
+    state["memory_control"]["action"] = {"type": "set_recall", "enabled": False}
 
     delta = await run_memory_control_node(state, cast(Any, _Runtime(store=store)))
     profile = await aget_procedural_profile(store, user_id="user-1")
@@ -352,7 +352,7 @@ async def test_memory_control_delete_by_query_requires_confirmation_then_deletes
     await _seed_memory(store)
 
     first_state = _state("Forget what you remember about presentations.")
-    first_state["memory_control_action"] = {
+    first_state["memory_control"]["action"] = {
         "type": "forget_by_query",
         "query": "presentations",
     }
@@ -368,7 +368,7 @@ async def test_memory_control_delete_by_query_requires_confirmation_then_deletes
 
     confirm_state = _state("yes, delete it")
     confirm_state["memory_control"] = first_delta["memory_control"]
-    confirm_state["memory_control_action"] = {"type": "confirm_pending"}
+    confirm_state["memory_control"]["action"] = {"type": "confirm_pending"}
     confirm_delta = await run_memory_control_node(
         confirm_state,
         cast(Any, _Runtime(store=store)),
@@ -386,7 +386,7 @@ async def test_memory_control_delete_by_query_requires_confirmation_then_deletes
 async def test_memory_control_node_saves_explicit_preference_rule() -> None:
     store = OpenCouchMemoryStore()
     state = _state("Remember that I prefer very short replies when I'm panicking.")
-    state["memory_control_action"] = {
+    state["memory_control"]["action"] = {
         "type": "save_preference",
         "rule_text": "You prefer very short replies when I'm panicking.",
     }

@@ -339,7 +339,7 @@ Long CBT sessions risk becoming problem-saturated — an extended focus on what'
 
 ### When to pause CBT structure
 
-CBT is a structured modality. Sometimes structure is exactly wrong. Pause and hold space when:
+CBT is a structured therapeutic approach. Sometimes structure is exactly wrong. Pause and hold space when:
 
 - The user is flooded: crying, activated, can't think clearly, body overwhelmed. Cognitive work requires a regulated nervous system. If they're flooded, ground first, think later.
 - The user is circular: repeating the same point without moving forward. This usually means the cognitive approach isn't reaching the part that's stuck. Switch to reflecting the feeling, not examining the thought.
@@ -372,7 +372,7 @@ Signs the CBT frame is not working for the user right now:
 Response to rupture — do NOT press harder on the structure:
 - Acknowledge: "It sounds like this approach isn't quite landing right now."
 - Ask what would help: "Would it be more useful to just talk through it, or is there something else on your mind?"
-- Adapt: do the same work conversationally without the structure, or switch to support mode entirely. The thought record is a tool, not the therapy. If the tool isn't working, change the tool, not the user.
+- Adapt: do the same work conversationally without the structure, or switch to supportive style entirely. The thought record is a tool, not the therapy. If the tool isn't working, change the tool, not the user.
 
 ### Switching out of CBT mid-session
 
@@ -395,7 +395,7 @@ When a CBT conversation completes, these are worth tracking for next time:
 - **The action step** — so you can ask "did you get a chance to try X?"
 - **The outcome of any behavioral experiment** — if the user reports back, integrate it
 - **Where belief strength shifted** — if they went from 90% to 60%, that's meaningful data
-- **Whether the session felt useful** — if CBT felt forced or flat, consider a different modality next time
+- **Whether the session felt useful** — if CBT felt forced or flat, consider a different therapeutic approach next time
 
 On the next session:
 - If there was an action step: check in briefly ("Last time you mentioned trying X — how did that go?")

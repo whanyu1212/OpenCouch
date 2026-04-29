@@ -79,31 +79,31 @@ class SessionMemoryBuffer(BaseModel):
     semantic_candidates: list[SemanticCandidate] = Field(default_factory=list)
     procedural_candidates: list[ProceduralCandidate] = Field(default_factory=list)
 
-    # Per-turn modality accumulator. The runtime increments the count for
-    # the dispatched modality after each turn. At session end, the most
-    # frequent modality is passed to the summarizer as a hint so it can
-    # extract modality-specific structured context. Entries with key
-    # "none" or absent modality are ignored when computing the dominant.
+    # Per-turn therapeutic-approach accumulator. The runtime increments the
+    # count for the dispatched approach after each turn. At session end, the
+    # dominant approach is passed to the summarizer as a hint so it can extract
+    # approach-specific structured context. Entries with key "none" or absent
+    # approach are ignored when computing the dominant.
     approach_counts: dict[str, int] = Field(default_factory=dict)
 
-    def record_approach(self, modality: str | None) -> None:
-        """Record one occurrence of a dispatched modality.
+    def record_approach(self, approach: str | None) -> None:
+        """Record one occurrence of a dispatched therapeutic approach.
 
         Args:
-            modality (str | None): Modality used for the completed turn.
+            approach (str | None): Approach used for the completed turn.
 
         Returns:
             None: Updates ``approach_counts`` in place.
         """
 
-        if modality and modality != "none":
-            self.approach_counts[modality] = self.approach_counts.get(modality, 0) + 1
+        if approach and approach != "none":
+            self.approach_counts[approach] = self.approach_counts.get(approach, 0) + 1
 
     def dominant_approach(self) -> str | None:
-        """Return the most frequent recorded modality.
+        """Return the most frequent recorded therapeutic approach.
 
         Returns:
-            str | None: Most frequent non-``"none"`` modality, or ``None``.
+            str | None: Most frequent non-``"none"`` approach, or ``None``.
         """
 
         if not self.approach_counts:

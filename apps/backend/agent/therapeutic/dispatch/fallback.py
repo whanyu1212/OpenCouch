@@ -13,16 +13,16 @@ from agent.therapeutic.dispatch.regex_catalog import (
 )
 
 
-def pick_therapeutic_mode(
+def pick_therapeutic_response_style(
     message: str,
 ) -> Literal["supportive", "reflective", "clarifying"]:
-    """Pick a fallback therapeutic mode from regex heuristics.
+    """Pick a fallback therapeutic response style from regex heuristics.
 
     Args:
         message: The current user message.
 
     Returns:
-        The fallback mode name for regex-only dispatch.
+        The fallback response-style name for regex-only dispatch.
     """
 
     lowered = message.lower()

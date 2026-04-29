@@ -28,7 +28,7 @@ const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }
   { key: "crisis", label: "Crisis", desc: "Safety assessment: level, confidence, flags", icon: "⚑" },
   { key: "session_memory", label: "Session Memory", desc: "Summary, concerns, loops, goal", icon: "◉" },
   { key: "procedural_profile", label: "Procedural Profile", desc: "Style rules and recall toggle", icon: "☷" },
-  { key: "session_progress", label: "Session Progress", desc: "Intent, stage, turn count", icon: "▸" },
+  { key: "session_progress", label: "Session Progress", desc: "Turn count", icon: "▸" },
   { key: "exercise_state", label: "Exercise State", desc: "Guided exercise continuity", icon: "◎" },
   { key: "memory_control", label: "Memory Control", desc: "Pending memory action", icon: "⌁" },
   { key: "grounded_lookup_status", label: "Grounded Lookup", desc: "Factual lookup status", icon: "⌕" },
@@ -421,9 +421,9 @@ function getSummary(key: string, value: unknown): string {
     case "procedural_profile":
       return `rules=${Array.isArray(obj.procedural_rules) ? obj.procedural_rules.length : 0} recall=${String(obj.proactive_recall_enabled ?? false)}`;
     case "session_progress":
-      return `stage=${String(obj.stage ?? "—")} intent=${String(obj.intent ?? "—")} turn=${String(obj.turn_count ?? "—")}`;
+      return `turn=${String(obj.turn_count ?? "—")}`;
     case "exercise_state":
-      return `type=${String(obj.exercise_type ?? "none")} step=${String(obj.exercise_step ?? "—")} approach=${String(obj.exercise_modality ?? "—")}`;
+      return `type=${String(obj.exercise_type ?? "none")} step=${String(obj.exercise_step ?? "—")} approach=${String(obj.exercise_therapeutic_approach ?? "—")}`;
     case "memory_control": {
       const pending = obj.pending_action;
       return pending ? "pending confirmation" : "no pending action";

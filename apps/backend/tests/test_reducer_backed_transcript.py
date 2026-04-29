@@ -71,7 +71,7 @@ def test_history_uses_add_reducer() -> None:
 
 
 def test_session_progress_uses_merge_reducer() -> None:
-    """``AgentState.session_progress`` should have a merge reducer."""
+    """``AgentState.session_progress`` should have a plain merge reducer."""
     from agent.state import _merge_dicts
 
     reducer = _get_reducer(AgentState, "session_progress")
@@ -193,6 +193,20 @@ def test_build_initial_state_turn_count_still_correct() -> None:
 
     # 2 prior user turns + 1 current = 3
     assert state["session_progress"]["turn_count"] == 3
+
+
+def test_build_initial_state_session_progress_contract_is_minimal() -> None:
+    """build_initial_state should seed only owned session-progress fields."""
+
+    state = build_initial_state(
+        AgentInput(message="Fourth message"),
+        prior_turn_count=3,
+    )
+
+    assert state["session_progress"] == {
+        "turn_count": 4,
+        "is_guest": False,
+    }
 
 
 # ── finalize_turn_node tests ──────────────────────────────────────────────
@@ -354,8 +368,8 @@ async def test_exercise_state_persists_across_turns() -> None:
     in turn N+1 without any manual carry-forward in persistence.py.
 
     The exercise_state field uses a merge reducer so build_initial_state's
-    fresh session_progress dict (with turn_count, stage, etc.) coexists with
-    the checkpoint's exercise_state (which carries exercise_type/exercise_step)
+    fresh session_progress dict (with turn_count) coexists with the
+    checkpoint's exercise_state (which carries exercise_type/exercise_step)
     rather than overwriting it.
     """
 

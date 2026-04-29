@@ -12,7 +12,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.exercises.registry import _EXERCISE_REGISTRY
+from agent.therapeutic.exercises.registry import get_exercise_steps
 from agent.therapeutic.exercises.responses import (
     StreamWriterFactory,
     _build_advance_delta,
@@ -31,7 +31,7 @@ from agent.therapeutic.exercises.state import (
 )
 from agent.therapeutic.exercises.step_classifier import _classify_step_state_llm_primary
 from agent.therapeutic.exercises.types import ExerciseStep
-from agent.therapeutic.response_modes.common import therapeutic_response_delta
+from agent.therapeutic.response_styles.common import therapeutic_response_delta
 from services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -152,14 +152,16 @@ async def _handle_start(
         return _build_selection_options_delta(selection.options)
 
     selected = selection.exercise_type
-    steps = _EXERCISE_REGISTRY[selected]
+    steps = get_exercise_steps(selected)
+    if steps is None:
+        raise KeyError(selected)
     response_text = steps[0].prompt_fallback
 
     start_exercise_delta = _start_exercise_delta(state, exercise_type=selected)
     return {
         **start_exercise_delta,
         **therapeutic_response_delta(
-            mode="guided_exercise",
+            response_style="guided_exercise",
             response_text=response_text,
         ),
     }

@@ -29,7 +29,7 @@ from typing import Literal
 
 from livekit.agents import AgentTask, RunContext, function_tool
 
-from agent.therapeutic.guided_exercise import (
+from agent.therapeutic.exercises.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
     EXERCISE_GRATITUDE,
@@ -37,12 +37,13 @@ from agent.therapeutic.guided_exercise import (
     EXERCISE_MUSCLE_RELAXATION,
     EXERCISE_SELF_COMPASSION,
     EXERCISE_STOP_TECHNIQUE,
-    ExerciseStep,
-    _EXERCISE_DISPLAY_NAMES,
-    _EXERCISE_REGISTRY,
-    _EXERCISE_SELECTORS,
-    _VOICE_EXERCISE_IDS,
+    get_exercise_display_name,
+    get_exercise_steps,
+    iter_exercise_definitions,
+    iter_exercise_selectors,
+    voice_exercise_ids,
 )
+from agent.therapeutic.exercises.types import ExerciseStep
 from voice.livekit.session_data import SessionData
 
 logger = logging.getLogger(__name__)
@@ -52,9 +53,9 @@ logger = logging.getLogger(__name__)
 # Sequential worksheet-like exercises (thought records and behavioral
 # experiments) work better in text mode where the user can re-read prompts.
 # Voice mode favors body-based, verbal, and low-visual-load exercises.
-VOICE_EXERCISES: set[str] = set(_VOICE_EXERCISE_IDS)
+VOICE_EXERCISES: set[str] = set(voice_exercise_ids())
 
-TEXT_EXERCISES: set[str] = set(_EXERCISE_REGISTRY)
+TEXT_EXERCISES: set[str] = {definition.id for definition in iter_exercise_definitions()}
 
 _GENERIC_VOICE_EXERCISE_ROTATION: tuple[str, ...] = (
     EXERCISE_5_4_3_2_1,
@@ -81,7 +82,7 @@ class ExerciseResult:
 def _match_requested_exercise(technique: str) -> str | None:
     """Return the exercise directly implied by the technique text, if any."""
     lowered = technique.lower()
-    for keywords, exercise_type in _EXERCISE_SELECTORS:
+    for keywords, exercise_type in iter_exercise_selectors():
         for kw in keywords:
             if re.search(kw, lowered):
                 return exercise_type
@@ -122,7 +123,9 @@ def _resolve_exercise(
     if exercise_type not in allowed_exercises:
         exercise_type = EXERCISE_5_4_3_2_1
 
-    steps = _EXERCISE_REGISTRY[exercise_type]
+    steps = get_exercise_steps(exercise_type)
+    if steps is None:
+        raise KeyError(exercise_type)
     return exercise_type, steps
 
 
@@ -135,7 +138,7 @@ def _build_exercise_instructions(
     Gives the LLM the full exercise plan so it can guide the user
     naturally, but with explicit rules about pacing.
     """
-    display_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, "this exercise")
+    display_name = get_exercise_display_name(exercise_type, default="this exercise")
     total = len(steps)
 
     step_plan = []
@@ -195,7 +198,10 @@ class GroundingTask(AgentTask[ExerciseResult]):
         self._steps = steps
         self._current_step = 0
         self._total_steps = len(steps)
-        self._display_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, "this exercise")
+        self._display_name = get_exercise_display_name(
+            exercise_type,
+            default="this exercise",
+        )
 
         super().__init__(
             instructions=_build_exercise_instructions(exercise_type, steps),

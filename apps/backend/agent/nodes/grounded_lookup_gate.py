@@ -268,8 +268,7 @@ async def run_grounded_lookup_gate_node(
     if action is None:
         return Command(
             update={
-                "grounded_lookup_query": "",
-                "grounded_lookup_status": "not_attempted",
+                "grounded_lookup": {"query": "", "status": "not_attempted"},
                 "diagnostics": diagnostics,
             },
             goto="load_memory_node",
@@ -278,8 +277,7 @@ async def run_grounded_lookup_gate_node(
     return Command(
         update={
             "route": "grounded_lookup",
-            "grounded_lookup_query": action["query"],
-            "grounded_lookup_status": "not_attempted",
+            "grounded_lookup": {"query": action["query"], "status": "not_attempted"},
             "diagnostics": diagnostics,
         },
         goto="grounded_answer_node",

@@ -1,4 +1,4 @@
-"""Shared streaming and response-delta helpers for therapeutic modes."""
+"""Shared streaming and response-delta helpers for therapeutic response styles."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseCategory
+from agent.models import ResponseStyleType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import build_therapeutic_response_prompt
@@ -19,11 +19,15 @@ SystemPromptBuilder = Callable[[AgentState], str]
 ResponsePostprocessor = Callable[[str], str]
 
 
-def therapeutic_response_delta(*, mode: str, response_text: str) -> dict[str, Any]:
-    """Build the fixed response delta emitted by simple therapeutic modes.
+def therapeutic_response_delta(
+    *,
+    response_style: str,
+    response_text: str,
+) -> dict[str, Any]:
+    """Build the fixed response delta emitted by therapeutic response styles.
 
     Args:
-        mode: Therapeutic response style name.
+        response_style: Therapeutic response style name.
         response_text: Text to return to the user.
 
     Returns:
@@ -33,17 +37,17 @@ def therapeutic_response_delta(*, mode: str, response_text: str) -> dict[str, An
     return {
         "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
-        "response_style": mode,
+        "response_style": response_style,
         "response_style_source": "therapeutic_dispatch",
-        "response_style_type": ModeType.THERAPEUTIC,
+        "response_style_type": ResponseStyleType.THERAPEUTIC,
     }
 
 
-async def run_streamed_mode_response(
+async def run_streamed_response_style(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
     *,
-    mode: str,
+    response_style: str,
     system_prompt_builder: SystemPromptBuilder,
     fallback_text: str,
     logger: logging.Logger,
@@ -51,12 +55,12 @@ async def run_streamed_mode_response(
     postprocess: ResponsePostprocessor | None = None,
     stream_writer_factory: StreamWriterFactory = get_stream_writer,
 ) -> dict[str, Any]:
-    """Run a simple therapeutic response mode with streaming and fallback.
+    """Run a therapeutic response style with streaming and fallback.
 
     Args:
         state: Current graph state for the turn.
         runtime: LangGraph runtime carrying configured dependencies.
-        mode: Therapeutic response style name.
+        response_style: Therapeutic response style name.
         system_prompt_builder: Function that builds the system prompt.
         fallback_text: Deterministic response used when no LLM is available
             or the LLM call fails.
@@ -75,7 +79,7 @@ async def run_streamed_mode_response(
     response_text = await generate_streamed_therapeutic_text(
         state=state,
         llm_client=llm_client,
-        mode=mode,
+        response_style=response_style,
         system_prompt_builder=system_prompt_builder,
         fallback_text=fallback_text,
         logger=logger,
@@ -83,14 +87,17 @@ async def run_streamed_mode_response(
         postprocess=postprocess,
         stream_writer_factory=stream_writer_factory,
     )
-    return therapeutic_response_delta(mode=mode, response_text=response_text)
+    return therapeutic_response_delta(
+        response_style=response_style,
+        response_text=response_text,
+    )
 
 
 async def generate_streamed_therapeutic_text(
     *,
     state: AgentState,
     llm_client: Any,
-    mode: str,
+    response_style: str,
     system_prompt_builder: SystemPromptBuilder,
     fallback_text: str,
     logger: logging.Logger,
@@ -104,7 +111,7 @@ async def generate_streamed_therapeutic_text(
     Args:
         state: Current graph state for the turn.
         llm_client: Response LLM client, if configured.
-        mode: Therapeutic response style name.
+        response_style: Therapeutic response style name.
         system_prompt_builder: Function that builds the system prompt.
         fallback_text: Deterministic text used when no LLM is available
             or the LLM call fails.
@@ -129,7 +136,7 @@ async def generate_streamed_therapeutic_text(
             async for chunk in llm_client.generate_text_stream(
                 prompt=build_therapeutic_response_prompt(
                     state,
-                    mode=mode,
+                    response_style=response_style,
                     step_directive=step_directive,
                 ),
                 system_instruction=system_prompt_builder(state),

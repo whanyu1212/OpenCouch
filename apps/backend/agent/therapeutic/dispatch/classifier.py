@@ -10,18 +10,18 @@ from agent.therapeutic.dispatch.prompt import (
 )
 
 
-async def _pick_mode_and_modality_with_llm(
+async def _pick_response_style_and_approach_with_llm(
     state: AgentState,
     llm_client,
 ) -> tuple[str, str]:
-    """Call the structured-output classifier for mode and modality.
+    """Call the structured-output classifier for style and approach.
 
     Args:
         state: The current agent state.
         llm_client: The configured control-plane LLM client.
 
     Returns:
-        A ``(mode, modality)`` tuple from the structured classifier response.
+        A ``(response_style, therapeutic_approach)`` tuple from the response.
 
     Raises:
         Exception: Propagates any classifier error to the caller.

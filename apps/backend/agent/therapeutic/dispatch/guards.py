@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from agent.state import AgentState
 from agent.therapeutic.dispatch.regex_catalog import (
@@ -17,6 +18,9 @@ from agent.therapeutic.dispatch.regex_catalog import (
     _BARE_ACKNOWLEDGMENT_PATTERNS,
     _OPEN_QUESTION_PATTERNS,
 )
+from agent.therapeutic.exercises.registry import iter_exercise_selection_aliases
+
+ExerciseLifecycle = Literal["inactive", "pending_choice", "active"]
 
 
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
@@ -77,6 +81,24 @@ def _has_pending_exercise_selection(state: AgentState) -> bool:
     return bool(exercise_state.get("exercise_selection_options"))
 
 
+def _exercise_lifecycle(state: AgentState) -> ExerciseLifecycle:
+    """Return the current guided-exercise lifecycle.
+
+    Args:
+        state: The current agent state.
+
+    Returns:
+        ``active`` when an exercise is running, ``pending_choice`` when the
+        prior turn offered exercise options, otherwise ``inactive``.
+    """
+
+    if _has_active_exercise(state):
+        return "active"
+    if _has_pending_exercise_selection(state):
+        return "pending_choice"
+    return "inactive"
+
+
 def _looks_like_pending_exercise_choice(message: str) -> bool:
     """Return whether a message looks like an exercise-option choice.
 
@@ -90,41 +112,44 @@ def _looks_like_pending_exercise_choice(message: str) -> bool:
     lowered = message.lower().strip()
     if re.match(r"^(?:option\s*)?[1-9](?:[.)])?\s*$", lowered):
         return True
-    return _matches_any(
-        lowered,
-        (
-            r"\b(?:one|two|three|first|second|third)\b",
-            r"\b(?:grounding|ground me|5-4-3-2-1)\b",
-            r"\b(?:breath|breathe|breathing|box breathing)\b",
-            r"\b(?:self.?compassion|compassion break|kinder to myself)\b",
-            r"\b(?:thought record|thought check|belief)\b",
-            r"\b(?:values|what matters|purpose|compass)\b",
-            r"\b(?:gratitude|grateful|thankful)\b",
-            r"\b(?:muscle|relaxation|pmr)\b",
-            r"\b(?:stop technique|s\.t\.o\.p)\b",
-            r"\b(?:improve|overwhelmed|too much)\b",
-            r"\b(?:defusion|leaves|let go)\b",
-            r"\b(?:behavioral experiment|test this belief)\b",
-            r"\b(?:continuum|all.or.nothing)\b",
-        ),
-    )
+    if _matches_any(lowered, (r"\b(?:one|two|three|first|second|third)\b",)):
+        return True
+
+    normalized = f" {_normalize_exercise_choice_text(lowered)} "
+    for alias, _ in iter_exercise_selection_aliases():
+        normalized_alias = _normalize_exercise_choice_text(alias)
+        if normalized_alias and f" {normalized_alias} " in normalized:
+            return True
+    return False
 
 
-def _active_exercise_modality(state: AgentState) -> str | None:
-    """Return the pinned modality for an active exercise.
+def _normalize_exercise_choice_text(text: str) -> str:
+    """Normalize an exercise-choice string for alias containment checks.
+
+    Args:
+        text: User text or catalog alias.
+
+    Returns:
+        Lowercase alphanumeric tokens separated by single spaces.
+    """
+
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _active_exercise_therapeutic_approach(state: AgentState) -> str | None:
+    """Return the pinned therapeutic approach for an active exercise.
 
     Args:
         state: The current agent state.
 
     Returns:
-        The exercise modality when present, otherwise the current
+        The exercise therapeutic approach when present, otherwise the current
         turn's top-level ``therapeutic_approach``.
     """
 
     exercise_state = state.get("exercise_state", {}) or {}
-    modality = exercise_state.get("exercise_modality")
-    if modality:
-        return modality
+    if "exercise_therapeutic_approach" in exercise_state:
+        return exercise_state.get("exercise_therapeutic_approach")
     return state.get("therapeutic_approach")
 
 
@@ -261,3 +286,20 @@ def _is_advice_request_without_exercise_consent(
     ):
         return True
     return False
+
+
+def _blocks_unconsented_exercise_start(state: AgentState, message: str) -> bool:
+    """Return whether a guided-exercise pick should be rewritten.
+
+    Args:
+        state: The current agent state.
+        message: The current user message.
+
+    Returns:
+        ``True`` when the user is asking for information, advice, or guidance
+        without clearly consenting to practice a structured exercise now.
+    """
+
+    return _is_coping_advice_without_exercise_consent(
+        message
+    ) or _is_advice_request_without_exercise_consent(state, message)

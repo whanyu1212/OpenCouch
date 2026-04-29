@@ -1,7 +1,7 @@
 """Runner for therapeutic dispatcher routing evaluation.
 
 Grades the dispatcher's accuracy on a hand-curated dataset of message
-→ expected-mode pairs. Each case is labeled with a ``dispatch_tier``
+→ expected-response-style pairs. Each case is labeled with a ``dispatch_tier``
 (``regex`` or ``llm``) so the runner can report tier-scoped accuracy
 separately — regex cases should always pass regardless of LLM
 availability, while LLM cases only pass when the LLM classifier is
@@ -65,8 +65,8 @@ DATASET_PATH = (
 EvalMode = Literal["auto", "deterministic", "hybrid"]
 DispatchTier = Literal["regex", "llm"]
 
-# Map subgraph node name → logical mode name, for clean reporting.
-_NODE_TO_MODE = {
+# Map subgraph node name to logical response-style name for clean reporting.
+_NODE_TO_RESPONSE_STYLE = {
     SUPPORTIVE_NODE: "supportive",
     REFLECTIVE_NODE: "reflective",
     CLARIFYING_NODE: "clarifying",
@@ -162,10 +162,10 @@ async def _evaluate_case(
     case: dict[str, Any],
     llm_client: BaseLLMClient | None,
 ) -> tuple[bool, str, str | None]:
-    """Run one case through the dispatcher and compare to the expected mode.
+    """Run one case through the dispatcher and compare to the expected style.
 
     Returns:
-        ``(passed, actual_mode, failure_detail)``. ``failure_detail`` is
+        ``(passed, actual_style, failure_detail)``. ``failure_detail`` is
         ``None`` on a passing case, or a human-readable explanation on a
         failing case.
     """
@@ -174,19 +174,19 @@ async def _evaluate_case(
     state = _build_state(case)
     cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
-    actual_mode = _NODE_TO_MODE.get(cmd.goto, f"unknown({cmd.goto})")
-    expected_mode = case["expected_mode"]
+    actual_style = _NODE_TO_RESPONSE_STYLE.get(cmd.goto, f"unknown({cmd.goto})")
+    expected_style = case.get("expected_response_style", case.get("expected_mode"))
 
-    if actual_mode == expected_mode:
-        return True, actual_mode, None
+    if actual_style == expected_style:
+        return True, actual_style, None
 
     tier = case.get("dispatch_tier", "?")
     detail = (
         f"FAIL [{tier}] {case['id']}: "
-        f"got {actual_mode}, expected {expected_mode}. "
+        f"got {actual_style}, expected {expected_style}. "
         f"message={case['message']!r}"
     )
-    return False, actual_mode, detail
+    return False, actual_style, detail
 
 
 async def _run(mode: EvalMode, dataset_path: Path) -> int:

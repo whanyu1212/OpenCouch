@@ -7,9 +7,11 @@ callers that still import dispatch helpers from ``patterns``.
 
 from __future__ import annotations
 
-from agent.therapeutic.dispatch.fallback import pick_therapeutic_mode
+from agent.therapeutic.dispatch.fallback import pick_therapeutic_response_style
 from agent.therapeutic.dispatch.guards import (
-    _active_exercise_modality,
+    _active_exercise_therapeutic_approach,
+    _blocks_unconsented_exercise_start,
+    _exercise_lifecycle,
     _has_active_exercise,
     _has_pending_exercise_selection,
     _is_active_exercise_clarification,
@@ -73,7 +75,9 @@ __all__ = [
     "_TERMINATOR",
     "_TRIGGER_LIST_SENTENCE",
     "_WALKTHROUGH_NOUNS",
-    "_active_exercise_modality",
+    "_active_exercise_therapeutic_approach",
+    "_blocks_unconsented_exercise_start",
+    "_exercise_lifecycle",
     "_format_prompt_trigger_phrases",
     "_has_active_exercise",
     "_has_pending_exercise_selection",
@@ -86,5 +90,5 @@ __all__ = [
     "_message_is_acceptance_of_offer",
     "_trigger_to_regex",
     "_word_count",
-    "pick_therapeutic_mode",
+    "pick_therapeutic_response_style",
 ]

@@ -142,7 +142,7 @@
         "evidence"
       ]
     },
-    "notes": "Structured thought-work request should route to technique mode."
+    "notes": "Structured thought-work request should route to technique style."
   },
   {
     "id": "llm_closing_explicit_wind_down",
@@ -152,6 +152,6 @@
     "assertions": {
       "max_sentences": 5
     },
-    "notes": "Explicit wind-down should route to closing mode."
+    "notes": "Explicit wind-down should route to closing style."
   }
 ]

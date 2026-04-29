@@ -238,6 +238,8 @@ GROUNDING_5_4_3_2_1_DEFINITION = ExerciseDefinition(
         "or needing to orient to the room"
     ),
     steps=_GROUNDING_5_4_3_2_1_STEPS,
+    selection_aliases=("grounding", "ground me", "5-4-3-2-1"),
+    fallback_suggestion_rank=10,
     voice_supported=True,
 )
 
@@ -255,6 +257,8 @@ BOX_BREATHING_DEFINITION = ExerciseDefinition(
             priority=10,
         ),
     ),
+    selection_aliases=("breathing", "box breathing", "breath"),
+    fallback_suggestion_rank=20,
     voice_supported=True,
 )
 
@@ -276,6 +280,7 @@ STOP_TECHNIQUE_DEFINITION = ExerciseDefinition(
             priority=120,
         ),
     ),
+    selection_aliases=("STOP technique", "S.T.O.P.", "pause technique"),
     voice_supported=True,
 )
 
@@ -298,6 +303,11 @@ MUSCLE_RELAXATION_DEFINITION = ExerciseDefinition(
             ),
             priority=20,
         ),
+    ),
+    selection_aliases=(
+        "muscle relaxation",
+        "progressive muscle relaxation",
+        "PMR",
     ),
     voice_supported=True,
 )

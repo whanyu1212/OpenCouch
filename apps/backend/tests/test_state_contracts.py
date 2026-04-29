@@ -7,7 +7,7 @@ unrelated channel, the failure should be immediate and local.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
@@ -33,8 +33,6 @@ from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
-from agent.therapeutic.clarifying import run_clarifying_response_node
-from agent.therapeutic.closing import run_closing_response_node
 from agent.therapeutic.dispatcher import run_therapeutic_dispatch_node
 from agent.therapeutic.graph import (
     TherapeuticSubgraphInput,
@@ -42,10 +40,7 @@ from agent.therapeutic.graph import (
     build_therapeutic_subgraph,
 )
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
-from agent.therapeutic.psychoeducation import run_psychoeducation_response_node
-from agent.therapeutic.reflective import run_reflective_response_node
-from agent.therapeutic.supportive import run_supportive_response_node
-from agent.therapeutic.technique import run_technique_response_node
+from agent.therapeutic.response import run_therapeutic_response_node
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -245,7 +240,7 @@ async def test_memory_control_gate_passthrough_channel_contract() -> None:
     )
 
     assert command.goto == "grounded_lookup_gate_node"
-    _assert_exact_keys(command.update, {"memory_control_action", "diagnostics"})
+    _assert_exact_keys(command.update, {"memory_control", "diagnostics"})
 
 
 @pytest.mark.asyncio
@@ -260,7 +255,7 @@ async def test_memory_control_gate_action_channel_contract() -> None:
     assert command.goto == "memory_control_node"
     _assert_exact_keys(
         command.update,
-        {"route", "memory_control_action", "diagnostics"},
+        {"route", "memory_control", "diagnostics"},
     )
 
 
@@ -270,7 +265,7 @@ async def test_memory_control_node_channel_contract() -> None:
 
     state = _build_state("What do you remember about me?")
     state["route"] = "memory_control"
-    state["memory_control_action"] = {"type": "list"}
+    state["memory_control"] = {"action": {"type": "list"}}
 
     delta = await run_memory_control_node(
         state,
@@ -305,7 +300,7 @@ async def test_grounded_lookup_gate_passthrough_channel_contract() -> None:
     assert command.goto == "load_memory_node"
     _assert_exact_keys(
         command.update,
-        {"grounded_lookup_query", "grounded_lookup_status", "diagnostics"},
+        {"grounded_lookup", "diagnostics"},
     )
 
 
@@ -321,7 +316,7 @@ async def test_grounded_lookup_gate_action_channel_contract() -> None:
     assert command.goto == "grounded_answer_node"
     _assert_exact_keys(
         command.update,
-        {"route", "grounded_lookup_query", "grounded_lookup_status", "diagnostics"},
+        {"route", "grounded_lookup", "diagnostics"},
     )
 
 
@@ -331,7 +326,7 @@ async def test_grounded_answer_node_channel_contract() -> None:
 
     state = _build_state("Can you look up the current 988 rules?")
     state["route"] = "grounded_lookup"
-    state["grounded_lookup_query"] = "Can you look up the current 988 rules?"
+    state["grounded_lookup"] = {"query": "Can you look up the current 988 rules?"}
 
     delta = await run_grounded_answer_node(
         state,
@@ -342,7 +337,7 @@ async def test_grounded_answer_node_channel_contract() -> None:
         delta,
         {
             "route",
-            "grounded_lookup_status",
+            "grounded_lookup",
             "response_style",
             "response_style_source",
             "response_style_type",
@@ -449,25 +444,25 @@ async def test_load_memory_channel_contract() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_default_channel_contract() -> None:
-    """Default therapeutic dispatch should only write approach routing."""
+    """Default therapeutic dispatch should only write response routing."""
 
     command = await run_therapeutic_dispatch_node(
         _build_state("I had a rough day at work."),
         cast(Any, _FakeRuntime(llm_client=None)),
     )
 
-    _assert_exact_keys(command.update, {"therapeutic_approach"})
+    _assert_exact_keys(command.update, {"response_style", "therapeutic_approach"})
 
 
 @pytest.mark.asyncio
 async def test_dispatch_active_exercise_exit_channel_contract() -> None:
-    """Exercise opt-out should only clear exercise continuity and approach."""
+    """Exercise opt-out should clear exercise continuity and write response routing."""
 
     state = _build_state("This isn't helping, can we just talk?")
     state["exercise_state"] = {
         "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 0,
-        "exercise_modality": "cbt",
+        "exercise_therapeutic_approach": "cbt",
     }
     state["therapeutic_approach"] = "cbt"
 
@@ -476,7 +471,10 @@ async def test_dispatch_active_exercise_exit_channel_contract() -> None:
         cast(Any, _FakeRuntime(llm_client=None)),
     )
 
-    _assert_exact_keys(command.update, {"therapeutic_approach", "exercise_state"})
+    _assert_exact_keys(
+        command.update,
+        {"response_style", "therapeutic_approach", "exercise_state"},
+    )
 
 
 @pytest.mark.asyncio
@@ -487,7 +485,7 @@ async def test_dispatch_llm_mid_exercise_clarifying_channel_contract() -> None:
     state["exercise_state"] = {
         "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 0,
-        "exercise_modality": "act",
+        "exercise_therapeutic_approach": "act",
     }
     state["therapeutic_approach"] = "act"
 
@@ -504,41 +502,42 @@ async def test_dispatch_llm_mid_exercise_clarifying_channel_contract() -> None:
         ),
     )
 
-    assert command.goto == "clarifying_response_node"
-    _assert_exact_keys(command.update, {"therapeutic_approach"})
+    assert command.goto == "therapeutic_response_node"
+    _assert_exact_keys(command.update, {"response_style", "therapeutic_approach"})
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("node", "message", "extra_state"),
+    ("response_style", "message", "extra_state"),
     [
-        (run_supportive_response_node, "I had a rough day.", {}),
+        ("supportive", "I had a rough day.", {}),
         (
-            run_reflective_response_node,
+            "reflective",
             "Why do I keep ending up in the same fight?",
             {},
         ),
-        (run_clarifying_response_node, "What do you mean?", {}),
-        (run_psychoeducation_response_node, "Why am I reacting like this?", {}),
-        (run_closing_response_node, "Thanks, I should go.", {}),
+        ("clarifying", "What do you mean?", {}),
+        ("psychoeducation", "Why am I reacting like this?", {}),
+        ("closing", "Thanks, I should go.", {}),
         (
-            run_technique_response_node,
+            "technique",
             "Can you help me examine this thought step by step?",
             {"therapeutic_approach": "cbt"},
         ),
     ],
 )
 async def test_fixed_shape_therapeutic_mode_channel_contract(
-    node: Callable[..., Any],
+    response_style: str,
     message: str,
     extra_state: dict[str, Any],
 ) -> None:
-    """Fixed-shape therapeutic mode nodes should only write response channels."""
+    """Fixed-shape therapeutic response node should only write response channels."""
 
     state = _build_state(message)
+    state["response_style"] = response_style
     state.update(extra_state)
 
-    delta = await node(
+    delta = await run_therapeutic_response_node(
         state,
         cast(Any, _FakeRuntime(llm_client=None)),
     )
@@ -585,7 +584,7 @@ async def test_guided_exercise_hold_channel_contract() -> None:
     state["exercise_state"] = {
         "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 0,
-        "exercise_modality": "none",
+        "exercise_therapeutic_approach": "none",
     }
 
     delta = await run_guided_exercise_response_node(
@@ -613,7 +612,7 @@ async def test_guided_exercise_advance_channel_contract() -> None:
     state["exercise_state"] = {
         "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 0,
-        "exercise_modality": "none",
+        "exercise_therapeutic_approach": "none",
     }
 
     delta = await run_guided_exercise_response_node(
@@ -642,7 +641,7 @@ async def test_guided_exercise_exit_channel_contract() -> None:
     state["exercise_state"] = {
         "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 0,
-        "exercise_modality": "none",
+        "exercise_therapeutic_approach": "none",
     }
 
     delta = await run_guided_exercise_response_node(
@@ -671,7 +670,7 @@ async def test_guided_exercise_completion_channel_contract() -> None:
     state["exercise_state"] = {
         "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 4,
-        "exercise_modality": "none",
+        "exercise_therapeutic_approach": "none",
     }
 
     delta = await run_guided_exercise_response_node(

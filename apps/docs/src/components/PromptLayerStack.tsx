@@ -37,15 +37,15 @@ const fileIndex: Record<string, FileInfo> = {
     excerpt:
       'Users share sensitive mental health information. Only necessary context is injected into prompts. Memory is minimal and reviewable. Principle of least necessary context applies at every step.',
   },
-  'response_modes/support.md': {
-    name: 'response_modes/support.md',
+  'response_styles/support.md': {
+    name: 'response_styles/support.md',
     kind: 'markdown',
     summary: 'Default supportive response style',
     excerpt:
       'Active when no crisis or safety check is needed. Validates before suggesting, reflects the user\'s emotional state, offers one helpful next step. Replies stay concise and grounded.',
   },
   'crisis_response.md': {
-    name: 'response_modes/crisis_response.md',
+    name: 'response_styles/crisis_response.md',
     kind: 'markdown',
     summary: 'Crisis response style',
     excerpt:
@@ -59,28 +59,28 @@ const fileIndex: Record<string, FileInfo> = {
       'Python code that chooses response-style knowledge and therapeutic-approach overlays before builders assemble the final system prompt.',
   },
   'pfa.md': {
-    name: 'modalities/pfa.md + dbt_skills.md',
+    name: 'therapeutic_approaches/pfa.md + dbt_skills.md',
     kind: 'markdown',
     summary: 'Psychological First Aid (+ DBT skills)',
     excerpt:
       'Baseline for acute distress: calm presence, practical immediate next steps, emotional stabilisation. DBT skills bundled in. Avoids turning support into diagnosis or intensive therapy when someone is in crisis.',
   },
   'cbt.md': {
-    name: 'modalities/cbt.md',
+    name: 'therapeutic_approaches/cbt.md',
     kind: 'markdown',
     summary: 'CBT self-help overlay',
     excerpt:
       'Structured self-help for thought-checking, pattern identification, behaviour activation, and problem-solving. Avoids clinical phrasing and does not force reframes before the user is ready.',
   },
   'grief_support.md': {
-    name: 'modalities/grief_support.md',
+    name: 'therapeutic_approaches/grief_support.md',
     kind: 'markdown',
     summary: 'Grief support overlay',
     excerpt:
       'Makes room for grief without rushing it. Validates mixed emotions, avoids silver linings, treats grief as non-pathological. Does not push the user toward resolution on any timeline.',
   },
   'act.md': {
-    name: 'modalities/act.md',
+    name: 'therapeutic_approaches/act.md',
     kind: 'markdown',
     summary: 'ACT defusion and values overlay',
     excerpt:
@@ -150,7 +150,7 @@ const layers = [
     label: 'Response',
     tag: 'graph-selected',
     desc: 'The response style selected by the graph. Shapes the goal and tone of the turn — supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing, safety_check, or crisis_response.',
-    files: ['response_modes/support.md', 'crisis_response.md', 'sources.py'],
+    files: ['response_styles/support.md', 'crisis_response.md', 'sources.py'],
     dot: '#2d7a74',
   },
   {
