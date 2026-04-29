@@ -48,6 +48,8 @@ and grounded in the current user message only.
 
 from __future__ import annotations
 
+from agent.conversation import format_recent_history
+
 from agent.state import AgentState
 
 
@@ -213,15 +215,7 @@ def build_procedural_writer_user_prompt(state: AgentState) -> str:
         str: User prompt for a single procedural-rule write call.
     """
 
-    history = state.get("history", [])[-6:]
-    history_block = (
-        "\n".join(
-            f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-            for turn in history
-            if turn.get("content")
-        )
-        or "(no prior history)"
-    )
+    history_block = format_recent_history(state, limit=6)
 
     current_message = state["message"]
 

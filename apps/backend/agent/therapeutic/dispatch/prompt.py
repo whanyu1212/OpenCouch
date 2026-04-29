@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent.conversation import format_recent_history
 from agent.state import AgentState
 from agent.therapeutic.dispatch.regex_catalog import _TRIGGER_LIST_SENTENCE
 from agent.working_memory import format_working_memory_entries
@@ -255,15 +256,7 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
         current message.
     """
 
-    history = state.get("history", [])[-6:]
-    history_block = (
-        "\n".join(
-            f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-            for turn in history
-            if turn.get("content")
-        )
-        or "(no prior history)"
-    )
+    history_block = format_recent_history(state, limit=6)
 
     working_memory = format_working_memory_entries(
         state.get("working_memory", []),

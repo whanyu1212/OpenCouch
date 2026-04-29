@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
+from agent.conversation import get_transcript
 from agent.state import AgentState
 from agent.therapeutic.dispatch.regex_catalog import (
     ACCEPTANCE_PATTERNS,
@@ -186,8 +187,7 @@ def _message_is_acceptance_of_offer(state: AgentState, message: str) -> bool:
         (which doesn't end-anchor to acceptance).
     """
 
-    history = state.get("history", []) or []
-    for turn in reversed(history):
+    for turn in reversed(get_transcript(state)):
         if turn.get("role") == "assistant":
             offered = _matches_any(
                 turn.get("content", "").lower(), EXERCISE_OFFER_PATTERNS
@@ -214,8 +214,7 @@ def _is_bare_ack_to_open_question(state: AgentState, message: str) -> bool:
     if _message_is_acceptance_of_offer(state, message):
         return False
 
-    history = state.get("history", []) or []
-    for turn in reversed(history):
+    for turn in reversed(get_transcript(state)):
         if turn.get("role") != "assistant":
             continue
         assistant_text = turn.get("content", "").lower()

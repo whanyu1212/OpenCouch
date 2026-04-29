@@ -25,6 +25,8 @@ Two design principles shape these prompts:
 
 from __future__ import annotations
 
+from agent.conversation import format_recent_history
+
 from agent.state import AgentState
 
 
@@ -210,15 +212,7 @@ def build_extraction_user_prompt(
         str: User prompt for a single extraction call.
     """
 
-    history = state.get("history", [])[-6:]
-    history_block = (
-        "\n".join(
-            f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-            for turn in history
-            if turn.get("content")
-        )
-        or "(no prior history)"
-    )
+    history_block = format_recent_history(state, limit=6)
 
     session_id = state.get("session_id") or "__no_session__"
     current_message = state["message"]

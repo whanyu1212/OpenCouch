@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from agent.conversation import format_recent_history, get_recent_history
 from agent.state import AgentState
 from agent.therapeutic.exercises.registry import (
     EXERCISE_5_4_3_2_1,
@@ -187,13 +188,7 @@ def _build_exercise_selection_prompt(state: AgentState) -> str:
         Prompt asking for a structured exercise-selection decision.
     """
 
-    history_lines = []
-    for turn in (state.get("history", []) or [])[-6:]:
-        role = turn.get("role", "unknown")
-        content = turn.get("content", "")
-        if content:
-            history_lines.append(f"{role}: {content}")
-    recent_history = "\n".join(history_lines) or "(none)"
+    recent_history = format_recent_history(state, limit=6, empty="(none)")
     alias_hint = _selection_aliases_for_prompt()
     return (
         "Choose the best guided exercise for the user's current need. "
@@ -373,7 +368,7 @@ async def _select_exercise_llm_primary(
 
     selected = _select_exercise(
         state.get("message", ""),
-        history=state.get("history", []),
+        history=get_recent_history(state, limit=6),
     )
     if selected is not None:
         return ExerciseSelectionResult(exercise_type=selected)
