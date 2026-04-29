@@ -1324,7 +1324,6 @@ class PersistentAgentRuntime:
                     "message": message,
                     "user_id": user_id,
                     "session_id": thread_id,
-                    "history": list(transcript[:transcript_index]),
                     "transcript": list(transcript[: transcript_index + 1]),
                     "session_progress": {"turn_count": user_turn_count},
                     "route": "therapeutic",
