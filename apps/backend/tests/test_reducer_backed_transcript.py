@@ -24,6 +24,7 @@ from typing import Annotated, Any, NotRequired, get_type_hints
 
 import pytest
 
+from agent.conversation import format_recent_history, get_recent_history, get_transcript
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.models import DispatchDecision
 from agent.memory.modes import MemoryMode
@@ -110,6 +111,33 @@ def test_transcript_uses_add_reducer() -> None:
     assert reducer is operator.add, (
         f"transcript reducer is {reducer!r}, expected operator.add"
     )
+
+
+def test_conversation_helpers_prefer_transcript_over_history() -> None:
+    """Conversation helpers should read transcript before legacy history."""
+
+    state = {
+        "transcript": [
+            {"role": "user", "content": "new user turn"},
+            {"role": "assistant", "content": "new assistant turn"},
+        ],
+        "history": [{"role": "user", "content": "legacy user turn"}],
+    }
+
+    assert get_transcript(state) == state["transcript"]
+    assert get_recent_history(state, limit=1) == [state["transcript"][1]]
+    assert format_recent_history(state, limit=2) == (
+        "user: new user turn\nassistant: new assistant turn"
+    )
+
+
+def test_conversation_helpers_fall_back_to_history() -> None:
+    """Conversation helpers should support older state without transcript."""
+
+    state = {"history": [{"role": "user", "content": "legacy user turn"}]}
+
+    assert get_transcript(state) == state["history"]
+    assert format_recent_history(state) == "user: legacy user turn"
 
 
 def test_langgraph_compiles_therapeutic_approach_as_last_value_channel() -> None:

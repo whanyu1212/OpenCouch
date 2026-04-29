@@ -7,6 +7,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from agent.conversation import format_recent_history as _format_recent_history
+
 CORE_SOURCES = (
     "soul.md",
     "identity.md",
@@ -67,13 +69,4 @@ def format_recent_history(state: Mapping[str, Any], *, limit: int = 6) -> str:
         Formatted conversation history, or a no-history placeholder.
     """
 
-    history_value = state.get("history", [])
-    history = history_value[-limit:] if isinstance(history_value, list) else []
-    if not history:
-        return "(no prior history)"
-
-    return "\n".join(
-        f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-        for turn in history
-        if isinstance(turn, dict) and turn.get("content")
-    )
+    return _format_recent_history(state, limit=limit)

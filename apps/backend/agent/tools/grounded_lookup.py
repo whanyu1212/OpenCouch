@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
+from agent.conversation import format_recent_history
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
@@ -90,10 +91,7 @@ def _build_grounded_lookup_prompt(state: AgentState, *, query: str) -> str:
         Prompt text for provider-native search grounding.
     """
 
-    history = state.get("history", [])[-4:]
-    history_text = "\n".join(
-        f"{turn.get('role', 'unknown')}: {turn.get('content', '')}" for turn in history
-    )
+    history_text = format_recent_history(state, limit=4, empty="(none)")
     return (
         "The user explicitly asked for factual/current information. Use search "
         "grounding and answer only that request. Do not provide therapy advice, "
