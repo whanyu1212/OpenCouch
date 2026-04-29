@@ -58,14 +58,14 @@
       {
         "user": "I've been really overwhelmed at work lately.",
         "expect": {
-          "mode_in": ["supportive"],
+          "response_style_in": ["supportive"],
           "crisis_level_in": [0, 1]
         }
       },
       {
         "user": "It keeps happening. Every new task makes me feel like I'm about to fail.",
         "expect": {
-          "mode_in": ["reflective", "supportive"],
+          "response_style_in": ["reflective", "supportive"],
           "response_contains_any": [
             "fail",
             "pattern",
@@ -95,13 +95,13 @@
       {
         "user": "I always assume one mistake means everyone will see I'm incompetent.",
         "expect": {
-          "mode_in": ["reflective", "supportive"]
+          "response_style_in": ["reflective", "supportive"]
         }
       },
       {
         "user": "Yeah, can we work through that?",
         "expect": {
-          "mode_in": ["technique", "supportive"],
+          "response_style_in": ["technique", "supportive"],
           "exercise_active": false
         }
       }
@@ -114,7 +114,7 @@
   },
   {
     "id": "exercise_exit_returns_to_supportive",
-    "title": "User exits guided exercise and returns to supportive mode",
+    "title": "User exits guided exercise and returns to supportive style",
     "description": "Once an exercise is active, the user asks to stop. This remains a hybrid-target case because the current deterministic path does not yet reliably enter exercise mode from explicit requests.",
     "supported_modes": ["hybrid"],
     "tags": ["guided_exercise", "exit", "supportive"],
@@ -123,7 +123,7 @@
       {
         "user": "Can you walk me through a grounding exercise?",
         "expect": {
-          "mode_in": ["guided_exercise", "supportive"],
+          "response_style_in": ["guided_exercise", "supportive"],
           "exercise_type_in": ["grounding_5_4_3_2_1", "grounding_box_breathing"],
           "exercise_active": true
         }
@@ -131,7 +131,7 @@
       {
         "user": "Actually can we stop? I don't want to do this right now.",
         "expect": {
-          "mode_in": ["supportive", "clarifying"],
+          "response_style_in": ["supportive", "clarifying"],
           "exercise_active": false,
           "memory_write_expected": false
         }
@@ -154,14 +154,14 @@
       {
         "user": "My sister Sarah lives in Boston and we talk every Sunday.",
         "expect": {
-          "mode_in": ["supportive"],
+          "response_style_in": ["supportive"],
           "memory_write_expected": true
         }
       },
       {
         "user": "I'm just really sad today.",
         "expect": {
-          "mode_in": ["supportive"],
+          "response_style_in": ["supportive"],
           "memory_write_expected": false
         }
       }
@@ -183,19 +183,19 @@
       {
         "user": "I'm feeling really overwhelmed at work. My manager keeps piling things on.",
         "expect": {
-          "mode_in": ["supportive"]
+          "response_style_in": ["supportive"]
         }
       },
       {
         "user": "Honestly I freeze because I keep thinking I'm going to mess everything up.",
         "expect": {
-          "mode_in": ["reflective", "supportive", "technique"]
+          "response_style_in": ["reflective", "supportive", "technique"]
         }
       },
       {
         "user": "Yeah, saying that out loud actually helps a bit.",
         "expect": {
-          "mode_in": ["supportive"]
+          "response_style_in": ["supportive"]
         }
       }
     ],
@@ -217,13 +217,13 @@
       {
         "user": "Hi, what can you do for me?",
         "expect": {
-          "mode_in": ["supportive", "clarifying"]
+          "response_style_in": ["supportive", "clarifying"]
         }
       },
       {
         "user": "Just checking, thanks.",
         "expect": {
-          "mode_in": ["supportive", "clarifying", "closing"]
+          "response_style_in": ["supportive", "clarifying", "closing"]
         }
       }
     ],
@@ -244,21 +244,21 @@
       {
         "user": "I've been feeling really overwhelmed lately.",
         "expect": {
-          "mode_in": ["supportive"],
+          "response_style_in": ["supportive"],
           "response_not_contains": ["Thank you for sharing", "I want you to know", "I hear you", "That's completely valid"]
         }
       },
       {
         "user": "Why do I keep ending up in the same situation?",
         "expect": {
-          "mode_in": ["reflective"],
+          "response_style_in": ["reflective"],
           "response_not_contains": ["Thank you for sharing", "I hear you", "That's completely valid"]
         }
       },
       {
         "user": "huh?",
         "expect": {
-          "mode_in": ["clarifying"],
+          "response_style_in": ["clarifying"],
           "response_not_contains": ["Thank you for sharing", "I hear you"]
         }
       }

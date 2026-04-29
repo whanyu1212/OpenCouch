@@ -69,6 +69,12 @@ class ExerciseDefinition:
         selection_use_case: Compact description shown to the selector LLM.
         steps: Ordered exercise steps.
         selector_groups: Deterministic fallback selectors with priorities.
+        selection_aliases: Human-readable technique names and short phrases
+            shown in selection prompts and pending-choice detection.
+        fallback_suggestion_rank: Optional rank for deterministic fallback
+            suggestion menus when the LLM is unavailable or returns invalid
+            options. Lower ranks are offered first. ``None`` excludes the
+            exercise from broad fallback menus.
         voice_supported: Whether the exercise is suitable for voice mode.
     """
 
@@ -77,6 +83,8 @@ class ExerciseDefinition:
     selection_use_case: str
     steps: tuple[ExerciseStep, ...]
     selector_groups: tuple[ExerciseSelectorGroup, ...] = ()
+    selection_aliases: tuple[str, ...] = ()
+    fallback_suggestion_rank: int | None = None
     voice_supported: bool = False
 
 

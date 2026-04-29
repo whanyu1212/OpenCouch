@@ -3,8 +3,8 @@ SOURCE: synthesized from agent/prompts/crisis.py (build_crisis_response_*)
 
 The crisis response prompt is composed from a different layer set
 than therapeutic turns. CORE_SOURCES + policy/crisis.md +
-response_modes/crisis_response.md + modalities/pfa.md +
-modalities/dbt_skills.md. Procedural rules and recall-toggle
+response_styles/crisis_response.md + therapeutic_approaches/pfa.md +
+therapeutic_approaches/dbt_skills.md. Procedural rules and recall-toggle
 guidance are deliberately omitted — a user-saved rule like "be
 less emotional" or "don't ask questions" must NOT degrade crisis
 handling.
@@ -70,7 +70,7 @@ recall-toggle layers — see crisis.py docstring.)
 
 ===== USER/TASK PROMPT =====
 Write the next assistant message for a mental health support
-conversation in crisis_response mode.
+conversation with crisis_response style.
 
 Crisis assessment:
   level=3

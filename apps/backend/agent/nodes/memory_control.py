@@ -18,7 +18,7 @@ from agent.memory.control import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural import aget_procedural_profile
-from agent.models import ModeType, ResponseCategory
+from agent.models import ResponseStyleType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -38,7 +38,7 @@ def _base_delta(response_text: str, *, started_at: float) -> dict[str, Any]:
         "route": "memory_control",
         "response_style": "memory_control",
         "response_style_source": "memory_control_gate",
-        "response_style_type": ModeType.OPERATIONAL,
+        "response_style_type": ResponseStyleType.OPERATIONAL,
         "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
         "diagnostics": {
@@ -193,7 +193,7 @@ async def run_memory_control_node(
     """Execute an explicit memory-control action.
 
     Args:
-        state: Current graph state with ``memory_control_action`` set by the gate.
+        state: Current graph state with ``memory_control.action`` set by the gate.
         runtime: LangGraph runtime carrying memory dependencies.
 
     Returns:
@@ -202,7 +202,7 @@ async def run_memory_control_node(
     """
 
     started_at = time.monotonic()
-    action = state.get("memory_control_action", {}) or {}
+    action = (state.get("memory_control", {}) or {}).get("action", {}) or {}
     action_type = action.get("type")
 
     if runtime.context.memory_mode == MemoryMode.INCOGNITO:

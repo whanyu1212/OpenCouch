@@ -86,11 +86,11 @@ def _classify_transition(
     exercise_step = exercise_state.get("exercise_step", "MISSING")
 
     if exercise_type is None and exercise_step is None:
-        from agent.therapeutic.guided_exercise import _EXERCISE_REGISTRY
+        from agent.therapeutic.exercises.registry import get_exercise_steps
 
         orig_type = case["exercise_type"]
         orig_step = case["exercise_step"]
-        steps = _EXERCISE_REGISTRY.get(orig_type, ())
+        steps = get_exercise_steps(orig_type) or ()
         if orig_step == len(steps) - 1:
             return "complete"
         return "exit"

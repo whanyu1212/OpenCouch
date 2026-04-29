@@ -15,7 +15,7 @@ const LAYERS: Layer[] = [
     depth: 0,
     label: '6. Turn posture',
     source: 'build_*_system_prompt() + format_recent_history()',
-    desc: 'Working memory block, recent history, current message, and step directives for multi-turn exercises (including the pinned exercise_modality).',
+    desc: 'Working memory block, recent history, current message, and step directives for multi-turn exercises (including the pinned exercise_therapeutic_approach).',
   },
   {
     id: 'state',
@@ -35,14 +35,14 @@ const LAYERS: Layer[] = [
     id: 'approach',
     depth: 3,
     label: '3. Approach overlay',
-    source: 'agent/prompts/sources/modalities/*.md',
+    source: 'agent/prompts/sources/therapeutic_approaches/*.md',
     desc: 'Therapeutic framework overlay — MI, CBT (with cbt_arc), ACT, DBT skills, grief support, IPT, or PFA. Selected per turn as therapeutic_approach by the LLM dispatcher.',
   },
   {
     id: 'response',
     depth: 4,
     label: '2. Response knowledge',
-    source: 'agent/prompts/sources/response_modes/*.md',
+    source: 'agent/prompts/sources/response_styles/*.md',
     desc: 'Response-style knowledge file. Seven files: support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check. Technique responses use the core sources plus the active therapeutic approach.',
   },
   {

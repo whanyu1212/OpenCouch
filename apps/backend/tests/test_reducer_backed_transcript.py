@@ -1,11 +1,10 @@
-"""Guard tests for reducer-backed transcript/history state.
+"""Guard tests for reducer-backed transcript state.
 
 Phase C of the LangGraph best-practice alignment plan. These tests
 verify that:
 
-1. ``history`` and ``transcript`` use ``operator.add`` reducers so
-   LangGraph accumulates turns via the checkpointer instead of
-   manual reconstruction every turn.
+1. ``transcript`` uses an ``operator.add`` reducer so LangGraph accumulates
+   turns via the checkpointer instead of manual reconstruction every turn.
 2. ``build_initial_state`` emits only the current user turn (not the
    full prior history) — the checkpointer restores prior turns.
 3. ``run_finalize_turn_node`` returns a single-element delta (not a
@@ -24,6 +23,7 @@ from typing import Annotated, Any, NotRequired, get_type_hints
 
 import pytest
 
+from agent.conversation import format_recent_history, get_recent_history, get_transcript
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.models import DispatchDecision
 from agent.memory.modes import MemoryMode
@@ -62,16 +62,8 @@ def _get_reducer(state_class: type, field: str) -> Any:
     return metadata[0] if metadata else None
 
 
-def test_history_uses_add_reducer() -> None:
-    """``AgentState.history`` should have ``operator.add`` as its reducer."""
-    reducer = _get_reducer(AgentState, "history")
-    assert reducer is operator.add, (
-        f"history reducer is {reducer!r}, expected operator.add"
-    )
-
-
 def test_session_progress_uses_merge_reducer() -> None:
-    """``AgentState.session_progress`` should have a merge reducer."""
+    """``AgentState.session_progress`` should have a plain merge reducer."""
     from agent.state import _merge_dicts
 
     reducer = _get_reducer(AgentState, "session_progress")
@@ -112,6 +104,33 @@ def test_transcript_uses_add_reducer() -> None:
     )
 
 
+def test_conversation_helpers_prefer_transcript_over_history() -> None:
+    """Conversation helpers should read transcript before legacy history."""
+
+    state = {
+        "transcript": [
+            {"role": "user", "content": "new user turn"},
+            {"role": "assistant", "content": "new assistant turn"},
+        ],
+        "history": [{"role": "user", "content": "legacy user turn"}],
+    }
+
+    assert get_transcript(state) == state["transcript"]
+    assert get_recent_history(state, limit=1) == [state["transcript"][1]]
+    assert format_recent_history(state, limit=2) == (
+        "user: new user turn\nassistant: new assistant turn"
+    )
+
+
+def test_conversation_helpers_fall_back_to_history() -> None:
+    """Conversation helpers should support older state without transcript."""
+
+    state = {"history": [{"role": "user", "content": "legacy user turn"}]}
+
+    assert get_transcript(state) == state["history"]
+    assert format_recent_history(state) == "user: legacy user turn"
+
+
 def test_langgraph_compiles_therapeutic_approach_as_last_value_channel() -> None:
     """LangGraph should compile ``therapeutic_approach`` as an overwrite channel."""
 
@@ -139,9 +158,8 @@ def test_parent_graph_declares_explicit_input_and_output_schemas() -> None:
 # ── build_initial_state tests ──────────────────────────────────────────────
 
 
-def test_build_initial_state_emits_only_current_user_turn() -> None:
-    """build_initial_state should emit only the current user message in
-    history/transcript — not the full prior history.
+def test_build_initial_state_emits_only_current_user_turn_to_transcript() -> None:
+    """build_initial_state should emit only the current user message to transcript.
 
     The checkpointer is responsible for restoring prior turns via the
     reducer. Emitting the full history would cause duplication when
@@ -159,14 +177,7 @@ def test_build_initial_state_emits_only_current_user_turn() -> None:
     )
     state = build_initial_state(agent_input)
 
-    # history and transcript should contain ONLY the current user turn.
-    assert len(state["history"]) == 1, (
-        f"Expected 1 entry in history, got {len(state['history'])}. "
-        f"build_initial_state should not reconstruct the full prior history."
-    )
-    assert state["history"][0]["content"] == "How are you?"
-    assert state["history"][0]["role"] == MessageRole.USER.value
-
+    assert "history" not in state
     assert len(state.get("transcript", [])) == 1
     assert state["transcript"][0]["content"] == "How are you?"
 
@@ -193,6 +204,20 @@ def test_build_initial_state_turn_count_still_correct() -> None:
 
     # 2 prior user turns + 1 current = 3
     assert state["session_progress"]["turn_count"] == 3
+
+
+def test_build_initial_state_session_progress_contract_is_minimal() -> None:
+    """build_initial_state should seed only owned session-progress fields."""
+
+    state = build_initial_state(
+        AgentInput(message="Fourth message"),
+        prior_turn_count=3,
+    )
+
+    assert state["session_progress"] == {
+        "turn_count": 4,
+        "is_guest": False,
+    }
 
 
 # ── finalize_turn_node tests ──────────────────────────────────────────────
@@ -270,17 +295,10 @@ class _GuidedExerciseLLM(BaseLLMClient):
 
 @pytest.mark.asyncio
 async def test_finalize_returns_single_element_delta() -> None:
-    """finalize_turn_node should return a 1-element list for transcript
-    and history — the reducer handles appending to the accumulated state.
-    """
+    """finalize_turn_node should return a 1-element transcript delta."""
 
     state: dict[str, Any] = {
         "transcript": [
-            {"role": "user", "content": "Hi"},
-            {"role": "assistant", "content": "Hello"},
-            {"role": "user", "content": "Help me"},
-        ],
-        "history": [
             {"role": "user", "content": "Hi"},
             {"role": "assistant", "content": "Hello"},
             {"role": "user", "content": "Help me"},
@@ -300,9 +318,6 @@ async def test_finalize_returns_single_element_delta() -> None:
     assert delta["transcript"][0]["role"] == MessageRole.ASSISTANT.value
     assert delta["transcript"][0]["content"] == "Of course, what's on your mind?"
     assert delta["transcript"][0]["response_style"] == "supportive"
-
-    assert len(delta["history"]) == 1
-    assert delta["history"] == delta["transcript"]
 
 
 # ── Multi-turn accumulation via checkpointer ───────────────────────────────
@@ -354,8 +369,8 @@ async def test_exercise_state_persists_across_turns() -> None:
     in turn N+1 without any manual carry-forward in persistence.py.
 
     The exercise_state field uses a merge reducer so build_initial_state's
-    fresh session_progress dict (with turn_count, stage, etc.) coexists with
-    the checkpoint's exercise_state (which carries exercise_type/exercise_step)
+    fresh session_progress dict (with turn_count) coexists with the
+    checkpoint's exercise_state (which carries exercise_type/exercise_step)
     rather than overwriting it.
     """
 

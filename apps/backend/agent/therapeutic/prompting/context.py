@@ -1,4 +1,4 @@
-"""State-derived prompt context for therapeutic response modes."""
+"""State-derived prompt context for therapeutic response styles."""
 
 from __future__ import annotations
 

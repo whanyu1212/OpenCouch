@@ -66,9 +66,9 @@ def _make_state(
     """Build a minimal AgentState with procedural fields configured.
 
     The builders under test only read ``state["procedural_profile"]`` for
-    procedural rules and recall toggle, plus ``state["history"]`` and
-    ``state["working_memory"]`` for the user-prompt helpers (which
-    aren't exercised here). A partial dict is sufficient — AgentState
+    procedural rules and recall toggle, plus transcript-backed conversation
+    context and ``state["working_memory"]`` for the user-prompt helpers
+    (which aren't exercised here). A partial dict is sufficient — AgentState
     is a TypedDict so the type annotation is a type-checker assertion,
     not a runtime constructor.
     """
@@ -328,6 +328,65 @@ def test_technique_prompt_requires_attuned_opening_before_structure() -> None:
     assert 'Do not open with bare consent ("Yes.", "Okay.", "Sure.")' in prompt
 
 
+def test_therapeutic_approach_overlays_psychoeducation_without_changing_style() -> None:
+    """Approach files may shape the prompt, but the response style remains primary."""
+
+    state = _make_state()
+    state["therapeutic_approach"] = "dbt_skills"
+
+    prompt = build_psychoeducation_system_prompt(state)
+
+    assert "Psychoeducation Mode" in prompt
+    assert "You are in the PSYCHOEDUCATION response style" in prompt
+    assert "DBT Skills" in prompt
+    assert "Use DBT skills as a bounded coping-skills overlay" in prompt
+
+
+def test_closing_prompt_ignores_specific_approach_overlay() -> None:
+    """Closing owns the reply shape even when an approach is present in state."""
+
+    state = _make_state()
+    state["therapeutic_approach"] = "cbt"
+
+    prompt = build_closing_system_prompt(state)
+
+    assert "Closing Mode" in prompt
+    assert "You are in the CLOSING response style" in prompt
+    assert "CBT Overlay" not in prompt
+    assert "The CBT structure is invisible scaffolding" not in prompt
+
+
+def test_technique_prompt_uses_dbt_approach_as_primary_process_context() -> None:
+    """Technique is the one style where the selected approach is foregrounded."""
+
+    state = _make_state()
+    state["therapeutic_approach"] = "dbt_skills"
+
+    prompt = build_technique_system_prompt(state)
+    normalized = " ".join(prompt.split())
+
+    assert "You are in the TECHNIQUE response style" in prompt
+    assert "DBT Skills" in prompt
+    assert "The therapeutic approach is driving this turn" in normalized
+    assert "Use DBT skills as a bounded coping-skills overlay" in prompt
+
+
+def test_supportive_prompt_can_use_pfa_overlay_without_becoming_crisis_response() -> (
+    None
+):
+    """PFA can inform non-crisis therapeutic support without taking over routing."""
+
+    state = _make_state()
+    state["therapeutic_approach"] = "pfa"
+
+    prompt = build_supportive_system_prompt(state)
+
+    assert "Supportive Conversation Mode" in prompt
+    assert "You are in the SUPPORTIVE response style" in prompt
+    assert "Psychological First Aid" in prompt
+    assert "Crisis Response" not in prompt
+
+
 def test_closing_prompt_handles_wrap_up_takeaway_requests() -> None:
     """Closing should answer explicit wrap-up takeaway requests directly."""
 
@@ -378,7 +437,7 @@ def test_supportive_prompt_handles_low_content_opening_orientation() -> None:
 
 
 def test_supportive_prompt_breaks_uniform_response_shape() -> None:
-    """Supportive mode should not force reflection -> explanation -> question."""
+    """Supportive style should not force reflection -> explanation -> question."""
 
     prompt = build_supportive_system_prompt(_make_state())
     normalized = " ".join(prompt.split())
@@ -394,7 +453,7 @@ def test_supportive_prompt_breaks_uniform_response_shape() -> None:
 
 
 def test_supportive_prompt_handles_acknowledgments_and_capability_questions() -> None:
-    """Supportive mode should answer terse acknowledgments and capability asks directly."""
+    """Supportive style should answer terse acknowledgments and capability asks directly."""
 
     prompt = build_supportive_system_prompt(_make_state())
 
@@ -465,11 +524,11 @@ def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> Non
             )
 
     def test_rules_appear_AFTER_instructions(self) -> None:
-        """The rules block is a suffix: it appears AFTER the mode's
+        """The rules block is a suffix: it appears AFTER the response style's
         instructions block, not before or in the middle.
 
         This matches the schema's ``injection_point: system_prompt_suffix``
-        spec. Using a signature string from each mode's instructions
+        spec. Using a signature string from each response style's instructions
         block, we verify the rules block's position.
         """
 
@@ -477,15 +536,15 @@ def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> Non
             rules=["You prefer shorter responses."],
         )
 
-        # Each mode has a unique signature string in its instructions.
+        # Each response style has a unique signature string in its instructions.
         # We verify the rules block appears AFTER it.
         signatures = {
-            "supportive": "SUPPORTIVE mode",
-            "reflective": "REFLECTIVE mode",
-            "clarifying": "CLARIFYING mode",
-            "psychoeducation": "PSYCHOEDUCATION mode",
-            "closing": "CLOSING mode",
-            "guided_exercise": "GUIDED_EXERCISE mode",
+            "supportive": "SUPPORTIVE response style",
+            "reflective": "REFLECTIVE response style",
+            "clarifying": "CLARIFYING response style",
+            "psychoeducation": "PSYCHOEDUCATION response style",
+            "closing": "CLOSING response style",
+            "guided_exercise": "GUIDED_EXERCISE response style",
         }
 
         for name, builder in self.BUILDERS:
@@ -493,7 +552,7 @@ def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> Non
             mode_sig = signatures[name]
             sig_index = prompt.find(mode_sig)
             rules_index = prompt.find("Style rules from past conversations")
-            assert sig_index >= 0, f"{name}: mode signature not found"
+            assert sig_index >= 0, f"{name}: response-style signature not found"
             assert rules_index >= 0, f"{name}: rules block not found"
             assert rules_index > sig_index, (
                 f"{name}: rules block ({rules_index}) appears BEFORE "
@@ -603,7 +662,7 @@ class TestTherapeuticResponsePrompt:
             ]
         )
 
-        prompt = build_therapeutic_response_prompt(state, mode="supportive")
+        prompt = build_therapeutic_response_prompt(state, response_style="supportive")
         assert "Relevant context from past sessions:" in prompt
         assert "- Previously noted: I have a sister named Sarah." in prompt
         assert "- Last session (grief): talked about grief after my dog died." in prompt
@@ -617,5 +676,5 @@ class TestTherapeuticResponsePrompt:
                 "Previously noted: legacy fact about the user.",  # type: ignore[list-item]
             ]
         )
-        prompt = build_therapeutic_response_prompt(state, mode="supportive")
+        prompt = build_therapeutic_response_prompt(state, response_style="supportive")
         assert "legacy fact about the user" in prompt

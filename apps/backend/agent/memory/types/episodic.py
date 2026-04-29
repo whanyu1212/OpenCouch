@@ -13,7 +13,7 @@ from agent.memory.types.therapeutic import TherapeuticApproach
 class CBTContext(BaseModel):
     """Structured context from a CBT-oriented session."""
 
-    modality: Literal["cbt"] = "cbt"
+    approach: Literal["cbt"] = "cbt"
     thought_examined: str | None = None
     action_step: str | None = None
     tool_used: str | None = None
@@ -22,7 +22,7 @@ class CBTContext(BaseModel):
 class MIContext(BaseModel):
     """Structured context from a motivational interviewing session."""
 
-    modality: Literal["motivational_interviewing"] = "motivational_interviewing"
+    approach: Literal["motivational_interviewing"] = "motivational_interviewing"
     readiness_stage: str | None = None
     change_talk_themes: list[str] = Field(default_factory=list)
     sustain_talk_themes: list[str] = Field(default_factory=list)
@@ -31,7 +31,7 @@ class MIContext(BaseModel):
 class ACTContext(BaseModel):
     """Structured context from an ACT-oriented session."""
 
-    modality: Literal["act"] = "act"
+    approach: Literal["act"] = "act"
     values_identified: list[str] = Field(default_factory=list)
     fusion_patterns: list[str] = Field(default_factory=list)
     committed_action: str | None = None
@@ -40,7 +40,7 @@ class ACTContext(BaseModel):
 class GriefContext(BaseModel):
     """Structured context from a grief support session."""
 
-    modality: Literal["grief_support"] = "grief_support"
+    approach: Literal["grief_support"] = "grief_support"
     person_lost: str | None = None
     relationship: str | None = None
     time_since_loss: str | None = None
@@ -49,7 +49,7 @@ class GriefContext(BaseModel):
 class IPTContext(BaseModel):
     """Structured context from an interpersonal therapy session."""
 
-    modality: Literal["interpersonal_therapy"] = "interpersonal_therapy"
+    approach: Literal["interpersonal_therapy"] = "interpersonal_therapy"
     problem_area: str | None = None
     key_relationship: str | None = None
     communication_step_planned: str | None = None
@@ -58,7 +58,7 @@ class IPTContext(BaseModel):
 class DBTContext(BaseModel):
     """Structured context from a DBT skills session."""
 
-    modality: Literal["dbt_skills"] = "dbt_skills"
+    approach: Literal["dbt_skills"] = "dbt_skills"
     skills_used: list[str] = Field(default_factory=list)
     primary_domain: str | None = None
 
@@ -66,12 +66,12 @@ class DBTContext(BaseModel):
 class PFAContext(BaseModel):
     """Structured context from a psychological first aid session."""
 
-    modality: Literal["pfa"] = "pfa"
+    approach: Literal["pfa"] = "pfa"
     crisis_type: str | None = None
     support_connected: str | None = None
 
 
-ModalityContext = (
+TherapeuticApproachContext = (
     CBTContext
     | MIContext
     | ACTContext
@@ -103,7 +103,7 @@ class SessionArc(BaseModel):
     open_loops: list[str] = Field(default_factory=list)
     resolved_threads: list[str] = Field(default_factory=list)
     approach_used: TherapeuticApproach | None = None
-    approach_context: ModalityContext | None = None
+    approach_context: TherapeuticApproachContext | None = None
 
 
 class StoredSessionArc(SessionArc):
@@ -135,7 +135,7 @@ __all__ = [
     "IPTContext",
     "DBTContext",
     "PFAContext",
-    "ModalityContext",
+    "TherapeuticApproachContext",
     "MoodArc",
     "SessionArc",
     "StoredSessionArc",

@@ -29,7 +29,6 @@ from agent.memory.types import (
     MIContext,
     MemoryWrite,
     MemoryWriteTiming,
-    ModalityContext,
     MoodArc,
     PFAContext,
     ProceduralExtractionResult,
@@ -44,6 +43,7 @@ from agent.memory.types import (
     StoredSessionArc,
     SummarizationResult,
     TherapeuticApproach,
+    TherapeuticApproachContext,
     TherapeuticResponseStyle,
 )
 
@@ -65,7 +65,7 @@ __all__ = [
     "IPTContext",
     "DBTContext",
     "PFAContext",
-    "ModalityContext",
+    "TherapeuticApproachContext",
     "MoodArc",
     "SessionArc",
     "StoredSessionArc",

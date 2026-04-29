@@ -82,9 +82,8 @@ DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "Channel"),
     ("agent.models", "CrisisAssessment"),
-    ("agent.models", "ModeType"),
     ("agent.models", "ResponseCategory"),
-    ("agent.models", "ResponseKind"),
+    ("agent.models", "ResponseStyleType"),
 ]
 SESSION_TIMEOUT = timedelta(minutes=20)
 ACTIVE_SESSION_STATE_DDL = """
@@ -106,7 +105,7 @@ ACTIVE_SESSION_EXTRA_COLUMNS = {
 _EXERCISE_STATE_FIELDS = (
     "exercise_type",
     "exercise_step",
-    "exercise_modality",
+    "exercise_therapeutic_approach",
     "exercise_selection_options",
 )
 ExpectedSessionLiveness = Literal["active", "absent"]
@@ -865,7 +864,7 @@ class PersistentAgentRuntime:
             delta["exercise_state"] = {
                 "exercise_type": None,
                 "exercise_step": None,
-                "exercise_modality": None,
+                "exercise_therapeutic_approach": None,
                 "exercise_selection_options": None,
             }
 
@@ -1203,8 +1202,8 @@ class PersistentAgentRuntime:
         prior_max = self._max_crisis_levels.get(thread_id, 0)
         self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
 
-        turn_modality = final_state.get("therapeutic_approach")
-        self._session_memory_buffer_for_thread(thread_id).record_approach(turn_modality)
+        turn_approach = final_state.get("therapeutic_approach")
+        self._session_memory_buffer_for_thread(thread_id).record_approach(turn_approach)
 
         await self._persist_runtime_session_tracking(thread_id)
 
@@ -1325,7 +1324,6 @@ class PersistentAgentRuntime:
                     "message": message,
                     "user_id": user_id,
                     "session_id": thread_id,
-                    "history": list(transcript[:transcript_index]),
                     "transcript": list(transcript[: transcript_index + 1]),
                     "session_progress": {"turn_count": user_turn_count},
                     "route": "therapeutic",
@@ -1701,7 +1699,7 @@ class PersistentAgentRuntime:
             graph = self._get_graph()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Reducers restore transcript/history; only turn_count is needed here.
+            # Reducers restore transcript; only turn_count is needed here.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
@@ -2065,7 +2063,7 @@ class PersistentAgentRuntime:
             graph = self._get_graph()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Reducers restore transcript/history; only turn_count is needed here.
+            # Reducers restore transcript; only turn_count is needed here.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,

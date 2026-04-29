@@ -1,11 +1,11 @@
-"""Tests for the modality-context pipeline: schema, working memory, and retrieval.
+"""Tests for the approach-context pipeline: schema, working memory, and retrieval.
 
 These tests verify the full Option D data path:
-1. Schema: typed ModalityContext models round-trip through JSON.
-2. Working memory: EpisodicWorkingMemoryEntry carries and formats modality context.
-3. Load memory: _episodic_entry_from_record extracts modality fields from stored records.
+1. Schema: typed approach-context models round-trip through JSON.
+2. Working memory: EpisodicWorkingMemoryEntry carries and formats approach context.
+3. Load memory: _episodic_entry_from_record extracts approach fields from stored records.
 4. SessionMemoryBuffer: approach_counts accumulates per-turn and computes dominant.
-5. Backward compatibility: old records without modality fields degrade gracefully.
+5. Missing approach fields degrade gracefully.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from agent.working_memory import (
 # ─── 1. Schema round-trip tests ─────────────────────────────────────────
 
 
-class TestModalityContextSchema:
-    """Discriminated union round-trips cleanly through JSON for every modality."""
+class TestApproachContextSchema:
+    """Approach context models round-trip cleanly through JSON."""
 
     def test_cbt_context_round_trip(self) -> None:
         ctx = CBTContext(
@@ -40,7 +40,7 @@ class TestModalityContextSchema:
             tool_used="thought_record",
         )
         dumped = ctx.model_dump(mode="json")
-        assert dumped["modality"] == "cbt"
+        assert dumped["approach"] == "cbt"
         reloaded = CBTContext.model_validate(dumped)
         assert reloaded.thought_examined == "I'm going to get fired"
 
@@ -51,7 +51,7 @@ class TestModalityContextSchema:
             sustain_talk_themes=["effort"],
         )
         dumped = ctx.model_dump(mode="json")
-        assert dumped["modality"] == "motivational_interviewing"
+        assert dumped["approach"] == "motivational_interviewing"
         reloaded = MIContext.model_validate(dumped)
         assert reloaded.readiness_stage == "contemplation"
         assert reloaded.change_talk_themes == ["health", "kids"]
@@ -122,8 +122,8 @@ class TestModalityContextSchema:
         assert isinstance(reloaded.approach_context, CBTContext)
         assert reloaded.approach_context.thought_examined == "I'm incompetent"
 
-    def test_session_arc_without_modality_fields(self) -> None:
-        """Old-style arcs without modality fields should validate cleanly."""
+    def test_session_arc_without_approach_fields(self) -> None:
+        """Old-style arcs without approach fields should validate cleanly."""
 
         old = {
             "session_id": "old",
@@ -143,8 +143,8 @@ class TestModalityContextSchema:
 # ─── 2. Working memory formatting tests ──────────────────────────────────
 
 
-class TestWorkingMemoryModalityFormatting:
-    """format_working_memory_entry renders modality context correctly."""
+class TestWorkingMemoryApproachFormatting:
+    """format_working_memory_entry renders approach context correctly."""
 
     def test_cbt_entry_shows_thought_and_action(self) -> None:
         entry = make_episodic_working_memory_entry(
@@ -153,7 +153,7 @@ class TestWorkingMemoryModalityFormatting:
             is_catch_up=True,
             approach_used="cbt",
             approach_context={
-                "modality": "cbt",
+                "approach": "cbt",
                 "thought_examined": "I'll get fired",
                 "action_step": "speak up in one meeting",
                 "tool_used": "thought_record",
@@ -165,7 +165,7 @@ class TestWorkingMemoryModalityFormatting:
         assert "Action step: speak up in one meeting" in rendered
         assert "Tool: thought_record" in rendered
 
-    def test_entry_without_modality_renders_unchanged(self) -> None:
+    def test_entry_without_approach_renders_unchanged(self) -> None:
         entry = make_episodic_working_memory_entry(
             summary="User discussed sleep.",
             primary_themes=["sleep"],
@@ -175,7 +175,7 @@ class TestWorkingMemoryModalityFormatting:
         assert rendered == "Last session (sleep): User discussed sleep."
         assert "[" not in rendered
 
-    def test_entry_with_modality_but_no_context_has_no_bracket_suffix(self) -> None:
+    def test_entry_with_approach_but_no_context_has_no_bracket_suffix(self) -> None:
         entry = make_episodic_working_memory_entry(
             summary="Short MI session.",
             primary_themes=["motivation"],
@@ -193,7 +193,7 @@ class TestWorkingMemoryModalityFormatting:
             is_catch_up=True,
             approach_used="grief_support",
             approach_context={
-                "modality": "grief_support",
+                "approach": "grief_support",
                 "person_lost": "Dad",
                 "relationship": None,
                 "time_since_loss": None,
@@ -211,7 +211,7 @@ class TestWorkingMemoryModalityFormatting:
             is_catch_up=False,
             approach_used="motivational_interviewing",
             approach_context={
-                "modality": "motivational_interviewing",
+                "approach": "motivational_interviewing",
                 "readiness_stage": "contemplation",
                 "change_talk_themes": ["health", "kids", "energy"],
                 "sustain_talk_themes": [],
@@ -225,17 +225,17 @@ class TestWorkingMemoryModalityFormatting:
 # ─── 3. _episodic_entry_from_record passthrough ─────────────────────────
 
 
-class TestEpisodicEntryFromRecordModality:
-    """_episodic_entry_from_record passes modality fields through."""
+class TestEpisodicEntryFromRecordApproach:
+    """_episodic_entry_from_record passes approach fields through."""
 
-    def test_new_record_with_modality(self) -> None:
+    def test_new_record_with_approach(self) -> None:
         # Simulate what a stored record looks like after model_dump
         record = {
             "summary": "User examined a thought.",
             "primary_themes": ["work"],
             "approach_used": "cbt",
             "approach_context": {
-                "modality": "cbt",
+                "approach": "cbt",
                 "thought_examined": "I always fail",
                 "action_step": None,
                 "tool_used": None,
@@ -251,7 +251,7 @@ class TestEpisodicEntryFromRecordModality:
         assert entry["approach_used"] == "cbt"
         assert entry["approach_context"]["thought_examined"] == "I always fail"
 
-    def test_old_record_without_modality(self) -> None:
+    def test_old_record_without_approach(self) -> None:
         record = {
             "summary": "Old session.",
             "primary_themes": ["sleep"],
@@ -267,17 +267,17 @@ class TestEpisodicEntryFromRecordModality:
         assert "approach_context" not in entry
 
 
-# ─── 4. SessionMemoryBuffer modality counting ───────────────────────────
+# ─── 4. SessionMemoryBuffer approach counting ───────────────────────────
 
 
-class TestSessionMemoryBufferModality:
+class TestSessionMemoryBufferApproach:
     """approach_counts accumulates per-turn and dominant_approach works."""
 
     def test_empty_buffer_returns_none(self) -> None:
         buf = SessionMemoryBuffer(session_id="test")
         assert buf.dominant_approach() is None
 
-    def test_single_modality_dominates(self) -> None:
+    def test_single_approach_dominates(self) -> None:
         buf = SessionMemoryBuffer(session_id="test")
         buf.record_approach("cbt")
         buf.record_approach("cbt")
@@ -293,7 +293,7 @@ class TestSessionMemoryBufferModality:
         assert buf.approach_counts == {"cbt": 1}
         assert buf.dominant_approach() == "cbt"
 
-    def test_mixed_modalities_picks_most_frequent(self) -> None:
+    def test_mixed_approaches_picks_most_frequent(self) -> None:
         buf = SessionMemoryBuffer(session_id="test")
         buf.record_approach("act")
         buf.record_approach("act")

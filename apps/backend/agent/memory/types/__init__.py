@@ -21,11 +21,11 @@ from agent.memory.types.episodic import (
     IPTContext,
     MIContext,
     MoodArc,
-    ModalityContext,
     PFAContext,
     SessionArc,
     StoredSessionArc,
     SummarizationResult,
+    TherapeuticApproachContext,
 )
 from agent.memory.types.primitives import (
     ConfidenceLevel,
@@ -71,7 +71,7 @@ __all__ = [
     "IPTContext",
     "DBTContext",
     "PFAContext",
-    "ModalityContext",
+    "TherapeuticApproachContext",
     "MoodArc",
     "SessionArc",
     "StoredSessionArc",

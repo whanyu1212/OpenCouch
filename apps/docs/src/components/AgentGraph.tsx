@@ -82,7 +82,7 @@ const STEPS: StepDef[] = [
     ],
     detail: {
       what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and exercise state flow back to the parent — preventing reducer double-counting on history/transcript.',
-      how: 'Dispatcher is LLM-primary: deterministic regex only fires for explicit exercise opt-out, the LLM picks response_style + therapeutic_approach for everything else, and regex fallback runs when no LLM is configured. Mid-exercise side-turns preserve the approach stored in exercise_modality.',
+      how: 'Dispatcher is LLM-primary: deterministic regex only fires for explicit exercise opt-out, the LLM picks response_style + therapeutic_approach for everything else, and regex fallback runs when no LLM is configured. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
       emits: 'response_style + response_style_source + response_style_type + response_kind + response_text + therapeutic_approach + exercise_state',
     },
   },
@@ -174,9 +174,9 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
   {
     id: 'guided_exercise', label: 'guided_exercise',
     detail: {
-      what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_modality) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
+      what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_therapeutic_approach) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
       how: 'Active-exercise context is passed to the LLM dispatcher; explicit exit phrases fire deterministically. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
-      emits: 'response_kind = THERAPEUTIC + exercise_state.{exercise_type, exercise_step, exercise_modality}',
+      emits: 'response_kind = THERAPEUTIC + exercise_state.{exercise_type, exercise_step, exercise_therapeutic_approach}',
     },
   },
   {

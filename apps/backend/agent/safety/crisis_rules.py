@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
+from agent.conversation import get_recent_history
 from agent.models import CrisisAssessment
 from agent.state import AgentState
 
@@ -99,7 +100,7 @@ def _combined_user_text(state: AgentState) -> str:
 
     recent_user_turns = [
         turn["content"]
-        for turn in state.get("history", [])[-6:]
+        for turn in get_recent_history(state, limit=6)
         if turn.get("role") == "user" and turn.get("content")
     ]
     recent_user_turns.append(state["message"])
@@ -153,8 +154,7 @@ def _previous_mode_was_safety_check(state: AgentState) -> bool:
         Whether the latest assistant turn looks like a safety check.
     """
 
-    history = state.get("history", [])
-    for turn in reversed(history[-4:]):
+    for turn in reversed(get_recent_history(state, limit=4)):
         if turn.get("role") != "assistant":
             continue
         content = turn.get("content", "").lower()

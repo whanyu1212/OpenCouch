@@ -19,7 +19,7 @@ from agent.memory.procedural import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from agent.therapeutic.guided_exercise import (
+from agent.therapeutic.exercises.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
     EXERCISE_CONTINUUM,

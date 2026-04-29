@@ -78,8 +78,9 @@ The dispatcher is **LLM-primary** with deterministic regex overrides
 for unambiguous exercise opt-out (`"never mind"`, `"quit the
 exercise"`) and a regex fallback for the no-LLM path. When a guided
 exercise is active, the dispatcher preserves the pinned
-`exercise_modality` across mid-exercise clarifying or psychoeducation
-turns so the pinned approach does not drift.
+`exercise_therapeutic_approach` for exercise continuations and narrow
+clarifying turns. Psychoeducation side-turns keep the exercise active, but may
+use a fresh top-level approach for the explanation.
 
 ## Design principles
 
@@ -175,7 +176,7 @@ for the full breakdown.
 
 ## Adding a new therapeutic response style
 
-1. Create `agent/prompts/sources/response_modes/your_style.md` with the
+1. Create `agent/prompts/sources/response_styles/your_style.md` with the
    response style's knowledge content
 2. Create `agent/therapeutic/your_style.py` with the response node
    function

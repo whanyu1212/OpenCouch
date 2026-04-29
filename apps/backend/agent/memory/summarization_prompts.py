@@ -37,14 +37,14 @@ from __future__ import annotations
 from agent.state import AgentState
 
 
-# ─── Per-modality field hints for the summarizer user prompt ─────────────────
+# ─── Per-approach field hints for the summarizer user prompt ─────────────────
 #
 # Each entry lists the approach_context field names the LLM should look for
 # in the transcript, plus a one-line description of what each field captures.
-# Only the relevant modality's hints are injected into the user prompt,
+# Only the relevant approach's hints are injected into the user prompt,
 # keeping the system prompt generic and avoiding prompt bloat.
 
-_MODALITY_CONTEXT_HINTS: dict[str, str] = {
+_THERAPEUTIC_APPROACH_CONTEXT_HINTS: dict[str, str] = {
     "cbt": (
         "thought_examined (the specific belief or prediction examined),\n"
         "    action_step (concrete next step the user agreed to try),\n"
@@ -168,18 +168,18 @@ def build_summarization_system_prompt() -> str:
         "If the session ended cleanly (user said goodbye or thanked the\n"
         "assistant without naming loose ends), both lists may be empty.\n"
         "\n"
-        "═══ Modality context ═══\n"
+        "═══ Approach context ═══\n"
         "\n"
-        "If a dominant modality hint is provided in the user prompt,\n"
-        "populate ``approach_used`` with the modality name and\n"
+        "If a dominant therapeutic approach hint is provided in the user prompt,\n"
+        "populate ``approach_used`` with the therapeutic approach name and\n"
         "``approach_context`` with the matching typed schema.\n"
         "\n"
         "Rules:\n"
         "- Only populate fields where the conversation clearly produced\n"
         "  that artifact. When unsure, leave fields as null.\n"
         "- The user prompt lists the specific fields to extract for the\n"
-        "  active modality. Do NOT guess fields for other modalities.\n"
-        "- If no modality hint is provided, or the session did not\n"
+        "  active therapeutic approach. Do NOT guess fields for other therapeutic approaches.\n"
+        "- If no therapeutic approach hint is provided, or the session did not\n"
         "  engage in structured therapeutic work, set both\n"
         "  ``approach_used`` and ``approach_context`` to null.\n"
         "- For PFA sessions: do NOT reinterpret crisis severity in\n"
@@ -254,7 +254,7 @@ def build_summarization_user_prompt(
         ended_at (str): ISO-8601 session end timestamp.
         duration_seconds (int): Session duration in seconds.
         turn_count (int): Total number of user turns in the session.
-        approach_hint (str | None): Dominant modality hint for approach-context extraction.
+        approach_hint (str | None): Dominant therapeutic approach hint for approach-context extraction.
 
     Returns:
         str: User prompt for a single session-summarization call.
@@ -270,14 +270,14 @@ def build_summarization_user_prompt(
             if turn.get("content")
         )
 
-    # Build modality extraction block — only for sessions with a clear modality.
-    modality_block = ""
+    # Build approach extraction block — only for sessions with a clear therapeutic approach.
+    approach_block = ""
     if approach_hint and approach_hint != "none":
-        field_hints = _MODALITY_CONTEXT_HINTS.get(approach_hint)
+        field_hints = _THERAPEUTIC_APPROACH_CONTEXT_HINTS.get(approach_hint)
         if field_hints:
-            modality_block = (
+            approach_block = (
                 f"\n"
-                f"Dominant modality this session: {approach_hint}\n"
+                f"Dominant therapeutic approach this session: {approach_hint}\n"
                 f"Set approach_used = {approach_hint!r} and populate\n"
                 f"approach_context with these fields (only where the\n"
                 f"transcript clearly shows the artifact — leave null\n"
@@ -293,7 +293,7 @@ def build_summarization_user_prompt(
         f"  ended_at          = {ended_at!r}\n"
         f"  duration_seconds  = {duration_seconds}\n"
         f"  turn_count        = {turn_count}\n"
-        f"{modality_block}\n"
+        f"{approach_block}\n"
         f"Full session transcript (every user and assistant turn, in\n"
         f"chronological order):\n"
         f"{transcript_block}\n"

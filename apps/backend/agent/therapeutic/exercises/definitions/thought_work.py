@@ -196,6 +196,7 @@ THOUGHT_RECORD_DEFINITION = ExerciseDefinition(
             priority=70,
         ),
     ),
+    selection_aliases=("thought record", "thought check", "belief"),
 )
 
 BEHAVIORAL_EXPERIMENT_DEFINITION = ExerciseDefinition(
@@ -217,6 +218,7 @@ BEHAVIORAL_EXPERIMENT_DEFINITION = ExerciseDefinition(
             priority=50,
         ),
     ),
+    selection_aliases=("behavioral experiment", "test this belief", "test a belief"),
 )
 
 CONTINUUM_DEFINITION = ExerciseDefinition(
@@ -240,5 +242,6 @@ CONTINUUM_DEFINITION = ExerciseDefinition(
             priority=60,
         ),
     ),
+    selection_aliases=("continuum", "all-or-nothing", "black-and-white"),
     voice_supported=True,
 )

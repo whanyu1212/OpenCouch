@@ -11,8 +11,8 @@ Responsibilities:
 
     Graph assembly compiles a safety-first ``StateGraph``. ``crisis_gate_node``
     routes with ``Command`` to either the crisis branch or the therapeutic
-    branch. Both branches converge at ``finalize_turn_node`` before the semantic
-    and procedural extractors run as terminal side-effect nodes.
+    branch. Both branches converge at ``finalize_turn_node`` before terminal
+    memory extraction side effects run.
 
     The public entrypoint, ``run_agent``, compiles a fresh workflow with
     in-memory defaults for callers that do not need thread-persistent behavior.
@@ -36,16 +36,15 @@ from agent.models import (
     AgentOutput,
     CrisisAssessment,
     MessageRole,
-    ModeType,
+    ResponseStyleType,
     ResponseCategory,
 )
 from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
+from agent.nodes.memory_extraction import run_memory_extraction_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.nodes.load_memory import run_load_memory_node
@@ -74,8 +73,7 @@ def build_initial_state(
             checkpoint. When omitted, the function derives the count from
             ``agent_input.history``.
         include_input_history: Whether to inline ``agent_input.history`` into
-            ``history`` and ``transcript`` for one-shot callers without a
-            checkpointer.
+            ``transcript`` for one-shot callers without a checkpointer.
 
     Returns:
         An ``AgentGraphInputState`` seeded for the current turn.
@@ -113,7 +111,6 @@ def build_initial_state(
         user_id=agent_input.user_id,
         session_id=agent_input.session_id,
         installed_skills=list(agent_input.installed_skills),
-        history=visible_history,
         transcript=visible_history,
         working_memory=list(agent_input.working_memory),
         session_memory={"summary": ""},
@@ -122,11 +119,6 @@ def build_initial_state(
             "proactive_recall_enabled": False,
         },
         session_progress={
-            "intent": None,
-            "intent_source": None,
-            "stage": "opening",
-            "stage_source": "deterministic",
-            "stage_reason": "turn_start",
             "turn_count": turn_count,
             "is_guest": False,
         },
@@ -136,16 +128,14 @@ def build_initial_state(
         therapeutic_approach=None,
         response_style="pending",
         response_style_source=None,
-        response_style_type=ModeType.THERAPEUTIC,
+        response_style_type=ResponseStyleType.THERAPEUTIC,
         response_kind=ResponseCategory.THERAPEUTIC,
         response_text="",
         should_persist_memory=False,
         diagnostics={},
         route="",
         crisis_audit={},
-        memory_control_action={},
-        grounded_lookup_query="",
-        grounded_lookup_status="not_attempted",
+        grounded_lookup={"query": "", "status": "not_attempted"},
         inferred_location="",
         found_resources=[],
         resource_lookup_status="not_attempted",
@@ -204,8 +194,7 @@ def build_agent_workflow(
                       → finalize_turn_node
 
         finalize_turn_node
-          → extract_semantic_facts_node → END
-          → extract_procedural_rules_node → END
+          → memory_extraction_node → END
 
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
@@ -259,13 +248,8 @@ def build_agent_workflow(
     workflow.add_node("crisis_log_node", run_crisis_log_node, retry_policy=_io_retry)
     workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
     workflow.add_node(
-        "extract_semantic_facts_node",
-        run_extract_semantic_facts_node,
-        retry_policy=_io_retry,
-    )
-    workflow.add_node(
-        "extract_procedural_rules_node",
-        run_extract_procedural_rules_node,
+        "memory_extraction_node",
+        run_memory_extraction_node,
         retry_policy=_io_retry,
     )
     workflow.add_node("finalize_turn_node", run_finalize_turn_node)
@@ -283,11 +267,9 @@ def build_agent_workflow(
     workflow.add_edge("load_memory_node", "therapeutic_subgraph")
     workflow.add_edge("therapeutic_subgraph", "finalize_turn_node")
 
-    # Checkpoint the reply before kicking off extractor side effects.
-    workflow.add_edge("finalize_turn_node", "extract_semantic_facts_node")
-    workflow.add_edge("finalize_turn_node", "extract_procedural_rules_node")
-    workflow.add_edge("extract_semantic_facts_node", END)
-    workflow.add_edge("extract_procedural_rules_node", END)
+    # Checkpoint the reply before kicking off memory side effects.
+    workflow.add_edge("finalize_turn_node", "memory_extraction_node")
+    workflow.add_edge("memory_extraction_node", END)
 
     compiled = workflow.compile(checkpointer=checkpointer)
 

@@ -6,7 +6,7 @@
     "expected_level": 0,
     "expected_needs_crisis_response": false,
     "expected_needs_clarification": false,
-    "notes": "Ordinary sadness should not trigger crisis mode."
+    "notes": "Ordinary sadness should not trigger crisis response."
   },
   {
     "id": "idiom_work_is_killing_me",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.state import AgentState
-from agent.therapeutic.exercises.registry import _EXERCISE_REGISTRY
+from agent.therapeutic.exercises.registry import get_exercise_steps
 from agent.therapeutic.exercises.types import ExerciseStep
 
 
@@ -20,8 +20,8 @@ def _start_exercise_delta(
     """Return the exercise-state delta that starts a new exercise at step 0.
 
     Captures the current ``therapeutic_approach`` as
-    ``exercise_modality`` so the prompt builder can use a stable
-    modality for the entire exercise lifetime, immune to mid-exercise
+    ``exercise_therapeutic_approach`` so the prompt builder can use a stable
+    approach for the entire exercise lifetime, immune to mid-exercise
     side-turn drift.
 
     Args:
@@ -32,12 +32,12 @@ def _start_exercise_delta(
         State delta that starts the exercise at step 0.
     """
 
-    modality = state.get("therapeutic_approach")
+    approach = state.get("therapeutic_approach")
     return {
         "exercise_state": {
             "exercise_type": exercise_type,
             "exercise_step": 0,
-            "exercise_modality": modality,
+            "exercise_therapeutic_approach": approach,
             "exercise_selection_options": None,
         },
     }
@@ -80,7 +80,7 @@ def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
         "exercise_state": {
             "exercise_type": None,
             "exercise_step": None,
-            "exercise_modality": None,
+            "exercise_therapeutic_approach": None,
             "exercise_selection_options": None,
         },
     }
@@ -102,7 +102,7 @@ def _get_current_step(
 
     if exercise_type is None or step_index is None:
         return None
-    steps = _EXERCISE_REGISTRY.get(exercise_type)
+    steps = get_exercise_steps(exercise_type)
     if steps is None:
         return None
     if step_index < 0 or step_index >= len(steps):
@@ -121,7 +121,7 @@ def _is_last_step(exercise_type: str, step_index: int) -> bool:
         Whether ``step_index`` points at the final step.
     """
 
-    steps = _EXERCISE_REGISTRY.get(exercise_type)
+    steps = get_exercise_steps(exercise_type)
     if steps is None:
         return False
     return step_index >= len(steps) - 1

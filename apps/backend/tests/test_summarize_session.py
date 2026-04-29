@@ -510,13 +510,13 @@ class TestSummarizerFailureModes:
         assert result.created_at  # non-empty
 
 
-# ─── 5. Modality context tests ──────────────────────────────────────────
+# ─── 5. Approach context tests ──────────────────────────────────────────
 
 
-class TestSummarizerModalityContext:
+class TestSummarizerApproachContext:
     """Tests for the approach_used / approach_context fields on SessionArc."""
 
-    def test_promotion_preserves_modality_fields(self) -> None:
+    def test_promotion_preserves_approach_fields(self) -> None:
         """approach_used and approach_context on SessionArc should
         survive promotion to StoredSessionArc via _session_arc_to_stored."""
 
@@ -533,8 +533,8 @@ class TestSummarizerModalityContext:
         assert isinstance(stored.approach_context, CBTContext)
         assert stored.approach_context.thought_examined == "I'm going to get fired"
 
-    def test_promotion_without_modality_defaults_to_none(self) -> None:
-        """SessionArcs without modality fields (backward compat) should
+    def test_promotion_without_approach_defaults_to_none(self) -> None:
+        """SessionArcs without approach fields (backward compat) should
         promote cleanly with None defaults."""
 
         arc = _make_session_arc()
@@ -600,13 +600,13 @@ class TestSummarizerModalityContext:
 
     @pytest.mark.asyncio
     async def test_no_approach_hint_produces_none_fields(self) -> None:
-        """Without approach_hint, the modality fields should be None
+        """Without approach_hint, the approach fields should be None
         (backward-compatible behavior)."""
 
         store = OpenCouchMemoryStore()
-        arc = _make_session_arc()  # no modality fields set
+        arc = _make_session_arc()  # no approach fields set
         fake = _FakeSummarizerLLM(
-            summarization_result=SummarizationResult(arc=arc, reason="no modality")
+            summarization_result=SummarizationResult(arc=arc, reason="no approach")
         )
         state = _partial_state()
 

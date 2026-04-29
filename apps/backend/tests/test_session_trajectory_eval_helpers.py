@@ -157,7 +157,7 @@ def test_diff_memory_state_reports_actual_namespace_deltas() -> None:
     ]
 
 
-def test_normalize_turn_record_sets_mode_and_modality_aliases() -> None:
+def test_normalize_turn_record_sets_canonical_fields() -> None:
     result = SimpleNamespace(
         output=SimpleNamespace(
             response_text="Let's stay with one thing at a time.",
@@ -174,6 +174,8 @@ def test_normalize_turn_record_sets_mode_and_modality_aliases() -> None:
             diagnostics={},
         ),
         state={
+            # Optional session-progress fields should still normalize when
+            # hand-built eval fixtures provide them.
             "session_progress": {
                 "intent": "support",
                 "intent_source": "dispatcher",
@@ -216,9 +218,45 @@ def test_normalize_turn_record_sets_mode_and_modality_aliases() -> None:
         },
     )
 
-    assert record["mode"] == "supportive"
+    assert set(record) == {
+        "assistant_text",
+        "crisis_level",
+        "episodic_arc_count_delta",
+        "episodic_arcs",
+        "episodic_arcs_total",
+        "exercise_active",
+        "exercise_step",
+        "exercise_type",
+        "found_resource_names",
+        "found_resource_phones",
+        "found_resources_count",
+        "inferred_location",
+        "memory_writes",
+        "needs_clarification",
+        "needs_crisis_response",
+        "procedural_rule_count_delta",
+        "procedural_rules",
+        "procedural_rules_total",
+        "proactive_recall_enabled",
+        "raw_observations",
+        "resource_lookup_status",
+        "response_style",
+        "response_type",
+        "semantic_fact_count_delta",
+        "semantic_facts",
+        "semantic_facts_total",
+        "session_intent",
+        "session_intent_source",
+        "session_stage",
+        "therapeutic_approach",
+        "turn_index",
+        "user_text",
+        "working_memory_evidence_quotes",
+        "working_memory_objects",
+        "working_memory_summaries",
+        "working_memory_types",
+    }
     assert record["response_style"] == "supportive"
-    assert record["modality"] == "act"
     assert record["therapeutic_approach"] == "act"
     assert record["working_memory_types"] == ["semantic", "episodic"]
     assert record["working_memory_objects"] == ["panic"]
@@ -277,6 +315,8 @@ def test_turn_expectation_grades_actual_memory_fields() -> None:
         1,
         record,
         {
+            "response_style_in": ["supportive"],
+            "allowed_response_styles": ["supportive"],
             "memory_write_expected": True,
             "memory_write_category_in": ["semantic", "procedural"],
             "semantic_fact_count_delta": 1,
@@ -289,6 +329,49 @@ def test_turn_expectation_grades_actual_memory_fields() -> None:
             "proactive_recall_enabled": True,
             "semantic_fact_object_contains_any": ["Sarah"],
             "procedural_rule_contains_any": ["shorter responses"],
+        },
+    )
+
+    assert failures == []
+
+
+def test_turn_expectation_grades_therapeutic_approach() -> None:
+    record = {
+        "response_style": "supportive",
+        "crisis_level": 0,
+        "needs_crisis_response": False,
+        "needs_clarification": False,
+        "session_intent": None,
+        "session_intent_source": None,
+        "session_stage": None,
+        "therapeutic_approach": "act",
+        "response_type": "therapeutic",
+        "assistant_text": "Okay.",
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_active": False,
+        "working_memory_types": [],
+        "working_memory_objects": [],
+        "working_memory_evidence_quotes": [],
+        "working_memory_summaries": [],
+        "proactive_recall_enabled": False,
+        "memory_writes": [],
+        "semantic_fact_count_delta": 0,
+        "procedural_rule_count_delta": 0,
+        "episodic_arc_count_delta": 0,
+        "semantic_facts_total": 0,
+        "procedural_rules_total": 0,
+        "episodic_arcs_total": 0,
+    }
+
+    failures = _check_turn_expectation(
+        "case-approach",
+        1,
+        record,
+        {
+            "response_style_in": ["supportive"],
+            "allowed_response_styles": ["supportive"],
+            "required_therapeutic_approaches": ["act"],
         },
     )
 
@@ -380,6 +463,7 @@ def test_final_expectation_grades_session_end_and_totals() -> None:
         record,
         {
             "summary_expected": True,
+            "allowed_response_styles": ["supportive"],
             "session_end_memory_write_expected": True,
             "session_end_memory_write_category_in": ["episodic"],
             "session_end_episodic_arc_count_delta": 1,

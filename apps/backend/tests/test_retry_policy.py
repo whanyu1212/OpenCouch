@@ -141,8 +141,7 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         "crisis_response_node",
         "crisis_log_node",
         "therapeutic_subgraph",
-        "extract_semantic_facts_node",
-        "extract_procedural_rules_node",
+        "memory_extraction_node",
         "finalize_turn_node",
     }
     assert node_ids == expected_nodes, (
@@ -152,8 +151,8 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
     )
 
     # Expected edges (v0.9+ topology). Includes the two Command-based
-    # routing edges from crisis_gate_node and the parallel extractor
-    # fan-out from finalize_turn_node.
+    # routing edges from crisis_gate_node and the terminal memory
+    # extraction node after finalize_turn_node.
     expected_edges = {
         ("__start__", "crisis_gate_node"),
         ("crisis_gate_node", "crisis_resource_lookup_node"),
@@ -169,10 +168,8 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         ("grounded_answer_node", "finalize_turn_node"),
         ("load_memory_node", "therapeutic_subgraph"),
         ("therapeutic_subgraph", "finalize_turn_node"),
-        ("finalize_turn_node", "extract_semantic_facts_node"),
-        ("finalize_turn_node", "extract_procedural_rules_node"),
-        ("extract_semantic_facts_node", "__end__"),
-        ("extract_procedural_rules_node", "__end__"),
+        ("finalize_turn_node", "memory_extraction_node"),
+        ("memory_extraction_node", "__end__"),
     }
     assert edge_tuples == expected_edges, (
         f"Edge set mismatch.\n"

@@ -11,6 +11,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from agent.conversation import format_recent_history
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
@@ -72,13 +73,7 @@ def _build_grounded_lookup_prompt(state: AgentState) -> str:
         Prompt asking for a structured lookup-routing decision.
     """
 
-    history_lines = []
-    for turn in (state.get("history", []) or [])[-6:]:
-        role = turn.get("role", "unknown")
-        content = turn.get("content", "")
-        if content:
-            history_lines.append(f"{role}: {content}")
-    recent_history = "\n".join(history_lines) or "(none)"
+    recent_history = format_recent_history(state, limit=6, empty="(none)")
     return (
         "Decide whether the user's message should route to grounded web/current "
         "factual lookup before therapeutic response generation.\n\n"
@@ -268,8 +263,7 @@ async def run_grounded_lookup_gate_node(
     if action is None:
         return Command(
             update={
-                "grounded_lookup_query": "",
-                "grounded_lookup_status": "not_attempted",
+                "grounded_lookup": {"query": "", "status": "not_attempted"},
                 "diagnostics": diagnostics,
             },
             goto="load_memory_node",
@@ -278,8 +272,7 @@ async def run_grounded_lookup_gate_node(
     return Command(
         update={
             "route": "grounded_lookup",
-            "grounded_lookup_query": action["query"],
-            "grounded_lookup_status": "not_attempted",
+            "grounded_lookup": {"query": action["query"], "status": "not_attempted"},
             "diagnostics": diagnostics,
         },
         goto="grounded_answer_node",

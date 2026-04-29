@@ -208,11 +208,11 @@ async def run_summarize_session(
             truth for crisis severity.
         embedding_provider: Optional provider for storing a retrievable
             embedding alongside the session arc.
-        approach_hint: The dominant therapeutic modality used during
+        approach_hint: The dominant therapeutic approach used during
             the session (e.g., "cbt", "act"). Passed to the
-            summarization prompt so the LLM extracts modality-specific
+            summarization prompt so the LLM extracts approach-specific
             structured context. When None, the summarizer produces a
-            modality-agnostic arc (backward-compatible behavior).
+            general arc (backward-compatible behavior).
 
     Returns:
         The written :class:`StoredSessionArc` on success, or ``None`` on
@@ -351,7 +351,7 @@ async def run_summarize_session(
 
     logger.info(
         "run_summarize_session: wrote arc id=%s owner=%r session=%r "
-        "themes=%s crisis_level_max=%d modality=%s",
+        "themes=%s crisis_level_max=%d approach=%s",
         stored_arc.id,
         owner_id,
         session_id,

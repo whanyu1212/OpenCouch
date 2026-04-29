@@ -17,9 +17,9 @@ from agent.state import AgentState
 _CRISIS_RESPONSE_KNOWLEDGE = (
     *CORE_SOURCES,
     "policy/crisis.md",
-    "response_modes/crisis_response.md",
-    "modalities/pfa.md",
-    "modalities/dbt_skills.md",
+    "response_styles/crisis_response.md",
+    "therapeutic_approaches/pfa.md",
+    "therapeutic_approaches/dbt_skills.md",
 )
 _CRISIS_CLASSIFIER_KNOWLEDGE = (
     *CORE_SOURCES,
@@ -56,7 +56,7 @@ def _format_found_resources(resources: list[dict[str, str]]) -> str:
 def build_crisis_response_system_prompt() -> str:
     """Build the system prompt for crisis replies.
 
-    Unlike the therapeutic-mode system prompts, the crisis response
+    Unlike the therapeutic response-style system prompts, the crisis response
     prompt does not inject procedural rules or the recall-toggle
     constraint. This is a safety call:
 
@@ -79,7 +79,7 @@ def build_crisis_response_system_prompt() -> str:
 
     If a rule is safe and universal enough that it SHOULD apply to
     crisis responses (e.g., "use shorter sentences"), it can be
-    baked into ``prompts/sources/response_modes/crisis_response.md`` rather
+    baked into ``prompts/sources/response_styles/crisis_response.md`` rather
     than threaded through user-writable procedural memory.
 
     Returns:
@@ -101,7 +101,7 @@ def build_crisis_response_prompt(state: AgentState) -> str:
         state: Current graph state for a crisis turn.
 
     Returns:
-        User prompt for the crisis response model call.
+        User prompt for crisis reply generation.
     """
 
     crisis = state["crisis"]

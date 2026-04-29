@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
+from agent.conversation import format_recent_history
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
@@ -115,10 +116,7 @@ async def _extract_location(
     """
 
     message = state.get("message", "")
-    history = state.get("history", [])[-4:]
-    history_text = "\n".join(
-        f"{turn.get('role', 'unknown')}: {turn.get('content', '')}" for turn in history
-    )
+    history_text = format_recent_history(state, limit=4, empty="")
     prompt = (
         "Extract the user's location from the conversation below. "
         "Return only the location name (city, region, or country). "

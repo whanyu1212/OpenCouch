@@ -67,7 +67,7 @@ const LAYER_DEFS: LayerDef[] = [
     id: 'approach',
     label: 'Approach',
     dot: '#2d7a74',
-    source: 'agent/prompts/sources/modalities/*.md',
+    source: 'agent/prompts/sources/therapeutic_approaches/*.md',
     match: (l) =>
       /^# (Motivational Interviewing|Cognitive Behavioural Therapy|Acceptance and Commitment Therapy|DBT Skills|Grief Support|Interpersonal Therapy|Psychological First Aid)/.test(
         l,
@@ -77,7 +77,7 @@ const LAYER_DEFS: LayerDef[] = [
     id: 'response',
     label: 'Response knowledge',
     dot: '#3d9990',
-    source: 'agent/prompts/sources/response_modes/*.md',
+    source: 'agent/prompts/sources/response_styles/*.md',
     match: (l) =>
       /^# (Supportive Conversation Mode|Pattern Reflection Mode|Psychoeducation Mode|Guided Exercise Mode|Closing Mode|Crisis (Response )?(Mode|Policy)|Safety Check Mode)/.test(
         l,
@@ -140,7 +140,7 @@ const SCENARIOS: ScenarioMeta[] = [
     file: 'prompt-dumps/guided_exercise_act_drift.txt',
     sub: 'response_style=guided_exercise · approach=act · mid-exercise side-turn',
     blurb:
-      'Mid-exercise side-turn: the dispatcher could re-pick an approach, but exercise_state.exercise_modality is pinned at "act" so ACT framing stays loaded.',
+      'Mid-exercise side-turn: the dispatcher could re-pick an approach, but exercise_state.exercise_therapeutic_approach is pinned at "act" so ACT framing stays loaded.',
     expects: ['core', 'response', 'approach', 'instructions', 'recall', 'task'],
   },
   {

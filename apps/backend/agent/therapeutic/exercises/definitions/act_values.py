@@ -153,6 +153,7 @@ LEAVES_ON_STREAM_DEFINITION = ExerciseDefinition(
             priority=110,
         ),
     ),
+    selection_aliases=("defusion", "leaves exercise", "let go"),
 )
 
 VALUES_COMPASS_DEFINITION = ExerciseDefinition(
@@ -174,5 +175,6 @@ VALUES_COMPASS_DEFINITION = ExerciseDefinition(
             priority=100,
         ),
     ),
+    selection_aliases=("values", "values compass", "what matters"),
     voice_supported=True,
 )

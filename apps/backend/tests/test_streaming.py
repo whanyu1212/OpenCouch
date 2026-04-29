@@ -90,12 +90,11 @@ class TestRunTurnStreamStages:
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
-        Expected stage order (v0.9 latency reorder):
+        Expected stage order:
             crisis_gate → memory_control_gate → grounded_lookup_gate →
-            load_memory → therapeutic → finalize → extract_facts →
-            extract_procedural
+            load_memory → therapeutic → finalize → memory_extraction_node
 
-        A ResponseReadyEvent is emitted after finalize, before extractors.
+        A ResponseReadyEvent is emitted after finalize, before memory extraction.
         """
 
         async with PersistentAgentRuntime(
@@ -110,22 +109,16 @@ class TestRunTurnStreamStages:
         assert ready is not None
         assert done is not None
         # The stages should appear in the order the graph executes them.
-        # The first five stages are sequential and must appear in order.
-        # The extractors run in parallel after finalize, so their order
-        # relative to each other is non-deterministic.
         stage_names = [event.stage for event in statuses]
-        assert stage_names[:6] == [
+        assert stage_names == [
             "crisis_gate",
             "memory_control_gate",
             "grounded_lookup_gate",
             "load_memory",
             "therapeutic",
             "finalize",
+            "memory_extraction_node",
         ]
-        assert len(stage_names) == 8, (
-            f"Expected exactly 8 stages, got {len(stage_names)}: {stage_names}"
-        )
-        assert set(stage_names[6:]) == {"extract_facts", "extract_procedural"}
         # In deterministic mode (no LLM client), no chunks are emitted —
         # the response comes from the fallback template via DoneEvent only.
         # When an LLM client is present, chunks stream during the

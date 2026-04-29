@@ -73,15 +73,13 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.memory.candidates import build_procedural_candidate
 from agent.memory.models import ProceduralExtractionResult
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import aupsert_procedural_rule, build_procedural_rule
 from agent.memory.procedural_prompts import (
     build_procedural_writer_system_prompt,
     build_procedural_writer_user_prompt,
 )
-from agent.memory.write_policy import decide_procedural_candidate_llm_primary
+from agent.memory.service import MemoryService
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -224,97 +222,22 @@ async def run_extract_procedural_rules_node(
     if not result.rules:
         return _diagnostics_delta(reason=result.reason)
 
-    immediate_candidates: list[tuple[Any, Any]] = []
-    session_end_holds = 0
-    policy_drops = 0
-
-    for draft in result.rules:
-        candidate = build_procedural_candidate(
-            draft,
-            message=state["message"],
-            session_id=state.get("session_id") or owner_id,
-            turn_index=turn_index,
-        )
-        decision = await decide_procedural_candidate_llm_primary(
-            candidate,
-            llm_client=llm_client,
-        )
-
-        if decision.action == "commit_now":
-            immediate_candidates.append((candidate, decision))
-        elif decision.action == "commit_at_session_end":
-            session_end_holds += 1
-            if session_buffer is not None:
-                session_buffer.procedural_candidates.append(candidate)
-        else:
-            policy_drops += 1
-
-    if not immediate_candidates:
-        logger.info(
-            "extract_procedural_rules_node: policy held all %d rules "
-            "(session_end=%d, dropped=%d)",
-            len(result.rules),
-            session_end_holds,
-            policy_drops,
-        )
-        return _diagnostics_delta(
-            procedural_candidates=len(result.rules),
-            procedural_session_end_holds=session_end_holds,
-            procedural_policy_drops=policy_drops,
-            reason=result.reason,
-        )
-
-    # Each surviving candidate gets promoted to a ProceduralRule via
-    # build_procedural_rule (which adds the added_at timestamp and
-    # source="explicit_user"), then upserted into the user's profile.
-    # The helper handles the load-reconcile-put idiom internally;
-    # we don't touch the store directly.
-    #
-    # Error handling is per-draft: a failure to write one rule does NOT
-    # abandon the remaining drafts. This matches the semantic extractor's
-    # per-candidate error isolation.
-    written = 0
-    for candidate, decision in immediate_candidates:
-        draft = candidate.payload
-        try:
-            rule = build_procedural_rule(
-                rule_text=draft.rule,
-                evidence=draft.evidence,
-                confidence=draft.confidence,
-                source="explicit_user",
-                write_timing="immediate",
-                write_reason=decision.reason,
-                policy_version=decision.policy_version,
-            )
-            upsert = await aupsert_procedural_rule(
-                store,
-                user_id=owner_id,
-                rule=rule,
-                llm_client=llm_client,
-            )
-            if upsert.action != "skipped":
-                written += 1
-        except Exception:
-            logger.warning(
-                "extract_procedural_rules_node: failed to write draft %r; "
-                "continuing with other drafts.",
-                draft.rule[:60],
-                exc_info=True,
-            )
-
-    logger.info(
-        "extract_procedural_rules_node: turn complete — %d written, %d immediate, "
-        "%d held_for_session, %d dropped",
-        written,
-        len(immediate_candidates),
-        session_end_holds,
-        policy_drops,
+    processing = await MemoryService().process_procedural_rules(
+        drafts=result.rules,
+        message=state["message"],
+        reason=result.reason,
+        session_id=state.get("session_id") or owner_id,
+        turn_index=turn_index,
+        owner_id=owner_id,
+        store=store,
+        llm_client=llm_client,
+        session_buffer=session_buffer,
     )
     return _diagnostics_delta(
-        procedural_writes=written,
-        procedural_candidates=len(result.rules),
-        procedural_commit_now_candidates=len(immediate_candidates),
-        procedural_session_end_holds=session_end_holds,
-        procedural_policy_drops=policy_drops,
-        reason=result.reason,
+        procedural_writes=processing.written,
+        procedural_candidates=processing.candidates,
+        procedural_commit_now_candidates=processing.commit_now_candidates,
+        procedural_session_end_holds=processing.session_end_holds,
+        procedural_policy_drops=processing.policy_drops,
+        reason=processing.reason,
     )

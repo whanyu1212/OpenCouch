@@ -86,8 +86,8 @@ def make_episodic_working_memory_entry(
         summary: Session summary text to expose as working memory.
         primary_themes: Optional theme labels for the session.
         is_catch_up: Whether this entry is first-turn catch-up context.
-        approach_used: Optional modality label from the stored session.
-        approach_context: Optional modality-specific session details.
+        approach_used: Optional therapeutic approach from the stored session.
+        approach_context: Optional approach-specific session details.
 
     Returns:
         Structured entry for graph state.
@@ -188,15 +188,15 @@ def format_working_memory_entry(entry: WorkingMemoryEntry | str) -> str:
         if not summary:
             return ""
         themes_raw = entry.get("primary_themes")
-        modality_raw = entry.get("approach_used")
+        approach_raw = entry.get("approach_used")
         tag_parts = (
             [theme for theme in themes_raw if isinstance(theme, str)]
             if isinstance(themes_raw, list)
             else []
         )
-        modality = modality_raw if isinstance(modality_raw, str) else ""
-        if modality and modality != "none":
-            tag_parts.append(modality.upper().replace("_", " "))
+        approach = approach_raw if isinstance(approach_raw, str) else ""
+        if approach and approach != "none":
+            tag_parts.append(approach.upper().replace("_", " "))
         tags_str = ", ".join(tag_parts) if tag_parts else "untagged"
         base = f"Last session ({tags_str}): {summary}"
 

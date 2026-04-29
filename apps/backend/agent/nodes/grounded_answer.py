@@ -7,7 +7,7 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.models import ModeType, ResponseCategory
+from agent.models import ResponseStyleType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded_lookup import GroundedLookupStatus, answer_grounded_lookup
@@ -32,10 +32,10 @@ def _base_delta(
 
     return {
         "route": "grounded_lookup",
-        "grounded_lookup_status": status,
+        "grounded_lookup": {"status": status},
         "response_style": "grounded_lookup",
         "response_style_source": "grounded_lookup_gate",
-        "response_style_type": ModeType.OPERATIONAL,
+        "response_style_type": ResponseStyleType.OPERATIONAL,
         "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
         "diagnostics": {
@@ -51,7 +51,7 @@ async def run_grounded_answer_node(
     """Answer an explicit factual lookup request with search grounding.
 
     Args:
-        state: Current graph state with ``grounded_lookup_query`` set by the
+        state: Current graph state with ``grounded_lookup.query`` set by the
             grounded lookup gate.
         runtime: LangGraph runtime carrying the provider client.
 
@@ -61,7 +61,12 @@ async def run_grounded_answer_node(
     """
 
     started_at = time.monotonic()
-    query = (state.get("grounded_lookup_query") or state.get("message", "")).strip()
+    grounded_lookup = state.get("grounded_lookup", {}) or {}
+    query = (
+        grounded_lookup.get("query")
+        or state.get("grounded_lookup_query")
+        or state.get("message", "")
+    ).strip()
     llm_client = runtime.context.llm_client
 
     if llm_client is None:

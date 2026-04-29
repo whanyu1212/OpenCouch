@@ -34,13 +34,8 @@ class ResponseCategory(str, Enum):
     CRISIS = "crisis"
 
 
-# Backward-compatible alias for older persisted state that still refers
-# to the pre-rename enum name.
-ResponseKind = ResponseCategory
-
-
-class ModeType(str, Enum):
-    """High-level mode family used for response-style observability."""
+class ResponseStyleType(str, Enum):
+    """High-level response-style family used for observability."""
 
     OPERATIONAL = "operational"
     THERAPEUTIC = "therapeutic"
@@ -86,7 +81,7 @@ class AgentOutput(BaseModel):
     response_type: ResponseCategory
     crisis: CrisisAssessment
     response_style: str | None = None
-    response_style_type: ModeType | None = None
+    response_style_type: ResponseStyleType | None = None
     response_style_source: str | None = None
     therapeutic_approach: str | None = None
     should_persist_memory: bool = False
@@ -161,7 +156,7 @@ class ResponseReadyEvent(BaseModel):
     """Non-terminal event emitted when the reply is finalized.
 
     This fires after ``finalize_turn_node`` has appended the assistant
-    reply to transcript/history, but before post-response memory writers
+    reply to transcript, but before post-response memory writers
     finish. The output payload is intentionally partial: response text,
     routing, and crisis metadata are ready; tail diagnostics like
     ``turn_total_ms`` still land on the terminal ``DoneEvent``.

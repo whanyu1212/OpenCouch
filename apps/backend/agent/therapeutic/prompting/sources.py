@@ -1,49 +1,57 @@
-"""Prompt source selection for therapeutic response modes."""
+"""Prompt source selection for therapeutic response styles."""
 
 from __future__ import annotations
 
 from agent.prompts.shared import CORE_SOURCES
 
 
-_MODE_BASE_KNOWLEDGE: dict[str, tuple[str, ...]] = {
-    "supportive": (*CORE_SOURCES, "response_modes/support.md"),
-    "reflective": (*CORE_SOURCES, "response_modes/reflection.md"),
+_RESPONSE_STYLE_BASE_KNOWLEDGE: dict[str, tuple[str, ...]] = {
+    "supportive": (*CORE_SOURCES, "response_styles/support.md"),
+    "reflective": (*CORE_SOURCES, "response_styles/reflection.md"),
     "clarifying": CORE_SOURCES,
-    "psychoeducation": (*CORE_SOURCES, "response_modes/psychoeducation.md"),
-    "closing": (*CORE_SOURCES, "response_modes/closing.md"),
-    "guided_exercise": (*CORE_SOURCES, "response_modes/guided_exercise.md"),
-    # Technique mode uses ONLY core + the approach overlay. The approach
-    # knowledge IS the mode-specific guidance — no separate response_mode file.
+    "psychoeducation": (*CORE_SOURCES, "response_styles/psychoeducation.md"),
+    "closing": (*CORE_SOURCES, "response_styles/closing.md"),
+    "guided_exercise": (*CORE_SOURCES, "response_styles/guided_exercise.md"),
+    # Technique uses ONLY core + the approach overlay. The approach knowledge
+    # IS the style-specific guidance — no separate response style file.
     "technique": CORE_SOURCES,
 }
 
-_MODALITY_FILES: dict[str, tuple[str, ...]] = {
-    "motivational_interviewing": ("modalities/motivational_interviewing.md",),
-    "cbt": ("modalities/cbt.md", "modalities/cbt_arc.md"),
-    "act": ("modalities/act.md",),
-    "dbt_skills": ("modalities/dbt_skills.md",),
-    "grief_support": ("modalities/grief_support.md",),
-    "interpersonal_therapy": ("modalities/interpersonal_therapy.md",),
-    "pfa": ("modalities/pfa.md",),
+_THERAPEUTIC_APPROACH_FILES: dict[str, tuple[str, ...]] = {
+    "motivational_interviewing": (
+        "therapeutic_approaches/motivational_interviewing.md",
+    ),
+    "cbt": ("therapeutic_approaches/cbt.md", "therapeutic_approaches/cbt_arc.md"),
+    "act": ("therapeutic_approaches/act.md",),
+    "dbt_skills": ("therapeutic_approaches/dbt_skills.md",),
+    "grief_support": ("therapeutic_approaches/grief_support.md",),
+    "interpersonal_therapy": ("therapeutic_approaches/interpersonal_therapy.md",),
+    "pfa": ("therapeutic_approaches/pfa.md",),
 }
 
 
-def _knowledge_for_mode(mode: str, modality: str | None = None) -> tuple[str, ...]:
-    """Compose the knowledge file list for a mode + modality combination.
+def _knowledge_for_response_style(
+    response_style: str,
+    therapeutic_approach: str | None = None,
+) -> tuple[str, ...]:
+    """Compose the source files for a response style and therapeutic approach.
 
-    Returns the base knowledge for the mode, plus the modality overlay
-    file(s) if a valid modality is specified. When modality is None or
-    "none", only the base mode knowledge is returned.
+    Returns the base knowledge for the response style plus the approach
+    overlay files when a valid therapeutic approach is specified.
 
     Args:
-        mode: Therapeutic response mode name.
-        modality: Optional therapeutic approach selected by the dispatcher.
+        response_style: Therapeutic response style name.
+        therapeutic_approach: Optional approach selected by the dispatcher.
 
     Returns:
-        Prompt source paths to compose for the mode and modality.
+        Prompt source paths to compose.
     """
 
-    base = _MODE_BASE_KNOWLEDGE.get(mode, CORE_SOURCES)
-    if modality and modality != "none" and modality in _MODALITY_FILES:
-        return (*base, *_MODALITY_FILES[modality])
+    base = _RESPONSE_STYLE_BASE_KNOWLEDGE.get(response_style, CORE_SOURCES)
+    if (
+        therapeutic_approach
+        and therapeutic_approach != "none"
+        and therapeutic_approach in _THERAPEUTIC_APPROACH_FILES
+    ):
+        return (*base, *_THERAPEUTIC_APPROACH_FILES[therapeutic_approach])
     return base

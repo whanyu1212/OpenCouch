@@ -789,7 +789,7 @@ async def test_end_session_clears_session_continuity_from_checkpoint(
                 "exercise_state": {
                     "exercise_type": "grounding_5_4_3_2_1",
                     "exercise_step": 1,
-                    "exercise_modality": "cbt",
+                    "exercise_therapeutic_approach": "cbt",
                 },
                 "therapeutic_approach": "cbt",
             },
@@ -803,7 +803,9 @@ async def test_end_session_clears_session_continuity_from_checkpoint(
         assert state is not None
         assert state.get("exercise_state", {}).get("exercise_type") is None
         assert state.get("exercise_state", {}).get("exercise_step") is None
-        assert state.get("exercise_state", {}).get("exercise_modality") is None
+        assert (
+            state.get("exercise_state", {}).get("exercise_therapeutic_approach") is None
+        )
         assert state.get("therapeutic_approach") is None
 
 
@@ -842,7 +844,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
                 "exercise_state": {
                     "exercise_type": "grounding_5_4_3_2_1",
                     "exercise_step": 2,
-                    "exercise_modality": "cbt",
+                    "exercise_therapeutic_approach": "cbt",
                 },
                 "therapeutic_approach": "cbt",
             },
@@ -876,7 +878,10 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
         assert result.output.response_style == "supportive"
         assert result.state.get("exercise_state", {}).get("exercise_type") is None
         assert result.state.get("exercise_state", {}).get("exercise_step") is None
-        assert result.state.get("exercise_state", {}).get("exercise_modality") is None
+        assert (
+            result.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
+            is None
+        )
 
         active = await runtime._load_persisted_active_session("thread-timeout")
         assert active is not None
@@ -910,7 +915,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
         )
         assert first.state.get("exercise_state", {}).get("exercise_step") == 0
         assert (
-            first.state.get("exercise_state", {}).get("exercise_modality")
+            first.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
             == "dbt_skills"
         )
         assert (
@@ -933,7 +938,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
         )
         assert second.state.get("exercise_state", {}).get("exercise_step") == 0
         assert (
-            second.state.get("exercise_state", {}).get("exercise_modality")
+            second.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
             == "dbt_skills"
         )
 
@@ -951,7 +956,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
         )
         assert third.state.get("exercise_state", {}).get("exercise_step") == 1
         assert (
-            third.state.get("exercise_state", {}).get("exercise_modality")
+            third.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
             == "dbt_skills"
         )
 

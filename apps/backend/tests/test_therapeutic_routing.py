@@ -1,10 +1,10 @@
-"""Tests for therapeutic dispatch, mode nodes, and subgraph wiring.
+"""Tests for therapeutic dispatch, response-style nodes, and subgraph wiring.
 
 Covers four concerns:
-    1. ``pick_therapeutic_mode`` as a pure function (no LangGraph runtime)
+    1. ``pick_therapeutic_response_style`` as a pure function (no LangGraph runtime)
     2. ``run_therapeutic_dispatch_node`` with mocked runtime + fake LLM
     3. ``build_therapeutic_subgraph`` compiles to the expected shape
-    4. End-to-end via ``run_agent`` — each mode reaches its terminal
+    4. End-to-end via ``run_agent`` — each response style reaches its terminal
        node with the right routing metadata and a non-empty response
 
 These are unit/integration tests that run in the default pytest suite.
@@ -35,12 +35,14 @@ from agent.therapeutic.dispatcher import (
     PSYCHOEDUCATION_NODE,
     REFLECTIVE_NODE,
     SUPPORTIVE_NODE,
+    TECHNIQUE_NODE,
+    THERAPEUTIC_RESPONSE_NODE,
     _PROMPT_GUIDED_EXERCISE_TRIGGERS,
     _is_advice_request_without_exercise_consent,
     _matches_any,
     _format_prompt_trigger_phrases,
     build_therapeutic_dispatch_system_prompt,
-    pick_therapeutic_mode,
+    pick_therapeutic_response_style,
     run_therapeutic_dispatch_node,
 )
 from agent.therapeutic.exercises.types import ExerciseStepDecision
@@ -225,7 +227,7 @@ def _build_state(
     return cast(AgentState, state)
 
 
-# ─── 1. pick_therapeutic_mode pure-function tests ────────────────────────
+# ─── 1. pick_therapeutic_response_style pure-function tests ────────────────────────
 
 
 class TestPickTherapeuticResponseStyle:
@@ -263,21 +265,21 @@ class TestPickTherapeuticResponseStyle:
         ],
     )
     def test_pure_regex_dispatch(self, message: str, expected: str) -> None:
-        """Regex-only path returns the expected mode for each case."""
+        """Regex-only path returns the expected response style for each case."""
 
-        assert pick_therapeutic_mode(message) == expected
+        assert pick_therapeutic_response_style(message) == expected
 
     def test_self_report_overrides_short_message_rule(self) -> None:
         """Short messages that ARE self-reports should stay supportive."""
 
-        assert pick_therapeutic_mode("I am sad") == "supportive"
-        assert pick_therapeutic_mode("I feel tired") == "supportive"
-        assert pick_therapeutic_mode("I'm anxious") == "supportive"
+        assert pick_therapeutic_response_style("I am sad") == "supportive"
+        assert pick_therapeutic_response_style("I feel tired") == "supportive"
+        assert pick_therapeutic_response_style("I'm anxious") == "supportive"
 
     def test_reflective_beats_short_message_rule(self) -> None:
         """A short pattern-recognition question routes to reflective, not clarifying."""
 
-        assert pick_therapeutic_mode("Why do I keep?") == "reflective"
+        assert pick_therapeutic_response_style("Why do I keep?") == "reflective"
 
 
 # ─── 2. run_therapeutic_dispatch_node integration tests ──────────────────
@@ -305,7 +307,10 @@ class TestDispatchNode:
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == SUPPORTIVE_NODE
-        assert cmd.update == {"therapeutic_approach": "pfa"}
+        assert cmd.update == {
+            "response_style": "supportive",
+            "therapeutic_approach": "pfa",
+        }
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
@@ -458,8 +463,8 @@ class TestDispatchNode:
         """LLM picks for guided_exercise route to the real guided_exercise node.
 
         Regression guard for v0.6 Stage C: before Stage C landed, this
-        pick normalized to supportive via the deferred-mode block. After
-        Stage C, the deferred-mode block is gone and the pick must
+        pick normalized to supportive via the deferred-style block. After
+        Stage C, the deferred-style block is gone and the pick must
         route to the real node.
         """
 
@@ -470,6 +475,67 @@ class TestDispatchNode:
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == GUIDED_EXERCISE_NODE
+        assert fake.structured_calls == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("response_style", "therapeutic_approach", "message", "expected_node"),
+        [
+            (
+                "guided_exercise",
+                "none",
+                "Can you walk me through a grounding exercise?",
+                GUIDED_EXERCISE_NODE,
+            ),
+            (
+                "closing",
+                "cbt",
+                "I need to go, but what should I remember from this?",
+                CLOSING_NODE,
+            ),
+            (
+                "psychoeducation",
+                "dbt_skills",
+                "Why does my distress spike so fast when conflict starts?",
+                PSYCHOEDUCATION_NODE,
+            ),
+            (
+                "technique",
+                "dbt_skills",
+                "Can you help me work through the exact skill for this moment?",
+                TECHNIQUE_NODE,
+            ),
+            (
+                "supportive",
+                "pfa",
+                "I am really shaken and need a steady response.",
+                SUPPORTIVE_NODE,
+            ),
+        ],
+    )
+    async def test_response_style_selects_node_and_approach_stays_context(
+        self,
+        response_style: str,
+        therapeutic_approach: str,
+        message: str,
+        expected_node: str,
+    ) -> None:
+        """The response style routes; the therapeutic approach only travels as context."""
+
+        fake = _FakeDispatchLLM(
+            response_style=response_style,
+            therapeutic_approach=therapeutic_approach,
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state(message)
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+
+        assert cmd.goto == expected_node
+        assert cmd.update == {
+            "response_style": response_style,
+            "therapeutic_approach": therapeutic_approach,
+        }
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
@@ -523,7 +589,7 @@ class TestDispatchNode:
         next turn to guided_exercise. With LLM-primary dispatch, the
         LLM sees the active exercise context in the prompt and picks
         guided_exercise to continue. The dispatcher preserves the
-        existing modality from the entry turn.
+        existing therapeutic approach from the entry turn.
         """
 
         fake = _FakeDispatchLLM(response_style="guided_exercise")
@@ -549,7 +615,7 @@ class TestDispatchNode:
 
     @pytest.mark.asyncio
     async def test_active_exercise_stop_request_bypasses_llm(self) -> None:
-        """An explicit mid-exercise stop request exits to supportive mode."""
+        """An explicit mid-exercise stop request exits to supportive style."""
 
         fake = _FakeDispatchLLM(response_style="closing")
         runtime = _MockRuntime(llm_client=fake)
@@ -635,11 +701,37 @@ class TestDispatchNode:
         assert cmd.goto == GUIDED_EXERCISE_NODE
 
     @pytest.mark.asyncio
-    async def test_command_update_contains_modality(self) -> None:
+    async def test_pending_exercise_selection_alias_routes_to_guided(self) -> None:
+        """A named reply to offered exercise options returns to the node."""
+
+        runtime = _MockRuntime(llm_client=None)
+        state: Any = {
+            "message": "self compassion",
+            "history": [],
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
+                "exercise_type": None,
+                "exercise_step": None,
+                "exercise_selection_options": [
+                    "grounding_box_breathing",
+                    "self_compassion_break",
+                ],
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+
+    @pytest.mark.asyncio
+    async def test_command_update_contains_therapeutic_approach(self) -> None:
         """The dispatcher's Command carries top-level ``therapeutic_approach``.
 
-        Mode nodes own response-style metadata in their own deltas; the
-        dispatcher only writes ``therapeutic_approach`` so the mode node can
+        Response-style nodes own response-style metadata in their own deltas; the
+        dispatcher only writes ``therapeutic_approach`` so the response-style node can
         load the correct knowledge overlay.
         """
 
@@ -660,13 +752,7 @@ class TestSubgraphCompile:
     """Sanity checks on the compiled subgraph's shape."""
 
     def test_subgraph_compiles_with_expected_nodes(self) -> None:
-        """The subgraph should compile and expose all internal nodes.
-
-        As of v0.6 Stage C, the subgraph wires all six response-mode
-        nodes (supportive, reflective, clarifying, psychoeducation,
-        closing, guided_exercise) plus the dispatch node and implicit
-        START. No modes are deferred anymore.
-        """
+        """The subgraph should compile and expose its simplified internal nodes."""
 
         subgraph = build_therapeutic_subgraph()
         node_names = set(subgraph.nodes.keys())
@@ -674,11 +760,7 @@ class TestSubgraphCompile:
         expected = {
             "__start__",
             "therapeutic_dispatch_node",
-            "supportive_response_node",
-            "reflective_response_node",
-            "clarifying_response_node",
-            "psychoeducation_response_node",
-            "closing_response_node",
+            THERAPEUTIC_RESPONSE_NODE,
             "guided_exercise_response_node",
         }
         assert expected.issubset(node_names), f"missing nodes: {expected - node_names}"
@@ -695,7 +777,7 @@ class TestSubgraphCompile:
 
 
 class TestEndToEndRouting:
-    """Drive the full compiled parent graph and verify the right mode runs."""
+    """Drive the full compiled parent graph and verify the right response style runs."""
 
     @pytest.mark.asyncio
     async def test_supportive_happy_path(self) -> None:
@@ -736,20 +818,19 @@ class TestEndToEndRouting:
     ) -> None:
         """Reflective node should append a gentle question when needed."""
 
-        from agent.therapeutic import reflective
-        from agent.therapeutic.reflective import run_reflective_response_node
+        from agent.therapeutic import response
+        from agent.therapeutic.response import run_therapeutic_response_node
 
-        monkeypatch.setattr(reflective, "get_stream_writer", lambda: lambda _: None)
+        monkeypatch.setattr(response, "get_stream_writer", lambda: lambda _: None)
 
         runtime = _MockRuntime(llm_client=_RecordingTextLLM())
         state: Any = {
             "message": "Why do I keep ending up in the same fight with my partner?",
             "history": [],
-            "response": {},
-            "routing": {},
+            "response_style": "reflective",
         }
 
-        delta = await run_reflective_response_node(
+        delta = await run_therapeutic_response_node(
             cast(AgentState, state),  # type: ignore[arg-type]
             runtime,  # type: ignore[arg-type]
         )
@@ -765,10 +846,10 @@ class TestEndToEndRouting:
     ) -> None:
         """Technique node should add an attuned opening before structure."""
 
-        from agent.therapeutic import technique
-        from agent.therapeutic.technique import run_technique_response_node
+        from agent.therapeutic import response
+        from agent.therapeutic.response import run_therapeutic_response_node
 
-        monkeypatch.setattr(technique, "get_stream_writer", lambda: lambda _: None)
+        monkeypatch.setattr(response, "get_stream_writer", lambda: lambda _: None)
 
         runtime = _MockRuntime(
             llm_client=_RecordingTextLLM(
@@ -782,10 +863,11 @@ class TestEndToEndRouting:
                 "I want to look at evidence for and against it."
             ),
             "history": [],
+            "response_style": "technique",
             "therapeutic_approach": "cbt",
         }
 
-        delta = await run_technique_response_node(
+        delta = await run_therapeutic_response_node(
             cast(AgentState, state),  # type: ignore[arg-type]
             runtime,  # type: ignore[arg-type]
         )
@@ -828,16 +910,15 @@ class TestEndToEndRouting:
         asserting the delta dict has the right shape.
         """
 
-        from agent.therapeutic.psychoeducation import (
-            run_psychoeducation_response_node,
-        )
+        from agent.therapeutic.response import run_therapeutic_response_node
 
         runtime = _MockRuntime(llm_client=None)
         state = _build_state(
             "I don't understand why I always cry when she calls.",
         )
+        state["response_style"] = "psychoeducation"
 
-        delta = await run_psychoeducation_response_node(state, runtime)  # type: ignore[arg-type]
+        delta = await run_therapeutic_response_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response_text"]  # non-empty
@@ -853,14 +934,10 @@ class TestEndToEndRouting:
     ) -> None:
         """Psychoeducation replies should end with a fit-check question."""
 
-        from agent.therapeutic import psychoeducation
-        from agent.therapeutic.psychoeducation import (
-            run_psychoeducation_response_node,
-        )
+        from agent.therapeutic import response
+        from agent.therapeutic.response import run_therapeutic_response_node
 
-        monkeypatch.setattr(
-            psychoeducation, "get_stream_writer", lambda: lambda _: None
-        )
+        monkeypatch.setattr(response, "get_stream_writer", lambda: lambda _: None)
 
         runtime = _MockRuntime(
             llm_client=_RecordingTextLLM(
@@ -871,8 +948,9 @@ class TestEndToEndRouting:
         state = _build_state(
             "My heart races and my chest gets tight at night. Why does this happen?",
         )
+        state["response_style"] = "psychoeducation"
 
-        delta = await run_psychoeducation_response_node(state, runtime)  # type: ignore[arg-type]
+        delta = await run_therapeutic_response_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["response_style"] == "psychoeducation"
         assert delta["response_text"].startswith("That can happen")
@@ -890,18 +968,19 @@ class TestEndToEndRouting:
 
         Two extra assertions specific to closing:
         - The fallback MUST NOT contain "it was nice talking" or
-          "nice to meet you" (the most-common closing-mode failure
-          mode pinned in the knowledge file).
+          "nice to meet you" (the most-common closing-style failure
+          response style pinned in the knowledge file).
         - The fallback MUST include an open-door phrasing so the
           user doesn't feel dismissed.
         """
 
-        from agent.therapeutic.closing import run_closing_response_node
+        from agent.therapeutic.response import run_therapeutic_response_node
 
         runtime = _MockRuntime(llm_client=None)
         state = _build_state("I should probably go, thanks for this.")
+        state["response_style"] = "closing"
 
-        delta = await run_closing_response_node(state, runtime)  # type: ignore[arg-type]
+        delta = await run_therapeutic_response_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response_text"]  # non-empty
@@ -909,7 +988,7 @@ class TestEndToEndRouting:
         assert delta["response_style_source"] == "therapeutic_dispatch"
 
         text_lower = delta["response_text"].lower()
-        # The single most common closing-mode failure mode
+        # The single most common closing-style failure mode
         assert "nice talking" not in text_lower
         assert "nice to meet" not in text_lower
         # Open-door signal — some form of "here when you want"
@@ -1223,7 +1302,7 @@ class TestEndToEndRouting:
         assert result.response_type == ResponseCategory.CRISIS
         assert result.crisis.level == 3
         assert result.crisis.needs_crisis_response is True
-        # The therapeutic subgraph should NOT have set the mode
+        # The therapeutic subgraph should NOT have set the response style
         assert result.response_style != "supportive"
         assert result.response_style != "reflective"
         assert result.response_style != "clarifying"
@@ -1239,7 +1318,7 @@ class TestEndToEndRouting:
 
         This is the regression case for the Stage E rewiring: under the
         old topology, non-crisis traffic terminated at END with the
-        bootstrap reply. After Stage E, it should produce a real mode
+        bootstrap reply. After Stage E, it should produce a real response style
         response.
         """
 
@@ -1275,15 +1354,15 @@ class TestEndToEndRouting:
         assert "hotline" not in result.response_text.lower()
 
 
-# ── Mid-exercise modality preservation tests ─────────────────────────
+# ── Mid-exercise therapeutic approach preservation tests ─────────────────────────
 
 
-class TestMidExerciseModalityPreservation:
-    """Verify modality routing behavior on mid-exercise side-turns."""
+class TestMidExerciseTherapeuticApproachPreservation:
+    """Verify therapeutic approach routing behavior on mid-exercise side-turns."""
 
     @pytest.mark.asyncio
-    async def test_clarifying_preserves_exercise_modality(self) -> None:
-        """A clarifying side-turn preserves the exercise's modality in routing."""
+    async def test_clarifying_preserves_exercise_therapeutic_approach(self) -> None:
+        """A clarifying side-turn preserves the exercise's therapeutic approach in routing."""
 
         llm = _FakeDispatchLLM(
             response_style="clarifying",
@@ -1306,7 +1385,7 @@ class TestMidExerciseModalityPreservation:
             runtime,  # type: ignore[arg-type]
         )
 
-        # Clarifying should preserve the exercise's existing modality (cbt),
+        # Clarifying should preserve the exercise's existing therapeutic approach (cbt),
         # NOT use the LLM's fresh pick (grief_support).
         assert cmd.update["therapeutic_approach"] == "cbt"
         assert cmd.goto == CLARIFYING_NODE
@@ -1314,10 +1393,10 @@ class TestMidExerciseModalityPreservation:
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
 
     @pytest.mark.asyncio
-    async def test_clarifying_uses_pinned_exercise_modality_when_routing_missing(
+    async def test_clarifying_uses_pinned_exercise_therapeutic_approach_when_routing_missing(
         self,
     ) -> None:
-        """A clarifying side-turn falls back to exercise_state.exercise_modality."""
+        """A clarifying side-turn falls back to exercise_state.exercise_therapeutic_approach."""
 
         llm = _FakeDispatchLLM(
             response_style="clarifying",
@@ -1331,7 +1410,7 @@ class TestMidExerciseModalityPreservation:
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "exercise_modality": "cbt",
+                "exercise_therapeutic_approach": "cbt",
             },
         }
 
@@ -1364,7 +1443,7 @@ class TestMidExerciseModalityPreservation:
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 0,
-                "exercise_modality": "dbt_skills",
+                "exercise_therapeutic_approach": "dbt_skills",
             },
             "therapeutic_approach": "dbt_skills",
         }
@@ -1380,8 +1459,8 @@ class TestMidExerciseModalityPreservation:
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
 
     @pytest.mark.asyncio
-    async def test_psychoeducation_uses_fresh_modality(self) -> None:
-        """A psychoeducation side-turn uses the LLM's fresh modality pick."""
+    async def test_psychoeducation_uses_fresh_therapeutic_approach(self) -> None:
+        """A psychoeducation side-turn uses the LLM's fresh therapeutic approach pick."""
 
         llm = _FakeDispatchLLM(
             response_style="psychoeducation",
@@ -1405,17 +1484,17 @@ class TestMidExerciseModalityPreservation:
         )
 
         # Psychoeducation should use the LLM's fresh pick (grief_support),
-        # NOT the exercise's modality (cbt).
+        # NOT the exercise's therapeutic approach (cbt).
         assert cmd.update["therapeutic_approach"] == "grief_support"
         assert cmd.goto == PSYCHOEDUCATION_NODE
         # Exercise state must still be intact
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
 
     @pytest.mark.asyncio
-    async def test_regex_active_exercise_uses_pinned_modality_when_routing_missing(
+    async def test_regex_active_exercise_uses_pinned_therapeutic_approach_when_routing_missing(
         self,
     ) -> None:
-        """Regex continuation falls back to exercise_state.exercise_modality."""
+        """Regex continuation falls back to exercise_state.exercise_therapeutic_approach."""
 
         runtime = _MockRuntime(llm_client=None)
         state: Any = {
@@ -1425,7 +1504,7 @@ class TestMidExerciseModalityPreservation:
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "exercise_modality": "act",
+                "exercise_therapeutic_approach": "act",
             },
         }
 
@@ -1438,8 +1517,10 @@ class TestMidExerciseModalityPreservation:
         assert cmd.goto == GUIDED_EXERCISE_NODE
 
     @pytest.mark.asyncio
-    async def test_deterministic_exit_clears_exercise_modality(self) -> None:
-        """Deterministic exit override clears exercise_modality in exercise_state."""
+    async def test_deterministic_exit_clears_exercise_therapeutic_approach(
+        self,
+    ) -> None:
+        """Deterministic exit override clears exercise_therapeutic_approach in exercise_state."""
 
         llm = _FakeDispatchLLM(response_style="supportive")
         runtime = _MockRuntime(llm_client=llm)
@@ -1450,7 +1531,7 @@ class TestMidExerciseModalityPreservation:
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "exercise_modality": "cbt",
+                "exercise_therapeutic_approach": "cbt",
             },
             "therapeutic_approach": "cbt",
         }
@@ -1460,15 +1541,15 @@ class TestMidExerciseModalityPreservation:
             runtime,  # type: ignore[arg-type]
         )
 
-        # Exit must clear all exercise state including modality
+        # Exit must clear all exercise state including therapeutic approach
         assert cmd.update["exercise_state"]["exercise_type"] is None
         assert cmd.update["exercise_state"]["exercise_step"] is None
-        assert cmd.update["exercise_state"]["exercise_modality"] is None
+        assert cmd.update["exercise_state"]["exercise_therapeutic_approach"] is None
         assert cmd.goto == SUPPORTIVE_NODE
 
     @pytest.mark.asyncio
-    async def test_llm_exit_clears_exercise_modality(self) -> None:
-        """LLM-driven exit from active exercise clears exercise_modality."""
+    async def test_llm_exit_clears_exercise_therapeutic_approach(self) -> None:
+        """LLM-driven exit from active exercise clears exercise_therapeutic_approach."""
 
         llm = _FakeDispatchLLM(
             response_style="supportive",
@@ -1482,7 +1563,7 @@ class TestMidExerciseModalityPreservation:
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "exercise_modality": "cbt",
+                "exercise_therapeutic_approach": "cbt",
             },
             "therapeutic_approach": "cbt",
         }
@@ -1494,7 +1575,7 @@ class TestMidExerciseModalityPreservation:
 
         assert cmd.update["exercise_state"]["exercise_type"] is None
         assert cmd.update["exercise_state"]["exercise_step"] is None
-        assert cmd.update["exercise_state"]["exercise_modality"] is None
+        assert cmd.update["exercise_state"]["exercise_therapeutic_approach"] is None
 
 
 # ─── Anaphoric/walkthrough guidance guard ────────────────────────────────────
@@ -1524,7 +1605,7 @@ def _state_with_active_exercise(message: str) -> AgentState:
         "exercise_state": {
             "exercise_type": "grounding",
             "exercise_step": 2,
-            "exercise_modality": "dbt_skills",
+            "exercise_therapeutic_approach": "dbt_skills",
         },
     }
     return cast(AgentState, state)
@@ -1680,7 +1761,7 @@ class TestAdviceRequestWithoutExerciseConsent:
 class TestAnaphoricGuardIntegration:
     """Integration tests via ``run_therapeutic_dispatch_node`` (Step 5b).
 
-    Each test mocks the LLM to return ``guided_exercise`` + a modality, then
+    Each test mocks the LLM to return ``guided_exercise`` + a therapeutic approach, then
     asserts the guard rewrites (or correctly declines to rewrite) routing.
     """
 
@@ -1715,7 +1796,7 @@ class TestAnaphoricGuardIntegration:
         ],
     )
     @pytest.mark.asyncio
-    async def test_guard_rewrites_to_psychoeducation_with_modality_preserved(
+    async def test_guard_rewrites_to_psychoeducation_with_therapeutic_approach_preserved(
         self, message: str
     ) -> None:
         fake = _FakeDispatchLLM(

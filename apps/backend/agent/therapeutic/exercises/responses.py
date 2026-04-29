@@ -13,9 +13,9 @@ from agent.state import AgentState
 from agent.therapeutic.exercises.memory import _write_exercise_completion_fact
 from agent.therapeutic.exercises.registry import (
     EXERCISE_5_4_3_2_1,
-    _DEFAULT_EXERCISE_OPTIONS,
-    _EXERCISE_DISPLAY_NAMES,
-    _EXERCISE_REGISTRY,
+    fallback_suggestion_options,
+    get_exercise_display_name,
+    get_exercise_steps,
 )
 from agent.therapeutic.exercises.selection import _valid_exercise_options
 from agent.therapeutic.exercises.state import (
@@ -24,7 +24,7 @@ from agent.therapeutic.exercises.state import (
     _get_current_step,
 )
 from agent.therapeutic.prompts import build_guided_exercise_system_prompt
-from agent.therapeutic.response_modes.common import (
+from agent.therapeutic.response_styles.common import (
     StreamWriterFactory,
     generate_streamed_therapeutic_text,
     therapeutic_response_delta,
@@ -55,9 +55,9 @@ def _build_selection_options_delta(options: tuple[str, ...]) -> dict[str, Any]:
 
     valid_options = _valid_exercise_options(options)
     if len(valid_options) < 2:
-        valid_options = _DEFAULT_EXERCISE_OPTIONS
+        valid_options = fallback_suggestion_options()
     option_lines = "\n".join(
-        f"{index}. {_EXERCISE_DISPLAY_NAMES[exercise_type]}"
+        f"{index}. {get_exercise_display_name(exercise_type)}"
         for index, exercise_type in enumerate(valid_options, start=1)
     )
     response_text = (
@@ -69,11 +69,11 @@ def _build_selection_options_delta(options: tuple[str, ...]) -> dict[str, Any]:
         "exercise_state": {
             "exercise_type": None,
             "exercise_step": None,
-            "exercise_modality": None,
+            "exercise_therapeutic_approach": None,
             "exercise_selection_options": list(valid_options),
         },
         **therapeutic_response_delta(
-            mode="guided_exercise",
+            response_style="guided_exercise",
             response_text=response_text,
         ),
     }
@@ -95,7 +95,7 @@ def _build_exit_delta(
     return {
         **cleared,
         **therapeutic_response_delta(
-            mode="guided_exercise",
+            response_style="guided_exercise",
             response_text=_FALLBACK_EXIT,
         ),
     }
@@ -136,7 +136,7 @@ async def _build_stuck_delta(
     response_text = await generate_streamed_therapeutic_text(
         state=state,
         llm_client=llm_client,
-        mode="guided_exercise",
+        response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
         fallback_text=_FALLBACK_STUCK_REPHRASE,
         logger=logger,
@@ -148,7 +148,7 @@ async def _build_stuck_delta(
     )
 
     return therapeutic_response_delta(
-        mode="guided_exercise",
+        response_style="guided_exercise",
         response_text=response_text,
     )
 
@@ -189,7 +189,7 @@ async def _build_hold_delta(
     response_text = await generate_streamed_therapeutic_text(
         state=state,
         llm_client=llm_client,
-        mode="guided_exercise",
+        response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
         fallback_text=_FALLBACK_HOLD,
         logger=logger,
@@ -201,7 +201,7 @@ async def _build_hold_delta(
     )
 
     return therapeutic_response_delta(
-        mode="guided_exercise",
+        response_style="guided_exercise",
         response_text=response_text,
     )
 
@@ -231,7 +231,9 @@ async def _build_advance_delta(
         Response and state delta for the next exercise step.
     """
 
-    steps = _EXERCISE_REGISTRY[exercise_type]
+    steps = get_exercise_steps(exercise_type)
+    if steps is None:
+        raise KeyError(exercise_type)
     next_step = steps[next_step_index]
     total_steps = len(steps)
     directive = (
@@ -246,7 +248,7 @@ async def _build_advance_delta(
     response_text = await generate_streamed_therapeutic_text(
         state=state,
         llm_client=llm_client,
-        mode="guided_exercise",
+        response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
         fallback_text=next_step.prompt_fallback,
         logger=logger,
@@ -262,7 +264,7 @@ async def _build_advance_delta(
     return {
         **advance_exercise_state,
         **therapeutic_response_delta(
-            mode="guided_exercise",
+            response_style="guided_exercise",
             response_text=response_text,
         ),
     }
@@ -298,7 +300,7 @@ async def _build_complete_delta(
     exercise_type: str = (
         raw_exercise_type if raw_exercise_type is not None else EXERCISE_5_4_3_2_1
     )
-    display_name = _EXERCISE_DISPLAY_NAMES.get(exercise_type, "that exercise")
+    display_name = get_exercise_display_name(exercise_type, default="that exercise")
 
     directive = (
         f"The user just finished the LAST step of the exercise. "
@@ -317,7 +319,7 @@ async def _build_complete_delta(
     response_text = await generate_streamed_therapeutic_text(
         state=state,
         llm_client=llm_client,
-        mode="guided_exercise",
+        response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
         fallback_text=fallback_complete,
         logger=logger,
@@ -346,7 +348,7 @@ async def _build_complete_delta(
         **cleared,
         "should_persist_memory": True,
         **therapeutic_response_delta(
-            mode="guided_exercise",
+            response_style="guided_exercise",
             response_text=response_text,
         ),
     }
