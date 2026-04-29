@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -554,6 +554,38 @@ class PersistentAgentRuntime:
         """
 
         return token in self._active_mutation_tokens
+
+    @asynccontextmanager
+    async def _active_session_mutation(
+        self,
+        thread_id: str,
+        *,
+        mutation_kind: str,
+        finalize_required_reason: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Track an in-flight active-session mutation for recovery.
+
+        Args:
+            thread_id: Thread identifier.
+            mutation_kind: Mutation kind for diagnostics.
+            finalize_required_reason: Optional durable recovery reason.
+
+        Yields:
+            The process-scoped mutation token.
+        """
+
+        mutation_token = self._new_mutation_token()
+        self._active_mutation_tokens.add(mutation_token)
+        await self._set_active_session_mutation(
+            thread_id,
+            mutation_token=mutation_token,
+            mutation_kind=mutation_kind,
+            finalize_required_reason=finalize_required_reason,
+        )
+        try:
+            yield mutation_token
+        finally:
+            self._active_mutation_tokens.discard(mutation_token)
 
     async def _load_persisted_active_session_row(
         self,
@@ -1723,14 +1755,10 @@ class PersistentAgentRuntime:
                 prior_turn_count=prior_turn_count,
             )
 
-            mutation_token = self._new_mutation_token()
-            self._active_mutation_tokens.add(mutation_token)
-            await self._set_active_session_mutation(
+            async with self._active_session_mutation(
                 thread_id,
-                mutation_token=mutation_token,
                 mutation_kind="turn",
-            )
-            try:
+            ) as mutation_token:
                 turn_start = time.monotonic()
                 graph_output = await graph.ainvoke(
                     initial_state,
@@ -1777,8 +1805,6 @@ class PersistentAgentRuntime:
 
                 await self._clear_active_session_mutation(thread_id, mutation_token)
                 return result
-            finally:
-                self._active_mutation_tokens.discard(mutation_token)
 
     async def end_session(
         self,
@@ -2129,14 +2155,10 @@ class PersistentAgentRuntime:
                     return None
                 return state_to_output(state)
 
-            mutation_token = self._new_mutation_token()
-            self._active_mutation_tokens.add(mutation_token)
-            await self._set_active_session_mutation(
+            async with self._active_session_mutation(
                 thread_id,
-                mutation_token=mutation_token,
                 mutation_kind="turn",
-            )
-            try:
+            ) as mutation_token:
                 async for chunk in graph.astream(
                     initial_state,
                     config=self._config_for_thread(
@@ -2213,5 +2235,3 @@ class PersistentAgentRuntime:
 
                 await self._clear_active_session_mutation(thread_id, mutation_token)
                 yield DoneEvent(output=state_to_output(final_state))
-            finally:
-                self._active_mutation_tokens.discard(mutation_token)
