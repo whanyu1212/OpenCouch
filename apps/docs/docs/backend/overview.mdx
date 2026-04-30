@@ -78,11 +78,11 @@ composition logic.
 | Package | Owns |
 |---|---|
 | `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
-| `agent/nodes/` | One file per graph node — crisis_gate, crisis_resource_lookup, crisis_response, crisis_log, memory_control_gate, memory_control, grounded_lookup_gate, grounded_answer, load_memory, finalize_turn, extract_facts, extract_procedural_rules, summarize_session, commit_session_memory |
+| `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `memory_control_gate`, `grounded_lookup_gate`, `load_memory`, `extract_facts`, `summarize_session`, `commit_session_memory`, etc.) |
 | `agent/therapeutic/` | Subgraph: dispatcher, 7 response-style nodes, exercise registry/state machine, and prompt builders |
-| `agent/memory/` | Store protocol, embeddings, retrieval, dedup, write policy, reconciliation, procedural profile |
+| `agent/memory/` | Store protocol, embeddings, retrieval, dedup, write policy, reconciliation, procedural profile, and service-backed memory logic (`load_memory_service`, `episodic_service`, `session_commit_service`, `orchestration`, `backstops`) |
 | `agent/audit/` | Always-on safety records — crisis log, session feedback (in-memory + SQLite backends, models) |
-| `agent/safety/` | Crisis pattern tuples + `detect_crisis_override` (the deterministic safety override layer) |
+| `agent/safety/` | Deterministic crisis override layer plus service-backed crisis classification/routing helpers |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
 | `agent/tools/` | `find_local_crisis_resources` (web search for hotlines), `answer_grounded_lookup` (factual search grounding) |
 | `services/llm/` | `BaseLLMClient` + Gemini + OpenAI clients |

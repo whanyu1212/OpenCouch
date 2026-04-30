@@ -17,16 +17,15 @@ import {
 } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
-import {
-  ConversationShell,
-  MobileTabBar,
-  SessionPill,
-} from "@/components/conversation-shell";
+import { SessionPill } from "@/components/conversation-shell";
 
 type Tab = "overview" | "facts" | "sessions" | "rules";
 
 export default function MemoryPage() {
-  const { userId, threadId, memoryRefreshVersion, bumpMemoryRefreshVersion } = useSessionStore();
+  const userId = useSessionStore((s) => s.userId);
+  const threadId = useSessionStore((s) => s.threadId);
+  const memoryRefreshVersion = useSessionStore((s) => s.memoryRefreshVersion);
+  const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
   const [tab, setTab] = useState<Tab>("overview");
   const [status, setStatus] = useState<MemoryStatus | null>(null);
   const [facts, setFacts] = useState<MemoryFact[]>([]);
@@ -120,7 +119,7 @@ export default function MemoryPage() {
   ];
 
   return (
-    <ConversationShell>
+    <>
       {/* Desktop top bar — wrapper controls breakpoint visibility */}
       <div className="oc-app-top-wrap">
       <header className="oc-app-top">
@@ -214,11 +213,7 @@ export default function MemoryPage() {
         )}
       </div>
 
-      {/* Mobile bottom tab bar */}
-      <div className="oc-mobile-tabbar-wrap">
-        <MobileTabBar />
-      </div>
-    </ConversationShell>
+    </>
   );
 }
 

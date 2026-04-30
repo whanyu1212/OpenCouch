@@ -67,6 +67,32 @@ services:
     depends_on:
       - api
 
+  web-prod:
+    profiles:
+      - prod-web
+    image: node:22-bookworm-slim
+    working_dir: /workspace
+    command:
+      - sh
+      - -lc
+      - >
+        corepack enable &&
+        corepack prepare pnpm@10.33.0 --activate &&
+        pnpm --filter web install --frozen-lockfile &&
+        NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web build &&
+        NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web start --hostname 0.0.0.0
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080/api
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/workspace
+      - web-root-node-modules:/workspace/node_modules
+      - web-app-node-modules:/workspace/apps/web/node_modules
+      - web-next-cache:/workspace/apps/web/.next
+    depends_on:
+      - api
+
 volumes:
   backend-cache:
   web-root-node-modules:

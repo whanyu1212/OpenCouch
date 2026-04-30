@@ -4,11 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { getThreadState } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
-import {
-  ConversationShell,
-  MobileTabBar,
-  SessionPill,
-} from "@/components/conversation-shell";
+import { SessionPill } from "@/components/conversation-shell";
 
 /**
  * State Inspector — displays the full agent state dict for the current
@@ -42,7 +38,7 @@ const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }
 ];
 
 export default function StateInspectorPage() {
-  const { threadId } = useSessionStore();
+  const threadId = useSessionStore((s) => s.threadId);
   const [state, setState] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,7 +78,7 @@ export default function StateInspectorPage() {
     : null;
 
   return (
-    <ConversationShell>
+    <>
       {/* Desktop top bar — wrapper controls breakpoint visibility */}
       <div className="oc-app-top-wrap">
       <header className="oc-app-top">
@@ -198,9 +194,7 @@ export default function StateInspectorPage() {
                       "response_style_source",
                       "response_style_type",
                       "should_persist_memory",
-                      "grounded_lookup_query",
                       "crisis_audit",
-                      "memory_control_action",
                     ].includes(k)
                 )
                 .map((key) => (
@@ -221,11 +215,7 @@ export default function StateInspectorPage() {
         )}
       </div>
 
-      {/* Mobile bottom tab bar */}
-      <div className="oc-mobile-tabbar-wrap">
-        <MobileTabBar />
-      </div>
-    </ConversationShell>
+    </>
   );
 }
 

@@ -12,7 +12,9 @@ export function ThreadDrawer() {
     isBusy,
     threadDrawerOpen,
   } = useCommandActions();
-  const { sessionMode, threadId, setThreadId } = useSessionStore();
+  const sessionMode = useSessionStore((s) => s.sessionMode);
+  const threadId = useSessionStore((s) => s.threadId);
+  const setThreadId = useSessionStore((s) => s.setThreadId);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

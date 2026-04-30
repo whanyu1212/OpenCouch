@@ -156,8 +156,13 @@ def _actual_outcome(command: Any) -> tuple[str, str]:
         Tuple of outcome label and lookup query.
     """
 
+    update = cast(dict[str, Any], command.update or {})
     if command.goto == "grounded_answer_node":
-        return "lookup", str(command.update.get("grounded_lookup_query", ""))
+        grounded_lookup = cast(dict[str, Any], update.get("grounded_lookup", {}) or {})
+        query = grounded_lookup.get("query", "") or update.get(
+            "grounded_lookup_query", ""
+        )
+        return "lookup", str(query)
     if command.goto == "load_memory_node":
         return "pass_through", ""
     return f"unknown({command.goto})", ""

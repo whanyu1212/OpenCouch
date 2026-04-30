@@ -7,6 +7,7 @@ import { SessionSetup } from "@/components/session-setup";
 import { CommandPalette } from "@/components/command-palette";
 import { ThreadDrawer } from "@/components/thread-drawer";
 import { CommandActionsProvider } from "@/lib/command-actions";
+import { ConversationShell } from "@/components/conversation-shell";
 
 const DynamicVoiceSessionProvider = dynamic(
   () =>
@@ -20,8 +21,8 @@ const DynamicVoiceSessionProvider = dynamic(
  * AppShell — chooses between the landing setup screen and the main
  * conversation layout.
  *
- * Pages own their own chrome via `<ConversationShell>` — a slim icon
- * NavRail on desktop and a bottom tab bar on mobile. AppShell just wires
+ * AppShell owns the persistent conversation chrome so tab navigation only
+ * swaps page content instead of remounting the rail/tab bar. It also wires
  * up the providers (command palette, thread drawer, optional LiveKit
  * provider) and the hydration loader.
  */
@@ -32,7 +33,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const voiceFinalizationStatus = useSessionStore(
     (s) => s.voiceFinalization.status
   );
+  const sessionMode = useSessionStore((s) => s.sessionMode);
   const pathname = usePathname();
+  const withWash = pathname === "/voice" || (pathname === "/" && sessionMode === "persistent");
 
   if (!hydrated) {
     return (
@@ -56,7 +59,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const content = (
     <CommandActionsProvider>
-      <main className="flex-1 flex min-w-0">{children}</main>
+      <ConversationShell withWash={withWash}>
+        <main className="flex-1 flex min-w-0 flex-col">{children}</main>
+      </ConversationShell>
       <CommandPalette />
       <ThreadDrawer />
     </CommandActionsProvider>

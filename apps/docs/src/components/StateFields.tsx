@@ -104,8 +104,8 @@ const GROUPS: GroupDef[] = [
     label: 'Lookup scratch fields',
     blurb: 'Turn-scoped IO between gates and their worker nodes.',
     fields: [
-      { name: 'memory_control_action', type: 'dict', setBy: 'memory_control_gate_node', lifecycle: 'turn', desc: 'Detected memory command (kind, args). Consumed by memory_control_node.' },
-      { name: 'grounded_lookup_query', type: 'str', setBy: 'grounded_lookup_gate_node', lifecycle: 'turn', desc: 'Factual query extracted by the gate. Consumed by grounded_answer_node.' },
+      { name: 'memory_control.action', type: 'dict', setBy: 'memory_control_gate_node', lifecycle: 'turn', desc: 'Detected memory command (kind, args). Consumed by memory_control_node.' },
+      { name: 'grounded_lookup.query', type: 'str', setBy: 'grounded_lookup_gate_node', lifecycle: 'turn', desc: 'Factual query extracted by the gate. Consumed by grounded_answer_node.' },
       { name: 'grounded_lookup_status', type: 'str', setBy: 'grounded_answer_node', lifecycle: 'turn', desc: 'answered · no_verified_answer · search_failed · search_unavailable · not_attempted' },
       { name: 'inferred_location', type: 'str', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'Region extracted from recent context for hotline lookup.' },
       { name: 'found_resources', type: 'list[dict]', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'Verified hotlines (name / phone / website / region). Empty on failure or missing location.' },

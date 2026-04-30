@@ -59,7 +59,9 @@ function FactCard({ fact, isNew }: { fact: MemoryFact; isNew: boolean }) {
 }
 
 export function MemoryPanel() {
-  const { memoryFacts, memoryPanelOpen, setMemoryPanelOpen } = useSessionStore();
+  const memoryFacts = useSessionStore((s) => s.memoryFacts);
+  const memoryPanelOpen = useSessionStore((s) => s.memoryPanelOpen);
+  const setMemoryPanelOpen = useSessionStore((s) => s.setMemoryPanelOpen);
 
   if (!memoryPanelOpen) return null;
 
@@ -117,7 +119,10 @@ export function MemoryPanel() {
 }
 
 export function MemoryToggleButton() {
-  const { memoryPanelOpen, setMemoryPanelOpen, memoryUnseenCount, sessionMode } = useSessionStore();
+  const memoryPanelOpen = useSessionStore((s) => s.memoryPanelOpen);
+  const setMemoryPanelOpen = useSessionStore((s) => s.setMemoryPanelOpen);
+  const memoryUnseenCount = useSessionStore((s) => s.memoryUnseenCount);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
 
   // Only show in persistent mode
   if (sessionMode === "incognito") return null;

@@ -16,10 +16,12 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.graph import build_initial_state
 from agent.models import AgentInput
-from agent.nodes.crisis_gate import (
+from agent.safety.crisis_rules import (
     assess_crisis_risk_deterministically,
-    assess_crisis_risk_with_llm,
     detect_crisis_override,
+)
+from agent.safety.service import (
+    assess_crisis_risk_with_llm,
     enforce_crisis_truth_table,
 )
 from core.config import create_configured_llm_client

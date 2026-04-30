@@ -46,165 +46,27 @@ Design rules:
 from __future__ import annotations
 
 import logging
-import re
 import time
 from typing import Any
 
 from langgraph.runtime import Runtime
 
+from agent.memory.backstops import get_deterministic_semantic_backstops
 from agent.memory.extraction_prompts import (
     build_extraction_system_prompt,
     build_extraction_user_prompt,
 )
-from agent.memory.models import EntityRef, ExtractionResult, MemoryWrite
+from agent.memory.models import ExtractionResult
 from agent.memory.modes import MemoryMode
-from agent.memory.semantic_policy import (
-    contains_emerging_pattern,
-    contains_negative_self_belief,
-    has_durability_marker,
+from agent.memory.orchestration import (
+    get_session_turn_index,
+    should_skip_memory_extraction,
 )
-from agent.memory.service import (
-    MemoryService,
-    _memory_write_to_semantic_fact as _memory_write_to_semantic_fact,
-)
+from agent.memory.service import MemoryService
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
-
-
-_HELPFUL_PERSON_RE = re.compile(r"\b(?P<name>[A-Z][a-zA-Z'-]{1,60})\s+helped me\b")
-_PHD_CONTEXT_RE = re.compile(
-    r"\b(?:i'?m|i am)\s+a\s+phd student\b(?P<context>[^.!?]*)",
-    re.IGNORECASE,
-)
-_PERFECTIONISM_TRIGGER_RE = re.compile(
-    r"\bcan'?t stand\b.{0,80}\b(?:isn'?t|is not|not)\s+perfect\b",
-    re.IGNORECASE,
-)
-
-
-def _should_skip_early_emerging_pattern(message: str, turn_index: int) -> bool:
-    """Return whether an early-turn emerging pattern should skip extraction.
-
-    This is a narrow product guard for fresh, in-session interpretations that
-    are reflective-worthy but not yet durable enough for long-term semantic
-    memory. Prompt guidance should catch most of these cases; this helper adds
-    a deterministic backstop for the highest-friction failure mode.
-
-    Negative global self-beliefs get extra protection in early turns: even
-    when phrased with durability markers like "I always", they are often
-    better treated as fresh therapeutic material to explore first rather than
-    stable semantic memory to persist immediately.
-
-    Args:
-        message: Current user message.
-        turn_index: Zero-based user turn index for this session.
-
-    Returns:
-        Whether deterministic policy should skip extraction.
-    """
-
-    lowered = message.lower()
-    if turn_index > 1:
-        return False
-
-    if contains_negative_self_belief(lowered):
-        return True
-
-    if not contains_emerging_pattern(lowered):
-        return False
-    if has_durability_marker(lowered):
-        return False
-    return True
-
-
-def _deterministic_semantic_backstops(
-    state: AgentState,
-    *,
-    turn_index: int,
-) -> list[MemoryWrite]:
-    """Return high-precision semantic facts missed by conservative LLM output.
-
-    These backstops intentionally cover only direct, low-ambiguity statements
-    that the extractor prompt already tells the model to extract. They should
-    not become a broad regex extractor.
-
-    Args:
-        state: Current graph state.
-        turn_index: Zero-based user turn index for provenance.
-
-    Returns:
-        Deterministically recovered memory writes.
-    """
-
-    message = state["message"].strip()
-    lowered = message.lower()
-    session_id = state.get("session_id") or "__no_session__"
-    subject = EntityRef(type="User", identifier="self")
-    backstops: list[MemoryWrite] = []
-
-    if "my therapist" in lowered:
-        backstops.append(
-            MemoryWrite(
-                category="relationship",
-                subject=subject,
-                predicate="KNOWS",
-                object=EntityRef(type="Person", identifier="therapist"),
-                evidence_quote=message[:280],
-                confidence="medium",
-                source_session_id=session_id,
-                source_turn_index=turn_index,
-            )
-        )
-
-    helpful_person = _HELPFUL_PERSON_RE.search(message)
-    if helpful_person is not None:
-        name = helpful_person.group("name")
-        backstops.append(
-            MemoryWrite(
-                category="relationship",
-                subject=subject,
-                predicate="KNOWS",
-                object=EntityRef(type="Person", identifier=name),
-                evidence_quote=message[:280],
-                confidence="medium",
-                source_session_id=session_id,
-                source_turn_index=turn_index,
-            )
-        )
-
-    phd_context = _PHD_CONTEXT_RE.search(message)
-    if phd_context is not None:
-        context = f"PhD student{phd_context.group('context')}".strip()
-        backstops.append(
-            MemoryWrite(
-                category="context",
-                subject=subject,
-                predicate="EXPERIENCED",
-                object=EntityRef(type="Event", identifier=context),
-                evidence_quote=message[:280],
-                confidence="medium",
-                source_session_id=session_id,
-                source_turn_index=turn_index,
-            )
-        )
-
-    if _PERFECTIONISM_TRIGGER_RE.search(message):
-        backstops.append(
-            MemoryWrite(
-                category="trigger",
-                subject=subject,
-                predicate="WORRIES_ABOUT",
-                object=EntityRef(type="Concern", identifier="work not being perfect"),
-                evidence_quote=message[:280],
-                confidence="medium",
-                source_session_id=session_id,
-                source_turn_index=turn_index,
-            )
-        )
-
-    return backstops
 
 
 async def run_extract_semantic_facts_node(
@@ -267,18 +129,8 @@ async def run_extract_semantic_facts_node(
             }
         }
 
-    # Skip extraction on high-priority operational routes. Crisis responses
-    # should reach the user without waiting on memory side effects, and
-    # operational replies are not useful semantic-memory material.
-    route = state.get("route")
-    if route in {"crisis", "memory_control", "grounded_lookup"}:
-        skip_reason = (
-            "crisis_path"
-            if route == "crisis"
-            else "memory_control_path"
-            if route == "memory_control"
-            else "grounded_lookup_path"
-        )
+    skip_reason = should_skip_memory_extraction(state)
+    if skip_reason is not None:
         logger.debug(
             "extract_semantic_facts_node: %s; skipping extraction",
             skip_reason,
@@ -303,21 +155,7 @@ async def run_extract_semantic_facts_node(
     session_buffer = runtime.context.session_memory_buffer
     owner_id = resolve_owner_id(state)
 
-    from agent.memory.small_talk_gate import is_small_talk
-
-    if is_small_talk(state["message"]):
-        logger.debug(
-            "extract_semantic_facts_node: small-talk gate triggered; skipping "
-            "LLM call for message %r",
-            state["message"][:40],
-        )
-        return _diagnostics_delta(reason="skipped: small_talk_gate")
-
-    # Turn index is 0-based; state["session_progress"]["turn_count"] counts
-    # user turns including the current one (1-based), so we subtract 1.
-    session_progress = state.get("session_progress", {})
-    turn_count = int(session_progress.get("turn_count", 1))
-    turn_index = max(0, turn_count - 1)
+    turn_index = get_session_turn_index(state)
 
     try:
         extraction: ExtractionResult = await llm_client.generate_structured(
@@ -342,8 +180,9 @@ async def run_extract_semantic_facts_node(
         extraction.reason,
     )
 
-    backstop_facts = _deterministic_semantic_backstops(
-        state,
+    backstop_facts = get_deterministic_semantic_backstops(
+        message=state["message"],
+        session_id=state.get("session_id"),
         turn_index=turn_index,
     )
     if backstop_facts:

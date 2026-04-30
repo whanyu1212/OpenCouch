@@ -142,9 +142,9 @@ The `--user-id` flag decouples memory identity from thread identity
 |---|---|
 | `agent/working_memory.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
 | `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
-| `agent/nodes/load_memory.py` | Per-turn retrieval with 30-day episodic date filter |
-| `agent/nodes/extract_facts.py` | Semantic candidate extraction + immediate-write path |
+| `agent/nodes/load_memory.py` | Per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/load_memory_service.py` |
+| `agent/nodes/extract_facts.py` | Semantic candidate extraction orchestration + immediate-write path; deterministic backstops live in `agent/memory/backstops.py` |
 | `agent/nodes/extract_procedural_rules.py` | Procedural candidate extraction + immediate-write path |
-| `agent/nodes/commit_session_memory.py` | Session-end promotion for held semantic / procedural candidates |
-| `agent/nodes/summarize_session.py` | Session-end episodic summarization |
+| `agent/nodes/commit_session_memory.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/session_commit_service.py` |
+| `agent/nodes/summarize_session.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/episodic_service.py` |
 | `agent/persistence.py` | Shared session-end seam, timeout handling, active-session buffering |

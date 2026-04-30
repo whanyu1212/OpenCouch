@@ -110,7 +110,7 @@ const TOOLS: Tool[] = [
         temperature: 0,
         useSearch: false,
         onFailure: 'falls through to load_memory_node + therapeutic subgraph',
-        produces: 'state.grounded_lookup_query (str) when matched',
+        produces: 'state.grounded_lookup.query (str) when matched',
       },
       {
         id: 'grounded_answer',

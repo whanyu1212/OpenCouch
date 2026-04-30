@@ -174,7 +174,11 @@ async def _evaluate_case(
     state = _build_state(case)
     cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
-    actual_style = _NODE_TO_RESPONSE_STYLE.get(cmd.goto, f"unknown({cmd.goto})")
+    update = cast(dict[str, Any], cmd.update or {})
+    actual_style = str(
+        update.get("response_style")
+        or _NODE_TO_RESPONSE_STYLE.get(cmd.goto, f"unknown({cmd.goto})")
+    )
     expected_style = case.get("expected_response_style", case.get("expected_mode"))
 
     if actual_style == expected_style:

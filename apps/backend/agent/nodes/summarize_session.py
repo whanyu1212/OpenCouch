@@ -49,16 +49,15 @@ Design rules (mirror the extract_facts conventions):
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
-from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.models import (
-    SessionArc,
-    StoredSessionArc,
-    SummarizationResult,
+from agent.memory.episodic_service import (
+    prepare_session_summary_metadata,
+    session_arc_to_stored,
+    write_session_arc,
 )
+from agent.memory.hashing import iso_now as _iso_now
+from agent.memory.models import StoredSessionArc, SummarizationResult
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.memory.summarization_prompts import (
@@ -72,89 +71,6 @@ if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
-
-
-def _session_arc_to_stored(
-    arc: SessionArc,
-    *,
-    owner_id: str,
-    crisis_level_max: int = 0,
-) -> StoredSessionArc:
-    """Convert an LLM-produced :class:`SessionArc` to a stored shape.
-
-    Parallels ``_memory_write_to_semantic_fact`` in ``extract_facts.py``.
-    The SessionArc has the narrative fields the summarizer produces;
-    StoredSessionArc adds the store metadata (id, owner_id, timestamps,
-    visibility flag) AND the runtime-computed ``crisis_level_max``.
-    This helper generates a fresh ID and timestamps for a new record
-    and takes the crisis level as an explicit parameter.
-
-    The ``crisis_level_max`` parameter is the peak crisis-gate level
-    observed during the session, passed in from the runtime's
-    per-thread tracker rather than derived from the LLM's output.
-    See the class docstring on :class:`StoredSessionArc` for the
-    rationale — in short, the crisis gate is the canonical source
-    of truth for crisis severity and the summarizer should not
-    re-interpret it.
-
-    Args:
-        arc: LLM-produced session arc.
-        owner_id: Owner id for the stored arc.
-        crisis_level_max: Peak crisis level observed during the session.
-
-    Returns:
-        Stored session arc ready for persistence.
-    """
-
-    now = _iso_now()
-    return StoredSessionArc(
-        **arc.model_dump(),
-        id=str(uuid4()),
-        owner_id=owner_id,
-        created_at=now,
-        last_referenced_at=now,
-        user_visible=True,
-        write_timing="session_end",
-        write_reason="session-end episodic summary written from completed session transcript",
-        policy_version="phase5_v1",
-        crisis_level_max=crisis_level_max,  # type: ignore[arg-type]
-    )
-
-
-async def _write_session_arc(
-    store: MemoryStore,
-    *,
-    owner_id: str,
-    stored_arc: StoredSessionArc,
-    embedding: list[float] | None = None,
-    embedding_model: str | None = None,
-) -> None:
-    """Persist a freshly-summarized StoredSessionArc to the episodic namespace.
-
-    Separated from the main body so the error-handling scope is tight
-    around the single store call. A failure here is logged but never
-    raised to the caller — a summarization failure must not break the
-    session-end flow.
-
-    Args:
-        store: Memory store to write to.
-        owner_id: Owner whose episodic namespace receives the arc.
-        stored_arc: Stored session arc to persist.
-        embedding: Optional document embedding for hybrid retrieval.
-        embedding_model: Optional embedding model identifier.
-
-    Returns:
-        None.
-    """
-
-    namespace = (owner_id, "episodic")
-    await store.aput(
-        namespace,
-        key=stored_arc.id,
-        value=stored_arc.model_dump(mode="json"),
-        embedding=embedding,
-        embedding_model=embedding_model,
-    )
 
 
 async def run_summarize_session(
@@ -234,27 +150,12 @@ async def run_summarize_session(
 
     owner_id = resolve_owner_id(state)
 
-    # Compute duration from started_at / ended_at. If parsing fails (for
-    # example, malformed timestamps), degrade to 0 rather than crashing; the
-    # summary is still useful without the duration field.
-    duration_seconds = 0
-    try:
-        start_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
-        duration_seconds = max(0, int((end_dt - start_dt).total_seconds()))
-    except (ValueError, AttributeError):
-        logger.warning(
-            "run_summarize_session: could not parse started_at/ended_at; "
-            "duration will be 0. started_at=%r ended_at=%r",
-            started_at,
-            ended_at,
-        )
-
-    # Count user turns from the transcript. The state's session_progress.turn_count
-    # is technically 1-indexed and may include the current turn; using the
-    # transcript is more reliable.
     transcript = state.get("transcript", [])
-    user_turn_count = sum(1 for turn in transcript if turn.get("role") == "user")
+    duration_seconds, user_turn_count = prepare_session_summary_metadata(
+        started_at=started_at,
+        ended_at=ended_at,
+        transcript=transcript,
+    )
 
     try:
         result: SummarizationResult = await llm_client.generate_structured(
@@ -291,7 +192,7 @@ async def run_summarize_session(
         return None
 
     try:
-        stored_arc = _session_arc_to_stored(
+        stored_arc = session_arc_to_stored(
             result.arc,
             owner_id=owner_id,
             crisis_level_max=crisis_level_max,
@@ -334,7 +235,7 @@ async def run_summarize_session(
             )
 
     try:
-        await _write_session_arc(
+        await write_session_arc(
             memory_store,
             owner_id=owner_id,
             stored_arc=stored_arc,

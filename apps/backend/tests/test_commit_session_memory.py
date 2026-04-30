@@ -23,10 +23,12 @@ from agent.memory.models import (
     SessionArc,
     SummarizationResult,
 )
+from agent.memory.episodic_service import (
+    session_arc_to_stored as _session_arc_to_stored,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.nodes.commit_session_memory import run_commit_session_memory
-from agent.nodes.summarize_session import _session_arc_to_stored
 from agent.persistence import PersistentAgentRuntime
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient, StructuredResponseT
@@ -142,7 +144,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
         schema_name = response_schema.__name__
 
         if schema_name == "CrisisAssessmentSchema":
-            from agent.nodes.crisis_gate import CrisisAssessmentSchema
+            from agent.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

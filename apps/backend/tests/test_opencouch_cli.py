@@ -2040,6 +2040,26 @@ class TestParserUserIdFlag:
         assert args.user_id == "alice"
 
 
+class TestParserDisableTracingFlag:
+    """Unit tests for the --disable-tracing argparse flag."""
+
+    def test_disable_tracing_flag_defaults_to_false(self) -> None:
+        """Without --disable-tracing, tracing remains enabled by configuration."""
+
+        from opencouch_cli.app import build_parser
+
+        args = build_parser().parse_args([])
+        assert args.disable_tracing is False
+
+    def test_disable_tracing_flag_sets_true(self) -> None:
+        """With --disable-tracing, the parsed value is true."""
+
+        from opencouch_cli.app import build_parser
+
+        args = build_parser().parse_args(["--disable-tracing"])
+        assert args.disable_tracing is True
+
+
 class TestRenderContext:
     """Tests for the v0.8 additions to ``render_context``.
 

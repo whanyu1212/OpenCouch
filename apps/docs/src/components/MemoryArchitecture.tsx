@@ -42,7 +42,7 @@ const LAYERS: LayerDef[] = [
     label: 'Episodic',
     icon: '\u25CB',
     color: 'episodic',
-    writeHow: 'Session-end LLM summary via run_summarize_session',
+    writeHow: 'Session-end LLM summary via summarize_session + episodic_service',
     writeWhen: 'Only at session end: /end, timeout, shutdown, web end-session, or voice disconnect. Produces one StoredSessionArc for the active session window.',
     readHow: 'Hybrid RRF + first-turn catch-up (most recent arc injected automatically)',
     readInto: 'EpisodicWorkingMemoryEntry in working_memory',

@@ -40,11 +40,9 @@ from agent.memory.models import (
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.service import _memory_write_to_semantic_fact
 from agent.models import AgentInput
-from agent.nodes.extract_facts import (
-    _memory_write_to_semantic_fact,
-    run_extract_semantic_facts_node,
-)
+from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient, StructuredResponseT
@@ -163,7 +161,7 @@ class _FakeExtractionLLM(BaseLLMClient):
             # Return a safe (level 0) crisis assessment so non-crisis
             # messages don't route to the crisis branch during these tests.
             self.crisis_calls += 1
-            from agent.nodes.crisis_gate import CrisisAssessmentSchema
+            from agent.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
