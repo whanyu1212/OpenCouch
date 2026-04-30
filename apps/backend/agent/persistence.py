@@ -72,6 +72,23 @@ AgentWorkflow = CompiledStateGraph[
     AgentGraphOutputState,
 ]
 
+# Keep graph node names and CLI/API stage labels aligned in one place.
+_NODE_TO_STAGE = {
+    "load_memory_node": "load_memory",
+    "crisis_gate_node": "crisis_gate",
+    "crisis_resource_lookup_node": "crisis_resource_lookup",
+    "crisis_response_node": "crisis_response",
+    "crisis_log_node": "crisis_log",
+    "memory_control_gate_node": "memory_control_gate",
+    "memory_control_node": "memory_control",
+    "grounded_lookup_gate_node": "grounded_lookup_gate",
+    "grounded_answer_node": "grounded_lookup",
+    "therapeutic_subgraph": "therapeutic",
+    "extract_semantic_facts_node": "extract_facts",
+    "extract_procedural_rules_node": "extract_procedural",
+    "finalize_turn_node": "finalize",
+}
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _STORE_DIR = BACKEND_ROOT / ".store"
 DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
@@ -1753,6 +1770,31 @@ class PersistentAgentRuntime:
             2,
         )
 
+    @staticmethod
+    def _response_ready_output(
+        state: Mapping[str, Any] | None,
+        *,
+        finalize_seen: bool,
+        response_ready_emitted: bool,
+    ) -> AgentOutput | None:
+        """Return the durable output once finalize has completed.
+
+        Args:
+            state: Latest streamed state snapshot.
+            finalize_seen: Whether the finalize node has emitted an update.
+            response_ready_emitted: Whether a ready event was already emitted.
+
+        Returns:
+            The finalized output, if it is ready to surface.
+        """
+
+        if state is None or not finalize_seen or response_ready_emitted:
+            return None
+        response_text = str(state.get("response_text", "") or "").strip()
+        if not response_text:
+            return None
+        return state_to_output(state)
+
     async def run_turn(
         self,
         *,
@@ -2153,47 +2195,11 @@ class PersistentAgentRuntime:
                 prior_turn_count=prior_turn_count,
             )
 
-            # Keep graph node names and CLI stage labels aligned in one place.
-            _NODE_TO_STAGE = {
-                "load_memory_node": "load_memory",
-                "crisis_gate_node": "crisis_gate",
-                "crisis_resource_lookup_node": "crisis_resource_lookup",
-                "crisis_response_node": "crisis_response",
-                "crisis_log_node": "crisis_log",
-                "memory_control_gate_node": "memory_control_gate",
-                "memory_control_node": "memory_control",
-                "grounded_lookup_gate_node": "grounded_lookup_gate",
-                "grounded_answer_node": "grounded_lookup",
-                "therapeutic_subgraph": "therapeutic",
-                "extract_semantic_facts_node": "extract_facts",
-                "extract_procedural_rules_node": "extract_procedural",
-                "finalize_turn_node": "finalize",
-            }
-
             turn_start = time.monotonic()
             final_state: AgentState | None = None
             chunks_emitted = False
             finalize_seen = False
             response_ready_emitted = False
-
-            def _response_ready_output(
-                state: Mapping[str, Any] | None,
-            ) -> AgentOutput | None:
-                """Return the durable output once finalize has completed.
-
-                Args:
-                    state: The latest streamed state snapshot.
-
-                Returns:
-                    The finalized output, if it is ready to surface.
-                """
-
-                if state is None or not finalize_seen or response_ready_emitted:
-                    return None
-                response_text = str(state.get("response_text", "") or "").strip()
-                if not response_text:
-                    return None
-                return state_to_output(state)
 
             async with self._active_session_mutation(
                 thread_id,
@@ -2229,7 +2235,11 @@ class PersistentAgentRuntime:
                             yield StatusEvent(stage=stage)
                             if node_name == "finalize_turn_node":
                                 finalize_seen = True
-                                ready_output = _response_ready_output(final_state)
+                                ready_output = self._response_ready_output(
+                                    final_state,
+                                    finalize_seen=finalize_seen,
+                                    response_ready_emitted=response_ready_emitted,
+                                )
                                 if ready_output is not None:
                                     if not chunks_emitted:
                                         yield ChunkEvent(
@@ -2240,7 +2250,11 @@ class PersistentAgentRuntime:
                                     response_ready_emitted = True
                     elif chunk["type"] == "values" and chunk["ns"] == ():
                         final_state = cast(AgentState, chunk["data"])
-                        ready_output = _response_ready_output(final_state)
+                        ready_output = self._response_ready_output(
+                            final_state,
+                            finalize_seen=finalize_seen,
+                            response_ready_emitted=response_ready_emitted,
+                        )
                         if ready_output is not None:
                             if not chunks_emitted:
                                 yield ChunkEvent(text=ready_output.response_text)
