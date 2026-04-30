@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -71,6 +71,23 @@ AgentWorkflow = CompiledStateGraph[
     AgentGraphInputState,
     AgentGraphOutputState,
 ]
+
+# Keep graph node names and CLI/API stage labels aligned in one place.
+_NODE_TO_STAGE = {
+    "load_memory_node": "load_memory",
+    "crisis_gate_node": "crisis_gate",
+    "crisis_resource_lookup_node": "crisis_resource_lookup",
+    "crisis_response_node": "crisis_response",
+    "crisis_log_node": "crisis_log",
+    "memory_control_gate_node": "memory_control_gate",
+    "memory_control_node": "memory_control",
+    "grounded_lookup_gate_node": "grounded_lookup_gate",
+    "grounded_answer_node": "grounded_lookup",
+    "therapeutic_subgraph": "therapeutic",
+    "extract_semantic_facts_node": "extract_facts",
+    "extract_procedural_rules_node": "extract_procedural",
+    "finalize_turn_node": "finalize",
+}
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _STORE_DIR = BACKEND_ROOT / ".store"
@@ -554,6 +571,38 @@ class PersistentAgentRuntime:
         """
 
         return token in self._active_mutation_tokens
+
+    @asynccontextmanager
+    async def _active_session_mutation(
+        self,
+        thread_id: str,
+        *,
+        mutation_kind: str,
+        finalize_required_reason: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Track an in-flight active-session mutation for recovery.
+
+        Args:
+            thread_id: Thread identifier.
+            mutation_kind: Mutation kind for diagnostics.
+            finalize_required_reason: Optional durable recovery reason.
+
+        Yields:
+            The process-scoped mutation token.
+        """
+
+        mutation_token = self._new_mutation_token()
+        self._active_mutation_tokens.add(mutation_token)
+        await self._set_active_session_mutation(
+            thread_id,
+            mutation_token=mutation_token,
+            mutation_kind=mutation_kind,
+            finalize_required_reason=finalize_required_reason,
+        )
+        try:
+            yield mutation_token
+        finally:
+            self._active_mutation_tokens.discard(mutation_token)
 
     async def _load_persisted_active_session_row(
         self,
@@ -1664,6 +1713,88 @@ class PersistentAgentRuntime:
         session_progress = state.get("session_progress", {}) or {}
         return int(session_progress.get("turn_count", 0) or 0)
 
+    @staticmethod
+    def _build_turn_initial_state(
+        *,
+        thread_id: str,
+        message: str,
+        channel: Channel,
+        user_id: str | None,
+        installed_skills: list[str] | None,
+        prior_turn_count: int,
+    ) -> AgentGraphInputState:
+        """Build the graph input state for one user turn.
+
+        Args:
+            thread_id: Thread identifier used as the session id.
+            message: Current user message.
+            channel: Channel metadata for the turn.
+            user_id: Optional user identifier.
+            installed_skills: Optional installed skill names.
+            prior_turn_count: Persisted user-turn count before this turn.
+
+        Returns:
+            Initial graph state for the turn.
+        """
+
+        return build_initial_state(
+            AgentInput(
+                message=message,
+                channel=channel,
+                user_id=user_id,
+                session_id=thread_id,
+                history=[],
+                working_memory=[],
+                installed_skills=list(installed_skills or []),
+            ),
+            prior_turn_count=prior_turn_count,
+        )
+
+    @staticmethod
+    def _stamp_turn_total_ms(
+        state: AgentState,
+        *,
+        started_at: float,
+    ) -> None:
+        """Record total turn latency in state diagnostics.
+
+        Args:
+            state: Final graph state for the turn.
+            started_at: Monotonic timestamp captured before graph execution.
+        """
+
+        if "diagnostics" not in state or state["diagnostics"] is None:
+            state["diagnostics"] = {}
+        state["diagnostics"]["turn_total_ms"] = round(
+            (time.monotonic() - started_at) * 1000,
+            2,
+        )
+
+    @staticmethod
+    def _response_ready_output(
+        state: Mapping[str, Any] | None,
+        *,
+        finalize_seen: bool,
+        response_ready_emitted: bool,
+    ) -> AgentOutput | None:
+        """Return the durable output once finalize has completed.
+
+        Args:
+            state: Latest streamed state snapshot.
+            finalize_seen: Whether the finalize node has emitted an update.
+            response_ready_emitted: Whether a ready event was already emitted.
+
+        Returns:
+            The finalized output, if it is ready to surface.
+        """
+
+        if state is None or not finalize_seen or response_ready_emitted:
+            return None
+        response_text = str(state.get("response_text", "") or "").strip()
+        if not response_text:
+            return None
+        return state_to_output(state)
+
     async def run_turn(
         self,
         *,
@@ -1709,28 +1840,19 @@ class PersistentAgentRuntime:
             )
             prior_turn_count = self._turn_count_from_state(prior_state)
 
-            agent_input = AgentInput(
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
                 message=message,
                 channel=channel,
                 user_id=user_id,
-                session_id=thread_id,
-                history=[],
-                working_memory=[],
-                installed_skills=list(installed_skills or []),
-            )
-            initial_state = build_initial_state(
-                agent_input,
+                installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
 
-            mutation_token = self._new_mutation_token()
-            self._active_mutation_tokens.add(mutation_token)
-            await self._set_active_session_mutation(
+            async with self._active_session_mutation(
                 thread_id,
-                mutation_token=mutation_token,
                 mutation_kind="turn",
-            )
-            try:
+            ) as mutation_token:
                 turn_start = time.monotonic()
                 graph_output = await graph.ainvoke(
                     initial_state,
@@ -1746,20 +1868,13 @@ class PersistentAgentRuntime:
                         response_llm_client=response_llm_client,
                     ),
                 )
-                turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
-
                 final_state = await self.get_state(thread_id)
                 if final_state is None:
                     final_state = cast(
                         AgentState, {**dict(initial_state), **dict(graph_output)}
                     )
 
-                if (
-                    "diagnostics" not in final_state
-                    or final_state["diagnostics"] is None
-                ):
-                    final_state["diagnostics"] = {}
-                final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
+                self._stamp_turn_total_ms(final_state, started_at=turn_start)
 
                 await self._record_successful_turn_tracking(
                     thread_id,
@@ -1777,8 +1892,6 @@ class PersistentAgentRuntime:
 
                 await self._clear_active_session_mutation(thread_id, mutation_token)
                 return result
-            finally:
-                self._active_mutation_tokens.discard(mutation_token)
 
     async def end_session(
         self,
@@ -2073,36 +2186,14 @@ class PersistentAgentRuntime:
             )
             prior_turn_count = self._turn_count_from_state(prior_state)
 
-            agent_input = AgentInput(
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
                 message=message,
                 channel=channel,
                 user_id=user_id,
-                session_id=thread_id,
-                history=[],
-                working_memory=[],
-                installed_skills=list(installed_skills or []),
-            )
-            initial_state = build_initial_state(
-                agent_input,
+                installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-
-            # Keep graph node names and CLI stage labels aligned in one place.
-            _NODE_TO_STAGE = {
-                "load_memory_node": "load_memory",
-                "crisis_gate_node": "crisis_gate",
-                "crisis_resource_lookup_node": "crisis_resource_lookup",
-                "crisis_response_node": "crisis_response",
-                "crisis_log_node": "crisis_log",
-                "memory_control_gate_node": "memory_control_gate",
-                "memory_control_node": "memory_control",
-                "grounded_lookup_gate_node": "grounded_lookup_gate",
-                "grounded_answer_node": "grounded_lookup",
-                "therapeutic_subgraph": "therapeutic",
-                "extract_semantic_facts_node": "extract_facts",
-                "extract_procedural_rules_node": "extract_procedural",
-                "finalize_turn_node": "finalize",
-            }
 
             turn_start = time.monotonic()
             final_state: AgentState | None = None
@@ -2110,33 +2201,10 @@ class PersistentAgentRuntime:
             finalize_seen = False
             response_ready_emitted = False
 
-            def _response_ready_output(
-                state: Mapping[str, Any] | None,
-            ) -> AgentOutput | None:
-                """Return the durable output once finalize has completed.
-
-                Args:
-                    state: The latest streamed state snapshot.
-
-                Returns:
-                    The finalized output, if it is ready to surface.
-                """
-
-                if state is None or not finalize_seen or response_ready_emitted:
-                    return None
-                response_text = str(state.get("response_text", "") or "").strip()
-                if not response_text:
-                    return None
-                return state_to_output(state)
-
-            mutation_token = self._new_mutation_token()
-            self._active_mutation_tokens.add(mutation_token)
-            await self._set_active_session_mutation(
+            async with self._active_session_mutation(
                 thread_id,
-                mutation_token=mutation_token,
                 mutation_kind="turn",
-            )
-            try:
+            ) as mutation_token:
                 async for chunk in graph.astream(
                     initial_state,
                     config=self._config_for_thread(
@@ -2167,7 +2235,11 @@ class PersistentAgentRuntime:
                             yield StatusEvent(stage=stage)
                             if node_name == "finalize_turn_node":
                                 finalize_seen = True
-                                ready_output = _response_ready_output(final_state)
+                                ready_output = self._response_ready_output(
+                                    final_state,
+                                    finalize_seen=finalize_seen,
+                                    response_ready_emitted=response_ready_emitted,
+                                )
                                 if ready_output is not None:
                                     if not chunks_emitted:
                                         yield ChunkEvent(
@@ -2178,15 +2250,17 @@ class PersistentAgentRuntime:
                                     response_ready_emitted = True
                     elif chunk["type"] == "values" and chunk["ns"] == ():
                         final_state = cast(AgentState, chunk["data"])
-                        ready_output = _response_ready_output(final_state)
+                        ready_output = self._response_ready_output(
+                            final_state,
+                            finalize_seen=finalize_seen,
+                            response_ready_emitted=response_ready_emitted,
+                        )
                         if ready_output is not None:
                             if not chunks_emitted:
                                 yield ChunkEvent(text=ready_output.response_text)
                                 chunks_emitted = True
                             yield ResponseReadyEvent(output=ready_output)
                             response_ready_emitted = True
-
-                turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
 
                 # Fall back to the checkpoint if the stream never yielded state values.
                 if final_state is None:
@@ -2198,12 +2272,7 @@ class PersistentAgentRuntime:
                         )
                     final_state = fallback
 
-                if (
-                    "diagnostics" not in final_state
-                    or final_state["diagnostics"] is None
-                ):
-                    final_state["diagnostics"] = {}
-                final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
+                self._stamp_turn_total_ms(final_state, started_at=turn_start)
 
                 await self._record_successful_turn_tracking(
                     thread_id,
@@ -2213,5 +2282,3 @@ class PersistentAgentRuntime:
 
                 await self._clear_active_session_mutation(thread_id, mutation_token)
                 yield DoneEvent(output=state_to_output(final_state))
-            finally:
-                self._active_mutation_tokens.discard(mutation_token)
