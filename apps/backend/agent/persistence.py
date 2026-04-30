@@ -1696,6 +1696,63 @@ class PersistentAgentRuntime:
         session_progress = state.get("session_progress", {}) or {}
         return int(session_progress.get("turn_count", 0) or 0)
 
+    @staticmethod
+    def _build_turn_initial_state(
+        *,
+        thread_id: str,
+        message: str,
+        channel: Channel,
+        user_id: str | None,
+        installed_skills: list[str] | None,
+        prior_turn_count: int,
+    ) -> AgentGraphInputState:
+        """Build the graph input state for one user turn.
+
+        Args:
+            thread_id: Thread identifier used as the session id.
+            message: Current user message.
+            channel: Channel metadata for the turn.
+            user_id: Optional user identifier.
+            installed_skills: Optional installed skill names.
+            prior_turn_count: Persisted user-turn count before this turn.
+
+        Returns:
+            Initial graph state for the turn.
+        """
+
+        return build_initial_state(
+            AgentInput(
+                message=message,
+                channel=channel,
+                user_id=user_id,
+                session_id=thread_id,
+                history=[],
+                working_memory=[],
+                installed_skills=list(installed_skills or []),
+            ),
+            prior_turn_count=prior_turn_count,
+        )
+
+    @staticmethod
+    def _stamp_turn_total_ms(
+        state: AgentState,
+        *,
+        started_at: float,
+    ) -> None:
+        """Record total turn latency in state diagnostics.
+
+        Args:
+            state: Final graph state for the turn.
+            started_at: Monotonic timestamp captured before graph execution.
+        """
+
+        if "diagnostics" not in state or state["diagnostics"] is None:
+            state["diagnostics"] = {}
+        state["diagnostics"]["turn_total_ms"] = round(
+            (time.monotonic() - started_at) * 1000,
+            2,
+        )
+
     async def run_turn(
         self,
         *,
@@ -1741,17 +1798,12 @@ class PersistentAgentRuntime:
             )
             prior_turn_count = self._turn_count_from_state(prior_state)
 
-            agent_input = AgentInput(
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
                 message=message,
                 channel=channel,
                 user_id=user_id,
-                session_id=thread_id,
-                history=[],
-                working_memory=[],
-                installed_skills=list(installed_skills or []),
-            )
-            initial_state = build_initial_state(
-                agent_input,
+                installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
 
@@ -1774,20 +1826,13 @@ class PersistentAgentRuntime:
                         response_llm_client=response_llm_client,
                     ),
                 )
-                turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
-
                 final_state = await self.get_state(thread_id)
                 if final_state is None:
                     final_state = cast(
                         AgentState, {**dict(initial_state), **dict(graph_output)}
                     )
 
-                if (
-                    "diagnostics" not in final_state
-                    or final_state["diagnostics"] is None
-                ):
-                    final_state["diagnostics"] = {}
-                final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
+                self._stamp_turn_total_ms(final_state, started_at=turn_start)
 
                 await self._record_successful_turn_tracking(
                     thread_id,
@@ -2099,17 +2144,12 @@ class PersistentAgentRuntime:
             )
             prior_turn_count = self._turn_count_from_state(prior_state)
 
-            agent_input = AgentInput(
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
                 message=message,
                 channel=channel,
                 user_id=user_id,
-                session_id=thread_id,
-                history=[],
-                working_memory=[],
-                installed_skills=list(installed_skills or []),
-            )
-            initial_state = build_initial_state(
-                agent_input,
+                installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
 
@@ -2208,8 +2248,6 @@ class PersistentAgentRuntime:
                             yield ResponseReadyEvent(output=ready_output)
                             response_ready_emitted = True
 
-                turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
-
                 # Fall back to the checkpoint if the stream never yielded state values.
                 if final_state is None:
                     fallback = await self.get_state(thread_id)
@@ -2220,12 +2258,7 @@ class PersistentAgentRuntime:
                         )
                     final_state = fallback
 
-                if (
-                    "diagnostics" not in final_state
-                    or final_state["diagnostics"] is None
-                ):
-                    final_state["diagnostics"] = {}
-                final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
+                self._stamp_turn_total_ms(final_state, started_at=turn_start)
 
                 await self._record_successful_turn_tracking(
                     thread_id,
