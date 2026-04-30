@@ -75,6 +75,10 @@ from langgraph.runtime import Runtime
 
 from agent.memory.models import ProceduralExtractionResult
 from agent.memory.modes import MemoryMode
+from agent.memory.orchestration import (
+    get_session_turn_index,
+    should_skip_memory_extraction,
+)
 from agent.memory.procedural_prompts import (
     build_procedural_writer_system_prompt,
     build_procedural_writer_user_prompt,
@@ -148,17 +152,8 @@ async def run_extract_procedural_rules_node(
             }
         }
 
-    # Skip extraction on high-priority operational routes for the same reason
-    # as semantic extraction: these replies are not useful procedural material.
-    route = state.get("route")
-    if route in {"crisis", "memory_control", "grounded_lookup"}:
-        skip_reason = (
-            "crisis_path"
-            if route == "crisis"
-            else "memory_control_path"
-            if route == "memory_control"
-            else "grounded_lookup_path"
-        )
+    skip_reason = should_skip_memory_extraction(state)
+    if skip_reason is not None:
         logger.debug(
             "extract_procedural_rules_node: %s; skipping extraction",
             skip_reason,
@@ -182,19 +177,7 @@ async def run_extract_procedural_rules_node(
     session_buffer = runtime.context.session_memory_buffer
     owner_id = resolve_owner_id(state)
 
-    from agent.memory.small_talk_gate import is_small_talk
-
-    if is_small_talk(state["message"]):
-        logger.debug(
-            "extract_procedural_rules_node: small-talk gate triggered; "
-            "skipping LLM call for message %r",
-            state["message"][:40],
-        )
-        return _diagnostics_delta(reason="skipped: small_talk_gate")
-
-    session_progress = state.get("session_progress", {})
-    turn_count = int(session_progress.get("turn_count", 1))
-    turn_index = max(0, turn_count - 1)
+    turn_index = get_session_turn_index(state)
 
     try:
         result: ProceduralExtractionResult = await llm_client.generate_structured(

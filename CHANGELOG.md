@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-05-01 — Thin Nodes, Fat Services + Eval/Docs Alignment
+
+### Backend architecture
+- Thinned the LangGraph backend by extracting node-heavy logic into focused services: `load_memory_service`, `episodic_service`, `session_commit_service`, `backstops`, and `agent/safety/service`
+- Kept graph behavior stable while reducing orchestration complexity across `load_memory`, `crisis_gate`, `extract_facts`, `summarize_session`, and `commit_session_memory`
+- Added shared memory orchestration helpers and completed the active-session/runtime cleanup needed to support the new boundaries
+
+### Eval and test alignment
+- Fixed stale routing eval harness assumptions after the state-shape and shared-node refactors: grounded lookup now reads `grounded_lookup.query`, memory control now reads `memory_control.action`, and therapeutic routing grades `response_style` directly instead of inferring style from shared node names
+- Revalidated the affected routing suites in both deterministic and hybrid modes: grounded lookup (`14/14` hybrid), memory control (`11/11` hybrid), and therapeutic routing (`54/54` hybrid)
+- Full backend test suite passed (`1156 passed, 13 skipped`) and targeted routing/state-contract regression coverage passed (`226 passed`)
+
+### Documentation
+- Updated Docusaurus state-contract and architecture docs to reflect nested routing scratch fields, thin-node/service-backed ownership, and session-end summarization/commit flow
+- Refreshed observability and architecture components so the docs no longer describe stale flat fields or the pre-refactor node-heavy implementation model
+
 ## 2026-04-29 — Route-Persistent Text Streaming
 
 ### Web chat and voice navigation

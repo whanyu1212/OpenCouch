@@ -273,7 +273,12 @@ def build_agent_workflow(
 
     compiled = workflow.compile(checkpointer=checkpointer)
 
-    if os.getenv("OPIK_API_KEY") and os.getenv("OPIK_WORKSPACE"):
+    tracing_disabled = os.getenv("OPENCOUCH_DISABLE_TRACING", "").strip().lower()
+    if (
+        tracing_disabled not in {"1", "true", "yes", "on"}
+        and os.getenv("OPIK_API_KEY")
+        and os.getenv("OPIK_WORKSPACE")
+    ):
         from opik.integrations.langchain import OpikTracer, track_langgraph
 
         project_name = os.getenv("OPIK_PROJECT_NAME") or "opencouch-dev"

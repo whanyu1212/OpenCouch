@@ -155,8 +155,8 @@ for the full breakdown.
 | `agent/therapeutic/dispatch/` | LLM-primary response-style + therapeutic-approach classification with deterministic overrides/fallbacks |
 | `agent/therapeutic/prompting/` | Therapeutic prompt composition, instructions, and on-demand working memory formatting |
 | `agent/therapeutic/exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and node implementation |
-| `agent/nodes/load_memory.py` | Hybrid retrieval + query embedding |
-| `agent/nodes/crisis_gate.py` | LLM-primary crisis classification + branch routing |
+| `agent/nodes/load_memory.py` | Retrieval orchestration node backed by `agent/memory/load_memory_service.py` |
+| `agent/nodes/crisis_gate.py` | Crisis branch routing backed by `agent/safety/service.py` |
 | `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup before crisis response |
 | `agent/nodes/crisis_response.py` | Crisis response generation |
 | `agent/nodes/crisis_log.py` | Always-on audit log writer |
@@ -164,10 +164,10 @@ for the full breakdown.
 | `agent/nodes/memory_control.py` | Executes memory commands (list, forget, recall toggle, save preference) |
 | `agent/nodes/grounded_lookup_gate.py` | Detects explicit factual lookup requests |
 | `agent/nodes/grounded_answer.py` | Search-grounded factual replies |
-| `agent/nodes/extract_facts.py` | Semantic fact extraction with policy + dedup |
+| `agent/nodes/extract_facts.py` | Semantic fact extraction orchestration backed by write policy + `agent/memory/backstops.py` |
 | `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction with policy |
-| `agent/nodes/commit_session_memory.py` | Session-end promotion for held semantic / procedural candidates |
-| `agent/nodes/summarize_session.py` | Session-end episodic summarization |
+| `agent/nodes/commit_session_memory.py` | Session-end promotion node backed by `agent/memory/session_commit_service.py` |
+| `agent/nodes/summarize_session.py` | Session-end episodic summarization node backed by `agent/memory/episodic_service.py` |
 | `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
 | `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
 | `agent/audit/crisis_log.py` | Audit-log backend protocol + in-memory implementations |

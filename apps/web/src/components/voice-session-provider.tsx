@@ -154,23 +154,23 @@ function shouldRefreshMemoryForActivity(event: VoiceActivityEvent): boolean {
 }
 
 function VoiceSessionSync({ children }: { children: React.ReactNode }) {
-  const {
-    userId,
-    threadId,
-    sessionMode,
-    transcriptionLanguageSelected,
-    voiceFinalization,
-    setVoiceConnected,
-    setVoiceAgentSpeaking,
-    setVoiceReadyToSpeak,
-    addVoiceTranscript,
-    addVoiceActivity,
-    setVoiceFinalization,
-    clearVoiceFinalization,
-    setVoiceSessionInfo,
-    voiceSetRefs,
-    bumpMemoryRefreshVersion,
-  } = useSessionStore();
+  const userId = useSessionStore((s) => s.userId);
+  const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
+  const transcriptionLanguageSelected = useSessionStore(
+    (s) => s.transcriptionLanguageSelected
+  );
+  const voiceFinalization = useSessionStore((s) => s.voiceFinalization);
+  const setVoiceConnected = useSessionStore((s) => s.setVoiceConnected);
+  const setVoiceAgentSpeaking = useSessionStore((s) => s.setVoiceAgentSpeaking);
+  const setVoiceReadyToSpeak = useSessionStore((s) => s.setVoiceReadyToSpeak);
+  const addVoiceTranscript = useSessionStore((s) => s.addVoiceTranscript);
+  const addVoiceActivity = useSessionStore((s) => s.addVoiceActivity);
+  const setVoiceFinalization = useSessionStore((s) => s.setVoiceFinalization);
+  const clearVoiceFinalization = useSessionStore((s) => s.clearVoiceFinalization);
+  const setVoiceSessionInfo = useSessionStore((s) => s.setVoiceSessionInfo);
+  const voiceSetRefs = useSessionStore((s) => s.voiceSetRefs);
+  const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
 
   const room = useMemo(() => createOpenCouchVoiceRoom(), []);
   const tokenSource = useMemo(

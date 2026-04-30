@@ -1,8 +1,8 @@
-"""Memory side-effect service for extraction nodes.
+"""Service for processing and persisting extracted memories.
 
-This module keeps memory policy, deduplication, reconciliation, and store writes
-outside LangGraph nodes. Nodes remain responsible for graph/runtime concerns:
-early skips, LLM extraction prompts, and diagnostics deltas.
+This module owns memory policy, deduplication, reconciliation, and store writes
+for semantic and procedural candidates produced during turn-level extraction or
+session-end promotion.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SemanticProcessingResult:
-    """Summary of semantic candidate processing for node diagnostics."""
+    """Summary of semantic candidate processing for telemetry and diagnostics."""
 
     written: int
     bumped: int
@@ -55,7 +55,7 @@ class SemanticProcessingResult:
 
 @dataclass(frozen=True)
 class ProceduralProcessingResult:
-    """Summary of procedural candidate processing for node diagnostics."""
+    """Summary of procedural candidate processing for telemetry and diagnostics."""
 
     written: int
     candidates: int

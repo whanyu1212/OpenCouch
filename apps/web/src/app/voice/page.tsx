@@ -13,11 +13,7 @@ import {
 } from "@/lib/api";
 import { useSessionStore } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
-import {
-  ConversationShell,
-  MobileTabBar,
-  SessionPill,
-} from "@/components/conversation-shell";
+import { SessionPill } from "@/components/conversation-shell";
 
 // `preConnectBuffer: true` lets the mic capture speech locally while the
 // LiveKit worker is still cold-starting the agent. The buffer is forwarded
@@ -154,26 +150,28 @@ function formatElapsed(ms: number): string {
 }
 
 export default function VoicePage() {
-  const {
-    userId,
-    threadId,
-    sessionMode,
-    chatLoading,
-    voiceConnected,
-    voiceAgentSpeaking,
-    voiceReadyToSpeak,
-    transcriptionLanguageSelected,
-    voiceTranscripts,
-    voiceActivities,
-    voiceFinalization,
-    voiceSessionInfo,
-    voiceError,
-    setVoiceError,
-    setTranscriptionLanguageSelected,
-    clearVoiceTranscripts,
-    clearVoiceActivities,
-    voiceDisconnect,
-  } = useSessionStore();
+  const userId = useSessionStore((s) => s.userId);
+  const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
+  const chatLoading = useSessionStore((s) => s.chatLoading);
+  const voiceConnected = useSessionStore((s) => s.voiceConnected);
+  const voiceAgentSpeaking = useSessionStore((s) => s.voiceAgentSpeaking);
+  const voiceReadyToSpeak = useSessionStore((s) => s.voiceReadyToSpeak);
+  const transcriptionLanguageSelected = useSessionStore(
+    (s) => s.transcriptionLanguageSelected
+  );
+  const voiceTranscripts = useSessionStore((s) => s.voiceTranscripts);
+  const voiceActivities = useSessionStore((s) => s.voiceActivities);
+  const voiceFinalization = useSessionStore((s) => s.voiceFinalization);
+  const voiceSessionInfo = useSessionStore((s) => s.voiceSessionInfo);
+  const voiceError = useSessionStore((s) => s.voiceError);
+  const setVoiceError = useSessionStore((s) => s.setVoiceError);
+  const setTranscriptionLanguageSelected = useSessionStore(
+    (s) => s.setTranscriptionLanguageSelected
+  );
+  const clearVoiceTranscripts = useSessionStore((s) => s.clearVoiceTranscripts);
+  const clearVoiceActivities = useSessionStore((s) => s.clearVoiceActivities);
+  const voiceDisconnect = useSessionStore((s) => s.voiceDisconnect);
   const session = useSessionContext();
   const agent = useAgent();
   const { canPlayAudio, startAudio } = useAudioPlayback(session.room);
@@ -464,7 +462,7 @@ export default function VoicePage() {
   const callTimerText = formatElapsed(callElapsedMs);
 
   return (
-    <ConversationShell withWash>
+    <>
       {/* Desktop top bar — wrapper controls breakpoint visibility */}
       <div className="oc-app-top-wrap">
       <header className="oc-app-top">
@@ -858,10 +856,6 @@ export default function VoicePage() {
         </details>
       )}
 
-      {/* Mobile bottom tab bar */}
-      <div className="oc-mobile-tabbar-wrap">
-        <MobileTabBar />
-      </div>
-    </ConversationShell>
+    </>
   );
 }

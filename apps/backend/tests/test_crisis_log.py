@@ -426,7 +426,7 @@ class TestCrisisLogMetadata:
         from collections.abc import AsyncIterator
         from typing import cast
 
-        from agent.nodes.crisis_gate import CrisisAssessmentSchema
+        from agent.safety.service import CrisisAssessmentSchema
         from services.llm.base import BaseLLMClient, StructuredResponseT
 
         class _FakeCrisisLLM(BaseLLMClient):

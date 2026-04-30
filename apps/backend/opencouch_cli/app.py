@@ -295,6 +295,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--disable-tracing",
+        action="store_true",
+        default=False,
+        help=(
+            "Disable optional tracing integrations for this CLI run. "
+            "Equivalent to setting OPENCOUCH_DISABLE_TRACING=1."
+        ),
+    )
+    parser.add_argument(
         "--voice",
         action="store_true",
         default=False,
@@ -3488,6 +3497,9 @@ def main() -> int:
     """
 
     args = build_parser().parse_args()
+
+    if args.disable_tracing:
+        os.environ["OPENCOUCH_DISABLE_TRACING"] = "1"
 
     if args.voice:
         return _run_voice_mode(args)

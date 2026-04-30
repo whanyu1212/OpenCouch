@@ -28,15 +28,15 @@ from typing import Any
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.load_memory_service import (
+    SEMANTIC_SEARCH_LIMIT,
+    SEMANTIC_WORKING_MEMORY_LIMIT,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
 from agent.nodes.finalize_turn import run_finalize_turn_node
-from agent.nodes.load_memory import (
-    SEMANTIC_SEARCH_LIMIT,
-    SEMANTIC_WORKING_MEMORY_LIMIT,
-    run_load_memory_node,
-)
+from agent.nodes.load_memory import run_load_memory_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.working_memory import format_working_memory_entry

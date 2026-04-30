@@ -184,7 +184,7 @@ render without a mapping update.
 | `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
 | `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `search_failed` / `no_verified_results` / `not_attempted` |
 | `memory_control_gate_ms` | memory_control_gate | Gate evaluation wall-clock time |
-| `memory_control_action` | memory_control_gate | Detected command kind (or empty when none) |
+| `memory_control.action` | memory_control_gate | Detected command kind (or empty when none) |
 | `grounded_lookup_gate_ms` | grounded_lookup_gate | Gate evaluation wall-clock time |
 | `grounded_lookup_status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |

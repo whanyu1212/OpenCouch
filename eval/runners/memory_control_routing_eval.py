@@ -159,7 +159,11 @@ def _actual_outcome(command: Any) -> tuple[str, dict[str, Any]]:
 
     update = cast(dict[str, Any], command.update or {})
     if command.goto == "memory_control_node":
-        return "memory_control", dict(update.get("memory_control_action", {}) or {})
+        memory_control = cast(dict[str, Any], update.get("memory_control", {}) or {})
+        action = memory_control.get("action", {}) or update.get(
+            "memory_control_action", {}
+        )
+        return "memory_control", dict(action or {})
     if command.goto == "grounded_lookup_gate_node":
         return "pass_through", {}
     return f"unknown({command.goto})", {}

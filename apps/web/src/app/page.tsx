@@ -20,11 +20,7 @@ import { useCommandActions } from "@/lib/command-actions";
 import { resolveSlashCommand } from "@/lib/slash-commands";
 import { CouchLogo } from "@/components/logo";
 import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
-import {
-  ConversationShell,
-  MobileTabBar,
-  SessionPill,
-} from "@/components/conversation-shell";
+import { SessionPill } from "@/components/conversation-shell";
 
 const PROMPT_CARDS = [
   {
@@ -188,26 +184,24 @@ function friendlyThreadName(threadId: string): string {
 }
 
 export default function TextChatPage() {
-  const {
-    userId,
-    threadId,
-    sessionMode,
-    setThreadId,
-    messages,
-    setMessages,
-    addMessage,
-    clearMessages,
-    chatLoading: isLoading,
-    chatStreamingStarted,
-    chatStages: stages,
-    chatNotice: notice,
-    setChatNotice: setNotice,
-    setMemoryFacts,
-    memoryRefreshVersion,
-    lastEndedSession,
-    clearLastEndedSession,
-    responseModelTier,
-  } = useSessionStore();
+  const userId = useSessionStore((s) => s.userId);
+  const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
+  const setThreadId = useSessionStore((s) => s.setThreadId);
+  const messages = useSessionStore((s) => s.messages);
+  const setMessages = useSessionStore((s) => s.setMessages);
+  const addMessage = useSessionStore((s) => s.addMessage);
+  const clearMessages = useSessionStore((s) => s.clearMessages);
+  const isLoading = useSessionStore((s) => s.chatLoading);
+  const chatStreamingStarted = useSessionStore((s) => s.chatStreamingStarted);
+  const stages = useSessionStore((s) => s.chatStages);
+  const notice = useSessionStore((s) => s.chatNotice);
+  const setNotice = useSessionStore((s) => s.setChatNotice);
+  const setMemoryFacts = useSessionStore((s) => s.setMemoryFacts);
+  const memoryRefreshVersion = useSessionStore((s) => s.memoryRefreshVersion);
+  const lastEndedSession = useSessionStore((s) => s.lastEndedSession);
+  const clearLastEndedSession = useSessionStore((s) => s.clearLastEndedSession);
+  const responseModelTier = useSessionStore((s) => s.responseModelTier);
   const { runAction, startNewSession, isBusy } = useCommandActions();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -389,7 +383,7 @@ export default function TextChatPage() {
     isPersistent && userId ? userId.split(/[\s_-]/)[0] : null;
 
   return (
-    <ConversationShell withWash={isPersistent}>
+    <>
       {/* Desktop top bar — wrapper controls breakpoint visibility */}
       <div className="oc-app-top-wrap">
       <header className="oc-app-top">
@@ -695,13 +689,8 @@ export default function TextChatPage() {
         </div>
       </div>
 
-      {/* Mobile bottom tab bar */}
-      <div className="oc-mobile-tabbar-wrap">
-        <MobileTabBar />
-      </div>
-
       <MemoryPanel />
-    </ConversationShell>
+    </>
   );
 }
 

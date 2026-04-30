@@ -29,10 +29,10 @@ from agent.memory.models import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.nodes.summarize_session import (
-    _session_arc_to_stored,
-    run_summarize_session,
+from agent.memory.episodic_service import (
+    session_arc_to_stored as _session_arc_to_stored,
 )
+from agent.nodes.summarize_session import run_summarize_session
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient, StructuredResponseT
 

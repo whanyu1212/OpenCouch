@@ -12,7 +12,7 @@ import { CouchLogo } from "@/components/logo";
  * on the `md:` breakpoint.
  */
 export function SessionSetup() {
-  const { startSession } = useSessionStore();
+  const startSession = useSessionStore((s) => s.startSession);
   // Prefill from the last session's persisted values (mode, user, thread).
   // The user still has to click Start — we just save them re-typing.
   const persistedMode = useSessionStore((s) => s.sessionMode);

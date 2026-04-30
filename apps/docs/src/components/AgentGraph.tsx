@@ -69,7 +69,7 @@ const STEPS: StepDef[] = [
     detail: {
       what: 'Retrieves semantic facts, episodic session arcs, and procedural style rules. Returns structured WorkingMemoryEntry dicts — formatting happens on demand at prompt-build time.',
       how: 'Semantic + episodic retrieval run in parallel via asyncio.gather. Each uses the store\'s hybrid path: token-recall + optional cosine-similarity fused via Reciprocal Rank Fusion. Procedural profile loaded separately. First-turn episodic catch-up injects the most recent session arc.',
-      emits: 'state.working_memory (structured entries) + state.memory.procedural_rules',
+      emits: 'state.working_memory (structured entries) + state.procedural_profile.procedural_rules',
     },
   },
   {
@@ -96,7 +96,7 @@ const STEPS: StepDef[] = [
     ],
     detail: {
       what: 'Appends the assistant response to transcript and history as a 1-element list. The operator.add reducer handles merging with the accumulated state from the checkpoint. Empty/whitespace responses produce an empty delta to keep the transcript clean.',
-      how: 'Reads state.response.text, stamps routing metadata onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
+      how: 'Reads state.response_text, stamps routing metadata onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
       emits: 'state.transcript += [assistant_turn], state.history += [assistant_turn]',
     },
   },

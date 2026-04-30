@@ -532,6 +532,7 @@ export function SessionPill() {
  *
  * The shell itself is a flex row on md+ and a flex column on mobile.
  * Pages render their own top bar + content + composer inside `children`.
+ * The mobile tab bar lives here so it persists across route switches.
  */
 export function ConversationShell({
   children,
@@ -567,6 +568,9 @@ export function ConversationShell({
         }}
       >
         {children}
+        <div className="oc-mobile-tabbar-wrap">
+          <MobileTabBar />
+        </div>
       </div>
     </div>
   );

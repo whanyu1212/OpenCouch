@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -18,6 +16,11 @@ from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 
+from agent.active_session_manager import (
+    ActiveSessionManager,
+    PersistedActiveSessionRow,
+    PersistedActiveSessionState,
+)
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.memory.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
@@ -103,22 +106,6 @@ ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "ResponseStyleType"),
 ]
 SESSION_TIMEOUT = timedelta(minutes=20)
-ACTIVE_SESSION_STATE_DDL = """
-CREATE TABLE IF NOT EXISTS opencouch_active_sessions (
-    thread_id TEXT PRIMARY KEY,
-    payload_json TEXT NOT NULL,
-    mutation_token TEXT,
-    mutation_kind TEXT,
-    rotate_after_this_turn INTEGER NOT NULL DEFAULT 0,
-    finalize_required_reason TEXT
-);
-"""
-ACTIVE_SESSION_EXTRA_COLUMNS = {
-    "mutation_token": "TEXT",
-    "mutation_kind": "TEXT",
-    "rotate_after_this_turn": "INTEGER NOT NULL DEFAULT 0",
-    "finalize_required_reason": "TEXT",
-}
 _EXERCISE_STATE_FIELDS = (
     "exercise_type",
     "exercise_step",
@@ -214,91 +201,6 @@ class _RuntimeShim:
     context: WorkflowContext
 
 
-@dataclass(slots=True)
-class PersistedActiveSessionState:
-    """Durable runtime-owned session state for active-session recovery."""
-
-    thread_id: str
-    started_at: str
-    last_active_at: str
-    transcript_start_index: int
-    max_crisis_level: int
-    session_buffer: SessionMemoryBuffer
-
-    def to_json(self) -> str:
-        """Serialize the session record to JSON.
-
-        Returns:
-            The JSON-encoded session payload.
-        """
-
-        return json.dumps(
-            {
-                "thread_id": self.thread_id,
-                "started_at": self.started_at,
-                "last_active_at": self.last_active_at,
-                "transcript_start_index": self.transcript_start_index,
-                "max_crisis_level": self.max_crisis_level,
-                "session_buffer": self.session_buffer.model_dump(mode="json"),
-            }
-        )
-
-    @classmethod
-    def from_json(cls, payload_json: str) -> PersistedActiveSessionState:
-        """Deserialize a persisted session record.
-
-        Args:
-            payload_json: The JSON payload to decode.
-
-        Returns:
-            The decoded ``PersistedActiveSessionState`` instance.
-        """
-
-        payload = json.loads(payload_json)
-        return cls(
-            thread_id=str(payload["thread_id"]),
-            started_at=str(payload["started_at"]),
-            last_active_at=str(payload["last_active_at"]),
-            transcript_start_index=max(
-                0, int(payload.get("transcript_start_index", 0) or 0)
-            ),
-            max_crisis_level=max(0, int(payload.get("max_crisis_level", 0) or 0)),
-            session_buffer=SessionMemoryBuffer.model_validate(
-                payload.get("session_buffer")
-                or {"session_id": str(payload["thread_id"])}
-            ),
-        )
-
-
-@dataclass(slots=True)
-class _PersistedActiveSessionRow:
-    """Raw active-session row including coordination metadata."""
-
-    payload_json: str
-    mutation_token: str | None
-    mutation_kind: str | None
-    rotate_after_this_turn: bool
-    finalize_required_reason: str | None
-
-
-def _parse_iso_timestamp(value: str | None) -> datetime | None:
-    """Parse a stored ISO timestamp.
-
-    Args:
-        value: The timestamp string to parse.
-
-    Returns:
-        A parsed ``datetime`` or ``None`` when parsing fails.
-    """
-
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 class PersistentAgentRuntime:
     """Thread-backed runtime with mode-aware persistence backends."""
 
@@ -365,8 +267,6 @@ class PersistentAgentRuntime:
         self._session_sweeper_task: asyncio.Task[None] | None = None
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
         self._thread_locks: dict[str, asyncio.Lock] = {}
-        self._active_mutation_tokens: set[str] = set()
-        self._runtime_instance_id = uuid4().hex
 
         if memory_store is not None:
             self._memory_store = memory_store
@@ -403,6 +303,11 @@ class PersistentAgentRuntime:
         self._max_crisis_levels: dict[str, int] = {}
         self._session_memory_buffers: dict[str, SessionMemoryBuffer] = {}
         self._session_transcript_starts: dict[str, int] = {}
+        self._active_session_manager = ActiveSessionManager(
+            checkpointer_getter=self._ensure_open,
+            memory_mode=self.memory_mode,
+            session_timeout=self._session_timeout,
+        )
 
     async def __aenter__(self) -> PersistentAgentRuntime:
         """Open runtime resources.
@@ -496,22 +401,7 @@ class PersistentAgentRuntime:
                 exc_info=True,
             )
 
-        checkpointer = self._ensure_open()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(ACTIVE_SESSION_STATE_DDL)
-            async with checkpointer.conn.execute(
-                "PRAGMA table_info(opencouch_active_sessions)"
-            ) as cursor:
-                rows = await cursor.fetchall()
-            present_columns = {str(row[1]) for row in rows}
-            for column_name, column_ddl in ACTIVE_SESSION_EXTRA_COLUMNS.items():
-                if column_name in present_columns:
-                    continue
-                await checkpointer.conn.execute(
-                    "ALTER TABLE opencouch_active_sessions "
-                    f"ADD COLUMN {column_name} {column_ddl}"
-                )
-            await checkpointer.conn.commit()
+        await self._active_session_manager.ensure_schema()
 
     def _thread_lock(self, thread_id: str) -> asyncio.Lock:
         """Return the in-process lock for one thread.
@@ -558,7 +448,7 @@ class PersistentAgentRuntime:
             A mutation token that identifies this runtime instance.
         """
 
-        return f"{uuid4().hex}:{self._runtime_instance_id}:{os.getpid()}"
+        return self._active_session_manager.new_mutation_token()
 
     def _is_mutation_in_flight(self, token: str | None) -> bool:
         """Return whether a mutation token is actively running in this process.
@@ -570,7 +460,7 @@ class PersistentAgentRuntime:
             True when this runtime currently owns an in-flight mutation.
         """
 
-        return token in self._active_mutation_tokens
+        return self._active_session_manager.is_mutation_in_flight(token)
 
     @asynccontextmanager
     async def _active_session_mutation(
@@ -591,23 +481,17 @@ class PersistentAgentRuntime:
             The process-scoped mutation token.
         """
 
-        mutation_token = self._new_mutation_token()
-        self._active_mutation_tokens.add(mutation_token)
-        await self._set_active_session_mutation(
+        async with self._active_session_manager.active_session_mutation(
             thread_id,
-            mutation_token=mutation_token,
             mutation_kind=mutation_kind,
             finalize_required_reason=finalize_required_reason,
-        )
-        try:
+        ) as mutation_token:
             yield mutation_token
-        finally:
-            self._active_mutation_tokens.discard(mutation_token)
 
     async def _load_persisted_active_session_row(
         self,
         thread_id: str,
-    ) -> _PersistedActiveSessionRow | None:
+    ) -> PersistedActiveSessionRow | None:
         """Load a raw active-session row.
 
         Args:
@@ -617,33 +501,8 @@ class PersistentAgentRuntime:
             The persisted row, or ``None`` when absent.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return None
-
-        checkpointer = self._ensure_open()
-        async with checkpointer.lock:
-            async with checkpointer.conn.execute(
-                """
-                SELECT
-                    payload_json,
-                    mutation_token,
-                    mutation_kind,
-                    rotate_after_this_turn,
-                    finalize_required_reason
-                FROM opencouch_active_sessions
-                WHERE thread_id = ?
-                """,
-                (thread_id,),
-            ) as cursor:
-                row = await cursor.fetchone()
-        if row is None:
-            return None
-        return _PersistedActiveSessionRow(
-            payload_json=str(row[0]),
-            mutation_token=str(row[1]) if row[1] is not None else None,
-            mutation_kind=str(row[2]) if row[2] is not None else None,
-            rotate_after_this_turn=bool(row[3]),
-            finalize_required_reason=str(row[4]) if row[4] is not None else None,
+        return await self._active_session_manager.load_persisted_active_session_row(
+            thread_id
         )
 
     async def _load_persisted_active_session(
@@ -659,13 +518,9 @@ class PersistentAgentRuntime:
             The persisted session record, or ``None`` when absent.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return None
-
-        row = await self._load_persisted_active_session_row(thread_id)
-        if row is None:
-            return None
-        return PersistedActiveSessionState.from_json(row.payload_json)
+        return await self._active_session_manager.load_persisted_active_session(
+            thread_id
+        )
 
     async def _list_persisted_active_session_ids(self) -> list[str]:
         """List thread ids with unresolved active sessions.
@@ -676,18 +531,7 @@ class PersistentAgentRuntime:
 
         if self.memory_mode == MemoryMode.INCOGNITO:
             return list(self._session_starts)
-
-        checkpointer = self._ensure_open()
-        async with checkpointer.lock:
-            async with checkpointer.conn.execute(
-                """
-                SELECT thread_id
-                FROM opencouch_active_sessions
-                ORDER BY thread_id
-                """
-            ) as cursor:
-                rows = await cursor.fetchall()
-        return [str(row[0]) for row in rows]
+        return await self._active_session_manager.list_persisted_active_session_ids()
 
     async def _save_persisted_active_session(
         self,
@@ -702,22 +546,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return
-
-        checkpointer = self._ensure_open()
-        payload_json = session.to_json()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                INSERT INTO opencouch_active_sessions(thread_id, payload_json)
-                VALUES(?, ?)
-                ON CONFLICT(thread_id) DO UPDATE SET
-                    payload_json = excluded.payload_json
-                """,
-                (session.thread_id, payload_json),
-            )
-            await checkpointer.conn.commit()
+        await self._active_session_manager.save_persisted_active_session(session)
 
     async def _set_active_session_mutation(
         self,
@@ -739,35 +568,12 @@ class PersistentAgentRuntime:
             None.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return
-
-        checkpointer = self._ensure_open()
-        if finalize_required_reason is None:
-            sql = """
-                UPDATE opencouch_active_sessions
-                SET mutation_token = ?, mutation_kind = ?
-                WHERE thread_id = ?
-                """
-            params: tuple[Any, ...] = (mutation_token, mutation_kind, thread_id)
-        else:
-            sql = """
-                UPDATE opencouch_active_sessions
-                SET
-                    mutation_token = ?,
-                    mutation_kind = ?,
-                    finalize_required_reason = ?
-                WHERE thread_id = ?
-                """
-            params = (
-                mutation_token,
-                mutation_kind,
-                finalize_required_reason,
-                thread_id,
-            )
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(sql, params)
-            await checkpointer.conn.commit()
+        await self._active_session_manager.set_active_session_mutation(
+            thread_id,
+            mutation_token=mutation_token,
+            mutation_kind=mutation_kind,
+            finalize_required_reason=finalize_required_reason,
+        )
 
     async def _clear_active_session_mutation(
         self,
@@ -784,20 +590,10 @@ class PersistentAgentRuntime:
             None.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return
-
-        checkpointer = self._ensure_open()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                UPDATE opencouch_active_sessions
-                SET mutation_token = NULL, mutation_kind = NULL
-                WHERE thread_id = ? AND mutation_token = ?
-                """,
-                (thread_id, mutation_token),
-            )
-            await checkpointer.conn.commit()
+        await self._active_session_manager.clear_active_session_mutation(
+            thread_id,
+            mutation_token,
+        )
 
     async def _set_active_session_rotation_required(self, thread_id: str) -> None:
         """Mark a persisted active session for channel-level rotation.
@@ -809,20 +605,9 @@ class PersistentAgentRuntime:
             None.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return
-
-        checkpointer = self._ensure_open()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                UPDATE opencouch_active_sessions
-                SET rotate_after_this_turn = 1
-                WHERE thread_id = ?
-                """,
-                (thread_id,),
-            )
-            await checkpointer.conn.commit()
+        await self._active_session_manager.set_active_session_rotation_required(
+            thread_id
+        )
 
     async def _delete_persisted_active_session(self, thread_id: str) -> None:
         """Delete the persisted active-session record for a thread.
@@ -834,19 +619,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return
-
-        checkpointer = self._ensure_open()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                DELETE FROM opencouch_active_sessions
-                WHERE thread_id = ?
-                """,
-                (thread_id,),
-            )
-            await checkpointer.conn.commit()
+        await self._active_session_manager.delete_persisted_active_session(thread_id)
 
     @staticmethod
     def _transcript_length(state: AgentState | None) -> int:
@@ -975,12 +748,7 @@ class PersistentAgentRuntime:
             ``True`` when the session is expired.
         """
 
-        last_active = _parse_iso_timestamp(session.last_active_at)
-        if last_active is None:
-            return True
-        return (
-            datetime.now(tz=last_active.tzinfo) - last_active >= self._session_timeout
-        )
+        return self._active_session_manager.session_has_expired(session)
 
     def _clear_runtime_session_tracking(self, thread_id: str) -> None:
         """Drop all in-process session trackers for one thread.
@@ -1943,58 +1711,64 @@ class PersistentAgentRuntime:
         if not has_active_session:
             return None
 
-        mutation_token = self._new_mutation_token()
-        if persisted is not None:
-            self._active_mutation_tokens.add(mutation_token)
-            await self._set_active_session_mutation(
+        @asynccontextmanager
+        async def _finalize_mutation_scope() -> AsyncIterator[str | None]:
+            if persisted is None:
+                yield None
+                return
+            async with self._active_session_mutation(
                 thread_id,
-                mutation_token=mutation_token,
                 mutation_kind="finalize",
                 finalize_required_reason=(
                     "interrupted" if status == SessionStatus.INTERRUPTED else None
                 ),
-            )
+            ) as mutation_token:
+                yield mutation_token
 
-        state = await self.get_state(thread_id)
+        async with _finalize_mutation_scope() as mutation_token:
+            state = await self.get_state(thread_id)
 
-        if state is None:
-            await self._delete_persisted_active_session(thread_id)
-            self._clear_runtime_session_tracking(thread_id)
-            self._active_mutation_tokens.discard(mutation_token)
-            return None
+            if state is None:
+                await self._delete_persisted_active_session(thread_id)
+                self._clear_runtime_session_tracking(thread_id)
+                return None
 
-        try:
-            transcript_start_index = self._session_transcript_starts.get(thread_id, 0)
-            session_state = self._slice_state_to_active_session(
-                state,
-                transcript_start_index=transcript_start_index,
-            )
-            started_at = self._session_starts.get(thread_id, _iso_now())
-            ended_at = _iso_now()
-            crisis_level_max = self._max_crisis_levels.get(thread_id, 0)
-            session_buffer = self._session_memory_buffers.get(thread_id)
-            stored_arc = await self._finalize_session_window(
-                thread_id=thread_id,
-                state=session_state,
-                started_at=started_at,
-                ended_at=ended_at,
-                crisis_level_max=crisis_level_max,
-                session_buffer=session_buffer,
-                llm_client=effective_llm_client,
-            )
-            await self._clear_session_continuity_in_checkpoint(
-                thread_id,
-                state,
-                suppress_errors=True,
-            )
-            await self._delete_persisted_active_session(thread_id)
-            self._clear_runtime_session_tracking(thread_id)
-            return stored_arc
-        except Exception:
-            await self._clear_active_session_mutation(thread_id, mutation_token)
-            raise
-        finally:
-            self._active_mutation_tokens.discard(mutation_token)
+            try:
+                transcript_start_index = self._session_transcript_starts.get(
+                    thread_id, 0
+                )
+                session_state = self._slice_state_to_active_session(
+                    state,
+                    transcript_start_index=transcript_start_index,
+                )
+                started_at = self._session_starts.get(thread_id, _iso_now())
+                ended_at = _iso_now()
+                crisis_level_max = self._max_crisis_levels.get(thread_id, 0)
+                session_buffer = self._session_memory_buffers.get(thread_id)
+                stored_arc = await self._finalize_session_window(
+                    thread_id=thread_id,
+                    state=session_state,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    crisis_level_max=crisis_level_max,
+                    session_buffer=session_buffer,
+                    llm_client=effective_llm_client,
+                )
+                await self._clear_session_continuity_in_checkpoint(
+                    thread_id,
+                    state,
+                    suppress_errors=True,
+                )
+                await self._delete_persisted_active_session(thread_id)
+                self._clear_runtime_session_tracking(thread_id)
+                return stored_arc
+            except Exception:
+                if mutation_token is not None:
+                    await self._clear_active_session_mutation(
+                        thread_id,
+                        mutation_token,
+                    )
+                raise
 
     async def end_transcript_session(
         self,

@@ -75,24 +75,22 @@ const CommandActionsContext =
 export function CommandActionsProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const {
-    userId,
-    threadId,
-    sessionMode,
-    responseModelTier,
-    setResponseModelTier,
-    newSession,
-    chatLoading,
-    voiceConnected,
-    messages,
-    memoryFacts,
-    setMemoryFacts,
-    addUnseenMemories,
-    bumpMemoryRefreshVersion,
-    lastEndedSession,
-    setLastEndedSession,
-    clearLastEndedSession,
-  } = useSessionStore();
+  const userId = useSessionStore((s) => s.userId);
+  const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
+  const responseModelTier = useSessionStore((s) => s.responseModelTier);
+  const setResponseModelTier = useSessionStore((s) => s.setResponseModelTier);
+  const newSession = useSessionStore((s) => s.newSession);
+  const chatLoading = useSessionStore((s) => s.chatLoading);
+  const voiceConnected = useSessionStore((s) => s.voiceConnected);
+  const messages = useSessionStore((s) => s.messages);
+  const memoryFacts = useSessionStore((s) => s.memoryFacts);
+  const setMemoryFacts = useSessionStore((s) => s.setMemoryFacts);
+  const addUnseenMemories = useSessionStore((s) => s.addUnseenMemories);
+  const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
+  const lastEndedSession = useSessionStore((s) => s.lastEndedSession);
+  const setLastEndedSession = useSessionStore((s) => s.setLastEndedSession);
+  const clearLastEndedSession = useSessionStore((s) => s.clearLastEndedSession);
   const isIncognito = sessionMode === "incognito";
   const hasSessionTurns = messages.some((message) => message.role === "user");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);

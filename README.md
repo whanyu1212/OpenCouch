@@ -122,7 +122,7 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 Keep real `.env` files local and out of version control.
 
 ### One-command local stack
-Use this for the full local web + voice development stack:
+Use this for the full local web + voice **development** stack with backend reload and Next.js hot reload:
 
 ```bash
 docker compose up --build
@@ -131,14 +131,20 @@ docker compose up --build
 This starts:
 - backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
 - LiveKit voice worker: `python -m voice.livekit.agent start`
-- Next.js web UI: [localhost:3000](http://localhost:3000)
+- Next.js web UI in dev mode: [localhost:3000](http://localhost:3000)
 
 The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
 
-For text-only development without LiveKit credentials, start just the API and web UI:
+For text-only development without LiveKit credentials, start just the API and hot-reload web UI:
 
 ```bash
 docker compose up --build api web
+```
+
+For production-like web dogfooding, use the `web-prod` profile. This keeps the backend API in Compose but runs the web UI with `next build` + `next start`, which is closer to what users feel than `next dev`:
+
+```bash
+docker compose --profile prod-web up --build api web-prod
 ```
 
 Stop everything with:
@@ -217,7 +223,7 @@ pnpm install && npx docusaurus start --port 3001
 
 ## 🧠 Architecture
 
-Every turn passes through the crisis gate before therapeutic generation. Memory writes happen in two phases: per-turn extraction, then a session-end commit for episodic summaries and held candidates.
+Every turn passes through the crisis gate before therapeutic generation. Memory writes happen in two phases: per-turn extraction, then a runtime-coordinated session-end commit for episodic summaries and held candidates.
 
 ### Supported Surfaces
 
@@ -235,7 +241,6 @@ flowchart TD
     classDef safeNode fill:#10B9811A,stroke:#10B981,stroke-width:2px
     classDef riskNode fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
     classDef sysNode fill:#3B82F61A,stroke:#3B82F6,stroke-width:2px
-    classDef bgTask fill:#3B82F61A,stroke:#3B82F6,stroke-width:2px,stroke-dasharray: 5 5
     classDef dbNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
 
     subgraph SURF ["Runtime Surfaces"]
@@ -279,14 +284,14 @@ flowchart TD
 
     subgraph POST ["Post-response Memory Evaluation"]
         direction LR
-        EF["extract_facts<br/>+ write_policy: commit • hold • drop"]:::bgTask
-        EP["extract_rules<br/>+ write_policy: commit • hold • drop"]:::bgTask
+        EF["extract_facts<br/>+ write_policy: commit • hold • drop"]:::sysNode
+        EP["extract_procedural<br/>+ write_policy: commit • hold • drop"]:::sysNode
         SB[("session buffer<br/>held semantic • procedural")]:::sysNode
         EF -.->|hold| SB
         EP -.->|hold| SB
     end
 
-    subgraph SESSION ["Session-End Commit (runtime-driven, outside the LangGraph workflow)"]
+    subgraph SESSION ["Session-End Commit (ActiveSessionManager, outside the LangGraph workflow)"]
         direction TB
         SE(["session_end trigger<br/>/end • timeout • shutdown • voice disconnect"]):::sysNode
         SS(["summarize_session<br/>episodic arc"]):::sysNode
@@ -418,6 +423,7 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Thin nodes, fat services refactor** — memory/session/crisis graph nodes now stay narrowly orchestration-focused while service modules own retrieval, episodic summarization, held-candidate promotion, and deterministic backstops; routing eval harnesses and Docusaurus architecture/state docs were updated to match the refactor, with hybrid routing evals passing for grounded lookup (`14/14`), memory control (`11/11`), and therapeutic routing (`54/54`).
 - **Route-persistent text streaming** — active text replies keep streaming while you move between Chat, Voice, Memory, and State, and Voice start is blocked until the text turn finishes.
 - **One-command local dev stack** — Docker Compose now starts the FastAPI backend, LiveKit voice worker, and Next.js web UI together with bind-mounted source and container-managed dependency caches.
 - **OpenAI hybrid prompt stabilization** — text and LiveKit voice prompts now share tighter safety, support, closing, guided-exercise, and continuity behavior; ambiguous level-1 safety language asks a direct check without premature emergency-resource escalation, and the OpenAI hybrid eval sweep passes across routing, behavior, trajectory, memory, and voice runners.
