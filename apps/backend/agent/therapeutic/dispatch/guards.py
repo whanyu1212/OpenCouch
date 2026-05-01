@@ -18,6 +18,7 @@ from agent.therapeutic.dispatch.regex_catalog import (
     _ACTIVE_EXERCISE_CLARIFICATION_PATTERNS,
     _BARE_ACKNOWLEDGMENT_PATTERNS,
     _OPEN_QUESTION_PATTERNS,
+    _SOFT_CONTINUER_PATTERNS,
 )
 from agent.therapeutic.exercises.registry import iter_exercise_selection_aliases
 
@@ -196,6 +197,21 @@ def _message_is_acceptance_of_offer(state: AgentState, message: str) -> bool:
     return False
 
 
+def _is_soft_continuer(message: str) -> bool:
+    """Return whether a short message is a conversational continuer.
+
+    Args:
+        message: The current user message.
+
+    Returns:
+        ``True`` when the message is a short affiliative acknowledgment such as
+        "got it" or "yeah that makes sense", which should not be treated like a
+        missing answer to an open question.
+    """
+
+    return _matches_any(message.lower(), _SOFT_CONTINUER_PATTERNS)
+
+
 def _is_bare_ack_to_open_question(state: AgentState, message: str) -> bool:
     """Return whether a bare acknowledgment fails to answer an open question.
 
@@ -212,6 +228,8 @@ def _is_bare_ack_to_open_question(state: AgentState, message: str) -> bool:
     if not _matches_any(lowered, _BARE_ACKNOWLEDGMENT_PATTERNS):
         return False
     if _message_is_acceptance_of_offer(state, message):
+        return False
+    if _is_soft_continuer(message):
         return False
 
     for turn in reversed(get_transcript(state)):

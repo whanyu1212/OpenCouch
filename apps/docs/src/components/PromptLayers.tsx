@@ -49,7 +49,7 @@ const LAYERS: Layer[] = [
     id: 'core',
     depth: 5,
     label: '1. Core identity',
-    source: 'CORE_SOURCES — soul.md + identity.md + policy/boundaries.md + policy/privacy.md',
+    source: 'CORE_SOURCES — core_identity.md + policy/boundaries.md + policy/privacy.md',
     desc: 'Agent identity, boundaries, and privacy policy. Loaded via compose_sources() for every response. The immutable foundation of every system prompt.',
   },
 ];

@@ -458,8 +458,8 @@ def test_supportive_prompt_handles_acknowledgments_and_capability_questions() ->
     prompt = build_supportive_system_prompt(_make_state())
 
     assert 'one-word acknowledgment such as "ok"' in prompt
-    assert 'Often "Okay." is enough' in prompt
-    assert "Do not add a takeaway" in prompt
+    assert '"Okay." can be enough' in prompt
+    assert "no takeaway" in prompt
     assert "parental close" in prompt
     assert "specific cases below override" in prompt
     assert "what you can do for them" in prompt

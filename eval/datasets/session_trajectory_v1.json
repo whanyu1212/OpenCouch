@@ -235,8 +235,8 @@
   },
   {
     "id": "deterministic_fallback_no_banned_phrases",
-    "title": "Deterministic fallback responses must not contain banned soul.md phrases",
-    "description": "In deterministic mode (no LLM), the hardcoded fallback responses should follow soul.md voice rules. Tests that banned phrases like 'Thank you for sharing' and 'I want you to know' are not in the fallback text.",
+    "title": "Deterministic fallback responses must not contain banned core identity phrases",
+    "description": "In deterministic mode (no LLM), the hardcoded fallback responses should follow core identity voice rules. Tests that banned phrases like 'Thank you for sharing' and 'I want you to know' are not in the fallback text.",
     "supported_modes": ["deterministic"],
     "tags": ["fallback_quality", "voice"],
     "run_end_session": false,

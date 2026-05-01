@@ -324,6 +324,9 @@ ACCEPTANCE_PATTERNS: tuple[str, ...] = (
     r"^\s*(?:let'?s|please)\s+(?:do|try)\s+(?:it|that)[\.\!]?\s*$",
     r"^\s*(?:i'?m|i am)\s+(?:ready|in|game)[\.\!]?\s*$",
     r"^\s*(?:go ahead|sounds good)[\.\!]?\s*$",
+    r"^\s*(?:yeah|okay|ok|sure|alright)[,\s]+let'?s\s+(?:do|try)(?:\s+(?:it|that))?[\.\!]?\s*$",
+    r"^\s*(?:yeah|okay|ok|sure|alright)[,\s]+we can try(?:\s+(?:it|that))?[\.\!]?\s*$",
+    r"^\s*(?:okay|ok|please)[,\s]+walk me through (?:it|that)[\.\!]?\s*$",
 )
 
 
@@ -336,6 +339,14 @@ EXERCISE_OFFER_PATTERNS: tuple[str, ...] = (
 
 _BARE_ACKNOWLEDGMENT_PATTERNS: tuple[str, ...] = (
     r"^\s*(?:yes|yeah|yep|yup|ok|okay|sure|mhm|mhmm)\s*[.!]?\s*$",
+)
+
+_SOFT_CONTINUER_PATTERNS: tuple[str, ...] = (
+    r"^\s*(?:yeah|okay|ok)[,\s]+that makes sense[\.\!]?\s*$",
+    r"^\s*got it[\.\!]?\s*$",
+    r"^\s*(?:fair|right|that tracks)[\.\!]?\s*$",
+    r"^\s*(?:okay|ok)\s+yeah[\.\!]?\s*$",
+    r"^\s*yeah\s+okay[\.\!]?\s*$",
 )
 
 _OPEN_QUESTION_PATTERNS: tuple[str, ...] = (

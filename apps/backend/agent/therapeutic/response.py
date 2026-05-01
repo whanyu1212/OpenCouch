@@ -83,23 +83,19 @@ _ATTUNED_OPENING_TERMS = (
 
 
 def _ensure_reflective_question(response_text: str) -> str:
-    """Ensure reflective replies end with one gentle question.
+    """Normalize reflective replies without forcing a trailing question.
 
     Args:
         response_text: The generated reflective reply text.
 
     Returns:
-        The original text when it already includes a question, otherwise the
-        text with a short reflective question appended.
+        The original text when present, otherwise the default reflective reply.
     """
 
     stripped = response_text.strip()
     if not stripped:
         return _DEFAULT_REFLECTIVE_REPLY
-    if "?" in stripped:
-        return stripped
-    suffix = "" if stripped.endswith((".", "!", "?")) else "."
-    return f"{stripped}{suffix} {_REFLECTIVE_FALLBACK_QUESTION}"
+    return stripped
 
 
 def _needs_safety_clarification(state: AgentState) -> bool:
@@ -137,23 +133,20 @@ def _default_clarifying_reply(state: AgentState) -> str:
 
 
 def _ensure_psychoeducation_question(response_text: str) -> str:
-    """Ensure psychoeducation replies include one check-in question.
+    """Normalize psychoeducation replies without forcing a stock check-in.
 
     Args:
         response_text: The generated psychoeducation reply text.
 
     Returns:
-        The original text when it already includes a question, otherwise the
-        text with a brief fit-check question appended.
+        The original text when present, otherwise the default
+        psychoeducation reply.
     """
 
     stripped = response_text.strip()
     if not stripped:
         return _DEFAULT_PSYCHOEDUCATION_REPLY
-    if "?" in stripped:
-        return stripped
-    suffix = "" if stripped.endswith((".", "!", "?")) else "."
-    return f"{stripped}{suffix} {_PSYCHOEDUCATION_FALLBACK_QUESTION}"
+    return stripped
 
 
 def _first_sentence(response_text: str) -> str:
@@ -174,14 +167,14 @@ def _first_sentence(response_text: str) -> str:
 
 
 def _ensure_attuned_opening(response_text: str) -> str:
-    """Ensure technique replies open with a brief attuned acknowledgment.
+    """Normalize technique replies while keeping an attuned opening.
 
     Args:
         response_text: The generated technique reply text.
 
     Returns:
         The original reply when its first sentence is already attuned, or a
-        prefixed acknowledgment when the opening is too abrupt.
+        lighter prefixed acknowledgment when the opening is too abrupt.
     """
 
     stripped = response_text.strip()
@@ -191,7 +184,7 @@ def _ensure_attuned_opening(response_text: str) -> str:
     first_sentence = _first_sentence(stripped).lower()
     if any(term in first_sentence for term in _ATTUNED_OPENING_TERMS):
         return stripped
-    return f"That sounds really hard. {stripped}"
+    return f"Let's slow this down for a second. {stripped}"
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,7 @@ What's shipped, what's in progress, and what's planned.
 | **Session Trajectory Eval** | Unified runner for short (inline) and long (checkpoint) trajectory datasets covering approach, boundary enforcement, crisis arcs, closing, venting, and response style transitions. Supports concurrent hybrid execution with `--concurrency`, `--case`, and `--verbose`. |
 | **Crisis Gate — LLM-primary** | LLM is the primary crisis classifier; regex is fallback only. Override precedence fix, prompt hardening (conversation fencing, anti-injection, adversarial examples), strict truth table enforcement. |
 | **Routing — LLM-primary** | Crisis, therapeutic dispatch, grounded lookup, memory-control, guided-exercise selection, and memory write policy all use LLM-primary classifiers with deterministic overrides/fallbacks where appropriate. |
-| **Knowledge Overhaul** | `soul.md` expanded with therapeutic grounding, cultural sensitivity, repair patterns, boundary-setting voice. `identity.md` rewritten with product philosophy. `boundaries.md` expanded with redirection patterns and dependency framing. |
+| **Knowledge Overhaul** | `core_identity.md` defines assistant role, product stance, voice, therapeutic grounding, cultural sensitivity, repair patterns, and boundary-setting voice. `boundaries.md` expands redirection patterns and dependency framing. |
 | **OpenAI Embeddings** | `text-embedding-3-large` as default provider, Gemini as fallback. Hybrid RRF retrieval achieves 14/17 recall@5 vs 6/17 token-only. |
 
 ---

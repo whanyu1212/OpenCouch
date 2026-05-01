@@ -124,7 +124,7 @@ def _base_state(*, mode: str, modality: str | None) -> dict:
         state["exercise_state"] = {
             "exercise_type": "grounding_5_4_3_2_1",
             "exercise_step": 1,
-            "exercise_modality": modality,
+            "exercise_therapeutic_approach": modality,
         }
 
     return state
@@ -165,14 +165,14 @@ def _apply_state_variant(state: dict, *, variant: str) -> dict:
         ]
         return s
 
-    if variant == "exercise_modality_drift":
+    if variant == "exercise_therapeutic_approach_drift":
         # Explicitly simulate side-turn drift:
         # top-level approach says ACT, but active exercise remains CBT.
         s["therapeutic_approach"] = "act"
         s.setdefault("exercise_state", {})
         s["exercise_state"]["exercise_type"] = "simple_thought_record"
         s["exercise_state"]["exercise_step"] = 2
-        s["exercise_state"]["exercise_modality"] = "cbt"
+        s["exercise_state"]["exercise_therapeutic_approach"] = "cbt"
         return s
 
     raise ValueError(f"Unknown variant: {variant}")
@@ -211,7 +211,7 @@ def _render_response_dump(*, mode: str, modality: str | None, variant: str) -> s
     system_prompt = builder(state)
     user_prompt = build_therapeutic_response_prompt(
         state,
-        mode=mode,
+        response_style=mode,
         step_directive=(
             "Continue the current exercise step." if mode == "guided_exercise" else None
         ),
@@ -246,7 +246,7 @@ def _render_dispatch_dump(*, active_exercise: bool) -> str:
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
                 "exercise_step": 2,
-                "exercise_modality": "dbt_skills",
+                "exercise_therapeutic_approach": "dbt_skills",
             },
             "therapeutic_approach": "dbt_skills",
             "session_memory": {"summary": ""},
@@ -331,9 +331,9 @@ def main() -> None:
     content = _render_response_dump(
         mode="guided_exercise",
         modality="act",
-        variant="exercise_modality_drift",
+        variant="exercise_therapeutic_approach_drift",
     )
-    filename = f"{_slug('guided_exercise', 'act', 'exercise_modality_drift')}.txt"
+    filename = f"{_slug('guided_exercise', 'act', 'exercise_therapeutic_approach_drift')}.txt"
     (dump_dir / filename).write_text(content, encoding="utf-8")
     total += 1
 

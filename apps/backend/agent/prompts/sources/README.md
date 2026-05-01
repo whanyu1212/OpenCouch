@@ -17,8 +17,7 @@ Keep this material:
 - separated from runtime code
 
 Recommended structure:
-- `soul.md` for core identity and values
-- `identity.md` for external presentation
+- `core_identity.md` for assistant role, voice, values, boundaries, and product stance
 - `policy/` for hard rules and boundaries
 - `response_styles/` for workflow-specific guidance
 - `therapeutic_approaches/` for intervention overlays
