@@ -87,7 +87,7 @@ const LAYER_DEFS: LayerDef[] = [
     id: 'core',
     label: 'Core identity',
     dot: '#215f5a',
-    source: 'soul.md · identity.md · policy/*.md',
+    source: 'core_identity.md · policy/*.md',
     match: (l) =>
       /^# (OpenCouch (Soul|Identity)|Boundaries Policy|Privacy Policy Notes)/.test(
         l,

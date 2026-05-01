@@ -10,8 +10,7 @@ from typing import Any
 from agent.conversation import format_recent_history as _format_recent_history
 
 CORE_SOURCES = (
-    "soul.md",
-    "identity.md",
+    "core_identity.md",
     "policy/boundaries.md",
     "policy/privacy.md",
 )

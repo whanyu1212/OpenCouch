@@ -26,7 +26,7 @@ runtime by the graph.
 
 | Layer | Question it answers | Source | Per turn? |
 |---|---|---|---|
-| **Core** | Who is this system? What are the hard rules? | `soul.md`, `identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/shared.py`) | Never changes |
+| **Core** | Who is this system? What are the hard rules? | `core_identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/shared.py`) | Never changes |
 | **Response style** | What response shape is this turn? | `response_styles/*.md` — support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check | Selected by dispatcher / crisis gate |
 | **Therapeutic approach** | What therapeutic framework overlay? | `therapeutic_approaches/*.md` — motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, picked by dispatcher |
 | **Instructions** | How should it respond on this turn specifically? | `agent/therapeutic/prompting/instructions.py` and `agent/prompts/crisis.py` | Per response style |
@@ -74,8 +74,7 @@ than a full crisis response.
 | `agent/therapeutic/prompting/instructions.py` | Per-response-style instruction blocks |
 | `agent/therapeutic/prompting/builders.py` | `build_*_system_prompt()` functions for therapeutic response nodes |
 | `agent/therapeutic/prompts.py` | Compatibility re-export wrapper for older imports |
-| `agent/prompts/sources/soul.md` | Identity, voice, tone, pacing, directness |
-| `agent/prompts/sources/identity.md` | Product boundaries and positioning |
+| `agent/prompts/sources/core_identity.md` | Assistant role, product stance, voice, tone, pacing, directness, and core boundaries |
 | `agent/prompts/sources/policy/` | Safety + privacy + crisis policy (3 files) |
 | `agent/prompts/sources/response_styles/` | One file per response style (7 files) |
 | `agent/prompts/sources/therapeutic_approaches/` | 8 therapeutic-approach knowledge files, dynamically loaded per turn |

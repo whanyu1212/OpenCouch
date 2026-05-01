@@ -41,6 +41,7 @@ from agent.therapeutic.dispatcher import (
     _is_advice_request_without_exercise_consent,
     _matches_any,
     _format_prompt_trigger_phrases,
+    _is_bare_ack_to_open_question,
     build_therapeutic_dispatch_system_prompt,
     pick_therapeutic_response_style,
     run_therapeutic_dispatch_node,
@@ -812,11 +813,11 @@ class TestEndToEndRouting:
         assert "pattern" in result.response_text.lower()
 
     @pytest.mark.asyncio
-    async def test_reflective_node_adds_question_when_llm_omits_one(
+    async def test_reflective_node_preserves_clean_reflection_when_llm_omits_question(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Reflective node should append a gentle question when needed."""
+        """Reflective node should allow a clean reflection to stand on its own."""
 
         from agent.therapeutic import response
         from agent.therapeutic.response import run_therapeutic_response_node
@@ -837,7 +838,7 @@ class TestEndToEndRouting:
 
         assert delta["response_style"] == "reflective"
         assert delta["response_text"].startswith("recorded")
-        assert "?" in delta["response_text"]
+        assert "?" not in delta["response_text"]
 
     @pytest.mark.asyncio
     async def test_technique_node_adds_attuned_opening_when_llm_omits_it(
@@ -873,7 +874,7 @@ class TestEndToEndRouting:
         )
 
         assert delta["response_style"] == "technique"
-        assert delta["response_text"].startswith("That sounds really hard.")
+        assert delta["response_text"].startswith("Let's slow this down for a second.")
 
     @pytest.mark.asyncio
     async def test_clarifying_happy_path(self) -> None:
@@ -928,11 +929,11 @@ class TestEndToEndRouting:
         assert "?" in delta["response_text"]
 
     @pytest.mark.asyncio
-    async def test_psychoeducation_node_adds_question_when_llm_omits_one(
+    async def test_psychoeducation_node_allows_clean_frame_when_llm_omits_question(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Psychoeducation replies should end with a fit-check question."""
+        """Psychoeducation replies may land on a clean frame without a forced question."""
 
         from agent.therapeutic import response
         from agent.therapeutic.response import run_therapeutic_response_node
@@ -954,7 +955,7 @@ class TestEndToEndRouting:
 
         assert delta["response_style"] == "psychoeducation"
         assert delta["response_text"].startswith("That can happen")
-        assert "?" in delta["response_text"]
+        assert "?" not in delta["response_text"]
 
     @pytest.mark.asyncio
     async def test_closing_deterministic_fallback_path(self) -> None:
@@ -1725,6 +1726,9 @@ class TestAdviceRequestWithoutExerciseConsent:
             "go ahead",
             "sounds good",
             "yes, please",
+            "okay we can try",
+            "yeah let's do that",
+            "okay, walk me through it",
         ],
     )
     def test_clean_acceptance_after_offer_does_not_fire(self, message: str) -> None:
@@ -1756,6 +1760,47 @@ class TestAdviceRequestWithoutExerciseConsent:
     def test_active_exercise_suppresses_guard(self, message: str) -> None:
         state = _state_with_active_exercise(message)
         assert _is_advice_request_without_exercise_consent(state, message) is False
+
+
+class TestBareAcknowledgmentClarifyingOverride:
+    """Short-turn acknowledgment routing should distinguish bare acks from continuers."""
+
+    @pytest.mark.parametrize("message", ["yeah", "ok", "okay", "sure"])
+    def test_bare_ack_after_open_question_triggers_clarifying(
+        self, message: str
+    ) -> None:
+        state = _build_state(
+            message,
+            history=[
+                {"role": "user", "content": "Work has been rough."},
+                {
+                    "role": "assistant",
+                    "content": "What part of it has been hitting the hardest?",
+                },
+            ],
+        )
+
+        assert _is_bare_ack_to_open_question(state, message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        ["yeah that makes sense", "got it", "fair", "right", "okay yeah"],
+    )
+    def test_soft_continuer_after_open_question_does_not_trigger_clarifying(
+        self, message: str
+    ) -> None:
+        state = _build_state(
+            message,
+            history=[
+                {"role": "user", "content": "Work has been rough."},
+                {
+                    "role": "assistant",
+                    "content": "What part of it has been hitting the hardest?",
+                },
+            ],
+        )
+
+        assert _is_bare_ack_to_open_question(state, message) is False
 
 
 class TestAnaphoricGuardIntegration:
@@ -1847,6 +1892,9 @@ class TestAnaphoricGuardIntegration:
             "yes, please",
             "yes",
             "go ahead",
+            "okay we can try",
+            "yeah let's do that",
+            "okay, walk me through it",
         ],
     )
     @pytest.mark.asyncio

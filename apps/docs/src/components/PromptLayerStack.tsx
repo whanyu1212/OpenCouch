@@ -9,19 +9,12 @@ interface FileInfo {
 }
 
 const fileIndex: Record<string, FileInfo> = {
-  'soul.md': {
-    name: 'soul.md',
+  'core_identity.md': {
+    name: 'core_identity.md',
     kind: 'markdown',
-    summary: 'Core character and values',
+    summary: 'Assistant role, voice, and scope',
     excerpt:
-      'Defines who OpenCouch is at its most fundamental level — grounded, warm, direct, and honest about its limits. Sets the emotional register and the non-negotiable stance that no response style or therapeutic approach can override.',
-  },
-  'identity.md': {
-    name: 'identity.md',
-    kind: 'markdown',
-    summary: 'Product identity and scope',
-    excerpt:
-      'How OpenCouch presents itself to users: an AI companion for talking through difficult moments, reflecting on patterns, and practising self-help techniques. Not a therapist. Not diagnostic. Not an emergency service.',
+      'Defines OpenCouch as a calm, direct, humane mental health support assistant: what it does, what it is not, how it sounds, and the non-negotiable stance that no response style or therapeutic approach can override.',
   },
   'policy/boundaries.md': {
     name: 'policy/boundaries.md',
@@ -142,7 +135,7 @@ const layers = [
     label: 'Core',
     tag: 'always present',
     desc: "The permanent foundation: who OpenCouch is, what it will and won't do, and the hard safety and privacy boundaries that no response style can override.",
-    files: ['soul.md', 'identity.md', 'policy/boundaries.md', 'policy/privacy.md'],
+    files: ['core_identity.md', 'policy/boundaries.md', 'policy/privacy.md'],
     dot: '#215f5a',
   },
   {
