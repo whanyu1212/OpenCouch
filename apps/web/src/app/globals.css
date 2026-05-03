@@ -281,15 +281,6 @@ body {
   width: 100%;
   align-items: center;
 }
-.oc-rail-foot {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-oc-line-2);
-  width: 100%;
-}
 .oc-rail-item {
   width: 44px;
   height: 44px;
@@ -326,20 +317,6 @@ body {
   text-transform: uppercase;
   opacity: 0.85;
 }
-.oc-rail-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--color-oc-primary);
-  color: #f6f1e5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 13px;
-}
-
 /* ── Top bar (chat / voice) ──
    z-index: 20 so the SessionPill popover (z-index: 50 inside this stacking
    context) can drop below the bar without falling behind the chat scroller
@@ -448,12 +425,46 @@ body {
   flex-direction: column;
   align-items: center;
 }
+.oc-chat-scroll--welcome {
+  position: relative;
+  isolation: isolate;
+  overflow-x: hidden;
+  background: #f7f3eb;
+}
+.oc-chat-scroll--welcome::before,
+.oc-chat-scroll--welcome::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.oc-chat-scroll--welcome::before {
+  z-index: 0;
+  background-image: url("/images/chat-welcome-bg.png");
+  background-size: cover;
+  background-position: center bottom;
+  opacity: 0.72;
+  filter: saturate(0.92) contrast(0.96);
+}
+.oc-chat-scroll--welcome::after {
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(253, 252, 250, 0.82) 0%, rgba(246, 244, 240, 0.52) 48%, rgba(253, 252, 250, 0.94) 100%),
+    linear-gradient(90deg, rgba(253, 252, 250, 0.64) 0%, rgba(253, 252, 250, 0.20) 42%, rgba(253, 252, 250, 0.70) 100%);
+}
+.oc-chat-scroll--welcome > * {
+  position: relative;
+  z-index: 2;
+}
 .oc-chat-inner {
   width: 100%;
   max-width: 680px;
 }
 .oc-chat-inner--narrow {
   max-width: 560px;
+}
+.oc-chat-scroll--welcome .oc-chat-inner--narrow {
+  max-width: 620px;
 }
 
 /* ── Welcome block ── */
@@ -528,9 +539,20 @@ body {
   transition: border-color 140ms ease, background 140ms ease, transform 120ms ease;
   width: 100%;
 }
+.oc-chat-scroll--welcome .oc-prompt-card {
+  background: rgba(255, 255, 255, 0.90);
+  border-color: rgba(31, 79, 70, 0.14);
+  box-shadow: 0 18px 44px -36px rgba(21, 32, 29, 0.46);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
 .oc-prompt-card:hover {
   border-color: var(--color-oc-warm-300);
   background: #fffefc;
+}
+.oc-chat-scroll--welcome .oc-prompt-card:hover {
+  border-color: rgba(31, 79, 70, 0.28);
+  background: rgba(255, 255, 255, 0.97);
 }
 .oc-prompt-card:active {
   transform: translateY(1px);
@@ -665,7 +687,6 @@ body {
 .oc-composer-input:disabled {
   opacity: 0.6;
 }
-.oc-composer-attach,
 .oc-composer-send {
   width: 34px;
   height: 34px;
@@ -679,10 +700,6 @@ body {
   color: var(--color-oc-muted);
   flex-shrink: 0;
   transition: background 140ms ease, color 140ms ease;
-}
-.oc-composer-attach:hover {
-  background: var(--color-oc-surface-tint);
-  color: var(--color-oc-ink-2);
 }
 .oc-composer-send {
   background: var(--color-oc-primary);
@@ -746,6 +763,33 @@ body {
   position: relative;
   z-index: 1;
   min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--color-oc-bg);
+}
+.oc-voice-stage::before,
+.oc-voice-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.oc-voice-stage::before {
+  z-index: 0;
+  background-image: url("/images/voice-room-bg.png");
+  background-size: cover;
+  background-position: center;
+  opacity: 0.44;
+}
+.oc-voice-stage::after {
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(253, 252, 250, 0.82) 0%, rgba(246, 244, 240, 0.78) 48%, rgba(232, 239, 234, 0.86) 100%),
+    linear-gradient(90deg, rgba(31, 79, 70, 0.12), transparent 44%, rgba(196, 122, 59, 0.10));
+}
+.oc-voice-stage > * {
+  position: relative;
+  z-index: 2;
 }
 .oc-voice-eyebrow {
   font-family: var(--font-mono);
@@ -767,6 +811,14 @@ body {
 .oc-voice-eyebrow.is-ready .dot {
   background: var(--color-oc-pulse);
   box-shadow: 0 0 0 3px rgba(79, 157, 135, 0.20);
+}
+.oc-voice-eyebrow--warming .dot {
+  background: var(--color-oc-cta);
+  box-shadow: 0 0 0 3px rgba(196, 122, 59, 0.18);
+}
+.oc-voice-eyebrow--speaking .dot {
+  background: var(--color-oc-cta);
+  box-shadow: 0 0 0 3px rgba(196, 122, 59, 0.22);
 }
 
 .oc-voice-title {
@@ -858,6 +910,75 @@ body {
   opacity: 0.4;
 }
 
+.oc-voice-readiness {
+  margin: 22px auto 0;
+  width: min(420px, 100%);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  text-align: left;
+  border: 1px solid rgba(196, 122, 59, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 248, 237, 0.88);
+  color: var(--color-oc-ink-2);
+  box-shadow: 0 12px 28px -24px rgba(88, 56, 21, 0.45);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.oc-voice-readiness-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(196, 122, 59, 0.12);
+  color: var(--color-oc-cta);
+}
+.oc-voice-readiness-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.oc-voice-readiness-copy b {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-oc-ink);
+}
+.oc-voice-readiness-copy span {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-oc-muted);
+}
+
+@media (max-width: 767px) {
+  .oc-chat-scroll--welcome::before {
+    opacity: 0.42;
+    background-position: center top;
+  }
+  .oc-chat-scroll--welcome::after {
+    background:
+      linear-gradient(180deg, rgba(253, 252, 250, 0.92) 0%, rgba(246, 244, 240, 0.76) 52%, rgba(253, 252, 250, 0.98) 100%),
+      linear-gradient(90deg, rgba(253, 252, 250, 0.68), rgba(253, 252, 250, 0.30) 52%, rgba(253, 252, 250, 0.72));
+  }
+  .oc-chat-scroll--welcome .oc-chat-inner--narrow {
+    max-width: 100%;
+  }
+  .oc-voice-stage::before {
+    opacity: 0.30;
+    background-position: center top;
+  }
+  .oc-voice-stage::after {
+    background:
+      linear-gradient(180deg, rgba(253, 252, 250, 0.88) 0%, rgba(246, 244, 240, 0.82) 44%, rgba(232, 239, 234, 0.90) 100%),
+      linear-gradient(90deg, rgba(31, 79, 70, 0.12), transparent 52%, rgba(196, 122, 59, 0.08));
+  }
+}
+
 /* ── Voice orb ── */
 .oc-orb-wrap {
   position: relative;
@@ -893,6 +1014,22 @@ body {
     rgba(196, 122, 59, 0.10) 60%,
     transparent 80%
   );
+}
+.oc-orb-waiting .oc-orb-ring {
+  background: radial-gradient(circle at 50% 50%, rgba(196, 122, 59, 0.16), transparent 70%);
+  animation-duration: 6s;
+}
+.oc-orb-waiting .oc-orb-ring-2 {
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(196, 122, 59, 0.24),
+    rgba(196, 122, 59, 0.07) 60%,
+    transparent 80%
+  );
+  animation-duration: 6s;
+}
+.oc-orb-waiting .oc-orb-core {
+  color: var(--color-oc-cta);
 }
 .oc-orb-core {
   position: relative;
@@ -984,7 +1121,7 @@ body {
 
 .oc-tabbar {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border-top: 1px solid var(--color-oc-line-2);
   background: var(--color-oc-bg-sidebar);
   padding: 6px 6px 14px;
@@ -1007,6 +1144,10 @@ body {
 }
 .oc-tab.is-active {
   color: var(--color-oc-primary);
+}
+.oc-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .oc-tab-icon {
   display: flex;

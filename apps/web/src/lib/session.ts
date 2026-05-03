@@ -6,6 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   createChatStream,
   getMemoryFacts,
+  type AssistantVoiceOption,
   type ChatResponse,
   type EndSessionResponse,
   type MemoryFact,
@@ -88,6 +89,7 @@ export interface VoiceSessionInfo {
   roomName: string;
   identity: string;
   memoryMode: string;
+  assistantVoice: string;
   serverUrl: string;
   connectedAt: string;
 }
@@ -148,6 +150,7 @@ interface SessionState {
   voiceConnected: boolean;
   voiceAgentSpeaking: boolean;
   voiceReadyToSpeak: boolean;
+  assistantVoiceSelected: AssistantVoiceOption;
   transcriptionLanguageSelected: TranscriptionLanguageOption;
   voiceTranscripts: VoiceTranscript[];
   voiceActivities: VoiceActivityEvent[];
@@ -185,6 +188,7 @@ interface SessionState {
   setVoiceConnected: (connected: boolean) => void;
   setVoiceAgentSpeaking: (speaking: boolean) => void;
   setVoiceReadyToSpeak: (ready: boolean) => void;
+  setAssistantVoiceSelected: (voice: AssistantVoiceOption) => void;
   setTranscriptionLanguageSelected: (language: TranscriptionLanguageOption) => void;
   addVoiceTranscript: (t: VoiceTranscript) => void;
   addVoiceActivity: (event: VoiceActivityEvent) => void;
@@ -219,6 +223,7 @@ type PersistedSessionState = Pick<
   | "sessionMode"
   | "userId"
   | "responseModelTier"
+  | "assistantVoiceSelected"
   | "transcriptionLanguageSelected"
 >;
 
@@ -253,6 +258,7 @@ export const useSessionStore = create<SessionState>()(
   voiceConnected: false,
   voiceAgentSpeaking: false,
   voiceReadyToSpeak: false,
+  assistantVoiceSelected: "marin",
   transcriptionLanguageSelected: "en",
   voiceTranscripts: [],
   voiceActivities: [],
@@ -368,6 +374,7 @@ export const useSessionStore = create<SessionState>()(
   setVoiceConnected: (connected) => set({ voiceConnected: connected }),
   setVoiceAgentSpeaking: (speaking) => set({ voiceAgentSpeaking: speaking }),
   setVoiceReadyToSpeak: (ready) => set({ voiceReadyToSpeak: ready }),
+  setAssistantVoiceSelected: (voice) => set({ assistantVoiceSelected: voice }),
   setTranscriptionLanguageSelected: (language) =>
     set({ transcriptionLanguageSelected: language }),
   addVoiceTranscript: (t) =>
@@ -429,6 +436,7 @@ export const useSessionStore = create<SessionState>()(
         sessionMode: state.sessionMode,
         userId: state.userId,
         responseModelTier: state.responseModelTier,
+        assistantVoiceSelected: state.assistantVoiceSelected,
         transcriptionLanguageSelected: state.transcriptionLanguageSelected,
       }),
       merge: (persisted, current): SessionState => {

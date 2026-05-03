@@ -38,6 +38,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const withWash = pathname === "/voice" || (pathname === "/" && sessionMode === "persistent");
 
+  // Preload the voice provider chunk after setup so navigating to
+  // /voice doesn't cause a loading gap that briefly unmounts the tree
+  // and kills an active chat WebSocket.
+  useEffect(() => {
+    if (isSetup) {
+      import("@/components/voice-session-provider");
+    }
+  }, [isSetup]);
+
   if (!hydrated) {
     return (
       <div className="flex min-h-screen flex-1 items-center justify-center bg-oc-bg px-6 text-oc-text">
@@ -53,15 +62,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
-  // Preload the voice provider chunk after setup so navigating to
-  // /voice doesn't cause a loading gap that briefly unmounts the tree
-  // and kills an active chat WebSocket.
-  useEffect(() => {
-    if (isSetup) {
-      import("@/components/voice-session-provider");
-    }
-  }, [isSetup]);
 
   if (!isSetup) {
     return <SessionSetup />;

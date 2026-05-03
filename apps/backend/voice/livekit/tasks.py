@@ -144,7 +144,7 @@ def _build_exercise_instructions(
     step_plan = []
     for i, step in enumerate(steps):
         mode_label = (
-            "Wait for the user to confirm they did it."
+            "Ask the user to tell you when they have done it, then wait for that confirmation."
             if step.completion_mode == "user_confirmation"
             else f"Wait for the user to name at least {step.min_count_for_completion} item(s)."
         )
@@ -157,6 +157,7 @@ def _build_exercise_instructions(
 RULES:
 - Deliver ONE step at a time. Do NOT skip ahead or combine steps.
 - After delivering a step, WAIT for the user to respond before moving on.
+- You cannot see whether the user has done a body, breathing, or imagery action. For user-confirmation steps, explicitly ask them to tell you when they have done it.
 - When the user has engaged with the current step (named items, confirmed, or responded meaningfully), call complete_step() to advance.
 - If the user says they want to stop, skip, or can't continue, call exit_exercise().
 - Keep your voice warm, patient, and unhurried. Brief encouragement between steps is good.
@@ -216,7 +217,9 @@ class GroundingTask(AgentTask[ExerciseResult]):
         )
         self.session.generate_reply(
             instructions=f"Guide the user into Step 1 of {self._display_name}. "
-            "Use warm, spoken language. Do not say 'Step 1' literally."
+            "Use warm, spoken language. Do not say 'Step 1' literally. "
+            "If the step asks the user to do an action, end by asking them "
+            "to tell you when they have done it."
         )
 
     @function_tool()
@@ -250,11 +253,17 @@ class GroundingTask(AgentTask[ExerciseResult]):
             )
 
         next_step = self._steps[self._current_step]
+        completion_hint = (
+            "Because you cannot see the user, ask them to tell you when they "
+            "have done it."
+            if next_step.completion_mode == "user_confirmation"
+            else "Wait for the user to answer with the requested item or items."
+        )
         return (
             f"Step {self._current_step} is done. Moving to step "
             f"{self._current_step + 1} of {self._total_steps}. "
             f"Next step instruction: {next_step.prompt_fallback} "
-            f"Rephrase this naturally and deliver it to the user."
+            f"Rephrase this naturally and deliver it to the user. {completion_hint}"
         )
 
     @function_tool()

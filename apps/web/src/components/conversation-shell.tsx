@@ -14,15 +14,11 @@ import { useCommandActions } from "@/lib/command-actions";
 import { CouchLogo } from "@/components/logo";
 
 /**
- * ConversationShell — shared chrome for /chat and /voice.
+ * ConversationShell — shared chrome for the main app routes.
  *
- * Replaces the resizable Sidebar on these two routes with a 64px icon
- * NavRail (desktop) and a 4-tab bottom bar (mobile). Session controls
- * collapse into a SessionPill popover so the conversation can take
- * the full canvas.
- *
- * Memory and State pages keep the existing wide Sidebar — switching
- * to the rail is governed by the route in app-shell.tsx.
+ * Uses a compact NavRail on desktop and a bottom tab bar on mobile.
+ * Session controls collapse into a SessionPill popover so the active
+ * page can use the full canvas.
  */
 
 const NAV_ITEMS: Array<{ id: string; label: string; href: string }> = [
@@ -53,6 +49,24 @@ const IconChat = ({ size = 16 }: { size?: number }) => (
     aria-hidden="true"
   >
     <path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z" />
+  </svg>
+);
+
+const IconHome = ({ size = 16 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M4 11.5 12 5l8 6.5" />
+    <path d="M6.5 10.5V20h11v-9.5" />
+    <path d="M10 20v-5h4v5" />
   </svg>
 );
 
@@ -108,22 +122,6 @@ const IconState = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-const IconPlus = ({ size = 14 }: { size?: number }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M12 5v14M5 12h14" />
-  </svg>
-);
-
 const IconHistory = ({ size = 14 }: { size?: number }) => (
   <svg
     width={size}
@@ -173,10 +171,7 @@ export function NavRail() {
   const { startNewSession, openThreadDrawer, endCurrentSession, isBusy, canEndSession } =
     useCommandActions();
   const voiceConnected = useSessionStore((s) => s.voiceConnected);
-  const userId = useSessionStore((s) => s.userId);
   const sessionMode = useSessionStore((s) => s.sessionMode);
-
-  const avatarLetter = (userId || "·").trim().charAt(0).toUpperCase() || "·";
 
   return (
     <aside className="oc-rail">
@@ -190,6 +185,26 @@ export function NavRail() {
         </Link>
       </div>
       <nav className="oc-rail-nav" aria-label="Primary navigation">
+        <button
+          type="button"
+          className="oc-rail-item"
+          title="Return home for a new session"
+          aria-label="Return home for a new session"
+          onClick={() => void startNewSession()}
+          disabled={isBusy}
+        >
+          <IconHome size={18} />
+          <span className="oc-rail-label">Home</span>
+        </button>
+        <div
+          aria-hidden="true"
+          style={{
+            width: 32,
+            height: 1,
+            background: "var(--color-oc-line-2)",
+            margin: "10px auto",
+          }}
+        />
         {NAV_ITEMS.map((item) => {
           const Icon = NAV_ICONS[item.id];
           const isActive = active === item.id;
@@ -234,16 +249,6 @@ export function NavRail() {
             margin: "10px auto",
           }}
         />
-        <button
-          type="button"
-          className="oc-rail-item"
-          title="New session"
-          onClick={() => void startNewSession()}
-          disabled={isBusy}
-        >
-          <IconPlus size={18} />
-          <span className="oc-rail-label">New</span>
-        </button>
         {sessionMode === "persistent" && (
           <button
             type="button"
@@ -268,11 +273,6 @@ export function NavRail() {
           </button>
         )}
       </nav>
-      <div className="oc-rail-foot">
-        <div className="oc-rail-avatar" title={userId || "no user"}>
-          {avatarLetter}
-        </div>
-      </div>
     </aside>
   );
 }
@@ -280,8 +280,21 @@ export function NavRail() {
 export function MobileTabBar() {
   const pathname = usePathname();
   const active = activeIdForPath(pathname);
+  const { startNewSession, isBusy } = useCommandActions();
   return (
     <div className="oc-tabbar" aria-label="Primary navigation">
+      <button
+        type="button"
+        className="oc-tab"
+        onClick={() => void startNewSession()}
+        disabled={isBusy}
+        aria-label="Return home for a new session"
+      >
+        <span className="oc-tab-icon">
+          <IconHome size={20} />
+        </span>
+        <span className="oc-tab-label">Home</span>
+      </button>
       {NAV_ITEMS.map((item) => {
         const Icon = NAV_ICONS[item.id];
         const isActive = active === item.id;
@@ -312,6 +325,7 @@ export function SessionPill() {
     canEndSession,
     endCurrentSession,
     endingSession,
+    openCommandPalette,
     openThreadDrawer,
     setResponseTier,
     showTextResponseTier,
@@ -383,7 +397,7 @@ export function SessionPill() {
             color: "var(--color-oc-ink-2)",
           }}
         >
-          {isIncognito ? "anon" : userId || "—"}
+          {isIncognito ? "anonymous" : userId || "—"}
         </span>
         <span style={{ color: "var(--color-oc-text-dim)" }}>/</span>
         <span
@@ -429,7 +443,7 @@ export function SessionPill() {
 
           {showTextResponseTier && (
             <div className="oc-popover-section">
-              <div className="oc-popover-eyebrow">Response speed</div>
+              <div className="oc-popover-eyebrow">Text response</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <button
                   type="button"
@@ -476,6 +490,10 @@ export function SessionPill() {
                   Quality
                 </button>
               </div>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-oc-muted">
+                For tone or style, ask directly. Persistent mode can remember
+                clear preferences like gentler tone or shorter replies.
+              </p>
             </div>
           )}
 
@@ -485,12 +503,23 @@ export function SessionPill() {
               className="oc-popover-action"
               onClick={() => {
                 close();
+                openCommandPalette();
+              }}
+            >
+              <IconChat size={14} />
+              Open actions and help
+            </button>
+            <button
+              type="button"
+              className="oc-popover-action"
+              onClick={() => {
+                close();
                 void startNewSession();
               }}
               disabled={isBusy}
             >
-              <IconPlus size={14} />
-              New session
+              <IconHome size={14} />
+              Return home
             </button>
             {!isIncognito && (
               <button

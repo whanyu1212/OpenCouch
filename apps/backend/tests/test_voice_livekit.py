@@ -24,6 +24,7 @@ from agent.therapeutic.exercises.registry import (
     EXERCISE_BOX_BREATHING,
     EXERCISE_CONTINUUM,
     EXERCISE_LEAVES_ON_STREAM,
+    EXERCISE_MUSCLE_RELAXATION,
     EXERCISE_TINY_ACTION,
     EXERCISE_THOUGHT_RECORD,
     EXERCISE_VALUES_COMPASS,
@@ -61,7 +62,7 @@ from voice.livekit.finalization_status import (
     get_voice_finalization_status,
     set_voice_finalization_status,
 )
-from voice.livekit.tasks import _resolve_exercise
+from voice.livekit.tasks import _build_exercise_instructions, _resolve_exercise
 from voice.livekit.tools import (
     answer_grounded_factual_lookup,
     cancel_memory_deletion,
@@ -682,6 +683,36 @@ def test_livekit_token_preserves_session_memory_mode_metadata(
     assert json.loads(token_payload["metadata"])["memory_mode"] == "incognito"
 
 
+def test_livekit_token_preserves_assistant_voice_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Browser-selected assistant voice should reach the worker metadata."""
+
+    monkeypatch.setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "test-api-key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "test-api-secret")
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/api/voice/livekit/token",
+        json={
+            "user_id": "browser-user",
+            "thread_id": "thread-123",
+            "assistant_voice": "sage",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["assistant_voice"] == "sage"
+
+    token_parts = payload["participant_token"].split(".")
+    token_payload = json.loads(
+        base64.urlsafe_b64decode(token_parts[1] + "=" * (-len(token_parts[1]) % 4))
+    )
+    assert json.loads(token_payload["metadata"])["assistant_voice"] == "sage"
+
+
 @pytest.mark.asyncio
 async def test_livekit_semantic_memory_load_filters_inactive_records() -> None:
     """Voice memory injection should skip dormant, superseded, and hidden facts."""
@@ -845,7 +876,7 @@ def test_resolve_livekit_session_metadata_uses_env_for_local_dev_defaults(
     monkeypatch.setenv("OPENCOUCH_VOICE_USER_ID", "hy")
     monkeypatch.setenv("OPENCOUCH_VOICE_THREAD_ID", "voice-dogfood")
 
-    user_id, thread_id, transcription_language, memory_mode = (
+    user_id, thread_id, transcription_language, assistant_voice, memory_mode = (
         _resolve_livekit_session_metadata(
             job_metadata=None,
             participant_metadata=None,
@@ -855,6 +886,7 @@ def test_resolve_livekit_session_metadata_uses_env_for_local_dev_defaults(
     assert user_id == "hy"
     assert thread_id == "voice-dogfood"
     assert transcription_language == "en"
+    assert assistant_voice == "marin"
     assert memory_mode == MemoryMode.LOCAL
 
 
@@ -866,13 +898,14 @@ def test_resolve_livekit_session_metadata_prefers_metadata_over_env(
     monkeypatch.setenv("OPENCOUCH_VOICE_USER_ID", "hy")
     monkeypatch.setenv("OPENCOUCH_VOICE_THREAD_ID", "voice-dogfood")
 
-    user_id, thread_id, transcription_language, memory_mode = (
+    user_id, thread_id, transcription_language, assistant_voice, memory_mode = (
         _resolve_livekit_session_metadata(
             job_metadata=json.dumps(
                 {
                     "user_id": "browser-user",
                     "thread_id": "thread-from-job",
                     "transcription_language": "es",
+                    "assistant_voice": "sage",
                     "memory_mode": "persistent",
                 }
             ),
@@ -881,6 +914,7 @@ def test_resolve_livekit_session_metadata_prefers_metadata_over_env(
                     "user_id": "participant-user",
                     "thread_id": "thread-from-participant",
                     "transcription_language": "",
+                    "assistant_voice": "verse",
                     "memory_mode": "guest",
                 }
             ),
@@ -890,6 +924,7 @@ def test_resolve_livekit_session_metadata_prefers_metadata_over_env(
     assert user_id == "participant-user"
     assert thread_id == "thread-from-participant"
     assert transcription_language is None
+    assert assistant_voice == "verse"
     assert memory_mode == MemoryMode.INCOGNITO
 
 
@@ -901,7 +936,7 @@ def test_resolve_livekit_session_metadata_ignores_blank_env_values(
     monkeypatch.setenv("OPENCOUCH_VOICE_USER_ID", "   ")
     monkeypatch.setenv("OPENCOUCH_VOICE_THREAD_ID", "")
 
-    user_id, thread_id, transcription_language, memory_mode = (
+    user_id, thread_id, transcription_language, assistant_voice, memory_mode = (
         _resolve_livekit_session_metadata(
             job_metadata=None,
             participant_metadata=None,
@@ -911,6 +946,7 @@ def test_resolve_livekit_session_metadata_ignores_blank_env_values(
     assert user_id == "voice-user"
     assert thread_id.startswith("voice-")
     assert transcription_language == "en"
+    assert assistant_voice == "marin"
     assert memory_mode == MemoryMode.LOCAL
 
 
@@ -989,6 +1025,22 @@ def test_resolve_exercise_keeps_visual_imagery_exercise_out_of_voice_mode() -> N
     assert exercise_type != EXERCISE_LEAVES_ON_STREAM
 
 
+def test_voice_exercise_instructions_remind_user_to_confirm_body_actions() -> None:
+    """Voice exercises should say the agent cannot observe completed actions."""
+
+    exercise_type, steps = _resolve_exercise(
+        "can we do a muscle relaxation technique?",
+        input_modality="voice",
+    )
+
+    instructions = _build_exercise_instructions(exercise_type, steps)
+
+    assert exercise_type == EXERCISE_MUSCLE_RELAXATION
+    assert "You cannot see whether the user has done" in instructions
+    assert "ask them to tell you when they have done it" in instructions
+    assert "Ask the user to tell you when they have done it" in instructions
+
+
 def test_livekit_realtime_session_uses_openai_turn_detection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1000,6 +1052,7 @@ def test_livekit_realtime_session_uses_openai_turn_detection(
     turn_handling = _build_turn_handling()
 
     assert model._opts.turn_detection is None
+    assert model._opts.voice == "marin"
     assert model._opts.input_audio_noise_reduction.type == "near_field"
     assert model._opts.input_audio_transcription.model == "gpt-4o-transcribe"
     assert model._opts.input_audio_transcription.language == "en"
@@ -1020,6 +1073,18 @@ def test_livekit_realtime_session_can_auto_detect_transcription_language(
     model = _build_realtime_model(transcription_language=None)
 
     assert model._opts.input_audio_transcription.language is None
+
+
+def test_livekit_realtime_session_uses_selected_assistant_voice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Realtime sessions should use the browser-selected assistant voice."""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    model = _build_realtime_model(assistant_voice="sage")
+
+    assert model._opts.voice == "sage"
 
 
 def test_build_voice_system_prompt_is_active_without_premature_exercises() -> None:
@@ -1498,6 +1563,89 @@ async def test_start_grounding_exercise_allows_explicit_yes_after_offer(
         ("exercise", "started", "Exercise active"),
         ("exercise", "completed", "Exercise completed"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_start_grounding_exercise_allows_relaxation_choice_after_offer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relaxation-technique choice after an offer should not re-ask consent."""
+
+    async def _fake_grounding_task(**kwargs):
+        assert kwargs["technique"] == "muscle relaxation"
+        return SimpleNamespace(
+            exercise_type=EXERCISE_MUSCLE_RELAXATION,
+            display_name="Muscle relaxation",
+            steps_completed=5,
+            total_steps=5,
+            outcome="completed",
+        )
+
+    monkeypatch.setattr(livekit_agent_module, "GroundingTask", _fake_grounding_task)
+
+    chat_ctx = ChatContext()
+    chat_ctx.add_message(
+        role="assistant",
+        content=(
+            "Would you like me to walk you through a simple muscle relaxation "
+            "technique?"
+        ),
+    )
+    chat_ctx.add_message(role="user", content="Maybe a relaxation technique?")
+    agent = TherapeuticAgent(instructions="test", chat_ctx=chat_ctx)
+    participant = _FakeLocalParticipant()
+    context = SimpleNamespace(
+        userdata=SessionData(),
+        session=_fake_voice_activity_session(participant),
+    )
+
+    result = await agent.start_grounding_exercise(
+        context,
+        technique="muscle relaxation",
+    )
+
+    assert "The user just finished Muscle relaxation" in result
+
+
+@pytest.mark.asyncio
+async def test_start_grounding_exercise_allows_yes_after_muscle_relaxation_offer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare yes should count after a muscle relaxation technique offer."""
+
+    async def _fake_grounding_task(**kwargs):
+        assert kwargs["technique"] == "muscle relaxation"
+        return SimpleNamespace(
+            exercise_type=EXERCISE_MUSCLE_RELAXATION,
+            display_name="Muscle relaxation",
+            steps_completed=5,
+            total_steps=5,
+            outcome="completed",
+        )
+
+    monkeypatch.setattr(livekit_agent_module, "GroundingTask", _fake_grounding_task)
+
+    chat_ctx = ChatContext()
+    chat_ctx.add_message(
+        role="assistant",
+        content=(
+            "Do you feel ready to try a short muscle relaxation technique with me?"
+        ),
+    )
+    chat_ctx.add_message(role="user", content="Yes.")
+    agent = TherapeuticAgent(instructions="test", chat_ctx=chat_ctx)
+    participant = _FakeLocalParticipant()
+    context = SimpleNamespace(
+        userdata=SessionData(),
+        session=_fake_voice_activity_session(participant),
+    )
+
+    result = await agent.start_grounding_exercise(
+        context,
+        technique="muscle relaxation",
+    )
+
+    assert "The user just finished Muscle relaxation" in result
 
 
 def test_console_shutdown_skips_transcript_finalization_by_default(

@@ -349,6 +349,7 @@ Why it's bad: labels the distortion, names the technique, uses clinical framing,
 - confirm the exercise target before diving in
 - explain why this exercise fits the moment in one or two lines
 - guide the user through one step at a time
+- when the step asks the user to do a body, breathing, or imagery action, explicitly tell them to let you know when they have done it
 - check whether the pace still feels workable
 - end with a simple takeaway, a moment of rest, or one small thing to try only if useful
 - if grounding interrupted an earlier task, return to that task once the user is steadier instead of quietly drifting into a new agenda

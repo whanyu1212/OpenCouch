@@ -104,7 +104,8 @@ OPENAI_API_KEY=...
 # GEMINI_API_KEY=...
 # GOOGLE_API_KEY=...
 
-# Local memory persistence backend.
+# Local persistence backend for memory, checkpoints, audit, feedback,
+# active-session state, and LiveKit voice finalization status.
 # The Docker Compose stack defaults to these values automatically.
 OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
@@ -129,30 +130,34 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 Keep real `.env` files local and out of version control.
 
 ### One-command local stack
-Use this for the full local web + voice **development** stack with backend reload, Next.js hot reload, and a Dockerized Postgres memory store:
+Use this for the full local web + voice stack with backend reload, production-mode Next.js, and Dockerized Postgres persistence:
 
 ```bash
 docker compose up --build
 ```
 
 This starts:
-- PostgreSQL + pgvector for memory persistence: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
+- PostgreSQL + pgvector for runtime persistence: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
 - backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
 - LiveKit voice worker: `python -m voice.livekit.agent start`
-- Next.js web UI in dev mode: [localhost:3000](http://localhost:3000)
+- Next.js web UI in production mode: [localhost:3000](http://localhost:3000)
+
+Expect the first run to be slow. Docker needs to pull base images, install backend dependencies, build the production web bundle, and warm the voice worker dependencies. Later runs should be much faster because Docker reuses image layers and dependency caches unless the lockfiles or Dockerfiles change.
 
 The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
 
-For text-only development without LiveKit credentials, start just the API, Postgres, and hot-reload web UI:
+Inside Compose, the API and voice worker default to `OPENCOUCH_PERSISTENCE_BACKEND=postgres`. That routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization status through the shared Postgres service. Outside Compose, SQLite remains the compatibility default unless you export the same Postgres environment variables yourself.
+
+For text-only development without LiveKit credentials, start just the API, Postgres, and production-mode web UI:
 
 ```bash
 docker compose up --build postgres api web
 ```
 
-For production-like web dogfooding, use the `web-prod` profile. This keeps the backend API and Postgres in Compose but runs the web UI with `next build` + `next start`, which is closer to what users feel than `next dev`:
+The Compose web service runs `next build` + `next start`, so frontend source edits require rebuilding the `web` service:
 
 ```bash
-docker compose --profile prod-web up --build postgres api web-prod
+docker compose up --build web
 ```
 
 Stop everything with:
@@ -309,7 +314,7 @@ flowchart TD
         SS ==> CM
     end
 
-    DB[("SQLite .store/<br/>threads • memory • crisis log • feedback")]:::dbNode
+    DB[("Postgres + pgvector<br/>threads • memory • crisis log • feedback • voice status")]:::dbNode
 
     %% Logic Flows
     CLI ==> IN
@@ -431,9 +436,11 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
+- **Postgres-backed Compose runtime** — the one-command stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization through Dockerized Postgres, while SQLite remains a compatibility default outside Compose.
+- **Lean production-mode Compose web** — backend and web Dockerfiles are consolidated, stale dev/prod Dockerfile splits were removed, and the Compose web service now runs `next build` + `next start`; first builds are expected to be slower.
+- **Voice and session UX polish** — Home is now an explicit primary action, setup help lives in a Getting Started dialog, chat session endings show summary actions, voice ending opens an options dialog, and voice sessions expose assistant voice selection with clearer mic warmup states.
 - **Thin nodes, fat services refactor** — memory/session/crisis graph nodes now stay narrowly orchestration-focused while service modules own retrieval, episodic summarization, held-candidate promotion, and deterministic backstops; routing eval harnesses and Docusaurus architecture/state docs were updated to match the refactor, with hybrid routing evals passing for grounded lookup (`14/14`), memory control (`11/11`), and therapeutic routing (`54/54`).
 - **Route-persistent text streaming** — active text replies keep streaming while you move between Chat, Voice, Memory, and State, and Voice start is blocked until the text turn finishes.
-- **One-command local dev stack** — Docker Compose now starts the FastAPI backend, LiveKit voice worker, and Next.js web UI together with bind-mounted source and container-managed dependency caches.
 - **OpenAI hybrid prompt stabilization** — text and LiveKit voice prompts now share tighter safety, support, closing, guided-exercise, and continuity behavior; ambiguous level-1 safety language asks a direct check without premature emergency-resource escalation, and the OpenAI hybrid eval sweep passes across routing, behavior, trajectory, memory, and voice runners.
 - **Session experience refresh** — the web app now has a responsive session setup flow, desktop nav rail, mobile tab bar, session pill controls, refreshed chat/voice surfaces, and a lightweight memory-model diagram for persistent vs incognito sessions.
 - **LiveKit prewarm path** — the voice worker preloads blocking VAD/runtime assets and supports a one-time first-output warmup request from the browser to reduce initial voice-session latency.
@@ -471,7 +478,8 @@ We welcome contributions. Run the relevant checks in [Development & Validation](
 | ✅ **Shipped** | **Guided Exercises** | 13 interactive exercises with multi-turn state tracking |
 | ✅ **Shipped** | **Session Feedback** | End-of-session rating system via UI and CLI |
 | ✅ **Shipped** | **API Layer** | FastAPI REST + WebSocket streaming |
-| ✅ **Dogfood** | **Telegram Gateway** | Direct-message gateway with allow-listing, Markdown rendering, and thread rotation |
+| ✅ **Dogfood** | **Telegram Gateway** | Interim text-first channel with allow-listing, Markdown rendering, and thread rotation; not intended for WebRTC voice |
+| 🧭 **Later** | **iOS App** | Native mobile client for chat and LiveKit voice once the web and backend voice paths are stable |
 | ⏳ **Planned** | **Additional Messaging Channels** | WhatsApp and Discord adapters |
 | ⏳ **Planned** | **Graph Memory** | Graphiti + Neo4j for entity-relationship reasoning |
 | ⏳ **Planned** | **Consolidation** | Background fact merging, dormant marking, and undo support |

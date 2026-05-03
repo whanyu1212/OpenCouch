@@ -73,18 +73,10 @@ CREATE INDEX IF NOT EXISTS idx_memory_last_ref
     ON memory_records(last_referenced_at);
 """
 
-MEMORY_RECORDS_INDEX_EMBEDDING_VECTOR_3072_HNSW_DDL = """
-CREATE INDEX IF NOT EXISTS idx_memory_embedding_vector_3072_hnsw
-    ON memory_records
-    USING hnsw (embedding_vector_3072 vector_cosine_ops)
-    WHERE embedding_vector_3072 IS NOT NULL;
-"""
-
 MEMORY_SCHEMA_DDL: tuple[str, ...] = (
     MEMORY_RECORDS_DDL,
     MEMORY_RECORDS_INDEX_OWNER_KIND_DDL,
     MEMORY_RECORDS_INDEX_LAST_REF_DDL,
-    MEMORY_RECORDS_INDEX_EMBEDDING_VECTOR_3072_HNSW_DDL,
 )
 
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-05-03 — Postgres Compose Runtime + Voice UX Polish
+
+### Local persistence and Compose
+- Moved the recommended local stack to Dockerized Postgres by default through `OPENCOUCH_PERSISTENCE_BACKEND=postgres`, covering memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization status for API/voice worker runs inside Compose
+- Kept SQLite as the compatibility default outside Compose while documenting the Postgres path as the current durable local runtime
+- Removed the unsupported pgvector HNSW index on the 3072-dimension embedding column, which Postgres rejects because HNSW vector indexes are limited below that dimension count; retained the typed vector column and added schema regression coverage
+- Consolidated backend and web Dockerfiles, removed stale dev/prod Dockerfile splits, and switched the Compose web service to production-mode `next build` + `next start`
+- Updated the root README to call out first-run Docker slowness from image pulls, dependency installation, production web build, and voice worker warmup
+
+### Web session UX
+- Added a clearer Home action above Chat, Voice, Memory, and State on desktop and mobile, replacing the less obvious `+ New` affordance
+- Replaced the always-visible setup guidance with a Getting Started dialog that explains persistent vs incognito mode, Chat vs Voice, memory review, State diagnostics, and clean session endings
+- Reworked chat opening prompts into more useful structured starters, removed the unused plus button from the chat composer, and refocused the text input after assistant replies and shortcut errors
+- Changed text session ending to show an inline `Session ended` card with summary details and actions for starting a new session, continuing in the thread, or reviewing memory
+- Removed the unused legacy sidebar component after the app moved fully to the compact conversation shell
+
+### Voice UX and behavior
+- Added selectable LiveKit/OpenAI Realtime assistant voices and plumbed the selected voice through token metadata into the LiveKit worker
+- Kept the microphone closed until the voice session is ready, making warmup/wait states explicit instead of collecting speech while the agent is still starting
+- Changed voice session ending to show an options dialog instead of automatically routing the user to Chat; users can continue in Chat, start a new session, review memory, or stay on Voice
+- Tightened voice exercise behavior so once the user asks for or accepts a technique, the agent starts the first step instead of repeatedly asking for confirmation
+- Updated guided exercise instructions to remind users to tell the agent when they have completed body, breathing, or imagery actions the agent cannot observe
+
+### Validation
+- Web lint and production build passed after the UI cleanup
+- Focused LiveKit voice tests and Postgres memory schema coverage passed during the voice and persistence changes
+- Pre-commit checks passed for the touched documentation/UI files
+
 ## 2026-05-01 — Thin Nodes, Fat Services + Eval/Docs Alignment
 
 ### Backend architecture

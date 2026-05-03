@@ -2332,6 +2332,9 @@ voice = [
     { name = "livekit-agents", extra = ["openai", "silero", "turn-detector"] },
     { name = "torch" },
 ]
+voice-api = [
+    { name = "livekit-api" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2352,6 +2355,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0,<4.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.0,<4.0" },
     { name = "livekit-agents", extras = ["openai", "silero", "turn-detector"], marker = "extra == 'voice'", specifier = "~=1.5" },
+    { name = "livekit-api", marker = "extra == 'voice-api'", specifier = "~=1.0" },
     { name = "openai", specifier = ">=2.0" },
     { name = "opik", specifier = ">=2.0.15" },
     { name = "psycopg", extras = ["pool"], specifier = ">=3.2,<4.0" },
@@ -2363,7 +2367,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'voice'", specifier = ">=2.11.0" },
     { name = "uvicorn", specifier = ">=0.30,<1.0" },
 ]
-provides-extras = ["voice"]
+provides-extras = ["voice-api", "voice"]
 
 [package.metadata.requires-dev]
 dev = [

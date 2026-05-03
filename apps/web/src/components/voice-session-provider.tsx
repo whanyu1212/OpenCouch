@@ -15,7 +15,11 @@ import {
   type VoiceActivityName,
   type VoiceActivityStatus,
 } from "@/lib/session";
-import { getLiveKitVoiceFinalizationStatus } from "@/lib/api";
+import {
+  getLiveKitVoiceFinalizationStatus,
+  getMemorySessions,
+  type MemorySession,
+} from "@/lib/api";
 import {
   createOpenCouchVoiceRoom,
   createOpenCouchVoiceTokenSource,
@@ -78,6 +82,24 @@ function isVoiceFinalizationStale(updatedAt: string | null): boolean {
   }
 
   return Date.now() - timestamp > VOICE_FINALIZATION_STALE_AFTER_MS;
+}
+
+function latestSessionForThread(
+  sessions: MemorySession[],
+  threadId: string
+): MemorySession | null {
+  let latest: MemorySession | null = null;
+
+  for (const session of sessions) {
+    if (session.session_id !== threadId || !session.summary) {
+      continue;
+    }
+    if (!latest || session.ended_at > latest.ended_at) {
+      latest = session;
+    }
+  }
+
+  return latest;
 }
 
 function createVoiceActivityId(): string {
@@ -157,6 +179,7 @@ function VoiceSessionSync({ children }: { children: React.ReactNode }) {
   const userId = useSessionStore((s) => s.userId);
   const threadId = useSessionStore((s) => s.threadId);
   const sessionMode = useSessionStore((s) => s.sessionMode);
+  const assistantVoiceSelected = useSessionStore((s) => s.assistantVoiceSelected);
   const transcriptionLanguageSelected = useSessionStore(
     (s) => s.transcriptionLanguageSelected
   );
@@ -169,6 +192,7 @@ function VoiceSessionSync({ children }: { children: React.ReactNode }) {
   const setVoiceFinalization = useSessionStore((s) => s.setVoiceFinalization);
   const clearVoiceFinalization = useSessionStore((s) => s.clearVoiceFinalization);
   const setVoiceSessionInfo = useSessionStore((s) => s.setVoiceSessionInfo);
+  const setLastEndedSession = useSessionStore((s) => s.setLastEndedSession);
   const voiceSetRefs = useSessionStore((s) => s.voiceSetRefs);
   const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
 
@@ -180,11 +204,13 @@ function VoiceSessionSync({ children }: { children: React.ReactNode }) {
         threadId,
         transcriptionLanguageSelected,
         sessionMode,
+        assistantVoiceSelected,
         (token) => {
           setVoiceSessionInfo({
             roomName: token.room_name,
             identity: token.identity,
             memoryMode: token.memory_mode,
+            assistantVoice: token.assistant_voice,
             serverUrl: token.server_url,
             connectedAt: new Date().toISOString(),
           });
@@ -192,6 +218,7 @@ function VoiceSessionSync({ children }: { children: React.ReactNode }) {
       ),
     [
       sessionMode,
+      assistantVoiceSelected,
       setVoiceSessionInfo,
       threadId,
       transcriptionLanguageSelected,
@@ -381,6 +408,39 @@ function VoiceSessionSync({ children }: { children: React.ReactNode }) {
 
           if (status.status === "completed") {
             bumpMemoryRefreshVersion();
+            try {
+              const sessions = await getMemorySessions(
+                finalizationThreadId,
+                userId || undefined
+              );
+              const savedSession = latestSessionForThread(
+                sessions,
+                finalizationThreadId
+              );
+              setLastEndedSession(
+                savedSession
+                  ? {
+                      threadId: finalizationThreadId,
+                      summary: savedSession.summary,
+                      themes: savedSession.themes,
+                      mood_opened: savedSession.mood_opened,
+                      mood_closed: savedSession.mood_closed,
+                      turn_count: savedSession.turn_count,
+                    }
+                  : {
+                      threadId: finalizationThreadId,
+                      summary: null,
+                      detail: status.detail || "Voice session ended.",
+                    }
+              );
+            } catch {
+              setLastEndedSession({
+                threadId: finalizationThreadId,
+                summary: null,
+                detail:
+                  "Voice session ended, but the saved summary could not be loaded.",
+              });
+            }
           }
 
           if (status.status !== "in_progress") {
@@ -410,8 +470,10 @@ function VoiceSessionSync({ children }: { children: React.ReactNode }) {
   }, [
     bumpMemoryRefreshVersion,
     session.isConnected,
+    setLastEndedSession,
     setVoiceFinalization,
     threadId,
+    userId,
     voiceFinalization.status,
     voiceFinalization.threadId,
     voiceFinalization.updatedAt,

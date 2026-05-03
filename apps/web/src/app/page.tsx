@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   getHistory,
   getMemoryStatus,
@@ -25,9 +26,10 @@ import { SessionPill } from "@/components/conversation-shell";
 const PROMPT_CARDS = [
   {
     id: "checkin",
-    label: "Check in",
-    description: "What feels most worth putting down first today?",
-    prompt: "Hi. What feels most worth putting down first today?",
+    label: "Sort out what happened",
+    description: "Walk me through the situation, what I felt, and what I need next.",
+    prompt:
+      "I want to sort out something that happened. Please help me name the situation, what I felt, what I needed, and what might help next.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
         <path d="M11 20A7 7 0 0 1 4 13c0-7 8-9 16-9 0 8-2 16-9 16z" />
@@ -37,9 +39,10 @@ const PROMPT_CARDS = [
   },
   {
     id: "breath",
-    label: "Breathing exercise",
-    description: "I'm feeling wound up. Can we do a breathing exercise?",
-    prompt: "I'm feeling wound up. Can we do a breathing exercise?",
+    label: "Regulate first",
+    description: "Help me settle my body before we figure out the problem.",
+    prompt:
+      "I feel activated right now. Please help me settle first, then ask a few questions to understand what triggered it.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
         <path d="M3 8h12a3 3 0 1 0-3-3" />
@@ -50,9 +53,10 @@ const PROMPT_CARDS = [
   },
   {
     id: "examine",
-    label: "Examine a thought",
-    description: "I have a thought that keeps pulling at me. Can we look?",
-    prompt: "I have a thought that keeps pulling at me. Can we do a thought record?",
+    label: "Untangle a thought",
+    description: "Help me test a looping worry against what I actually know.",
+    prompt:
+      "A thought keeps looping in my head. Please help me separate facts, assumptions, feelings, and a more balanced way to look at it.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
         <circle cx="12" cy="12" r="9" />
@@ -62,9 +66,10 @@ const PROMPT_CARDS = [
   },
   {
     id: "stuck",
-    label: "I'm stuck",
-    description: "I've been stuck all week and can't make myself do anything.",
-    prompt: "I've been stuck all week and can't make myself do anything. Can we try something small?",
+    label: "Find the next step",
+    description: "Help me turn avoidance into one concrete action I can take.",
+    prompt:
+      "I feel stuck and I am avoiding something. Please help me identify the blocker and choose one concrete next step that is small enough to start.",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
         <circle cx="12" cy="6" r="2" />
@@ -157,22 +162,6 @@ const IconSend = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-const IconPlus = ({ size = 14 }: { size?: number }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M12 5v14M5 12h14" />
-  </svg>
-);
-
 function friendlyThreadName(threadId: string): string {
   if (!threadId) return "thread";
   if (threadId.length <= 24 && !threadId.includes(":")) return threadId;
@@ -184,6 +173,7 @@ function friendlyThreadName(threadId: string): string {
 }
 
 export default function TextChatPage() {
+  const router = useRouter();
   const userId = useSessionStore((s) => s.userId);
   const threadId = useSessionStore((s) => s.threadId);
   const sessionMode = useSessionStore((s) => s.sessionMode);
@@ -206,6 +196,7 @@ export default function TextChatPage() {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const wasLoadingRef = useRef(isLoading);
 
   const [memoryStatus, setMemoryStatus] = useState<MemoryStatus | null>(null);
   const [recentThreads, setRecentThreads] = useState<ThreadSummary[]>([]);
@@ -282,6 +273,17 @@ export default function TextChatPage() {
     });
   }, [messages, stages]);
 
+  useEffect(() => {
+    const wasLoading = wasLoadingRef.current;
+    wasLoadingRef.current = isLoading;
+
+    if (wasLoading && !isLoading) {
+      window.setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
+    }
+  }, [isLoading]);
+
   const sendMessage = useCallback(
     (text?: string) => {
       const msg = (text || input).trim();
@@ -301,6 +303,7 @@ export default function TextChatPage() {
       if (slashCommand) {
         if (slashCommand.kind === "unsupported") {
           addMessage({ role: "assistant", content: slashCommand.message });
+          inputRef.current?.focus();
           return;
         }
 
@@ -312,12 +315,14 @@ export default function TextChatPage() {
                 content: slashCommand.disabledMessage,
               });
             }
+            inputRef.current?.focus();
           })
           .catch(() => {
             addMessage({
               role: "assistant",
               content: "Could not run that shortcut.",
             });
+            inputRef.current?.focus();
           });
         return;
       }
@@ -382,6 +387,22 @@ export default function TextChatPage() {
   const greetingFirstName =
     isPersistent && userId ? userId.split(/[\s_-]/)[0] : null;
 
+  const handleNewSession = useCallback(() => {
+    void startNewSession();
+  }, [startNewSession]);
+
+  const handleContinueInThread = useCallback(() => {
+    clearLastEndedSession();
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
+  }, [clearLastEndedSession]);
+
+  const handleReviewMemory = useCallback(() => {
+    clearLastEndedSession();
+    router.push("/memory");
+  }, [clearLastEndedSession, router]);
+
   return (
     <>
       {/* Desktop top bar — wrapper controls breakpoint visibility */}
@@ -429,15 +450,7 @@ export default function TextChatPage() {
           </span>
           <h2 className="oc-mobile-top-title">Chat</h2>
         </div>
-        <button
-          type="button"
-          className="oc-tab-chip"
-          onClick={() => void startNewSession()}
-          disabled={isBusy}
-          style={{ padding: "4px 8px", fontSize: 9.5 }}
-        >
-          <IconPlus size={11} /> new
-        </button>
+        <SessionPill />
       </header>
       </div>
 
@@ -480,7 +493,10 @@ export default function TextChatPage() {
       )}
 
       {/* Scrollable content */}
-      <div ref={scrollRef} className="oc-chat-scroll">
+      <div
+        ref={scrollRef}
+        className={`oc-chat-scroll${showWelcome ? " oc-chat-scroll--welcome" : ""}`}
+      >
         {showWelcome ? (
           <div
             className="oc-chat-inner oc-chat-inner--narrow animate-fadeIn"
@@ -649,18 +665,15 @@ export default function TextChatPage() {
         <div style={{ width: "100%", maxWidth: 680 }}>
           {isPersistent &&
           lastEndedSession?.threadId === threadId ? (
-            <SessionEndedCard session={lastEndedSession} />
+            <SessionEndedCard
+              session={lastEndedSession}
+              onNewSession={handleNewSession}
+              onContinueInThread={handleContinueInThread}
+              onReviewMemory={handleReviewMemory}
+              newSessionDisabled={isBusy}
+            />
           ) : null}
           <div className="oc-composer">
-            <button
-              type="button"
-              className="oc-composer-attach"
-              title="Attach"
-              aria-label="Attach (not yet supported)"
-              disabled
-            >
-              <IconPlus size={16} />
-            </button>
             <label htmlFor="chat-input" className="sr-only">
               Message
             </label>
@@ -696,8 +709,16 @@ export default function TextChatPage() {
 
 function SessionEndedCard({
   session,
+  onNewSession,
+  onContinueInThread,
+  onReviewMemory,
+  newSessionDisabled,
 }: {
   session: EndedSessionResult;
+  onNewSession: () => void;
+  onContinueInThread: () => void;
+  onReviewMemory: () => void;
+  newSessionDisabled: boolean;
 }) {
   const hasSummary = Boolean(session.summary);
 
@@ -727,6 +748,30 @@ function SessionEndedCard({
           ))}
         </div>
       ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onNewSession}
+          disabled={newSessionDisabled}
+          className="rounded-lg bg-oc-teal-700 px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-oc-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Start new session
+        </button>
+        <button
+          type="button"
+          onClick={onContinueInThread}
+          className="rounded-lg border border-oc-teal-200 bg-white/80 px-3 py-1.5 text-[12px] font-medium text-oc-teal-800 transition-colors hover:bg-white"
+        >
+          Continue in this thread
+        </button>
+        <button
+          type="button"
+          onClick={onReviewMemory}
+          className="rounded-lg border border-oc-teal-200 bg-white/60 px-3 py-1.5 text-[12px] font-medium text-oc-text transition-colors hover:bg-white"
+        >
+          Review memory
+        </button>
+      </div>
     </div>
   );
 }

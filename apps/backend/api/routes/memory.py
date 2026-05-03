@@ -218,6 +218,7 @@ async def list_sessions(
         {
             "index": i + 1,
             "key": r.key,
+            "session_id": r.value.get("session_id", ""),
             "summary": r.value.get("summary", ""),
             "themes": r.value.get("primary_themes", []),
             "mood_opened": (r.value.get("mood_arc") or {}).get("opened", ""),

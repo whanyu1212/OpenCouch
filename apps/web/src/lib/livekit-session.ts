@@ -3,6 +3,7 @@
 import { AudioPresets, Room, TokenSource } from "livekit-client";
 import {
   createLiveKitVoiceToken,
+  type AssistantVoiceOption,
   type LiveKitVoiceTokenResponse,
   type TranscriptionLanguageOption,
   type VoiceMemoryMode,
@@ -31,6 +32,7 @@ export function createOpenCouchVoiceTokenSource(
   threadId: string,
   transcriptionLanguage: TranscriptionLanguageOption,
   memoryMode: VoiceMemoryMode,
+  assistantVoice: AssistantVoiceOption,
   onTokenCreated?: (token: LiveKitVoiceTokenResponse) => void
 ) {
   return TokenSource.custom(async () => {
@@ -38,7 +40,8 @@ export function createOpenCouchVoiceTokenSource(
       userId,
       threadId,
       transcriptionLanguage,
-      memoryMode
+      memoryMode,
+      assistantVoice
     );
     onTokenCreated?.(token);
     return {

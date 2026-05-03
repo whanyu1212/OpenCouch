@@ -74,6 +74,30 @@ SUPPORTED_REALTIME_TRANSCRIPTION_LANGUAGES = (
     "zh",
 )
 
+
+def normalize_assistant_voice(
+    value: str | None,
+    *,
+    default: str = DEFAULT_ASSISTANT_VOICE,
+) -> str:
+    """Return a supported assistant voice name.
+
+    Args:
+        value (str | None): Candidate voice name from client or config.
+        default (str): Fallback voice when ``value`` is blank or unsupported.
+
+    Returns:
+        str: Supported realtime voice name.
+    """
+
+    normalized = (value or "").strip().lower()
+    if normalized in SUPPORTED_REALTIME_VOICES:
+        return normalized
+    if default in SUPPORTED_REALTIME_VOICES:
+        return default
+    return DEFAULT_ASSISTANT_VOICE
+
+
 _MAX_PROMPT_CHARS = 12_000
 _MAX_MEMORY_ITEMS = 6
 _MAX_MEMORY_ITEM_CHARS = 220
@@ -150,6 +174,7 @@ def build_voice_system_prompt(
                 "If the user interrupts or talks over you, yield immediately. Do not try to finish your sentence. Respond to what they said most recently.",
                 "Do not introduce grounding, breathing, or other structured exercises just because the user sounds anxious, overwhelmed, or dysregulated.",
                 "Use structured exercises only when the user explicitly asks for one, clearly agrees after you offer one, or is too activated to continue a normal conversation usefully.",
+                "Once the user asks for a structured exercise or says yes to one you offered, begin the first step instead of asking for confirmation again.",
                 "If you are unsure whether to keep talking or start a structured exercise, keep talking and offer one conversational next step.",
                 "Do not present yourself as a licensed clinician or give medical or legal advice.",
                 "If the user sounds in immediate danger or asks for crisis help, stop the normal conversation and tell them to contact local emergency services or a crisis line immediately. If they are in the US or Canada, tell them they can call or text 988.",
