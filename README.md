@@ -2,7 +2,7 @@
 
 <img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
-**A mental health companion built around three things: memory across sessions, 13 guided exercises, and a crisis gate on every turn.**
+**An experimental chat and voice app for reflection, guided exercises, and continuity across sessions.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
@@ -16,10 +16,10 @@
 
 > [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
-> OpenCouch is a place to think out loud, work through guided exercises, and pick up where you left off. It is not a substitute for professional care.
+> OpenCouch is meant for reflection, guided exercises, and continuity across sessions. It is not a substitute for professional care.
 
 > [!NOTE]
-> **Active Development:** OpenCouch is currently maintained by a solo developer. While stability is a priority, please anticipate occasional breaking changes as the architecture and features evolve. Documentation may lag behind the code at times because the project moves quickly.
+> **Active Development:** OpenCouch is currently maintained by a solo developer. Expect occasional breaking changes while the architecture and features are still settling. Documentation may lag behind the code at times because the project moves quickly.
 
 ---
 
@@ -36,7 +36,7 @@
   - [Telegram Gateway](#telegram-gateway)
   - [Documentation Site](#documentation-site)
 - [🧠 Architecture](#-architecture)
-  - [Supported Surfaces](#supported-surfaces)
+  - [Supported Interfaces](#supported-interfaces)
 - [📁 Project Structure](#-project-structure)
 - [🧪 Development \& Validation](#-development--validation)
   - [Observability](#observability)
@@ -48,21 +48,21 @@
 
 ## 📖 Overview
 
-The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and legacy SQLite fallback. The web UI is Next.js.
+The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. The web UI is built with Next.js.
 
-Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus Opik-first tracing.
+Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing. Local evals and Opik traces are used to catch regressions in the main routing decisions.
 
-Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime powers the low-latency model path. The older direct Realtime harness remains in the backend for experiments.
+Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime handles the speech-to-speech model interaction. The older direct Realtime harness remains in the backend for experiments.
 
-A closed beta is planned.
+The project is still pre-beta; a closed beta is planned.
 
 ## ✨ Key Features
-- Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
-- Crisis gate runs before every response, with an always-on durable audit trail.
-- Local eval runners, plus Opik as the primary trace surface for regression tracking.
-- LiveKit voice in the browser, backed by OpenAI Realtime — configurable voices, transcription hints, interruption handling.
+- Persistent memory across sessions: semantic facts, episodic arcs, and procedural rules.
+- Safety routing before every response, with a durable crisis-audit log.
+- Local eval runners and Opik traces for regression tracking.
+- Browser voice sessions through LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
 - Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.
-- 13 guided exercises with multi-turn state tracking — grounding, breathing, thought work, values reflection, and others.
+- 13 guided exercises with multi-turn state tracking, including grounding, breathing, thought work, and values reflection.
 
 ## Screenshots
 
@@ -111,7 +111,7 @@ OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
 ```
 
-Voice and Telegram are optional surfaces with additional configuration:
+Voice and Telegram need extra configuration:
 
 ```env
 # Web voice via LiveKit + OpenAI Realtime model.
@@ -120,7 +120,7 @@ LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 OPENAI_API_KEY=...
 
-# Telegram dogfood gateway.
+# Telegram gateway.
 OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
 OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
 OPENCOUCH_TELEGRAM_OWNER_ID=alice
@@ -142,7 +142,7 @@ This starts:
 - LiveKit voice worker: `python -m voice.livekit.agent start`
 - Next.js web UI in production mode: [localhost:3000](http://localhost:3000)
 
-Expect the first run to be slow. Docker needs to pull base images, install backend dependencies, build the production web bundle, and warm the voice worker dependencies. Later runs should be much faster because Docker reuses image layers and dependency caches unless the lockfiles or Dockerfiles change.
+The first run can take a while. Docker needs to pull base images, install backend dependencies, build the production web bundle, and warm the voice worker dependencies. Later runs should be much faster because Docker reuses image layers and dependency caches unless the lockfiles or Dockerfiles change.
 
 The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
 
@@ -206,7 +206,7 @@ uv run python -m opencouch_cli --voice
 ```
 
 ### Telegram Gateway
-Run the standalone Telegram dogfood gateway. It does not require the FastAPI server.
+Run the standalone Telegram gateway. It does not require the FastAPI server.
 
 ```bash
 cd apps/backend
@@ -236,15 +236,15 @@ pnpm install && npx docusaurus start --port 3001
 
 ## 🧠 Architecture
 
-Every turn passes through the crisis gate before therapeutic generation. Memory writes happen in two phases: per-turn extraction, then a runtime-coordinated session-end commit for episodic summaries and held candidates.
+Before response generation, each turn runs through safety routing. Memory writes happen in two phases: per-turn extraction, then a runtime-coordinated session-end commit for episodic summaries and held candidates.
 
-### Supported Surfaces
+### Supported Interfaces
 
-- **CLI:** Local text and voice harness for development and dogfooding.
+- **CLI:** Local text and voice harness for development and testing.
 - **Web chat:** Next.js text UI backed by FastAPI REST and WebSocket streaming routes.
 - **Web voice:** LiveKit browser sessions with a LiveKit Agents worker and OpenAI Realtime model.
 - **Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
-- **Backend API:** FastAPI route layer used by the web UI and integration surfaces.
+- **Backend API:** FastAPI route layer used by the web UI and other clients.
 
 ```mermaid
 flowchart TD
@@ -437,19 +437,19 @@ LANGCHAIN_PROJECT=opencouch-dev
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
 
 - **Postgres-backed Compose runtime** — the one-command stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization through Dockerized Postgres, while SQLite remains a compatibility default outside Compose.
-- **Lean production-mode Compose web** — backend and web Dockerfiles are consolidated, stale dev/prod Dockerfile splits were removed, and the Compose web service now runs `next build` + `next start`; first builds are expected to be slower.
-- **Voice and session UX polish** — Home is now an explicit primary action, setup help lives in a Getting Started dialog, chat session endings show summary actions, voice ending opens an options dialog, and voice sessions expose assistant voice selection with clearer mic warmup states.
+- **Lean production-mode Compose web** — backend and web Dockerfiles are consolidated, stale dev/prod Dockerfile splits were removed, and the Compose web service now runs `next build` + `next start`; first builds can take longer.
+- **Voice and session UX updates** — Home is now an explicit primary action, setup help lives in a Getting Started dialog, chat session endings show summary actions, voice ending opens an options dialog, and voice sessions expose assistant voice selection with clearer mic warmup states.
 - **Thin nodes, fat services refactor** — memory/session/crisis graph nodes now stay narrowly orchestration-focused while service modules own retrieval, episodic summarization, held-candidate promotion, and deterministic backstops; routing eval harnesses and Docusaurus architecture/state docs were updated to match the refactor, with hybrid routing evals passing for grounded lookup (`14/14`), memory control (`11/11`), and therapeutic routing (`54/54`).
 - **Route-persistent text streaming** — active text replies keep streaming while you move between Chat, Voice, Memory, and State, and Voice start is blocked until the text turn finishes.
 - **OpenAI hybrid prompt stabilization** — text and LiveKit voice prompts now share tighter safety, support, closing, guided-exercise, and continuity behavior; ambiguous level-1 safety language asks a direct check without premature emergency-resource escalation, and the OpenAI hybrid eval sweep passes across routing, behavior, trajectory, memory, and voice runners.
-- **Session experience refresh** — the web app now has a responsive session setup flow, desktop nav rail, mobile tab bar, session pill controls, refreshed chat/voice surfaces, and a lightweight memory-model diagram for persistent vs incognito sessions.
+- **Session experience refresh** — the web app now has a responsive session setup flow, desktop nav rail, mobile tab bar, session pill controls, refreshed chat and voice pages, and a lightweight memory-model diagram for persistent vs incognito sessions.
 - **LiveKit prewarm path** — the voice worker preloads blocking VAD/runtime assets and supports a one-time first-output warmup request from the browser to reduce initial voice-session latency.
 - **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, streaming, registry, and shared response-generation internals are split into focused modules while preserving compatibility imports.
 - **LLM-primary routing and policy gates** — therapeutic routing, grounded lookup, memory control, memory write policy, exercise continuation, and exercise selection now use LLM classifiers first with deterministic fallbacks.
 - **Guided exercise improvements** — 13 state-tracked exercises share a registry, ambiguous exercise requests can offer options instead of defaulting to grounding, and exercise eval coverage tracks selection, flow, and memory behavior.
 - **Web UI hardening** — Next.js lint/build now run in CI, persisted session setup avoids hydration flashes, REST and WebSocket failures surface in the UI, and LiveKit voice loading is route-aware.
 - **LiveKit voice path** — browser voice sessions use LiveKit token issuance, a LiveKit Agents worker, OpenAI Realtime model backing, transcript/finalization handling, and the existing crisis/memory runtime.
-- **Telegram dogfood gateway** — direct-message support includes allow-listing, `/end`, Markdown-to-HTML rendering, session rotation, startup recovery, lease retry handling, and non-blocking sweeps.
+- **Telegram gateway** — direct-message support includes allow-listing, `/end`, Markdown-to-HTML rendering, session rotation, startup recovery, lease retry handling, and non-blocking sweeps.
 - **Memory and audit cleanup** — memory internals, audit backends, extraction policy, and retrieval quality were reorganized for clearer subsystem boundaries and more stable eval behavior.
 - **Regression coverage** — backend tests and deterministic/hybrid eval runners cover crisis, therapeutic routing, behavior, exercises, long trajectories, memory trajectories, summarization, extraction, and procedural writer checks.
 
@@ -474,7 +474,7 @@ We welcome contributions. Run the relevant checks in [Development & Validation](
 | Status | Component | Initiative |
 |:---|:---|:---|
 | ✅ **Shipped** | **Web Frontend** | Next.js UI with chat, threading, and memory inspection |
-| ✅ **Shipped** | **Voice Chat** | LiveKit voice sessions backed by OpenAI Realtime, crisis gate, and memory |
+| ✅ **Shipped** | **Voice Chat** | LiveKit voice sessions backed by OpenAI Realtime, safety routing, and memory |
 | ✅ **Shipped** | **Guided Exercises** | 13 interactive exercises with multi-turn state tracking |
 | ✅ **Shipped** | **Session Feedback** | End-of-session rating system via UI and CLI |
 | ✅ **Shipped** | **API Layer** | FastAPI REST + WebSocket streaming |

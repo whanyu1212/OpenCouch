@@ -124,10 +124,9 @@ async def run_extract_procedural_rules_node(
         procedural_commit_now_candidates: int = 0,
         procedural_session_end_holds: int = 0,
         procedural_policy_drops: int = 0,
-        procedural_written_items: list[Any] | None = None,
         reason: str = "",
     ) -> dict[str, Any]:
-        """Return a state delta carrying writer diagnostics and approved writes.
+        """Return a state delta carrying writer diagnostics.
 
         Args:
             procedural_writes: Number of procedural rules written.
@@ -135,11 +134,10 @@ async def run_extract_procedural_rules_node(
             procedural_commit_now_candidates: Candidates eligible for immediate write.
             procedural_session_end_holds: Candidates buffered until session end.
             procedural_policy_drops: Candidates rejected by deterministic policy.
-            procedural_written_items: Approved procedural rules written this turn.
             reason: Human-readable writer or skip reason.
 
         Returns:
-            State delta with diagnostics and approved writes.
+            State delta with diagnostics.
         """
 
         return {
@@ -151,8 +149,7 @@ async def run_extract_procedural_rules_node(
                 "procedural_session_end_holds": procedural_session_end_holds,
                 "procedural_policy_drops": procedural_policy_drops,
                 "extract_procedural_reason": reason,
-            },
-            "written_items": list(procedural_written_items or []),
+            }
         }
 
     skip_reason = should_skip_memory_extraction(state)
@@ -225,6 +222,5 @@ async def run_extract_procedural_rules_node(
         procedural_commit_now_candidates=processing.commit_now_candidates,
         procedural_session_end_holds=processing.session_end_holds,
         procedural_policy_drops=processing.policy_drops,
-        procedural_written_items=processing.written_items,
         reason=processing.reason,
     )

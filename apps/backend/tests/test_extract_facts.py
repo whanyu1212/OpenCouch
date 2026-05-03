@@ -293,7 +293,6 @@ class TestExtractFactsNodeUnit:
             "semantic_policy_drops": 0,
             "extract_facts_reason": "skipped: no llm_client",
         }
-        assert delta["written_items"] == []
         assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
