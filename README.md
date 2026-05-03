@@ -2,7 +2,7 @@
 
 <img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
-**An experimental chat and voice app for reflection, guided exercises, and continuity across sessions.**
+**A chat and voice mental health companion that supports your well-being through reflection, guided exercises, and a memory that grows with you.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
@@ -16,7 +16,7 @@
 
 > [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
-> OpenCouch is meant for reflection, guided exercises, and continuity across sessions. It is not a substitute for professional care.
+> OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
 
 > [!NOTE]
 > **Active Development:** OpenCouch is currently maintained by a solo developer. Expect occasional breaking changes while the architecture and features are still settling. Documentation may lag behind the code at times because the project moves quickly.
@@ -48,7 +48,7 @@
 
 ## 📖 Overview
 
-The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. The web UI is built with Next.js.
+OpenCouch bridges conversational AI with structured therapeutic frameworks. Under the hood, the text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. The web UI is built with Next.js.
 
 Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing. Local evals and Opik traces are used to catch regressions in the main routing decisions.
 
@@ -57,12 +57,12 @@ Voice support is experimental and LiveKit-first in the web app. The browser join
 The project is still pre-beta; a closed beta is planned.
 
 ## ✨ Key Features
-- Persistent memory across sessions: semantic facts, episodic arcs, and procedural rules.
-- Safety routing before every response, with a durable crisis-audit log.
-- Local eval runners and Opik traces for regression tracking.
-- Browser voice sessions through LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
-- Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.
-- 13 guided exercises with multi-turn state tracking, including grounding, breathing, thought work, and values reflection.
+- **Persistent Memory:** Retains context across sessions using semantic facts, episodic arcs, and procedural rules.
+- **Safety First:** Built-in safety routing evaluates every turn before responding, backed by a durable crisis-audit log.
+- **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
+- **Voice Support:** Browser voice sessions via LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
+- **Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
+- **Evaluation & Tracing:** Local eval runners and Opik traces for regression tracking.
 
 ## Screenshots
 
@@ -90,7 +90,11 @@ The project is still pre-beta; a closed beta is planned.
 - Provider keys only for real model runs. Deterministic CLI and many local checks can run without external API keys.
 
 ### Environment
+
 OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need at least one configured provider.
+
+<details>
+<summary><b>View Environment Setup Details</b></summary>
 
 For local persistence, the recommended path is the Dockerized Postgres service from `compose.yml`. Backend services default to that stack configuration when `OPENCOUCH_PERSISTENCE_BACKEND` is unset inside Compose.
 
@@ -126,6 +130,8 @@ OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
 OPENCOUCH_TELEGRAM_OWNER_ID=alice
 OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 ```
+
+</details>
 
 Keep real `.env` files local and out of version control.
 
@@ -277,12 +283,19 @@ flowchart TD
         GLG{"grounded_lookup_gate<br/>LLM + hard-yes fallback"}:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
-        TS[["therapeutic_subgraph<br/>7 styles • 7 approaches + none"]]:::safeNode
         MCG ==>|memory control| MC
         MCG ==>|ordinary turn| GLG
         GLG ==>|lookup| GA
         GLG ==>|support| LM
-        LM ==> TS
+    end
+
+    subgraph THERAPY ["Therapeutic Subgraph"]
+        direction TB
+        TD{"therapeutic_dispatch<br/>style + exercise routing"}:::safeNode
+        TR[["therapeutic_response<br/>supportive response styles"]]:::safeNode
+        GE[["guided_exercise_response<br/>state-tracked exercises"]]:::safeNode
+        TD ==>|support| TR
+        TD ==>|exercise| GE
     end
 
     subgraph RISK ["Crisis Branch"]
@@ -295,11 +308,14 @@ flowchart TD
 
     FT{{"finalize_turn<br/>checkpoint reply • set route"}}:::sysNode
 
-    subgraph POST ["Post-response Memory Evaluation"]
+    subgraph POST ["Post-response Memory Side Effects"]
         direction LR
+        MX["memory_extraction<br/>parallel terminal side effects"]:::sysNode
         EF["extract_facts<br/>+ write_policy: commit • hold • drop"]:::sysNode
         EP["extract_procedural<br/>+ write_policy: commit • hold • drop"]:::sysNode
         SB[("session buffer<br/>held semantic • procedural")]:::sysNode
+        MX -.-> EF
+        MX -.-> EP
         EF -.->|hold| SB
         EP -.->|hold| SB
     end
@@ -310,11 +326,10 @@ flowchart TD
         SS(["summarize_session<br/>episodic arc"]):::sysNode
         CM(["commit_session_memory<br/>promote held semantic • procedural"]):::sysNode
         SE ==> SS
-        SE ==> CM
         SS ==> CM
     end
 
-    DB[("Postgres + pgvector<br/>threads • memory • crisis log • feedback • voice status")]:::dbNode
+    DB[("Postgres + pgvector<br/>threads • memory • active sessions • crisis log • feedback • voice status")]:::dbNode
 
     %% Logic Flows
     CLI ==> IN
@@ -327,10 +342,11 @@ flowchart TD
     CG -.->|Risk| RL
     MC ==> FT
     GA ==> FT
-    TS ==> FT
+    LM ==> TD
+    TR ==> FT
+    GE ==> FT
     CL -.-> FT
-    FT -.-> EF
-    FT -.-> EP
+    FT -.-> MX
     EF -.->|immediate writes| DB
     EP -.->|immediate writes| DB
     SB -.->|held candidates| CM
@@ -341,6 +357,7 @@ flowchart TD
     style SURF fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style GATE fill:none,stroke:#EF4444,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style SAFE fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style THERAPY fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style RISK fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style POST fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
     style SESSION fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
