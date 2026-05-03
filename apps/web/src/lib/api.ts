@@ -24,6 +24,23 @@ export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
 
 export type TranscriptionLanguageOption =
   (typeof TRANSCRIPTION_LANGUAGE_OPTIONS)[number]["value"];
+
+export const ASSISTANT_VOICE_OPTIONS = [
+  { value: "marin", label: "marin" },
+  { value: "cedar", label: "cedar" },
+  { value: "sage", label: "sage" },
+  { value: "verse", label: "verse" },
+  { value: "alloy", label: "alloy" },
+  { value: "ash", label: "ash" },
+  { value: "ballad", label: "ballad" },
+  { value: "coral", label: "coral" },
+  { value: "echo", label: "echo" },
+  { value: "shimmer", label: "shimmer" },
+] as const;
+
+export type AssistantVoiceOption =
+  (typeof ASSISTANT_VOICE_OPTIONS)[number]["value"];
+
 export type VoiceMemoryMode = "persistent" | "incognito";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -95,6 +112,7 @@ export interface MemoryFact {
 export interface MemorySession {
   index: number;
   key: string;
+  session_id: string;
   summary: string;
   themes: string[];
   mood_opened: string;
@@ -133,6 +151,7 @@ export interface LiveKitVoiceTokenResponse {
   room_name: string;
   identity: string;
   memory_mode: string;
+  assistant_voice: string;
 }
 
 export interface LiveKitVoiceFinalizationStatusResponse {
@@ -440,7 +459,8 @@ export async function createLiveKitVoiceToken(
   userId: string,
   threadId: string,
   transcriptionLanguage: TranscriptionLanguageOption,
-  memoryMode: VoiceMemoryMode
+  memoryMode: VoiceMemoryMode,
+  assistantVoice: AssistantVoiceOption
 ): Promise<LiveKitVoiceTokenResponse> {
   const res = await fetch(`${API_BASE}/voice/livekit/token`, {
     method: "POST",
@@ -450,6 +470,7 @@ export async function createLiveKitVoiceToken(
       thread_id: threadId,
       transcription_language: transcriptionLanguage,
       memory_mode: memoryMode,
+      assistant_voice: assistantVoice,
       dispatch_agent: true,
     }),
   });

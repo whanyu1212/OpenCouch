@@ -77,8 +77,8 @@ uv run python -m opencouch_cli \\
 
 ### Full mode with persistent memory
 
-Real LLM, SQLite-backed storage. Facts, session arcs, and style rules
-survive restart.
+Real LLM with durable configured storage. Facts, session arcs, and style
+rules survive restart; Postgres is recommended for the local durable path.
 
 <TerminalWindow title="bash — persistent CLI">
 {`cd apps/backend

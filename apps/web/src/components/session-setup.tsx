@@ -23,7 +23,7 @@ export function SessionSetup() {
   const [threadId, setThreadId] = useState(persistedThreadId);
 
   // Keep the form's thread input in sync with the store. When the user
-  // clicks "+ New session" mid-session, newSession() generates a fresh
+  // returns home mid-session, newSession() generates a fresh
   // threadId in the store — without this effect, the form would still
   // hold the previous prefilled value because useState only captures the
   // initial value at mount.
@@ -340,6 +340,8 @@ function Panel({
         setThreadId={setThreadId}
       />
 
+      <GettingStartedGuide />
+
       <p className="mt-6 text-[12.5px] leading-[1.55] text-oc-text-muted md:hidden">
         Choose <strong className="font-medium text-oc-ink-2">Persistent</strong> to let the
         agent remember across sessions, or{" "}
@@ -364,6 +366,193 @@ function Panel({
     </section>
   );
 }
+
+function GettingStartedGuide() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
+  return (
+    <div className="mt-5 border-t border-oc-line-2 pt-5">
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-2 rounded-lg border border-oc-line bg-oc-surface-tint px-3.5 py-2 font-mono text-[10.5px] uppercase tracking-[0.08em] text-oc-primary transition-[background,border-color] hover:border-oc-primary/40 hover:bg-white"
+        >
+          <IconHelp />
+          Getting started
+        </button>
+      </div>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-[rgba(21,32,29,0.34)] px-0 py-0 md:items-center md:px-6 md:py-8"
+          onMouseDown={() => setOpen(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="getting-started-title"
+            className="max-h-[88vh] w-full overflow-hidden rounded-t-[22px] border border-oc-line bg-white shadow-[0_28px_80px_-34px_rgba(21,32,29,0.58)] md:max-w-[700px] md:rounded-[22px]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-oc-line-2 px-5 py-4 md:px-6 md:py-5">
+              <div>
+                <p className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-oc-primary">
+                  OpenCouch
+                </p>
+                <h2
+                  id="getting-started-title"
+                  className="mt-1 font-display text-[24px] font-semibold leading-tight text-oc-ink"
+                >
+                  Getting started
+                </h2>
+                <p className="mt-1 max-w-[560px] text-[13.5px] leading-[1.55] text-oc-muted">
+                  Use this as an operating guide, not a checklist. Start with
+                  the mode and conversation style that fit the moment.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close getting started guide"
+                className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-oc-line bg-white text-oc-muted transition-[color,border-color,background] hover:border-oc-primary/30 hover:bg-oc-surface-tint hover:text-oc-primary"
+              >
+                <IconClose />
+              </button>
+            </div>
+
+            <div className="max-h-[calc(88vh-116px)] overflow-y-auto px-5 py-3 md:px-6 md:py-4">
+              {GETTING_STARTED_SECTIONS.map((section) => (
+                <details
+                  key={section.title}
+                  className="group border-b border-oc-line-2 py-3 last:border-b-0"
+                  open={section.defaultOpen}
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 [&::-webkit-details-marker]:hidden">
+                    <span>
+                      <span className="block font-display text-[17px] font-semibold text-oc-ink">
+                        {section.title}
+                      </span>
+                      <span className="mt-0.5 block text-[12.5px] leading-[1.45] text-oc-muted">
+                        {section.summary}
+                      </span>
+                    </span>
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-oc-surface-tint text-oc-primary transition-transform group-open:rotate-180">
+                      <IconChevronDown />
+                    </span>
+                  </summary>
+                  <div className="mt-3 space-y-2.5 pb-1">
+                    {section.points.map((point) => (
+                      <p
+                        key={point}
+                        className="text-[13px] leading-[1.55] text-oc-ink-2"
+                      >
+                        {point}
+                      </p>
+                    ))}
+                    {section.examples && (
+                      <div className="mt-3 rounded-xl border border-oc-line bg-oc-surface-tint px-3.5 py-3">
+                        <p className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-oc-muted">
+                          Useful openings
+                        </p>
+                        <div className="mt-2 grid gap-2">
+                          {section.examples.map((example) => (
+                            <p
+                              key={example}
+                              className="rounded-lg bg-white px-3 py-2 text-[12.5px] leading-[1.45] text-oc-ink-2"
+                            >
+                              {example}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const GETTING_STARTED_SECTIONS = [
+  {
+    title: "Start with the right mode",
+    summary: "Pick the memory behavior before starting.",
+    defaultOpen: true,
+    points: [
+      "Persistent uses your User ID to load prior memory and save useful session summaries after you end a session.",
+      "Incognito starts fresh, hides the identity fields, and does not save session memory.",
+      "Use the same User ID when you want continuity. Use a new Thread ID when you want a separate conversation under the same memory profile.",
+    ],
+  },
+  {
+    title: "Choose how you want to talk",
+    summary: "Chat and Voice fit different moments.",
+    defaultOpen: true,
+    points: [
+      "Chat is best for careful writing, pasted context, comparing options, or reviewing what was said.",
+      "Voice is best when typing feels hard, you want real-time support, or you want a grounding/check-in style conversation.",
+      "On Voice, choose the spoken voice and transcript language before connecting. Wait until the mic says open before speaking.",
+      "The voice selector changes the spoken voice. For response tone, ask directly for gentler, shorter, slower, or more practical replies.",
+    ],
+  },
+  {
+    title: "Ask for the kind of help you want",
+    summary: "You do not need a perfect opening question.",
+    points: [
+      "Start with what is happening, what you want from the session, and how direct or gentle the reply should be.",
+      "Ask for structure when you need it: name the feeling, sort the problem, slow down, examine a thought, or find one next step.",
+      "If advice feels too fast, say so. The assistant can shift into listening, reflection, or a more practical mode.",
+    ],
+    examples: [
+      "I want help sorting out what I am feeling, without jumping to advice yet.",
+      "Can you help me slow down and think clearly about what happened?",
+      "I want one practical next step, but please keep it gentle.",
+      "I have a thought that keeps pulling at me. Can we examine it?",
+    ],
+  },
+  {
+    title: "Use memory intentionally",
+    summary: "Memory is for durable context, not every detail.",
+    points: [
+      "Persistent mode can save recurring themes, useful preferences, session summaries, and insights that may help future sessions.",
+      "Open Memory to review facts, summaries, and style rules. Delete anything that is wrong or no longer useful.",
+      "Say clearly when something should or should not be remembered. Use Incognito for conversations that should not affect future sessions.",
+    ],
+  },
+  {
+    title: "Move around and finish cleanly",
+    summary: "Navigation should not trap you in one surface.",
+    points: [
+      "Home returns to this setup flow for a new session. Chat, Voice, Memory, and State stay in the primary navigation.",
+      "Memory shows what was saved. State shows current session signals and diagnostics when you want to inspect behavior.",
+      "End session creates a clean stopping point. After the summary finishes, continue in the thread, start a new session, or review memory.",
+    ],
+  },
+] satisfies Array<{
+  title: string;
+  summary: string;
+  defaultOpen?: boolean;
+  points: string[];
+  examples?: string[];
+}>;
 
 /* ── Mode card ──────────────────────────────────────────────────────── */
 
@@ -608,6 +797,63 @@ function IconArrow({ size = 16 }: { size?: number }) {
     >
       <path d="M5 12h14" />
       <path d="M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function IconClose({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
+    </svg>
+  );
+}
+
+function IconChevronDown({ size = 15 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+function IconHelp({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9a2.6 2.6 0 1 1 3.4 2.5c-0.8 0.3-1 0.8-1 1.5" />
+      <path d="M12 17h0.01" />
     </svg>
   );
 }

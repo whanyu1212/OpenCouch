@@ -9,8 +9,8 @@ Concrete backends share the same async protocol:
 
 - ``InMemorySessionFeedbackBackend`` is ephemeral and used by tests and
   incognito runtimes.
-- ``SqliteSessionFeedbackBackend`` persists records for local/synced
-  runtimes.
+- ``SqliteSessionFeedbackBackend`` is the legacy SQLite fallback for local
+  development and migration compatibility.
 - ``NullSessionFeedbackBackend`` is reserved for explicit test fixtures.
 """
 

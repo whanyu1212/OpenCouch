@@ -16,6 +16,11 @@ from typing import Any, Literal
 import pytest
 from pydantic import BaseModel, Field
 
+pytest.importorskip(
+    "livekit.agents",
+    reason="LiveKit behavior tests require the optional voice extra.",
+)
+
 from livekit.agents import AgentSession
 from livekit.agents.llm import (
     ChatChunk,

@@ -21,15 +21,19 @@ from agent.active_session_manager import (
     PersistedActiveSessionRow,
     PersistedActiveSessionState,
 )
+from agent.active_session_store import PostgresActiveSessionStore
+from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.memory.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
+from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.audit.session_feedback import (
     InMemorySessionFeedbackBackend,
     SessionFeedbackBackend,
 )
-from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.audit.legacy.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.legacy.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import (
@@ -40,7 +44,8 @@ from agent.memory.embeddings import (
 from agent.audit.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.postgres_store import PostgresMemoryStore
+from agent.memory.legacy.sqlite_store import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
     AgentInput,
@@ -61,6 +66,7 @@ from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_no
 from agent.nodes.summarize_session import run_summarize_session
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
@@ -212,6 +218,14 @@ class PersistentAgentRuntime:
         crisis_log_backend: CrisisLogBackend | None = None,
         session_feedback_backend: SessionFeedbackBackend | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
+        memory_backend: Literal["sqlite", "postgres"] = "sqlite",
+        memory_database_url: str | None = None,
+        thread_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        thread_database_url: str | None = None,
+        crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        crisis_log_database_url: str | None = None,
+        session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        session_feedback_database_url: str | None = None,
         memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
         crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
         feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH,
@@ -231,6 +245,21 @@ class PersistentAgentRuntime:
             crisis_log_backend: Optional explicit crisis-log override.
             session_feedback_backend: Optional explicit feedback-backend override.
             memory_mode: Persistence tier for the runtime.
+            memory_backend: Memory-store backend to use for persistent modes.
+            memory_database_url: PostgreSQL connection string used when
+                ``memory_backend`` is ``"postgres"``.
+            thread_persistence_backend: Checkpointer backend to use for
+                persistent modes.
+            thread_database_url: PostgreSQL connection string used when
+                ``thread_persistence_backend`` is ``"postgres"``.
+            crisis_log_persistence_backend: Crisis-log backend to use for
+                persistent modes.
+            crisis_log_database_url: PostgreSQL connection string used when
+                ``crisis_log_persistence_backend`` is ``"postgres"``.
+            session_feedback_persistence_backend: Session-feedback backend to use
+                for persistent modes.
+            session_feedback_database_url: PostgreSQL connection string used when
+                ``session_feedback_persistence_backend`` is ``"postgres"``.
             memory_sqlite_path: SQLite path for the default memory store.
             crisis_log_sqlite_path: SQLite path for the default crisis log.
             feedback_sqlite_path: SQLite path for the default feedback store.
@@ -254,8 +283,18 @@ class PersistentAgentRuntime:
             Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
         )
 
-        self._saver_cm: AbstractAsyncContextManager[AsyncSqliteSaver] | None = None
-        self._checkpointer: AsyncSqliteSaver | None = None
+        self._thread_persistence_backend = (
+            "sqlite" if is_incognito else thread_persistence_backend
+        )
+        self._thread_database_url = thread_database_url
+        if self._thread_persistence_backend == "postgres" and not thread_database_url:
+            raise ValueError(
+                "thread_database_url is required when "
+                "thread_persistence_backend='postgres'"
+            )
+
+        self._saver_cm: AbstractAsyncContextManager[Any] | None = None
+        self._checkpointer: AsyncSqliteSaver | AsyncPostgresSaver | None = None
         self._graph: AgentWorkflow | None = None
         self._default_llm_client = default_llm_client
         self._session_timeout = session_timeout
@@ -272,6 +311,12 @@ class PersistentAgentRuntime:
             self._memory_store = memory_store
         elif is_incognito:
             self._memory_store = OpenCouchMemoryStore()
+        elif memory_backend == "postgres":
+            if not memory_database_url:
+                raise ValueError(
+                    "memory_database_url is required when memory_backend='postgres'"
+                )
+            self._memory_store = PostgresMemoryStore(memory_database_url)
         else:
             self._memory_store = SqliteMemoryStore(memory_sqlite_path)
 
@@ -279,6 +324,13 @@ class PersistentAgentRuntime:
             self._crisis_log_backend = crisis_log_backend
         elif is_incognito:
             self._crisis_log_backend = InMemoryCrisisLogBackend()
+        elif crisis_log_persistence_backend == "postgres":
+            if not crisis_log_database_url:
+                raise ValueError(
+                    "crisis_log_database_url is required when "
+                    "crisis_log_persistence_backend='postgres'"
+                )
+            self._crisis_log_backend = PostgresCrisisLogBackend(crisis_log_database_url)
         else:
             self._crisis_log_backend = SqliteCrisisLogBackend(crisis_log_sqlite_path)
 
@@ -286,6 +338,15 @@ class PersistentAgentRuntime:
             self._session_feedback_backend = session_feedback_backend
         elif is_incognito:
             self._session_feedback_backend = InMemorySessionFeedbackBackend()
+        elif session_feedback_persistence_backend == "postgres":
+            if not session_feedback_database_url:
+                raise ValueError(
+                    "session_feedback_database_url is required when "
+                    "session_feedback_persistence_backend='postgres'"
+                )
+            self._session_feedback_backend = PostgresSessionFeedbackBackend(
+                session_feedback_database_url
+            )
         else:
             self._session_feedback_backend = SqliteSessionFeedbackBackend(
                 feedback_sqlite_path,
@@ -303,8 +364,16 @@ class PersistentAgentRuntime:
         self._max_crisis_levels: dict[str, int] = {}
         self._session_memory_buffers: dict[str, SessionMemoryBuffer] = {}
         self._session_transcript_starts: dict[str, int] = {}
+        if self._thread_persistence_backend == "postgres":
+            self._active_session_store = PostgresActiveSessionStore(
+                checkpointer_getter=self._ensure_postgres_open
+            )
+        else:
+            self._active_session_store = SqliteActiveSessionStore(
+                checkpointer_getter=self._ensure_sqlite_open
+            )
         self._active_session_manager = ActiveSessionManager(
-            checkpointer_getter=self._ensure_open,
+            store=self._active_session_store,
             memory_mode=self.memory_mode,
             session_timeout=self._session_timeout,
         )
@@ -316,11 +385,19 @@ class PersistentAgentRuntime:
             The initialized runtime instance.
         """
 
-        if self.sqlite_path != Path(":memory:"):
+        if self._thread_persistence_backend == "sqlite" and self.sqlite_path != Path(
+            ":memory:"
+        ):
             self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
         serde = JsonPlusSerializer(allowed_msgpack_modules=ALLOWED_MSGPACK_MODULES)
-        self._saver_cm = AsyncSqliteSaver.from_conn_string(str(self.sqlite_path))
+        if self._thread_persistence_backend == "postgres":
+            self._saver_cm = AsyncPostgresSaver.from_conn_string(
+                cast(str, self._thread_database_url),
+                serde=serde,
+            )
+        else:
+            self._saver_cm = AsyncSqliteSaver.from_conn_string(str(self.sqlite_path))
         self._checkpointer = await self._saver_cm.__aenter__()
         self._checkpointer.serde = serde
         await self._ensure_runtime_schema()
@@ -352,11 +429,11 @@ class PersistentAgentRuntime:
         if self._saver_cm is not None:
             await self._saver_cm.__aexit__(exc_type, exc, tb)
 
-    def _ensure_open(self) -> AsyncSqliteSaver:
+    def _ensure_open(self) -> AsyncSqliteSaver | AsyncPostgresSaver:
         """Raise when the runtime is used outside its async context.
 
         Returns:
-            The active SQLite checkpointer.
+            The active runtime checkpointer.
 
         Raises:
             RuntimeError: If the runtime has not been entered yet.
@@ -367,6 +444,36 @@ class PersistentAgentRuntime:
                 "PersistentAgentRuntime must be used inside 'async with'."
             )
         return self._checkpointer
+
+    def _ensure_sqlite_open(self) -> AsyncSqliteSaver:
+        """Return the active SQLite checkpointer.
+
+        Returns:
+            AsyncSqliteSaver: The active SQLite checkpointer.
+
+        Raises:
+            RuntimeError: If the runtime is not using the SQLite checkpointer.
+        """
+
+        checkpointer = self._ensure_open()
+        if not isinstance(checkpointer, AsyncSqliteSaver):
+            raise RuntimeError("PersistentAgentRuntime is not using SQLite threads.")
+        return checkpointer
+
+    def _ensure_postgres_open(self) -> AsyncPostgresSaver:
+        """Return the active Postgres checkpointer.
+
+        Returns:
+            AsyncPostgresSaver: The active Postgres checkpointer.
+
+        Raises:
+            RuntimeError: If the runtime is not using the Postgres checkpointer.
+        """
+
+        checkpointer = self._ensure_open()
+        if not isinstance(checkpointer, AsyncPostgresSaver):
+            raise RuntimeError("PersistentAgentRuntime is not using Postgres threads.")
+        return checkpointer
 
     async def _ensure_runtime_schema(self) -> None:
         """Create runtime-owned tables.
@@ -1416,7 +1523,7 @@ class PersistentAgentRuntime:
             self._clear_runtime_session_tracking(thread_id)
 
     async def list_threads(self, *, limit: int = 20) -> list[ThreadSummary]:
-        """List the most recent persisted threads in SQLite.
+        """List the most recent persisted threads.
 
         Args:
             limit: The maximum number of threads to return.
@@ -1429,21 +1536,17 @@ class PersistentAgentRuntime:
         await checkpointer.setup()
 
         thread_ids: list[str] = []
-        async with (
-            checkpointer.lock,
-            checkpointer.conn.execute(
-                """
-            SELECT thread_id
-            FROM checkpoints
-            GROUP BY thread_id
-            ORDER BY MAX(rowid) DESC
-            LIMIT ?
-            """,
-                (limit,),
-            ) as cursor,
+        seen_thread_ids: set[str] = set()
+        async for checkpoint_tuple in checkpointer.alist(
+            None, limit=max(limit * 5, limit)
         ):
-            async for row in cursor:
-                thread_ids.append(row[0])
+            thread_id = str(checkpoint_tuple.config["configurable"]["thread_id"])
+            if thread_id in seen_thread_ids:
+                continue
+            seen_thread_ids.add(thread_id)
+            thread_ids.append(thread_id)
+            if len(thread_ids) >= limit:
+                break
 
         summaries: list[ThreadSummary] = []
         for thread_id in thread_ids:

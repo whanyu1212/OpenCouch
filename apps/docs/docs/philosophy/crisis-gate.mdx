@@ -106,7 +106,8 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | `agent/nodes/crisis_log.py` | Always-on audit record writer (graph node) |
 | `agent/safety/crisis_rules.py` | Pattern tuples — imminent / clear-self-harm / ambiguous / distress / idiomatic-safe / safety-denial — and `detect_crisis_override` |
 | `agent/audit/crisis_log.py` | Backend protocol + in-memory + null implementations |
-| `agent/audit/sqlite_crisis_log.py` | SQLite backend with 90-day retention |
+| `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
+| `agent/audit/legacy/sqlite_crisis_log.py` | Legacy SQLite fallback with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
 | `agent/tools/web_search.py` | `find_local_crisis_resources` (called by `crisis_resource_lookup_node`) |
 | `eval/runners/crisis_gate_eval.py` | Deterministic eval runner |

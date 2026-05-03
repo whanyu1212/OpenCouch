@@ -16,7 +16,7 @@ const HELP_TEXT = [
   "",
   "/help - show this list",
   "/end - end the current persistent session",
-  "/new - start a new session",
+  "/new - return home for a new session",
   "/threads - browse previous sessions",
   "/memory - open memory",
   "/memory recall on - enable proactive recall",

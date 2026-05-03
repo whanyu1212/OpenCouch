@@ -4,33 +4,15 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
 from uuid import uuid4
 
+from agent.active_session_store import ActiveSessionStore
 from agent.memory.candidates import SessionMemoryBuffer
 from agent.memory.modes import MemoryMode
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-ACTIVE_SESSION_STATE_DDL = """
-CREATE TABLE IF NOT EXISTS opencouch_active_sessions (
-    thread_id TEXT PRIMARY KEY,
-    payload_json TEXT NOT NULL,
-    mutation_token TEXT,
-    mutation_kind TEXT,
-    rotate_after_this_turn INTEGER NOT NULL DEFAULT 0,
-    finalize_required_reason TEXT
-);
-"""
-ACTIVE_SESSION_EXTRA_COLUMNS = {
-    "mutation_token": "TEXT",
-    "mutation_kind": "TEXT",
-    "rotate_after_this_turn": "INTEGER NOT NULL DEFAULT 0",
-    "finalize_required_reason": "TEXT",
-}
 
 
 @dataclass(slots=True)
@@ -124,19 +106,19 @@ class ActiveSessionManager:
     def __init__(
         self,
         *,
-        checkpointer_getter: Callable[[], AsyncSqliteSaver],
+        store: ActiveSessionStore,
         memory_mode: MemoryMode,
         session_timeout: timedelta,
     ) -> None:
         """Initialize the active-session manager.
 
         Args:
-            checkpointer_getter: Callback returning the open runtime checkpointer.
+            store: Persistence store for active-session rows.
             memory_mode: Persistence tier for the runtime.
             session_timeout: Inactivity window before an active session expires.
         """
 
-        self._checkpointer_getter = checkpointer_getter
+        self._store = store
         self._memory_mode = memory_mode
         self._session_timeout = session_timeout
         self._active_mutation_tokens: set[str] = set()
@@ -152,22 +134,7 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(ACTIVE_SESSION_STATE_DDL)
-            async with checkpointer.conn.execute(
-                "PRAGMA table_info(opencouch_active_sessions)"
-            ) as cursor:
-                rows = await cursor.fetchall()
-            present_columns = {str(row[1]) for row in rows}
-            for column_name, column_ddl in ACTIVE_SESSION_EXTRA_COLUMNS.items():
-                if column_name in present_columns:
-                    continue
-                await checkpointer.conn.execute(
-                    "ALTER TABLE opencouch_active_sessions "
-                    f"ADD COLUMN {column_name} {column_ddl}"
-                )
-            await checkpointer.conn.commit()
+        await self._store.ensure_schema()
 
     def new_mutation_token(self) -> str:
         """Return a process-scoped mutation token.
@@ -238,30 +205,15 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return None
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.execute(
-                """
-                SELECT
-                    payload_json,
-                    mutation_token,
-                    mutation_kind,
-                    rotate_after_this_turn,
-                    finalize_required_reason
-                FROM opencouch_active_sessions
-                WHERE thread_id = ?
-                """,
-                (thread_id,),
-            ) as cursor:
-                row = await cursor.fetchone()
+        row = await self._store.load_row(thread_id)
         if row is None:
             return None
         return PersistedActiveSessionRow(
-            payload_json=str(row[0]),
-            mutation_token=str(row[1]) if row[1] is not None else None,
-            mutation_kind=str(row[2]) if row[2] is not None else None,
-            rotate_after_this_turn=bool(row[3]),
-            finalize_required_reason=str(row[4]) if row[4] is not None else None,
+            payload_json=row[0],
+            mutation_token=row[1],
+            mutation_kind=row[2],
+            rotate_after_this_turn=row[3],
+            finalize_required_reason=row[4],
         )
 
     async def load_persisted_active_session(
@@ -295,17 +247,7 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return []
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.execute(
-                """
-                SELECT thread_id
-                FROM opencouch_active_sessions
-                ORDER BY thread_id
-                """
-            ) as cursor:
-                rows = await cursor.fetchall()
-        return [str(row[0]) for row in rows]
+        return await self._store.list_ids()
 
     async def save_persisted_active_session(
         self,
@@ -323,19 +265,7 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return
 
-        checkpointer = self._checkpointer_getter()
-        payload_json = session.to_json()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                INSERT INTO opencouch_active_sessions(thread_id, payload_json)
-                VALUES(?, ?)
-                ON CONFLICT(thread_id) DO UPDATE SET
-                    payload_json = excluded.payload_json
-                """,
-                (session.thread_id, payload_json),
-            )
-            await checkpointer.conn.commit()
+        await self._store.save_payload(session.thread_id, session.to_json())
 
     async def set_active_session_mutation(
         self,
@@ -360,32 +290,12 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return
 
-        checkpointer = self._checkpointer_getter()
-        if finalize_required_reason is None:
-            sql = """
-                UPDATE opencouch_active_sessions
-                SET mutation_token = ?, mutation_kind = ?
-                WHERE thread_id = ?
-                """
-            params: tuple[Any, ...] = (mutation_token, mutation_kind, thread_id)
-        else:
-            sql = """
-                UPDATE opencouch_active_sessions
-                SET
-                    mutation_token = ?,
-                    mutation_kind = ?,
-                    finalize_required_reason = ?
-                WHERE thread_id = ?
-                """
-            params = (
-                mutation_token,
-                mutation_kind,
-                finalize_required_reason,
-                thread_id,
-            )
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(sql, params)
-            await checkpointer.conn.commit()
+        await self._store.set_mutation(
+            thread_id,
+            mutation_token=mutation_token,
+            mutation_kind=mutation_kind,
+            finalize_required_reason=finalize_required_reason,
+        )
 
     async def clear_active_session_mutation(
         self,
@@ -405,17 +315,7 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                UPDATE opencouch_active_sessions
-                SET mutation_token = NULL, mutation_kind = NULL
-                WHERE thread_id = ? AND mutation_token = ?
-                """,
-                (thread_id, mutation_token),
-            )
-            await checkpointer.conn.commit()
+        await self._store.clear_mutation(thread_id, mutation_token)
 
     async def set_active_session_rotation_required(self, thread_id: str) -> None:
         """Mark a persisted active session for channel-level rotation.
@@ -430,17 +330,7 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                UPDATE opencouch_active_sessions
-                SET rotate_after_this_turn = 1
-                WHERE thread_id = ?
-                """,
-                (thread_id,),
-            )
-            await checkpointer.conn.commit()
+        await self._store.set_rotation_required(thread_id)
 
     async def delete_persisted_active_session(self, thread_id: str) -> None:
         """Delete the persisted active-session record for a thread.
@@ -455,16 +345,7 @@ class ActiveSessionManager:
         if self._memory_mode == MemoryMode.INCOGNITO:
             return
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            await checkpointer.conn.execute(
-                """
-                DELETE FROM opencouch_active_sessions
-                WHERE thread_id = ?
-                """,
-                (thread_id,),
-            )
-            await checkpointer.conn.commit()
+        await self._store.delete_session(thread_id)
 
     def session_has_expired(self, session: PersistedActiveSessionState) -> bool:
         """Return whether an active session crossed the inactivity timeout.

@@ -74,11 +74,13 @@ user. Enable it with:
 OPENCOUCH_TELEGRAM_THREAD_ROTATION_ENABLED=true
 ```
 
-When rotation is enabled, the gateway stores Telegram session rows in
-`apps/backend/.store/telegram_sessions.sqlite3` by default. It keeps
-an active pointer per chat, finalizes old sessions, recovers startup
-orphan rows, and reclaims closed thread checkpoints after a grace
-period.
+When rotation is enabled, the gateway currently stores Telegram
+session rows in `apps/backend/.store/telegram_sessions.sqlite3` by
+default. This registry is still a separate SQLite surface even though
+the core runtime persistence stack now supports local Postgres end to
+end. It keeps an active pointer per chat, finalizes old sessions,
+recovers startup orphan rows, and reclaims closed thread checkpoints
+after a grace period.
 
 Related knobs:
 

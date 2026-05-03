@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   useAgent,
   useAudioPlayback,
@@ -8,25 +9,23 @@ import {
 } from "@livekit/components-react";
 import { ConnectionState } from "livekit-client";
 import {
+  ASSISTANT_VOICE_OPTIONS,
   TRANSCRIPTION_LANGUAGE_OPTIONS,
+  type AssistantVoiceOption,
   type TranscriptionLanguageOption,
 } from "@/lib/api";
-import { useSessionStore } from "@/lib/session";
+import { useCommandActions } from "@/lib/command-actions";
+import { useSessionStore, type EndedSessionResult } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
 import { SessionPill } from "@/components/conversation-shell";
 
-// `preConnectBuffer: true` lets the mic capture speech locally while the
-// LiveKit worker is still cold-starting the agent. The buffer is forwarded
-// to the agent over the `lk.agent.pre-connect-audio-buffer` byte stream
-// once it joins, removing the "click connect, then dead air" gap on the
-// first turn.
+// Keep the mic closed until the agent and voice output path are ready. This
+// avoids collecting speech during worker cold starts, when the user would not
+// yet hear confirmation that the session is listening.
 const VOICE_SESSION_START_OPTIONS = {
   tracks: {
     microphone: {
-      enabled: true,
-      publishOptions: {
-        preConnectBuffer: true,
-      },
+      enabled: false,
     },
   },
 } as const;
@@ -36,6 +35,7 @@ const VOICE_OUTPUT_WARMUP_TOPIC = "opencouch.voice_output_warmup";
 const VOICE_OUTPUT_WARMUP_TIMEOUT_MS = 6_000;
 
 type VoiceOutputWarmupStatus = "idle" | "requested" | "speaking" | "done";
+type VoiceEndOptionsStatus = "idle" | "in_progress" | "completed" | "failed";
 
 function formatVoiceTimestamp(value: string | null | undefined): string {
   if (!value) {
@@ -80,6 +80,11 @@ function languageLabel(value: string): string {
   return match?.label ?? "auto detect";
 }
 
+function assistantVoiceLabel(value: string): string {
+  const match = ASSISTANT_VOICE_OPTIONS.find((option) => option.value === value);
+  return match?.label ?? (value || "default");
+}
+
 function VoiceDebugRow({
   label,
   value,
@@ -98,6 +103,158 @@ function VoiceDebugRow({
       <p className="mt-1 break-words text-[12px] font-mono text-oc-text-secondary">
         {displayValue}
       </p>
+    </div>
+  );
+}
+
+function VoiceEndOptionsDialog({
+  finalizationStatus,
+  detail,
+  endedSession,
+  isPersistent,
+  onContinueInChat,
+  onReviewMemory,
+  onStartNewSession,
+  onStayOnVoice,
+}: {
+  finalizationStatus: VoiceEndOptionsStatus;
+  detail: string | null;
+  endedSession: EndedSessionResult | null;
+  isPersistent: boolean;
+  onContinueInChat: () => void;
+  onReviewMemory: () => void;
+  onStartNewSession: () => void;
+  onStayOnVoice: () => void;
+}) {
+  const hasSummary = Boolean(endedSession?.summary);
+  const reviewDisabled = !isPersistent || finalizationStatus === "in_progress";
+  const statusCopy = (() => {
+    if (!isPersistent) {
+      return "This was an incognito voice session, so no memory will be saved.";
+    }
+    if (finalizationStatus === "in_progress") {
+      return "Session memory is saving in the background. You can move around while it finishes.";
+    }
+    if (finalizationStatus === "completed") {
+      return hasSummary
+        ? "The session summary is ready."
+        : detail || "The voice session has finished saving.";
+    }
+    if (finalizationStatus === "failed") {
+      return (
+        detail ||
+        "The voice session ended, but memory saving did not finish cleanly."
+      );
+    }
+    return "The voice session has ended.";
+  })();
+
+  return (
+    <div
+      className="fixed inset-0 z-[85] flex items-end justify-center bg-[rgba(21,32,29,0.36)] px-0 py-0 md:items-center md:px-6 md:py-8"
+      role="presentation"
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="voice-ended-title"
+        className="w-full max-w-[560px] rounded-t-[22px] border border-oc-line bg-white shadow-[0_28px_80px_-34px_rgba(21,32,29,0.58)] md:rounded-[22px]"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-oc-line-2 px-5 py-4 md:px-6 md:py-5">
+          <div>
+            <p className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-oc-primary">
+              Voice session
+            </p>
+            <h2
+              id="voice-ended-title"
+              className="mt-1 font-display text-[24px] font-semibold leading-tight text-oc-ink"
+            >
+              Session ended
+            </h2>
+            <p className="mt-1 text-[13.5px] leading-[1.55] text-oc-muted">
+              {statusCopy}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onStayOnVoice}
+            aria-label="Close voice session options"
+            className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-oc-line bg-white text-oc-muted transition-[color,border-color,background] hover:border-oc-primary/30 hover:bg-oc-surface-tint hover:text-oc-primary"
+          >
+            x
+          </button>
+        </div>
+
+        <div className="px-5 py-4 md:px-6 md:py-5">
+          {hasSummary && (
+            <div className="mb-4 rounded-xl border border-oc-teal-200 bg-oc-teal-50/70 px-4 py-3">
+              <p className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-oc-teal-700">
+                Summary
+              </p>
+              <p className="mt-2 text-[13px] leading-relaxed text-oc-text">
+                {endedSession?.summary}
+              </p>
+              {endedSession?.themes && endedSession.themes.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {endedSession.themes.map((theme) => (
+                    <span
+                      key={theme}
+                      className="rounded-md border border-oc-teal-200/70 bg-white/70 px-2 py-0.5 text-[11px] font-mono text-oc-teal-700"
+                    >
+                      {theme}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid gap-2">
+            <button
+              type="button"
+              onClick={onContinueInChat}
+              className="rounded-xl bg-oc-primary px-4 py-3 text-left text-[14px] font-medium text-[#F6F1E5] transition-colors hover:bg-oc-primary-2"
+            >
+              Continue in chat
+              <span className="mt-0.5 block text-[12px] font-normal opacity-80">
+                Return to text without starting over.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onStartNewSession}
+              className="rounded-xl border border-oc-line bg-white px-4 py-3 text-left text-[14px] font-medium text-oc-ink transition-colors hover:bg-oc-surface-tint"
+            >
+              Start a new session
+              <span className="mt-0.5 block text-[12px] font-normal text-oc-muted">
+                Go home and choose mode, user, and thread again.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onReviewMemory}
+              disabled={reviewDisabled}
+              className="rounded-xl border border-oc-line bg-white px-4 py-3 text-left text-[14px] font-medium text-oc-ink transition-colors hover:bg-oc-surface-tint disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Review memory
+              <span className="mt-0.5 block text-[12px] font-normal text-oc-muted">
+                {!isPersistent
+                  ? "Not available for incognito sessions."
+                  : finalizationStatus === "in_progress"
+                    ? "Available after memory saving finishes."
+                    : "Open saved facts, summaries, and style rules."}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onStayOnVoice}
+              className="rounded-xl border border-transparent px-4 py-2.5 text-center text-[13px] font-medium text-oc-muted transition-colors hover:bg-oc-surface-tint hover:text-oc-primary"
+            >
+              Stay on Voice
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -123,13 +280,17 @@ const IconMic = ({ size = 16 }: { size?: number }) => (
 function VoiceOrb({
   size = 280,
   active = false,
+  waiting = false,
 }: {
   size?: number;
   active?: boolean;
+  waiting?: boolean;
 }) {
   return (
     <div
-      className={`oc-orb-wrap${active ? " oc-orb-active" : ""}`}
+      className={`oc-orb-wrap${active ? " oc-orb-active" : ""}${
+        waiting ? " oc-orb-waiting" : ""
+      }`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
@@ -160,14 +321,23 @@ export default function VoicePage() {
   const transcriptionLanguageSelected = useSessionStore(
     (s) => s.transcriptionLanguageSelected
   );
+  const assistantVoiceSelected = useSessionStore(
+    (s) => s.assistantVoiceSelected
+  );
   const voiceTranscripts = useSessionStore((s) => s.voiceTranscripts);
   const voiceActivities = useSessionStore((s) => s.voiceActivities);
   const voiceFinalization = useSessionStore((s) => s.voiceFinalization);
   const voiceSessionInfo = useSessionStore((s) => s.voiceSessionInfo);
+  const lastEndedSession = useSessionStore((s) => s.lastEndedSession);
+  const clearLastEndedSession = useSessionStore((s) => s.clearLastEndedSession);
   const voiceError = useSessionStore((s) => s.voiceError);
   const setVoiceError = useSessionStore((s) => s.setVoiceError);
+  const setChatNotice = useSessionStore((s) => s.setChatNotice);
   const setTranscriptionLanguageSelected = useSessionStore(
     (s) => s.setTranscriptionLanguageSelected
+  );
+  const setAssistantVoiceSelected = useSessionStore(
+    (s) => s.setAssistantVoiceSelected
   );
   const clearVoiceTranscripts = useSessionStore((s) => s.clearVoiceTranscripts);
   const clearVoiceActivities = useSessionStore((s) => s.clearVoiceActivities);
@@ -175,10 +345,15 @@ export default function VoicePage() {
   const session = useSessionContext();
   const agent = useAgent();
   const { canPlayAudio, startAudio } = useAudioPlayback(session.room);
+  const { startNewSession } = useCommandActions();
+  const router = useRouter();
   const [voiceOutputWarmupStatus, setVoiceOutputWarmupStatus] =
     useState<VoiceOutputWarmupStatus>("idle");
+  const [voiceEndOptionsOpen, setVoiceEndOptionsOpen] = useState(false);
+  const [endedVoiceThreadId, setEndedVoiceThreadId] = useState<string | null>(null);
   const voiceOutputWarmupRequestedRef = useRef(false);
   const voiceOutputWarmupTimeoutRef = useRef<number | null>(null);
+  const microphoneDesiredEnabledRef = useRef<boolean | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
 
   // Live call timer — derived from `connectedAt` so we don't need an effect
@@ -248,6 +423,7 @@ export default function VoicePage() {
     }
 
     setVoiceError(null);
+    setVoiceEndOptionsOpen(false);
     clearVoiceTranscripts();
     clearVoiceActivities();
     resetVoiceOutputWarmup();
@@ -273,10 +449,20 @@ export default function VoicePage() {
   ]);
 
   const disconnect = useCallback(() => {
+    const disconnectedThreadId = threadId;
     voiceDisconnect();
     resetVoiceOutputWarmup();
+    setVoiceError(null);
+    setEndedVoiceThreadId(disconnectedThreadId);
+    setVoiceEndOptionsOpen(true);
     void session.end();
-  }, [resetVoiceOutputWarmup, session, voiceDisconnect]);
+  }, [
+    resetVoiceOutputWarmup,
+    session,
+    setVoiceError,
+    threadId,
+    voiceDisconnect,
+  ]);
 
   const allowAudioPlayback = useCallback(async () => {
     try {
@@ -395,21 +581,102 @@ export default function VoicePage() {
   const effectiveVoiceMemoryMode =
     voiceSessionInfo?.memoryMode || sessionMode;
   const isPersistent = effectiveVoiceMemoryMode === "persistent";
+  const endOptionsFinalizationStatus: VoiceEndOptionsStatus =
+    endedVoiceThreadId && voiceFinalization.threadId === endedVoiceThreadId
+      ? voiceFinalization.status
+      : "idle";
+  const endOptionsFinalizationDetail =
+    endedVoiceThreadId && voiceFinalization.threadId === endedVoiceThreadId
+      ? voiceFinalization.detail
+      : null;
+  const endedVoiceSession =
+    endedVoiceThreadId && lastEndedSession?.threadId === endedVoiceThreadId
+      ? lastEndedSession
+      : null;
+  const voiceCanAcceptSpeech =
+    voiceConnected &&
+    canPlayAudio &&
+    voiceReadyToSpeak &&
+    !agent.isPending &&
+    voiceOutputWarmupStatus === "done";
+  const voiceIsWarming = voiceConnected && !voiceCanAcceptSpeech;
 
-  const eyebrowState: "idle" | "ready" | "listening" | "speaking" = (() => {
+  const continueInChat = useCallback(() => {
+    setVoiceEndOptionsOpen(false);
+    if (endOptionsFinalizationStatus === "in_progress") {
+      setChatNotice(
+        "Voice session ended. Memory is saving in the background; you can keep using chat."
+      );
+    } else if (endOptionsFinalizationStatus === "failed") {
+      setChatNotice(
+        endOptionsFinalizationDetail ||
+          "Voice session ended, but the latest memory may not be saved yet."
+      );
+    } else {
+      setChatNotice(null);
+    }
+    router.push("/");
+  }, [
+    endOptionsFinalizationDetail,
+    endOptionsFinalizationStatus,
+    router,
+    setChatNotice,
+  ]);
+
+  const reviewMemory = useCallback(() => {
+    setVoiceEndOptionsOpen(false);
+    clearLastEndedSession();
+    router.push("/memory");
+  }, [clearLastEndedSession, router]);
+
+  const startFreshSession = useCallback(() => {
+    setVoiceEndOptionsOpen(false);
+    clearLastEndedSession();
+    void startNewSession();
+  }, [clearLastEndedSession, startNewSession]);
+
+  useEffect(() => {
+    if (!session.isConnected) {
+      microphoneDesiredEnabledRef.current = null;
+      return;
+    }
+
+    if (microphoneDesiredEnabledRef.current === voiceCanAcceptSpeech) {
+      return;
+    }
+
+    microphoneDesiredEnabledRef.current = voiceCanAcceptSpeech;
+    void session.room.localParticipant
+      .setMicrophoneEnabled(voiceCanAcceptSpeech)
+      .catch((error) => {
+        microphoneDesiredEnabledRef.current = null;
+        if (voiceCanAcceptSpeech) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Unable to enable the microphone.";
+          setVoiceError(message);
+        }
+      });
+  }, [
+    session.isConnected,
+    session.room.localParticipant,
+    setVoiceError,
+    voiceCanAcceptSpeech,
+  ]);
+
+  const eyebrowState: "idle" | "warming" | "listening" | "speaking" = (() => {
     if (!voiceConnected) return "idle";
     if (voiceAgentSpeaking) return "speaking";
-    if (voiceReadyToSpeak && canPlayAudio && voiceOutputWarmupStatus === "done") {
-      return "listening";
-    }
-    return "ready";
+    if (voiceCanAcceptSpeech) return "listening";
+    return "warming";
   })();
 
   const eyebrowLabel = (() => {
     if (eyebrowState === "idle") return "agent · idle";
     if (eyebrowState === "speaking") return "agent · speaking";
     if (eyebrowState === "listening") return "agent · listening";
-    return "agent · warming up";
+    return "agent · wait";
   })();
 
   const statusText = (() => {
@@ -420,13 +687,13 @@ export default function VoicePage() {
       return "connect when you’re ready";
     }
     if (!canPlayAudio) {
-      return "click Allow audio before speaking";
+      return "allow audio before speaking";
     }
     if (!voiceReadyToSpeak || agent.isPending) {
-      return "warming up audio path… one moment";
+      return "please wait — the agent is warming up";
     }
     if (voiceOutputWarmupStatus !== "done") {
-      return "warming up voice output… one moment";
+      return "please wait — checking voice output";
     }
     if (voiceAgentSpeaking) {
       return "agent speaking…";
@@ -437,9 +704,41 @@ export default function VoicePage() {
     return "ready — speak when you want";
   })();
 
+  const readinessNotice = (() => {
+    if (!voiceConnected || voiceCanAcceptSpeech) {
+      return null;
+    }
+    if (!canPlayAudio) {
+      return {
+        title: "Allow audio before speaking",
+        detail: "The mic is muted until playback is enabled, so you can hear the agent first.",
+      };
+    }
+    if (!voiceReadyToSpeak || agent.isPending) {
+      return {
+        title: "Hold on before speaking",
+        detail: "The agent is still warming up. Your mic will open automatically when it can listen.",
+      };
+    }
+    if (voiceOutputWarmupStatus !== "done") {
+      return {
+        title: "Checking voice output",
+        detail: "The mic is still muted while the assistant verifies the audio path.",
+      };
+    }
+    return null;
+  })();
+
+  const mobileVoiceTitle = (() => {
+    if (!voiceConnected) return "Voice";
+    if (voiceAgentSpeaking) return "speaking";
+    if (voiceCanAcceptSpeech) return "listening";
+    return "warming up";
+  })();
+
   const memoryConsolidationMessage = (() => {
     if (isSavingDisconnectedSession) {
-      return "Please wait here while the transcript is consolidated into memory. This can take a little while; reconnecting before it finishes may mean the latest session memory is not ready yet.";
+      return "Voice memory is saving in the background. You can use chat or other tabs while it finishes; reconnecting voice unlocks when the latest session memory is ready.";
     }
     if (finalizationCompletedForCurrentThread) {
       return "Memory consolidation finished. The saved summary and extracted memories are now available for future persistent sessions.";
@@ -503,7 +802,7 @@ export default function VoicePage() {
             className="oc-mobile-top-title"
             style={voiceConnected ? { fontStyle: "italic", fontWeight: 500 } : undefined}
           >
-            {voiceConnected ? "listening" : "Voice"}
+            {mobileVoiceTitle}
           </h2>
         </div>
         {voiceConnected ? (
@@ -528,7 +827,7 @@ export default function VoicePage() {
           connected or not, swapping content + CTA. */}
       <div className="oc-voice-stage">
         <div
-          className={`oc-voice-eyebrow ${
+          className={`oc-voice-eyebrow oc-voice-eyebrow--${eyebrowState} ${
             eyebrowState !== "idle" ? "is-ready" : ""
           }`}
         >
@@ -536,7 +835,7 @@ export default function VoicePage() {
           {eyebrowLabel}
         </div>
 
-        <VoiceOrb size={280} active={voiceAgentSpeaking} />
+        <VoiceOrb size={280} active={voiceAgentSpeaking} waiting={voiceIsWarming} />
 
         {!voiceConnected ? (
           <>
@@ -562,8 +861,8 @@ export default function VoicePage() {
             )}
             {isSavingDisconnectedSession && (
               <p className="text-[12px] font-mono text-oc-teal-700 mb-3 -mt-3">
-                Saving session memory from the previous call. Reconnect will
-                unlock automatically when that finishes.
+                Saving session memory from the previous call. You can use chat
+                while this finishes.
               </p>
             )}
             {chatLoading && (
@@ -584,12 +883,21 @@ export default function VoicePage() {
                   ? "Replying…"
                   : session.connectionState === ConnectionState.Connecting
                   ? "Connecting…"
-                  : "Connect & speak"}
+                  : "Connect voice"}
             </button>
+            {isSavingDisconnectedSession && (
+              <button
+                type="button"
+                className="oc-voice-cta oc-voice-cta--secondary mt-3"
+                onClick={() => router.push("/")}
+              >
+                Use chat
+              </button>
+            )}
 
-            {/* Language picker — quiet inline control, not a card */}
-            <label
-              className="mt-5 flex items-center gap-2"
+            {/* Voice controls — quiet inline controls, not cards */}
+            <div
+              className="mt-5 flex flex-wrap items-center justify-center gap-3"
               style={{
                 fontFamily: "var(--font-mono)",
                 fontSize: 11,
@@ -598,27 +906,52 @@ export default function VoicePage() {
                 textTransform: "uppercase",
               }}
             >
-              <span>transcript</span>
-              <select
-                value={transcriptionLanguageSelected}
-                onChange={(event) =>
-                  setTranscriptionLanguageSelected(
-                    event.target.value as TranscriptionLanguageOption
-                  )
-                }
-                disabled={voiceConnected}
-                className="rounded-lg border border-oc-border bg-white px-2.5 py-1.5 text-[12px] font-mono normal-case tracking-normal text-oc-text-secondary disabled:opacity-60"
-              >
-                {TRANSCRIPTION_LANGUAGE_OPTIONS.map((option) => (
-                  <option key={option.label} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label className="flex items-center gap-2">
+                <span>voice</span>
+                <select
+                  value={assistantVoiceSelected}
+                  onChange={(event) =>
+                    setAssistantVoiceSelected(
+                      event.target.value as AssistantVoiceOption
+                    )
+                  }
+                  disabled={voiceConnected}
+                  className="rounded-lg border border-oc-border bg-white px-2.5 py-1.5 text-[12px] font-mono normal-case tracking-normal text-oc-text-secondary disabled:opacity-60"
+                >
+                  {ASSISTANT_VOICE_OPTIONS.map((option) => (
+                    <option key={option.label} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                <span>transcript</span>
+                <select
+                  value={transcriptionLanguageSelected}
+                  onChange={(event) =>
+                    setTranscriptionLanguageSelected(
+                      event.target.value as TranscriptionLanguageOption
+                    )
+                  }
+                  disabled={voiceConnected}
+                  className="rounded-lg border border-oc-border bg-white px-2.5 py-1.5 text-[12px] font-mono normal-case tracking-normal text-oc-text-secondary disabled:opacity-60"
+                >
+                  {TRANSCRIPTION_LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.label} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
 
             {/* Single meta line — replaces the four debug cards. */}
             <div className="oc-voice-meta">
+              <span>
+                voice <b>{assistantVoiceLabel(assistantVoiceSelected)}</b>
+              </span>
+              <span className="sep">·</span>
               <span>
                 language <b>{languageLabel(transcriptionLanguageSelected)}</b>
               </span>
@@ -680,6 +1013,22 @@ export default function VoicePage() {
                 {statusText}
               </p>
             )}
+            {readinessNotice && (
+              <div
+                className="oc-voice-readiness"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <span className="oc-voice-readiness-icon">
+                  <IconMic size={16} />
+                </span>
+                <span className="oc-voice-readiness-copy">
+                  <b>{readinessNotice.title}</b>
+                  <span>{readinessNotice.detail}</span>
+                </span>
+              </div>
+            )}
             <div className="mt-6 flex items-center gap-3">
               {!canPlayAudio && (
                 <button
@@ -701,13 +1050,28 @@ export default function VoicePage() {
               </button>
             </div>
 
-            {latestActivity && (
-              <div className="oc-voice-meta" style={{ marginTop: 18 }}>
-                <span>
-                  {latestActivity.label} <b>{latestActivity.status}</b>
-                </span>
-              </div>
-            )}
+            <div className="oc-voice-meta" style={{ marginTop: 18 }}>
+              {latestActivity && (
+                <>
+                  <span>
+                    {latestActivity.label} <b>{latestActivity.status}</b>
+                  </span>
+                  <span className="sep">·</span>
+                </>
+              )}
+              <span>
+                mic <b>{voiceCanAcceptSpeech ? "open" : "muted"}</b>
+              </span>
+              <span className="sep">·</span>
+              <span>
+                voice{" "}
+                <b>
+                  {assistantVoiceLabel(
+                    voiceSessionInfo?.assistantVoice || assistantVoiceSelected
+                  )}
+                </b>
+              </span>
+            </div>
           </>
         )}
       </div>
@@ -729,6 +1093,19 @@ export default function VoicePage() {
             {voiceError}
           </div>
         </div>
+      )}
+
+      {voiceEndOptionsOpen && (
+        <VoiceEndOptionsDialog
+          finalizationStatus={endOptionsFinalizationStatus}
+          detail={endOptionsFinalizationDetail}
+          endedSession={endedVoiceSession}
+          isPersistent={isPersistent}
+          onContinueInChat={continueInChat}
+          onReviewMemory={reviewMemory}
+          onStartNewSession={startFreshSession}
+          onStayOnVoice={() => setVoiceEndOptionsOpen(false)}
+        />
       )}
 
       {/* Transcript scroller — shown only when there's content; also kept on
@@ -788,6 +1165,7 @@ export default function VoicePage() {
               label="output warmup"
               value={voiceOutputWarmupStatus}
             />
+            <VoiceDebugRow label="mic enabled" value={voiceCanAcceptSpeech} />
             <VoiceDebugRow label="agent speaking" value={voiceAgentSpeaking} />
             <VoiceDebugRow label="memory mode" value={effectiveVoiceMemoryMode} />
             <VoiceDebugRow label="room" value={voiceSessionInfo?.roomName} />

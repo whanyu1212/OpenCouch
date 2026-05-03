@@ -126,7 +126,7 @@ async def run_extract_procedural_rules_node(
         procedural_policy_drops: int = 0,
         reason: str = "",
     ) -> dict[str, Any]:
-        """Return a state delta carrying just the writer's diagnostics.
+        """Return a state delta carrying writer diagnostics.
 
         Args:
             procedural_writes: Number of procedural rules written.
@@ -137,7 +137,7 @@ async def run_extract_procedural_rules_node(
             reason: Human-readable writer or skip reason.
 
         Returns:
-            State delta with diagnostics only.
+            State delta with diagnostics.
         """
 
         return {

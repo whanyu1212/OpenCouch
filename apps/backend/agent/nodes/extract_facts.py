@@ -99,7 +99,7 @@ async def run_extract_semantic_facts_node(
         semantic_policy_drops: int = 0,
         reason: str = "",
     ) -> dict[str, Any]:
-        """Return a state delta carrying just the extractor's diagnostics.
+        """Return a state delta carrying extractor diagnostics.
 
         Args:
             semantic_writes: Number of newly written semantic facts.
@@ -112,7 +112,7 @@ async def run_extract_semantic_facts_node(
             reason: Human-readable extraction or skip reason.
 
         Returns:
-            State delta with diagnostics only.
+            State delta with diagnostics.
         """
 
         return {

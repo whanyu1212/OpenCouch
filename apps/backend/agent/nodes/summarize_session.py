@@ -179,7 +179,6 @@ async def run_summarize_session(
         )
         return None
 
-    # Log the reason regardless; it is a useful signal for prompt tuning.
     logger.info(
         "run_summarize_session: arc=%s reason=%r",
         "present" if result.arc is not None else "None",
@@ -187,8 +186,6 @@ async def run_summarize_session(
     )
 
     if result.arc is None:
-        # Legitimate skip: the LLM judged the session too thin to summarize.
-        # The CLI should render a plain farewell without a summary panel.
         return None
 
     try:
@@ -205,17 +202,6 @@ async def run_summarize_session(
         )
         return None
 
-    # Compute an embedding for the summary so the arc participates in hybrid
-    # retrieval when the next session opens.
-    # The summary prose is the canonical document-side representation
-    # of an arc: it is what the load_memory catch-up path renders as
-    # "Last session (themes): <summary>" and what the user's next-
-    # session query would be trying to match semantically.
-    #
-    # Embedding failures degrade to None so a transient provider
-    # outage does not lose the arc; the store write still happens
-    # via the token-recall path. Same contract as the extract_facts
-    # embedding logic.
     arc_embedding: list[float] | None = None
     arc_embedding_model: str | None = None
     if embedding_provider is not None:

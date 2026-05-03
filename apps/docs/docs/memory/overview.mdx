@@ -71,9 +71,9 @@ Three persistence tiers are defined in `agent/memory/modes.py`:
 
 | Mode | Writes to disk | Embeddings | Crisis log | Feedback |
 |---|---|---|---|---|
-| **Incognito** | No (in-memory `:memory:` SQLite) | `NullEmbeddingProvider` | In-memory (ephemeral) | In-memory (ephemeral) |
-| **Local** | Yes (SQLite under `.store/`) | Configured provider | SQLite (90-day retention) | SQLite (180-day retention) |
-| **Synced** | Yes (treated like Local today) | Configured provider | SQLite | SQLite |
+| **Incognito** | No (in-memory only) | `NullEmbeddingProvider` | In-memory (ephemeral) | In-memory (ephemeral) |
+| **Local** | Yes (configured backend; Postgres recommended) | Configured provider | Configured backend | Configured backend |
+| **Synced** | Yes (treated like Local today) | Configured provider | Configured backend | Configured backend |
 
 `SYNCED` is reserved for a future remote persistence tier; runtime
 code currently treats it like `LOCAL` while the backend sync layer
@@ -107,7 +107,9 @@ The `--user-id` flag decouples memory identity from thread identity
 | File | Purpose |
 |---|---|
 | `agent/memory/store.py` | `MemoryStore` protocol — `aput`, `aput_batch`, `asearch_similar`, `alatest`, plus the in-memory `OpenCouchMemoryStore` |
-| `agent/memory/sqlite_store.py` | SQLite backend with embedding BLOB storage and transactional batch writes |
+| `agent/memory/postgres_store.py` | Primary durable Postgres backend with hybrid retrieval support |
+| `agent/memory/legacy/sqlite_store.py` | Legacy SQLite backend with embedding BLOB storage and transactional batch writes |
+| `agent/memory/sqlite_store.py` | Compatibility shim for the legacy SQLite backend |
 | `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
 | `agent/memory/retrieval.py` | RRF fusion (`k=60`), lexical/dense rank, cosine similarity |
 | `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + Gemini / OpenAI / Null providers |
@@ -132,9 +134,11 @@ The `--user-id` flag decouples memory identity from thread identity
 |---|---|
 | `agent/audit/models.py` | `CrisisLogRecord`, `SessionFeedbackRecord`, classifier-path enums |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
-| `agent/audit/sqlite_crisis_log.py` | Durable SQLite crisis log with retention purge |
+| `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
+| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
+| `agent/audit/legacy/sqlite_crisis_log.py` | Legacy SQLite crisis log fallback |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
-| `agent/audit/sqlite_session_feedback.py` | Durable SQLite session feedback store |
+| `agent/audit/legacy/sqlite_session_feedback.py` | Legacy SQLite session feedback fallback |
 
 ### Graph integration
 

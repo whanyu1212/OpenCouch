@@ -44,10 +44,11 @@ async def run_load_memory_node(
         }
 
     transcript = state.get("transcript", [])
+    owner_id = resolve_owner_id(state)
     result = await load_memory_for_turn(
         memory_store=runtime.context.memory_store,
         embedding_provider=runtime.context.embedding_provider,
-        owner_id=resolve_owner_id(state),
+        owner_id=owner_id,
         query=state["message"],
         is_first_turn=len(transcript) == 1,
     )
@@ -62,5 +63,5 @@ async def run_load_memory_node(
             "procedural_rules": result.procedural_rules,
             "proactive_recall_enabled": result.proactive_recall_enabled,
         },
-        "diagnostics": result.diagnostics,
+        "diagnostics": dict(result.diagnostics),
     }

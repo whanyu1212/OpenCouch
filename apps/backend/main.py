@@ -35,8 +35,8 @@ def create_app() -> FastAPI:
     """Create the configured FastAPI application.
 
     The lifespan handler opens a ``PersistentAgentRuntime`` on startup
-    (with SQLite connections, embedding provider, and LLM client
-    resolution) and closes it on shutdown. Route handlers access the
+    (with configured persistence backends, embedding provider, and LLM
+    client resolution) and closes it on shutdown. Route handlers access the
     runtime via ``Depends(get_runtime)``.
 
     Returns:

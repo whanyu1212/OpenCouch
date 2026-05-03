@@ -1,7 +1,7 @@
 """FastAPI dependency injection for the agent runtime.
 
 The ``PersistentAgentRuntime`` is an async context manager that owns
-SQLite connections, an embedding provider, and the LangGraph
+configured persistence backends, an embedding provider, and the LangGraph
 checkpointer. It must be opened once at startup and closed at
 shutdown, not per request. FastAPI's lifespan protocol handles this.
 
@@ -54,6 +54,7 @@ from core.config import (
     ResponseModelTier,
     create_configured_control_llm_client,
     create_configured_response_llm_clients,
+    get_settings,
 )
 from services.llm.base import BaseLLMClient
 
@@ -76,9 +77,9 @@ _response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = {
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """Open the agent runtime on startup, close on shutdown.
 
-    The runtime opens its SQLite connections (thread checkpointer,
-    memory store, crisis log) and resolves the embedding provider.
-    On shutdown, all connections are closed cleanly.
+    The runtime opens its configured persistence backends and resolves
+    the embedding provider. On shutdown, all connections are closed
+    cleanly.
 
     The LLM client is resolved separately because it's stateless
     and doesn't need lifecycle management. We resolve it once
@@ -115,6 +116,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     # The API server reads memory mode from env because there is no interactive prompt.
     import os
 
+    settings = get_settings()
     memory_mode_str = os.getenv("OPENCOUCH_MEMORY_MODE", "persistent")
     memory_mode = (
         MemoryMode.INCOGNITO if memory_mode_str == "guest" else MemoryMode.LOCAL
@@ -122,6 +124,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
 
     _runtime = PersistentAgentRuntime(
         sqlite_path=str(DEFAULT_THREAD_DB_PATH),
+        memory_backend=settings.persistence_backend,
+        memory_database_url=settings.memory_database_url,
+        thread_persistence_backend=settings.persistence_backend,
+        thread_database_url=settings.memory_database_url,
+        crisis_log_persistence_backend=settings.persistence_backend,
+        crisis_log_database_url=settings.memory_database_url,
+        session_feedback_persistence_backend=settings.persistence_backend,
+        session_feedback_database_url=settings.memory_database_url,
         memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
         crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         memory_mode=memory_mode,

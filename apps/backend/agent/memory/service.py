@@ -8,7 +8,7 @@ session-end promotion.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -22,6 +22,7 @@ from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.models import (
     MemoryWrite,
+    ProceduralRule,
     ProceduralRuleDraft,
     SemanticFact,
 )
@@ -51,6 +52,7 @@ class SemanticProcessingResult:
     repeat_required: int
     policy_drops: int
     reason: str
+    written_items: list[SemanticFact] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class ProceduralProcessingResult:
     session_end_holds: int
     policy_drops: int
     reason: str
+    written_items: list[ProceduralRule] = field(default_factory=list)
 
 
 def _memory_write_to_semantic_fact(
@@ -279,6 +282,7 @@ class MemoryService:
                 repeat_required=repeat_required,
                 policy_drops=policy_drops,
                 reason=reason,
+                written_items=[],
             )
 
         try:
@@ -300,6 +304,7 @@ class MemoryService:
                 repeat_required=repeat_required,
                 policy_drops=policy_drops,
                 reason="skipped: dedup fetch failed",
+                written_items=[],
             )
 
         candidate_embeddings: list[list[float] | None] = [None] * len(
@@ -330,6 +335,7 @@ class MemoryService:
 
         written = 0
         bumped = 0
+        written_items: list[SemanticFact] = []
         for candidate_index, (candidate, decision) in enumerate(immediate_candidates):
             write = candidate.payload
             collision_records = filter_semantic_collision_candidates(
@@ -392,6 +398,7 @@ class MemoryService:
                     embedding_model=this_model,
                 )
                 written += 1
+                written_items.append(fact)
                 existing_records.append(
                     StoreRecord(
                         namespace=(owner_id, "semantic"),
@@ -445,6 +452,7 @@ class MemoryService:
             repeat_required=repeat_required,
             policy_drops=policy_drops,
             reason=reason,
+            written_items=written_items,
         )
 
     async def process_procedural_rules(
@@ -517,9 +525,11 @@ class MemoryService:
                 session_end_holds=session_end_holds,
                 policy_drops=policy_drops,
                 reason=reason,
+                written_items=[],
             )
 
         written = 0
+        written_items: list[ProceduralRule] = []
         for candidate, decision in immediate_candidates:
             draft = candidate.payload
             try:
@@ -540,6 +550,7 @@ class MemoryService:
                 )
                 if upsert.action != "skipped":
                     written += 1
+                    written_items.append(rule)
             except Exception:
                 logger.warning(
                     "memory_service: failed to write procedural draft %r; "
@@ -563,4 +574,5 @@ class MemoryService:
             session_end_holds=session_end_holds,
             policy_drops=policy_drops,
             reason=reason,
+            written_items=written_items,
         )

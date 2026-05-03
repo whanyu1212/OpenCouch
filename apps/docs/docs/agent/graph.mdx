@@ -171,8 +171,9 @@ for the full breakdown.
 | `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
 | `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
 | `agent/audit/crisis_log.py` | Audit-log backend protocol + in-memory implementations |
-| `agent/audit/sqlite_crisis_log.py` | SQLite-backed crisis log with retention purge |
-| `agent/persistence.py` | `PersistentAgentRuntime` — SQLite-backed thread state |
+| `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
+| `agent/audit/legacy/sqlite_crisis_log.py` | Legacy SQLite crisis-log fallback |
+| `agent/persistence.py` | `PersistentAgentRuntime` — configured persistent thread state |
 
 ## Adding a new therapeutic response style
 

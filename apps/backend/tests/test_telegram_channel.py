@@ -6,7 +6,9 @@ import logging
 import os
 import sqlite3
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 from types import SimpleNamespace
 from typing import Any
 
@@ -28,6 +30,7 @@ from channels.gateway import (
     run_telegram_gateway,
     telegram_gateway_lock_path,
 )
+from channels.legacy.telegram_registry_sqlite import SqliteTelegramSessionRegistry
 from channels.telegram import (
     TELEGRAM_MAINTENANCE_MESSAGE,
     TELEGRAM_SESSION_CLOSED_MESSAGE,
@@ -36,13 +39,29 @@ from channels.telegram import (
     TelegramConfigurationError,
     TelegramGatewayConfig,
     TelegramSessionRegistry,
+    build_telegram_session_registry,
     render_telegram_markdown,
     split_telegram_markdown_html,
     split_telegram_text,
     telegram_thread_id,
 )
+from channels.telegram_registry_postgres import PostgresTelegramSessionRegistry
 from agent.persistence import PersistentAgentRuntime, SessionLeaseExpired, SessionStatus
 from services.llm.base import BaseLLMClient, StructuredResponseT
+
+_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+
+
+def _postgres_database_url() -> str | None:
+    """Return the opt-in Postgres DSN for Telegram registry integration tests.
+
+    Returns:
+        str | None: Configured Postgres DSN, or ``None`` when unavailable.
+    """
+
+    return os.getenv(_POSTGRES_TEST_URL_ENV) or os.getenv(
+        "OPENCOUCH_MEMORY_DATABASE_URL"
+    )
 
 
 class _FakeLLM(BaseLLMClient):
@@ -172,21 +191,43 @@ def _config(
     )
 
 
+def _registry_for_config(
+    config: TelegramGatewayConfig,
+) -> TelegramSessionRegistry | None:
+    """Return the default test registry for a Telegram config.
+
+    Args:
+        config (TelegramGatewayConfig): Telegram channel config.
+
+    Returns:
+        TelegramSessionRegistry | None: Postgres registry when configured, otherwise
+            ``None`` so production fallback behavior is still covered.
+    """
+
+    database_url = _postgres_database_url()
+    if config.thread_rotation_enabled and database_url is not None:
+        return PostgresTelegramSessionRegistry(database_url)
+    return None
+
+
 def _channel(
     *,
     runtime: _FakeRuntime | None = None,
     config: TelegramGatewayConfig | None = None,
     llm: _FakeLLM | None = None,
     response_llm: _FakeLLM | None = None,
+    session_registry: TelegramSessionRegistry | None = None,
 ) -> tuple[TelegramChannel, _FakeRuntime, _FakeLLM, _FakeLLM]:
     fake_runtime = runtime or _FakeRuntime()
     fake_llm = llm or _FakeLLM()
     fake_response_llm = response_llm or _FakeLLM()
+    resolved_config = config or _config()
     channel = TelegramChannel(
-        config=config or _config(),
+        config=resolved_config,
         runtime=fake_runtime,  # type: ignore[arg-type]
         llm_client=fake_llm,
         response_llm_client=fake_response_llm,
+        session_registry=session_registry or _registry_for_config(resolved_config),
     )
     return channel, fake_runtime, fake_llm, fake_response_llm
 
@@ -570,8 +611,12 @@ async def test_startup_recovery_closes_orphan_unclosed_session(
         thread_rotation_enabled=True,
         session_registry_sqlite_path=tmp_path / "telegram_sessions.sqlite3",
     )
-    channel, _, _, _ = _channel(runtime=runtime, config=config)
-    registry = channel._require_registry()  # noqa: SLF001
+    registry = SqliteTelegramSessionRegistry(config.session_registry_sqlite_path)
+    channel, _, _, _ = _channel(
+        runtime=runtime,
+        config=config,
+        session_registry=registry,
+    )
     thread_id = await registry.create_session(321)
     conn = registry._ensure_conn()  # noqa: SLF001
     await conn.execute(
@@ -638,8 +683,12 @@ async def test_reclaim_first_failure_remains_retryable(tmp_path: Path) -> None:
         session_registry_sqlite_path=tmp_path / "telegram_sessions.sqlite3",
         reclaim_grace_seconds=0.0,
     )
-    channel, _, _, _ = _channel(runtime=runtime, config=config)
-    registry = channel._require_registry()  # noqa: SLF001
+    registry = SqliteTelegramSessionRegistry(config.session_registry_sqlite_path)
+    channel, _, _, _ = _channel(
+        runtime=runtime,
+        config=config,
+        session_registry=registry,
+    )
     thread_id = await registry.create_session(321)
     await registry.close_thread(321, thread_id, "end_command")
 
@@ -678,6 +727,7 @@ async def test_rotation_real_runtime_registry_integration(tmp_path: Path) -> Non
             runtime=runtime,
             llm_client=None,  # type: ignore[arg-type]
             response_llm_client=None,  # type: ignore[arg-type]
+            session_registry=_registry_for_config(config),
         )
         registry = channel._require_registry()  # noqa: SLF001
 
@@ -825,7 +875,7 @@ async def test_registry_upgrades_boolean_legacy_migration_state(
             """
         )
 
-    registry = TelegramSessionRegistry(registry_path)
+    registry = SqliteTelegramSessionRegistry(registry_path)
     try:
         finalized = await registry.get_active(321)
         pending = await registry.get_active(654)
@@ -834,6 +884,89 @@ async def test_registry_upgrades_boolean_legacy_migration_state(
         assert finalized.legacy_migration_state == "finalized"
         assert pending is not None
         assert pending.legacy_migration_state == "pending"
+    finally:
+        await registry.aclose()
+
+
+def test_build_telegram_session_registry_selects_sqlite(tmp_path: Path) -> None:
+    registry = build_telegram_session_registry(
+        backend="sqlite",
+        sqlite_path=tmp_path / "telegram_sessions.sqlite3",
+        database_url=None,
+    )
+
+    assert isinstance(registry, SqliteTelegramSessionRegistry)
+
+
+def test_build_telegram_session_registry_selects_postgres() -> None:
+    registry = build_telegram_session_registry(
+        backend="postgres",
+        sqlite_path=Path(":memory:"),
+        database_url="postgresql://opencouch:opencouch@localhost:5432/opencouch",
+    )
+
+    assert isinstance(registry, PostgresTelegramSessionRegistry)
+
+
+def test_build_telegram_session_registry_prefers_postgres_url_over_sqlite_backend(
+    tmp_path: Path,
+) -> None:
+    registry = build_telegram_session_registry(
+        backend="sqlite",
+        sqlite_path=tmp_path / "telegram_sessions.sqlite3",
+        database_url="postgresql://opencouch:opencouch@localhost:5432/opencouch",
+    )
+
+    assert isinstance(registry, PostgresTelegramSessionRegistry)
+
+
+def test_build_telegram_session_registry_falls_back_without_postgres_url() -> None:
+    registry = build_telegram_session_registry(
+        backend="postgres",
+        sqlite_path=Path(":memory:"),
+        database_url=None,
+    )
+
+    assert isinstance(registry, SqliteTelegramSessionRegistry)
+
+
+@pytest.mark.asyncio
+async def test_postgres_registry_roundtrips_rotated_session_state() -> None:
+    database_url = _postgres_database_url()
+    if database_url is None:
+        pytest.skip(
+            "Postgres integration DSN not configured; set "
+            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+        )
+
+    registry = PostgresTelegramSessionRegistry(database_url)
+    chat_id = f"test-{uuid4()}"
+    try:
+        thread_id = await registry.create_session(chat_id)
+        active = await registry.get_active(chat_id)
+
+        assert active is not None
+        assert active.active_thread_id == thread_id
+        assert active.legacy_migration_state == "finalized"
+
+        await registry.set_pending_close(chat_id, "end_command")
+        pending = await registry.get_active(chat_id)
+        assert pending is not None
+        assert pending.close_requested_reason == "end_command"
+
+        await registry.close_thread(chat_id, thread_id, "end_command")
+        closed = await registry.get_active(chat_id)
+        assert closed is not None
+        assert closed.active_thread_id is None
+
+        reclaimable = await registry.list_reclaimable(timedelta(seconds=0))
+        assert any(session.thread_id == thread_id for session in reclaimable)
+
+        await registry.mark_reclaim_result(thread_id)
+        assert all(
+            session.thread_id != thread_id
+            for session in await registry.list_reclaimable(timedelta(seconds=0))
+        )
     finally:
         await registry.aclose()
 

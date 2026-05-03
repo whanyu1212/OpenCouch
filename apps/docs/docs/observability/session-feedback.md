@@ -7,8 +7,9 @@ sidebar_position: 2
 
 An explicit end-of-session feedback collector that captures a thumbs
 rating when the user finishes a session. The data is stored in a
-dedicated SQLite file (`session_feedback.sqlite3`) parallel to the
-crisis log — always-on, session-opaque, incognito-safe.
+dedicated persistence backend — Postgres for the recommended local
+Docker path, SQLite only as a legacy compatibility fallback —
+always-on, session-opaque, incognito-safe.
 
 ---
 
@@ -36,12 +37,12 @@ privacy boundary — mirroring the crisis log's
 
 | Memory mode | Backend | Persistence |
 |---|---|---|
-| **LOCAL / SYNCED** | `SqliteSessionFeedbackBackend` at `.store/session_feedback.sqlite3` | Survives CLI / server restarts |
+| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` when `OPENCOUCH_PERSISTENCE_BACKEND=postgres`; otherwise `SqliteSessionFeedbackBackend` fallback | Survives CLI / server restarts |
 | **INCOGNITO** | `InMemorySessionFeedbackBackend` | Dies at process exit |
 
-Fourth SQLite file under `.store/`, alongside `threads.sqlite3`,
-`memory.sqlite3`, and `crisis.sqlite3`. Same isolation reasoning
-— each subsystem owns its schema independently.
+For the recommended local Docker setup, feedback lives in the shared
+Postgres persistence layer. The `.store/session_feedback.sqlite3` file
+remains only for legacy SQLite compatibility.
 
 Default retention: **180 days** (wider than crisis log's 90 because
 feedback analytics benefit from a longer lookback). Enforced via
@@ -164,7 +165,8 @@ constraint on the opaque `id`.
 |---|---|
 | `agent/audit/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord`, plus crisis-log models |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
-| `agent/audit/sqlite_session_feedback.py` | SQLite backend with CHECK constraints and retention purge |
+| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
+| `agent/audit/legacy/sqlite_session_feedback.py` | Legacy SQLite fallback with CHECK constraints and retention purge |
 | `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |

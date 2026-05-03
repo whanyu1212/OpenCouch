@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from agent.active_session_store import PostgresActiveSessionStore
+from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode
@@ -31,9 +33,12 @@ from agent.audit.session_feedback import (
     InMemorySessionFeedbackBackend,
     NullSessionFeedbackBackend,
 )
-from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
+from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
+from agent.audit.legacy.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.legacy.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.memory.postgres_store import PostgresMemoryStore
+from agent.memory.legacy.sqlite_store import SqliteMemoryStore
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import (
     DEFAULT_CRISIS_LOG_DB_PATH,
@@ -132,6 +137,7 @@ def test_local_mode_uses_sqlite_memory_store_by_default() -> None:
 
     runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
+    assert isinstance(runtime._active_session_store, SqliteActiveSessionStore)  # noqa: SLF001
     # The SqliteMemoryStore's path should be the default memory path.
     assert runtime.memory_store.sqlite_path == Path(DEFAULT_MEMORY_DB_PATH)
 
@@ -175,6 +181,87 @@ def test_synced_mode_behaves_like_local_for_v0_8() -> None:
     runtime = PersistentAgentRuntime(memory_mode=MemoryMode.SYNCED)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+    assert isinstance(runtime._active_session_store, SqliteActiveSessionStore)  # noqa: SLF001
+
+
+def test_local_mode_can_select_postgres_memory_store() -> None:
+    """When configured explicitly, local mode should construct a
+    PostgresMemoryStore while leaving the other runtime-owned
+    backends unchanged."""
+
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+    )
+    assert isinstance(runtime.memory_store, PostgresMemoryStore)
+    assert runtime.memory_store.dsn == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+
+
+def test_postgres_memory_backend_requires_database_url() -> None:
+    """Selecting the Postgres memory backend without a DSN should fail
+    fast at runtime construction rather than later on first query."""
+
+    with pytest.raises(ValueError, match="memory_database_url"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            memory_backend="postgres",
+        )
+
+
+def test_local_mode_can_select_postgres_thread_backend() -> None:
+    """When configured explicitly, local mode should construct a
+    Postgres-backed active-session store for runtime-owned thread state."""
+
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,
+        thread_persistence_backend="postgres",
+        thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+    )
+    assert isinstance(runtime._active_session_store, PostgresActiveSessionStore)  # noqa: SLF001
+    assert isinstance(runtime.memory_store, SqliteMemoryStore)
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+
+
+def test_postgres_thread_backend_requires_database_url() -> None:
+    """Selecting the Postgres thread backend without a DSN should fail
+    fast at runtime construction rather than later on first turn."""
+
+    with pytest.raises(ValueError, match="thread_database_url"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="postgres",
+        )
+
+
+def test_local_mode_can_select_postgres_crisis_log_backend() -> None:
+    """When configured explicitly, local mode should construct a
+    PostgresCrisisLogBackend while leaving the memory store unchanged."""
+
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,
+        crisis_log_persistence_backend="postgres",
+        crisis_log_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+    )
+    assert isinstance(runtime.crisis_log_backend, PostgresCrisisLogBackend)
+    assert runtime.crisis_log_backend.dsn == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert isinstance(runtime.memory_store, SqliteMemoryStore)
+
+
+def test_postgres_crisis_log_backend_requires_database_url() -> None:
+    """Selecting the Postgres crisis-log backend without a DSN should fail
+    fast at runtime construction rather than later on first write."""
+
+    with pytest.raises(ValueError, match="crisis_log_database_url"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            crisis_log_persistence_backend="postgres",
+        )
 
 
 # ─── Explicit overrides ────────────────────────────────────────────────
@@ -343,6 +430,34 @@ def test_local_mode_accepts_custom_feedback_sqlite_path(tmp_path: Path) -> None:
     )
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
     assert runtime.session_feedback_backend.sqlite_path == custom
+
+
+def test_local_mode_can_select_postgres_session_feedback_backend() -> None:
+    """When configured explicitly, local mode should construct a
+    PostgresSessionFeedbackBackend while leaving the other backends unchanged."""
+
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+    )
+    assert isinstance(runtime.session_feedback_backend, PostgresSessionFeedbackBackend)
+    assert runtime.session_feedback_backend.dsn == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert isinstance(runtime.memory_store, SqliteMemoryStore)
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+
+
+def test_postgres_session_feedback_backend_requires_database_url() -> None:
+    """Selecting the Postgres feedback backend without a DSN should fail
+    fast at runtime construction rather than later on first write."""
+
+    with pytest.raises(ValueError, match="session_feedback_database_url"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            session_feedback_persistence_backend="postgres",
+        )
 
 
 def test_explicit_feedback_backend_overrides_mode_based_selection() -> None:

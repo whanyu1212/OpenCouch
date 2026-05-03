@@ -37,9 +37,11 @@ SQLite files are isolated per test and clean up automatically.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import pytest
 
@@ -55,7 +57,7 @@ from agent.memory.models import (
     SummarizationResult,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.legacy.sqlite_store import SqliteMemoryStore
 from agent.models import Channel
 from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
 from services.llm.base import BaseLLMClient, StructuredResponseT
@@ -356,6 +358,22 @@ def _runtime_paths(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+
+
+def _postgres_memory_database_url() -> str | None:
+    """Return the Postgres DSN for opt-in persistence integration tests.
+
+    Returns:
+        str | None: Configured Postgres DSN, or ``None`` when the
+            integration environment is not available.
+    """
+
+    return os.getenv(_POSTGRES_TEST_URL_ENV) or os.getenv(
+        "OPENCOUCH_MEMORY_DATABASE_URL"
+    )
+
+
 # ─── Smoke tests ───────────────────────────────────────────────────────
 
 
@@ -408,6 +426,69 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
         # And we can retrieve it via asearch with a paraphrased query
         results = await runtime_b.memory_store.asearch(
             ("thread-a", "semantic"),
+            query="tell me about Sarah",
+        )
+        assert len(results) == 1
+        assert "Sarah" in results[0].value["evidence_quote"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Postgres-backed memory should preserve semantic facts across runtime restarts.
+
+    This is an opt-in integration test: it requires a running Postgres
+    instance and a configured DSN via ``OPENCOUCH_TEST_POSTGRES_URL`` or
+    ``OPENCOUCH_MEMORY_DATABASE_URL``.
+    """
+
+    memory_database_url = _postgres_memory_database_url()
+    if not memory_database_url:
+        pytest.skip(
+            "Postgres integration DSN not configured; set "
+            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+        )
+
+    paths = _runtime_paths(tmp_path)
+    thread_id = f"thread-a-{uuid4()}"
+    llm_a = _FakeCrossRestartLLM()
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime_a:
+        result = await runtime_a.run_turn(
+            thread_id=thread_id,
+            message="I have a sister named Sarah",
+            channel=Channel.TEST,
+            llm_client=llm_a,
+        )
+        assert result.output.response_text
+        assert llm_a.extraction_calls == 1
+
+        stored_arc = await runtime_a.end_session(thread_id, llm_client=llm_a)
+        assert stored_arc is not None
+        assert await runtime_a.memory_store.arecord_count((thread_id, "semantic")) == 1
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+    ) as runtime_b:
+        count = await runtime_b.memory_store.arecord_count((thread_id, "semantic"))
+        assert count == 1, f"expected 1 Postgres record after restart, got {count}"
+
+        results = await runtime_b.memory_store.asearch(
+            (thread_id, "semantic"),
             query="tell me about Sarah",
         )
         assert len(results) == 1
@@ -753,6 +834,79 @@ async def test_held_session_buffer_survives_restart_until_end_session(
         assert await runtime_b.memory_store.arecord_count(("user-1", "episodic")) == 1
         assert await runtime_b.memory_store.arecord_count(("user-1", "semantic")) == 1
         assert await runtime_b._load_persisted_active_session("thread-held") is None
+
+
+@pytest.mark.asyncio
+async def test_held_session_buffer_survives_restart_until_end_session_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Held candidates should survive restart and commit on session end in Postgres."""
+
+    memory_database_url = _postgres_memory_database_url()
+    if not memory_database_url:
+        pytest.skip(
+            "Postgres integration DSN not configured; set "
+            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+        )
+
+    paths = _runtime_paths(tmp_path)
+    thread_id = f"thread-held-{uuid4()}"
+    user_id = f"user-1-{uuid4()}"
+    llm_a = _FakeCrossRestartLLM(
+        extraction_result=_held_trigger_extraction_result(
+            thread_id=thread_id,
+            user_id=user_id,
+        ),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id=thread_id
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime_a:
+        await runtime_a.run_turn(
+            thread_id=thread_id,
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id=user_id,
+            llm_client=llm_a,
+        )
+        assert await runtime_a.memory_store.arecord_count((user_id, "semantic")) == 0
+        persisted = await runtime_a._load_persisted_active_session(thread_id)
+        assert persisted is not None
+        assert len(persisted.session_buffer.semantic_candidates) == 1
+
+    llm_b = _FakeCrossRestartLLM(
+        extraction_result=_empty_extraction_result(),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id=thread_id
+        ),
+    )
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+    ) as runtime_b:
+        persisted = await runtime_b._load_persisted_active_session(thread_id)
+        assert persisted is not None
+        assert len(persisted.session_buffer.semantic_candidates) == 1
+
+        stored_arc = await runtime_b.end_session(thread_id, llm_client=llm_b)
+
+        assert stored_arc is not None
+        assert await runtime_b.memory_store.arecord_count((user_id, "episodic")) == 1
+        assert await runtime_b.memory_store.arecord_count((user_id, "semantic")) == 1
+        assert await runtime_b._load_persisted_active_session(thread_id) is None
 
 
 @pytest.mark.asyncio

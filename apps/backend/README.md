@@ -5,7 +5,7 @@ Backend service for the OpenCouch mental health support product.
 Current status:
 - minimal FastAPI app entrypoint
 - agent kernel with crisis and therapeutic subgraphs
-- LangGraph workflow with SQLite-backed thread persistence
+- LangGraph workflow with configurable persistence (Postgres recommended, SQLite legacy fallback)
 - provider-backed LLM adapters
 - local interactive CLI entrypoint
 - pytest backend tests and runner-based crisis evals
@@ -26,6 +26,14 @@ uv run python -m opencouch_cli --mode auto
 Resume a persisted local thread:
 
 ```bash
+uv run python -m opencouch_cli --mode auto --thread-id local-demo
+```
+
+Run the CLI against the Dockerized Postgres memory backend:
+
+```bash
+OPENCOUCH_PERSISTENCE_BACKEND=postgres \
+OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch \
 uv run python -m opencouch_cli --mode auto --thread-id local-demo
 ```
 

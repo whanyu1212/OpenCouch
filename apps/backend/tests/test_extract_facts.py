@@ -282,18 +282,16 @@ class TestExtractFactsNodeUnit:
         # populated diagnostics"). The skip reason records the early
         # exit path so downstream dashboards can distinguish "no LLM"
         # from "LLM returned empty" from "LLM errored".
-        assert delta == {
-            "diagnostics": {
-                "extract_facts_ms": pytest.approx(0.0, abs=50.0),
-                "semantic_writes": 0,
-                "semantic_bumps": 0,
-                "semantic_candidates": 0,
-                "semantic_commit_now_candidates": 0,
-                "semantic_session_end_holds": 0,
-                "semantic_repeat_required": 0,
-                "semantic_policy_drops": 0,
-                "extract_facts_reason": "skipped: no llm_client",
-            }
+        assert delta["diagnostics"] == {
+            "extract_facts_ms": pytest.approx(0.0, abs=50.0),
+            "semantic_writes": 0,
+            "semantic_bumps": 0,
+            "semantic_candidates": 0,
+            "semantic_commit_now_candidates": 0,
+            "semantic_session_end_holds": 0,
+            "semantic_repeat_required": 0,
+            "semantic_policy_drops": 0,
+            "extract_facts_reason": "skipped: no llm_client",
         }
         assert await store.arecord_count() == 0
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect the OpenCouch memory store for a given user.
+"""Inspect the legacy SQLite OpenCouch memory store for a given user.
 
 Usage:
     python scripts/inspect_memory.py --user hy
@@ -8,9 +8,12 @@ Usage:
     python scripts/inspect_memory.py --user hy --namespace procedural
     python scripts/inspect_memory.py --all-users
     python scripts/inspect_memory.py --user hy --raw
+    python scripts/inspect_memory.py --sqlite-path apps/backend/.store/memory.sqlite3 --all-users
 
-Run from the repo root or apps/backend/. The script auto-detects
-the .store/ directory location.
+Run from the repo root or apps/backend/. This is a legacy SQLite
+inspector; Postgres-first environments should query Postgres directly.
+The script auto-detects the .store/ directory location unless
+``--sqlite-path`` is provided.
 """
 
 from __future__ import annotations
@@ -22,8 +25,15 @@ import sys
 from pathlib import Path
 
 
-def find_db() -> Path:
-    """Locate the memory SQLite database."""
+def find_db(sqlite_path: str | None = None) -> Path:
+    """Locate the legacy memory SQLite database."""
+
+    if sqlite_path is not None:
+        path = Path(sqlite_path).expanduser()
+        if path.exists():
+            return path
+        print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
+        sys.exit(1)
 
     candidates = [
         Path("apps/backend/.store/memory.sqlite3"),
@@ -165,9 +175,13 @@ def main() -> None:
     )
     parser.add_argument("--all-users", action="store_true", help="List all users and record counts")
     parser.add_argument("--raw", action="store_true", help="Output raw JSON instead of formatted")
+    parser.add_argument(
+        "--sqlite-path",
+        help="Explicit legacy SQLite memory database path.",
+    )
     args = parser.parse_args()
 
-    db = find_db()
+    db = find_db(args.sqlite_path)
 
     if args.all_users:
         users = list_users(db)

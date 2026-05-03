@@ -103,7 +103,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
       <strong>Durable persistence</strong>
     </div>
-    <p>Four SQLite files under <code>.store/</code> — threads, memory, crisis log, session feedback. Audit stores live in their own package (<code>agent/audit/</code>) so they're never touched by user-facing memory recall toggles.</p>
+    <p>Postgres-first durable storage for threads, memory, crisis log, and session feedback, with legacy SQLite fallback for compatibility. Audit stores live in their own package (<code>agent/audit/</code>) so they're never touched by user-facing memory recall toggles.</p>
   </div>
 
   <div className="doc-card">

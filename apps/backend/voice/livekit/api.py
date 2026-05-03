@@ -29,6 +29,7 @@ from livekit.api import (
 from pydantic import BaseModel
 
 from core.config import load_runtime_env
+from voice.realtime import normalize_assistant_voice
 from voice.livekit.finalization_status import get_voice_finalization_status
 from voice.livekit.session_data import parse_voice_memory_mode
 
@@ -44,6 +45,7 @@ class TokenRequest(BaseModel):
     user_id: str | None = None
     thread_id: str | None = None
     transcription_language: str | None = None
+    assistant_voice: str | None = None
     memory_mode: str | None = None
     room_name: str | None = None
     dispatch_agent: bool = True
@@ -61,6 +63,7 @@ class TokenResponse(BaseModel):
     room_name: str
     identity: str
     memory_mode: str
+    assistant_voice: str
 
 
 class VoiceFinalizationStatusResponse(BaseModel):
@@ -131,6 +134,10 @@ async def create_voice_token(body: TokenRequest) -> TokenResponse:
         body.memory_mode,
         default=parse_voice_memory_mode(os.getenv("OPENCOUCH_MEMORY_MODE")),
     )
+    assistant_voice = normalize_assistant_voice(
+        body.assistant_voice,
+        default="marin",
+    )
 
     # Room name ties the browser participant and agent together.
     room_name = body.room_name or f"opencouch-{thread_id}"
@@ -144,6 +151,7 @@ async def create_voice_token(body: TokenRequest) -> TokenResponse:
             "user_id": user_id,
             "thread_id": thread_id,
             "transcription_language": transcription_language,
+            "assistant_voice": assistant_voice,
             "memory_mode": memory_mode.value,
         }
     )
@@ -180,12 +188,13 @@ async def create_voice_token(body: TokenRequest) -> TokenResponse:
     jwt = token.to_jwt()
 
     logger.info(
-        "livekit token: room=%s identity=%s user=%s thread=%s transcription_language=%s memory_mode=%s",
+        "livekit token: room=%s identity=%s user=%s thread=%s transcription_language=%s assistant_voice=%s memory_mode=%s",
         room_name,
         identity,
         user_id,
         thread_id,
         transcription_language if transcription_language is not None else "default",
+        assistant_voice,
         memory_mode.value,
     )
 
@@ -195,4 +204,5 @@ async def create_voice_token(body: TokenRequest) -> TokenResponse:
         room_name=room_name,
         identity=identity,
         memory_mode=memory_mode.value,
+        assistant_voice=assistant_voice,
     )

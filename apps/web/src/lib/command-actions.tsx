@@ -307,8 +307,8 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
       },
       {
         id: "new_session",
-        label: "New session",
-        description: "Close the current session if needed and return to setup.",
+        label: "Return home",
+        description: "Go back to the landing page to choose memory mode, user, and thread.",
         group: "Session",
         disabled: isBusy,
         run: startNewSession,

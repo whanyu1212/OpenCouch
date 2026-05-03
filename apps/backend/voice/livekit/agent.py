@@ -91,6 +91,7 @@ from voice.realtime import (
     DEFAULT_REALTIME_TRANSCRIPTION_LANGUAGE,
     DEFAULT_REALTIME_TRANSCRIPTION_PROMPT,
     build_voice_system_prompt,
+    normalize_assistant_voice,
 )
 
 load_dotenv(".env.local")
@@ -145,8 +146,19 @@ async def _ensure_runtime() -> PersistentAgentRuntime:
     if _runtime is not None:
         return _runtime
 
+    from core.config import get_settings
+
+    settings = get_settings()
     _runtime = PersistentAgentRuntime(
         sqlite_path=str(DEFAULT_THREAD_DB_PATH),
+        memory_backend=settings.persistence_backend,
+        memory_database_url=settings.memory_database_url,
+        thread_persistence_backend=settings.persistence_backend,
+        thread_database_url=settings.memory_database_url,
+        crisis_log_persistence_backend=settings.persistence_backend,
+        crisis_log_database_url=settings.memory_database_url,
+        session_feedback_persistence_backend=settings.persistence_backend,
+        session_feedback_database_url=settings.memory_database_url,
         memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
         crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         memory_mode=MemoryMode.LOCAL,
@@ -189,25 +201,25 @@ async def _close_runtime() -> None:
 
 def _parse_voice_session_metadata(
     metadata: str | None,
-) -> tuple[str | None, str | None, str | None, MemoryMode | None]:
+) -> tuple[str | None, str | None, str | None, str | None, MemoryMode | None]:
     """Parse voice session fields from a LiveKit metadata payload.
 
     Args:
         metadata (str | None): Raw JSON metadata from a job or participant.
 
     Returns:
-        tuple[str | None, str | None, str | None, MemoryMode | None]:
+        tuple[str | None, str | None, str | None, str | None, MemoryMode | None]:
             Parsed ``(user_id, thread_id, transcription_language,
-            memory_mode)`` values when present. An explicit empty
-            language string means auto-detect.
+            assistant_voice, memory_mode)`` values when present. An explicit
+            empty language string means auto-detect.
     """
     if not metadata:
-        return None, None, None, None
+        return None, None, None, None, None
 
     try:
         payload = json.loads(metadata)
     except (json.JSONDecodeError, TypeError):
-        return None, None, None, None
+        return None, None, None, None, None
 
     user_id = payload.get("user_id")
     thread_id = payload.get("thread_id")
@@ -217,20 +229,35 @@ def _parse_voice_session_metadata(
     else:
         transcription_language = None
 
+    assistant_voice = payload.get("assistant_voice")
+    if isinstance(assistant_voice, str):
+        assistant_voice = normalize_assistant_voice(
+            assistant_voice,
+            default="marin",
+        )
+    else:
+        assistant_voice = None
+
     raw_memory_mode = payload.get("memory_mode")
     memory_mode = (
         parse_optional_voice_memory_mode(raw_memory_mode)
         if isinstance(raw_memory_mode, str)
         else None
     )
-    return user_id or None, thread_id or None, transcription_language, memory_mode
+    return (
+        user_id or None,
+        thread_id or None,
+        transcription_language,
+        assistant_voice,
+        memory_mode,
+    )
 
 
 def _resolve_livekit_session_metadata(
     *,
     job_metadata: str | None,
     participant_metadata: str | None,
-) -> tuple[str, str, str | None, MemoryMode]:
+) -> tuple[str, str, str | None, str, MemoryMode]:
     """Resolve the effective owner/session metadata for a voice run.
 
     Args:
@@ -238,8 +265,8 @@ def _resolve_livekit_session_metadata(
         participant_metadata (str | None): Metadata attached to the connected participant.
 
     Returns:
-        tuple[str, str, str | None, MemoryMode]: Effective
-            ``(user_id, thread_id, transcription_language, memory_mode)``
+        tuple[str, str, str | None, str, MemoryMode]: Effective
+            ``(user_id, thread_id, transcription_language, assistant_voice, memory_mode)``
             for the session.
     """
     user_id = os.getenv(_VOICE_USER_ID_ENV, "").strip() or "voice-user"
@@ -247,6 +274,7 @@ def _resolve_livekit_session_metadata(
         os.getenv(_VOICE_THREAD_ID_ENV, "").strip() or f"voice-{uuid.uuid4().hex[:12]}"
     )
     transcription_language: str | None = DEFAULT_REALTIME_TRANSCRIPTION_LANGUAGE
+    assistant_voice = "marin"
     memory_mode = parse_voice_memory_mode(os.getenv("OPENCOUCH_MEMORY_MODE"))
 
     for metadata in (job_metadata, participant_metadata):
@@ -254,6 +282,7 @@ def _resolve_livekit_session_metadata(
             metadata_user_id,
             metadata_thread_id,
             metadata_transcription_language,
+            metadata_assistant_voice,
             metadata_memory_mode,
         ) = _parse_voice_session_metadata(metadata)
         if metadata_user_id:
@@ -262,10 +291,12 @@ def _resolve_livekit_session_metadata(
             thread_id = metadata_thread_id
         if metadata_transcription_language is not None:
             transcription_language = metadata_transcription_language or None
+        if metadata_assistant_voice is not None:
+            assistant_voice = metadata_assistant_voice
         if metadata_memory_mode is not None:
             memory_mode = metadata_memory_mode
 
-    return user_id, thread_id, transcription_language, memory_mode
+    return user_id, thread_id, transcription_language, assistant_voice, memory_mode
 
 
 # ── Memory loading helpers ──────────────────────────────────────────
@@ -275,8 +306,9 @@ def _resolve_livekit_session_metadata(
 _MAX_MEMORY_ITEMS = 6
 _MID_SESSION_MEMORY_ITEMS = 3
 _EXERCISE_KEYWORD_PATTERN = (
-    r"breath(?:ing)?|ground(?:ing)?|body scan|muscle relaxation|"
-    r"box breathing|stop technique|exercise|technique"
+    r"breath(?:ing)?|ground(?:ing)?|body scan|relaxation|muscle relaxation|"
+    r"progressive muscle relaxation|box breathing|stop technique|exercise|"
+    r"technique"
 )
 _EXPLICIT_EXERCISE_REQUEST_PATTERNS: tuple[str, ...] = (
     rf"\b(guide|walk)\s+me\s+through\b.*\b({_EXERCISE_KEYWORD_PATTERN})\b",
@@ -284,6 +316,7 @@ _EXPLICIT_EXERCISE_REQUEST_PATTERNS: tuple[str, ...] = (
     rf"\b(can|could|would)\s+we\s+do\b.*\b({_EXERCISE_KEYWORD_PATTERN})\b",
     rf"\blet'?s\s+do\b.*\b({_EXERCISE_KEYWORD_PATTERN})\b",
     rf"\bi\s+(want|need|would like)\b.*\b({_EXERCISE_KEYWORD_PATTERN})\b",
+    r"\b(exercises?|techniques?)\b.*\b(cope|manage|relax|release|tension)\b",
     r"\b(help|teach)\s+me\b.*\b(breathe|breathing|ground|grounding|calm down)\b",
     r"\bground me\b",
 )
@@ -293,13 +326,16 @@ _EXERCISE_AGREEMENT_PATTERNS: tuple[str, ...] = (
     r"^\s*that would help\b",
     r"^\s*i'?m open to that\b",
     r"^\s*okay[, ]+let'?s do (it|that)\b",
+    r"^\s*(maybe\s+)?(a|the)?\s*(muscle\s+)?relaxation\s+(technique|exercise)\??\s*$",
 )
 _EXERCISE_OFFER_PATTERNS: tuple[str, ...] = (
-    r"\bwould it help\b.*\b(exercise|breathing|grounding)\b",
-    r"\bwant to try\b.*\b(exercise|breathing|grounding)\b",
-    r"\bwe can try\b.*\b(exercise|breathing|grounding)\b",
-    r"\bi can (guide|walk) you through\b.*\b(exercise|breathing|grounding)\b",
-    r"\bwant me to\b.*\b(guide|walk)\b.*\b(exercise|breathing|grounding)\b",
+    r"\bwould (you )?like\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
+    r"\bwould it help\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
+    r"\bwant to try\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
+    r"\bwe can try\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
+    r"\bi can (guide|walk) you through\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
+    r"\bwant me to\b.*\b(guide|walk)\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
+    r"\bready to try\b.*\b(exercise|breathing|grounding|relaxation|technique)\b",
 )
 _GENERAL_GUIDANCE_REQUEST_PATTERNS: tuple[str, ...] = (
     r"\b(can|could|would) you help me\b",
@@ -465,6 +501,7 @@ _THERAPEUTIC_AGENT_SPECIALIZATION_BLOCKS: dict[TherapeuticAgentKind, str] = {
         "- Briefly acknowledge what is happening, then offer one concrete next step, reframe, or experiment.\n"
         "- Keep structure conversational and immediately usable.\n"
         "- Prefer conversational micro-steps before formal exercises unless the user explicitly asks for an exercise.\n"
+        "- Once the user asks for an exercise or says yes to one you offered, do not ask for readiness again; start the first step.\n"
         "- Do not overwhelm the user with lists, lectures, or multiple options."
     ),
 }
@@ -490,12 +527,14 @@ def _should_finalize_transcript_on_shutdown(*, is_fake_job: bool) -> bool:
 def _build_realtime_model(
     *,
     transcription_language: str | None = DEFAULT_REALTIME_TRANSCRIPTION_LANGUAGE,
+    assistant_voice: str = "marin",
 ) -> openai.realtime.RealtimeModel:
     """Build the realtime model for agent-controlled turn routing.
 
     Args:
         transcription_language (str | None): Preferred transcription
             language, or ``None`` to let the model auto-detect.
+        assistant_voice (str): Realtime output voice name.
 
     Returns:
         openai.realtime.RealtimeModel: Realtime model with provider-side
@@ -504,7 +543,7 @@ def _build_realtime_model(
     """
 
     return openai.realtime.RealtimeModel(
-        voice="marin",
+        voice=normalize_assistant_voice(assistant_voice, default="marin"),
         input_audio_transcription=openai_realtime_types.AudioTranscription(
             model="gpt-4o-transcribe",
             language=transcription_language,
@@ -1363,12 +1402,17 @@ class TherapeuticAgent(Agent):
         context: RunContext[SessionData],
         technique: str,
     ) -> str:
-        """Start a guided grounding or breathing exercise.
+        """Start a guided grounding, breathing, or relaxation exercise.
 
         Call this only when the user explicitly asks for a structured
         exercise or clearly agrees after you offered one. Examples:
         "guide me through breathing", "can we do grounding?", "walk me
-        through box breathing", or "yes, let's try that exercise."
+        through box breathing", "maybe a relaxation technique?", or
+        "yes, let's try that exercise."
+
+        Once the user has asked for a technique or clearly agreed, call
+        this tool and start the first step. Do not ask for readiness or
+        confirmation again.
 
         Do not call this just because the user sounds anxious,
         overwhelmed, dysregulated, or says they want to calm down.
@@ -1716,7 +1760,7 @@ async def opencouch_voice(ctx: agents.JobContext):
         participant_metadata = participant.metadata
 
     # ── Extract identity from metadata or local env overrides ───
-    user_id, thread_id, transcription_language, session_memory_mode = (
+    user_id, thread_id, transcription_language, assistant_voice, session_memory_mode = (
         _resolve_livekit_session_metadata(
             job_metadata=ctx.job.metadata,
             participant_metadata=participant_metadata,
@@ -1724,11 +1768,12 @@ async def opencouch_voice(ctx: agents.JobContext):
     )
 
     logger.info(
-        "livekit session: starting user=%s thread=%s participant=%s transcription_language=%s memory_mode=%s",
+        "livekit session: starting user=%s thread=%s participant=%s transcription_language=%s assistant_voice=%s memory_mode=%s",
         user_id,
         thread_id,
         participant.identity if participant is not None else "console",
         transcription_language or "auto",
+        assistant_voice,
         session_memory_mode.value,
     )
 
@@ -1778,6 +1823,7 @@ async def opencouch_voice(ctx: agents.JobContext):
     session = AgentSession[SessionData](
         llm=_build_realtime_model(
             transcription_language=transcription_language,
+            assistant_voice=assistant_voice,
         ),
         vad=vad,
         turn_handling=_build_turn_handling(),
