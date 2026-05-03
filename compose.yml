@@ -4,6 +4,7 @@ x-backend-service: &backend-service
   build:
     context: .
     dockerfile: apps/backend/Dockerfile.dev
+    target: api-dev
   env_file:
     - path: .env
       required: false
@@ -58,6 +59,10 @@ services:
 
   voice-agent:
     <<: *backend-service
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile.dev
+      target: voice-dev
     command:
       - python
       - -m
@@ -70,17 +75,12 @@ services:
         condition: service_started
 
   web:
-    image: node:22-bookworm-slim
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
     working_dir: /workspace
-    command:
-      - sh
-      - -lc
-      - >
-        corepack enable &&
-        corepack prepare pnpm@10.33.0 --activate &&
-        pnpm --filter web install --frozen-lockfile &&
-        pnpm --dir apps/web dev --hostname 0.0.0.0
     environment:
+      CI: "true"
       NEXT_PUBLIC_API_URL: http://localhost:8080/api
     ports:
       - "3000:3000"
@@ -107,6 +107,7 @@ services:
         NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web build &&
         NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web start --hostname 0.0.0.0
     environment:
+      CI: "true"
       NEXT_PUBLIC_API_URL: http://localhost:8080/api
     ports:
       - "3000:3000"

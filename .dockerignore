@@ -1,10 +1,14 @@
 .git
 .github
 .docusaurus
+.mypy_cache
 .pytest_cache
+.remember
+.remotion
 .ruff_cache
 .venv
 node_modules
+**/node_modules
 notes
 refs
 skills
@@ -13,11 +17,13 @@ skills
 **/.pytest_cache
 **/.ruff_cache
 **/.venv
+**/.coverage
 **/.store
+**/.next
+**/tsconfig.tsbuildinfo
 **/.env
 **/.env.local
 **/*.pyc
 
 apps/docs
-apps/web
 eval

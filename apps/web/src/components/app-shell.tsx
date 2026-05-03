@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { useSessionStore, useSessionStoreHydrated } from "@/lib/session";
 import { SessionSetup } from "@/components/session-setup";
@@ -52,6 +53,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
+
+  // Preload the voice provider chunk after setup so navigating to
+  // /voice doesn't cause a loading gap that briefly unmounts the tree
+  // and kills an active chat WebSocket.
+  useEffect(() => {
+    if (isSetup) {
+      import("@/components/voice-session-provider");
+    }
+  }, [isSetup]);
 
   if (!isSetup) {
     return <SessionSetup />;
