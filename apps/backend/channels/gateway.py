@@ -26,11 +26,13 @@ from channels.telegram import (
     TelegramConfigurationError,
     TelegramGatewayConfig,
     build_telegram_application,
+    build_telegram_session_registry,
     is_rotated_telegram_thread_id,
 )
 from core.config import (
     create_configured_control_llm_client,
     create_configured_response_llm_client,
+    get_settings,
     load_runtime_env,
 )
 
@@ -195,6 +197,7 @@ async def run_telegram_gateway(
 
     load_runtime_env()
     config = config or TelegramGatewayConfig.from_env()
+    settings = get_settings()
     memory_mode = resolve_telegram_memory_mode()
     llm_client = create_configured_control_llm_client()
     response_llm_client = create_configured_response_llm_client(
@@ -205,6 +208,14 @@ async def run_telegram_gateway(
     with TelegramGatewayLock(lock_path):
         runtime = PersistentAgentRuntime(
             sqlite_path=str(DEFAULT_THREAD_DB_PATH),
+            memory_backend=settings.persistence_backend,
+            memory_database_url=settings.memory_database_url,
+            thread_persistence_backend=settings.persistence_backend,
+            thread_database_url=settings.memory_database_url,
+            crisis_log_persistence_backend=settings.persistence_backend,
+            crisis_log_database_url=settings.memory_database_url,
+            session_feedback_persistence_backend=settings.persistence_backend,
+            session_feedback_database_url=settings.memory_database_url,
             memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
             crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
             memory_mode=memory_mode,
@@ -217,11 +228,21 @@ async def run_telegram_gateway(
             ),
         )
         async with runtime:
+            session_registry = (
+                build_telegram_session_registry(
+                    backend=settings.persistence_backend,
+                    sqlite_path=config.session_registry_sqlite_path,
+                    database_url=settings.memory_database_url,
+                )
+                if config.thread_rotation_enabled
+                else None
+            )
             channel = TelegramChannel(
                 config=config,
                 runtime=runtime,
                 llm_client=llm_client,
                 response_llm_client=response_llm_client,
+                session_registry=session_registry,
             )
             await channel.start()
             try:

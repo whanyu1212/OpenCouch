@@ -29,6 +29,14 @@ Resume a persisted local thread:
 uv run python -m opencouch_cli --mode auto --thread-id local-demo
 ```
 
+Run the CLI against the Dockerized Postgres memory backend:
+
+```bash
+OPENCOUCH_PERSISTENCE_BACKEND=postgres \
+OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch \
+uv run python -m opencouch_cli --mode auto --thread-id local-demo
+```
+
 Run backend tests:
 
 ```bash

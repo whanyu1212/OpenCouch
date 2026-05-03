@@ -13,12 +13,31 @@ x-backend-service: &backend-service
       required: false
     - path: apps/backend/.env.local
       required: false
+  environment:
+    OPENCOUCH_PERSISTENCE_BACKEND: ${OPENCOUCH_PERSISTENCE_BACKEND:-postgres}
+    OPENCOUCH_MEMORY_DATABASE_URL: ${OPENCOUCH_MEMORY_DATABASE_URL:-postgresql://opencouch:opencouch@postgres:5432/opencouch}
   volumes:
     - .:/workspace
     - backend-cache:/root/.cache
   working_dir: /workspace/apps/backend
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: opencouch
+      POSTGRES_USER: opencouch
+      POSTGRES_PASSWORD: opencouch
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencouch -d opencouch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   api:
     <<: *backend-service
     command:
@@ -31,6 +50,9 @@ services:
       - --port
       - "8080"
       - --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8080:8080"
 
@@ -42,7 +64,10 @@ services:
       - voice.livekit.agent
       - start
     depends_on:
-      - api
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
 
   web:
     image: node:22-bookworm-slim
@@ -95,6 +120,7 @@ services:
 
 volumes:
   backend-cache:
+  postgres-data:
   web-root-node-modules:
   web-app-node-modules:
   web-next-cache:

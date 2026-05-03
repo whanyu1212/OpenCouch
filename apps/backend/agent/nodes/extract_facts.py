@@ -97,9 +97,10 @@ async def run_extract_semantic_facts_node(
         semantic_session_end_holds: int = 0,
         semantic_repeat_required: int = 0,
         semantic_policy_drops: int = 0,
+        semantic_written_items: list[Any] | None = None,
         reason: str = "",
     ) -> dict[str, Any]:
-        """Return a state delta carrying just the extractor's diagnostics.
+        """Return a state delta carrying extractor diagnostics and approved writes.
 
         Args:
             semantic_writes: Number of newly written semantic facts.
@@ -109,10 +110,11 @@ async def run_extract_semantic_facts_node(
             semantic_session_end_holds: Candidates buffered until session end.
             semantic_repeat_required: Candidates requiring repetition evidence.
             semantic_policy_drops: Candidates rejected by deterministic policy.
+            semantic_written_items: Approved semantic facts written this turn.
             reason: Human-readable extraction or skip reason.
 
         Returns:
-            State delta with diagnostics only.
+            State delta with diagnostics and approved writes.
         """
 
         return {
@@ -126,7 +128,8 @@ async def run_extract_semantic_facts_node(
                 "semantic_repeat_required": semantic_repeat_required,
                 "semantic_policy_drops": semantic_policy_drops,
                 "extract_facts_reason": reason,
-            }
+            },
+            "written_items": list(semantic_written_items or []),
         }
 
     skip_reason = should_skip_memory_extraction(state)
@@ -209,5 +212,6 @@ async def run_extract_semantic_facts_node(
         semantic_session_end_holds=result.session_end_holds,
         semantic_repeat_required=result.repeat_required,
         semantic_policy_drops=result.policy_drops,
+        semantic_written_items=result.written_items,
         reason=result.reason,
     )

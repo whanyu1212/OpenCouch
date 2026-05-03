@@ -16,10 +16,15 @@ from services.llm.openai_client import DEFAULT_OPENAI_MODEL
 
 LLMProvider = Literal["gemini", "openai"]
 ResponseModelTier = Literal["fast", "quality"]
+PersistenceBackend = Literal["sqlite", "postgres"]
 
 # Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
+# Keep SQLite as the compatibility default for now. Dockerized Postgres is the
+# recommended local persistent path and may become the default once the
+# remaining legacy SQLite surfaces are retired.
+DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "sqlite"
 
 _DOTENV_LOADED = False
 
@@ -61,6 +66,8 @@ class Settings:
     response_quality_provider: LLMProvider = DEFAULT_LLM_PROVIDER
     response_quality_gemini_model: str = DEFAULT_GEMINI_MODEL
     response_quality_openai_model: str = DEFAULT_OPENAI_QUALITY_MODEL
+    persistence_backend: PersistenceBackend = DEFAULT_PERSISTENCE_BACKEND
+    memory_database_url: str | None = None
     langsmith_tracing: bool = False
     langsmith_endpoint: str | None = None
     langsmith_api_key: str | None = None
@@ -78,7 +85,8 @@ def get_settings() -> Settings:
         A populated `Settings` instance.
 
     Raises:
-        ValueError: If `LLM_PROVIDER` contains an unsupported value.
+        ValueError: If `LLM_PROVIDER` or `OPENCOUCH_PERSISTENCE_BACKEND`
+            contains an unsupported value.
     """
 
     load_runtime_env()
@@ -88,6 +96,10 @@ def get_settings() -> Settings:
     response_quality_provider = _read_provider_env(
         "RESPONSE_QUALITY_LLM_PROVIDER",
         provider,
+    )
+    persistence_backend = _read_persistence_backend_env(
+        "OPENCOUCH_PERSISTENCE_BACKEND",
+        DEFAULT_PERSISTENCE_BACKEND,
     )
 
     return Settings(
@@ -112,6 +124,8 @@ def get_settings() -> Settings:
             "RESPONSE_QUALITY_OPENAI_MODEL",
             DEFAULT_OPENAI_QUALITY_MODEL,
         ),
+        persistence_backend=persistence_backend,
+        memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
         langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
         in {"1", "true", "yes", "on"},
         langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),
@@ -123,6 +137,31 @@ def get_settings() -> Settings:
         langchain_api_key=os.getenv("LANGCHAIN_API_KEY"),
         langchain_project=os.getenv("LANGCHAIN_PROJECT"),
     )
+
+
+def _read_persistence_backend_env(
+    name: str,
+    fallback: PersistenceBackend,
+) -> PersistenceBackend:
+    """Read and validate a persistence backend env var.
+
+    Args:
+        name (str): Environment variable name to read.
+        fallback (PersistenceBackend): Backend used when the variable is unset.
+
+    Returns:
+        PersistenceBackend: Validated backend literal.
+
+    Raises:
+        ValueError: If the environment value is not supported.
+    """
+
+    raw = os.getenv(name, fallback).strip().lower()
+    if raw == "sqlite":
+        return "sqlite"
+    if raw == "postgres":
+        return "postgres"
+    raise ValueError(f"Unsupported {name} value: {raw}")
 
 
 def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
@@ -145,6 +184,42 @@ def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
     if raw == "openai":
         return "openai"
     raise ValueError(f"Unsupported {name} value: {raw}")
+
+
+def _read_bool_env(name: str) -> bool:
+    """Read a boolean feature flag from the environment.
+
+    Args:
+        name (str): Environment variable name to read.
+
+    Returns:
+        bool: True when the variable is set to a truthy value.
+    """
+
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_int_env(name: str, fallback: int) -> int:
+    """Read an integer from the environment.
+
+    Args:
+        name (str): Environment variable name to read.
+        fallback (int): Value used when the variable is unset.
+
+    Returns:
+        int: Parsed integer value.
+
+    Raises:
+        ValueError: If the environment value is not an integer.
+    """
+
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return fallback
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported {name} value: {raw}") from exc
 
 
 def _resolve_model_for_provider(

@@ -90,7 +90,9 @@ A closed beta is planned.
 - Provider keys only for real model runs. Deterministic CLI and many local checks can run without external API keys.
 
 ### Environment
-OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need at least one configured provider:
+OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need at least one configured provider.
+
+For local persistence, the recommended path is the Dockerized Postgres service from `compose.yml`. Backend services default to that stack configuration when `OPENCOUCH_PERSISTENCE_BACKEND` is unset inside Compose.
 
 ```env
 # Text model provider. Defaults to openai when unset.
@@ -101,6 +103,11 @@ OPENAI_API_KEY=...
 # LLM_PROVIDER=gemini
 # GEMINI_API_KEY=...
 # GOOGLE_API_KEY=...
+
+# Local memory persistence backend.
+# The Docker Compose stack defaults to these values automatically.
+OPENCOUCH_PERSISTENCE_BACKEND=postgres
+OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
 ```
 
 Voice and Telegram are optional surfaces with additional configuration:
@@ -122,29 +129,30 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 Keep real `.env` files local and out of version control.
 
 ### One-command local stack
-Use this for the full local web + voice **development** stack with backend reload and Next.js hot reload:
+Use this for the full local web + voice **development** stack with backend reload, Next.js hot reload, and a Dockerized Postgres memory store:
 
 ```bash
 docker compose up --build
 ```
 
 This starts:
+- PostgreSQL + pgvector for memory persistence: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
 - backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
 - LiveKit voice worker: `python -m voice.livekit.agent start`
 - Next.js web UI in dev mode: [localhost:3000](http://localhost:3000)
 
 The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
 
-For text-only development without LiveKit credentials, start just the API and hot-reload web UI:
+For text-only development without LiveKit credentials, start just the API, Postgres, and hot-reload web UI:
 
 ```bash
-docker compose up --build api web
+docker compose up --build postgres api web
 ```
 
-For production-like web dogfooding, use the `web-prod` profile. This keeps the backend API in Compose but runs the web UI with `next build` + `next start`, which is closer to what users feel than `next dev`:
+For production-like web dogfooding, use the `web-prod` profile. This keeps the backend API and Postgres in Compose but runs the web UI with `next build` + `next start`, which is closer to what users feel than `next dev`:
 
 ```bash
-docker compose --profile prod-web up --build api web-prod
+docker compose --profile prod-web up --build postgres api web-prod
 ```
 
 Stop everything with:

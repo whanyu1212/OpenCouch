@@ -42,6 +42,7 @@ async def run_memory_extraction_node(
         **semantic_delta.get("diagnostics", {}),
         **procedural_delta.get("diagnostics", {}),
     }
+
     if not diagnostics:
         return {}
     return {"diagnostics": diagnostics}

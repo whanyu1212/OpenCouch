@@ -145,8 +145,19 @@ async def _ensure_runtime() -> PersistentAgentRuntime:
     if _runtime is not None:
         return _runtime
 
+    from core.config import get_settings
+
+    settings = get_settings()
     _runtime = PersistentAgentRuntime(
         sqlite_path=str(DEFAULT_THREAD_DB_PATH),
+        memory_backend=settings.persistence_backend,
+        memory_database_url=settings.memory_database_url,
+        thread_persistence_backend=settings.persistence_backend,
+        thread_database_url=settings.memory_database_url,
+        crisis_log_persistence_backend=settings.persistence_backend,
+        crisis_log_database_url=settings.memory_database_url,
+        session_feedback_persistence_backend=settings.persistence_backend,
+        session_feedback_database_url=settings.memory_database_url,
         memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
         crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         memory_mode=MemoryMode.LOCAL,

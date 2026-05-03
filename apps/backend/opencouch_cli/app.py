@@ -90,6 +90,7 @@ from core.config import (
     ResponseModelTier,
     create_configured_control_llm_client,
     create_configured_response_llm_client,
+    get_settings,
 )
 from rich import box
 from rich.console import Console, Group
@@ -261,22 +262,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sqlite-path",
         default=str(DEFAULT_THREAD_DB_PATH),
-        help="SQLite path for LangGraph thread checkpoints.",
+        help=(
+            "Legacy SQLite path for LangGraph thread checkpoints. Deprecated "
+            "for normal local development; prefer "
+            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
+        ),
     )
     parser.add_argument(
         "--memory-sqlite-path",
         default=str(DEFAULT_MEMORY_DB_PATH),
         help=(
-            "SQLite path for the memory store (semantic facts + episodic "
-            "arcs). Only used in persistent mode."
+            "Legacy SQLite path for the memory store (semantic facts + "
+            "episodic arcs). Deprecated for normal local development; prefer "
+            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
         ),
     )
     parser.add_argument(
         "--crisis-log-sqlite-path",
         default=str(DEFAULT_CRISIS_LOG_DB_PATH),
         help=(
-            "SQLite path for the crisis log (safety audit trail). Only "
-            "used in persistent mode."
+            "Legacy SQLite path for the crisis log (safety audit trail). "
+            "Deprecated for normal local development; prefer "
+            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
         ),
     )
     parser.add_argument(
@@ -3230,17 +3237,19 @@ async def chat_loop(
             rationale. When None, the CLI uses ``thread_id`` as the
             effective owner.
         response_model_tier: Response tier for user-facing prose.
-        sqlite_path: SQLite file used for persisted thread checkpoints.
+        sqlite_path: Legacy SQLite file used for persisted thread checkpoints.
+            Deprecated for normal local development in favor of Postgres.
         memory_mode: Local memory mode ("guest" or "persistent").
-        memory_sqlite_path: SQLite path for the memory store. Only
-            used in persistent mode; incognito uses in-memory backing.
-        crisis_log_sqlite_path: SQLite path for the crisis log.
+        memory_sqlite_path: Legacy SQLite path for the memory store. Only
+            used in persistent mode when the SQLite backend is selected.
+        crisis_log_sqlite_path: Legacy SQLite path for the crisis log.
             Same persistence semantics as the memory path.
 
     Returns:
         None.
     """
 
+    settings = get_settings()
     llm_client, resolved_mode = resolve_llm_client(mode)
     response_llm_client = (
         resolve_response_llm_client(mode, response_model_tier)
@@ -3280,6 +3289,14 @@ async def chat_loop(
                 PersistentAgentRuntime(
                     sqlite_path,
                     memory_mode=runtime_memory_mode,
+                    memory_backend=settings.persistence_backend,
+                    memory_database_url=settings.memory_database_url,
+                    thread_persistence_backend=settings.persistence_backend,
+                    thread_database_url=settings.memory_database_url,
+                    crisis_log_persistence_backend=settings.persistence_backend,
+                    crisis_log_database_url=settings.memory_database_url,
+                    session_feedback_persistence_backend=settings.persistence_backend,
+                    session_feedback_database_url=settings.memory_database_url,
                     memory_sqlite_path=memory_sqlite_path,
                     crisis_log_sqlite_path=crisis_log_sqlite_path,
                     default_llm_client=session.llm_client,

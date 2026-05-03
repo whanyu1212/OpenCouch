@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.legacy.sqlite_store import SqliteMemoryStore
 from agent.memory.store import MemoryStore, StoreRecord
 
 

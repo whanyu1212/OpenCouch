@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from agent.memory.reconciliation import is_active_semantic_record_value
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.legacy.sqlite_store import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 
 
