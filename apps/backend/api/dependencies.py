@@ -1,7 +1,7 @@
 """FastAPI dependency injection for the agent runtime.
 
 The ``PersistentAgentRuntime`` is an async context manager that owns
-SQLite connections, an embedding provider, and the LangGraph
+configured persistence backends, an embedding provider, and the LangGraph
 checkpointer. It must be opened once at startup and closed at
 shutdown, not per request. FastAPI's lifespan protocol handles this.
 
@@ -77,9 +77,9 @@ _response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = {
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """Open the agent runtime on startup, close on shutdown.
 
-    The runtime opens its SQLite connections (thread checkpointer,
-    memory store, crisis log) and resolves the embedding provider.
-    On shutdown, all connections are closed cleanly.
+    The runtime opens its configured persistence backends and resolves
+    the embedding provider. On shutdown, all connections are closed
+    cleanly.
 
     The LLM client is resolved separately because it's stateless
     and doesn't need lifecycle management. We resolve it once

@@ -48,7 +48,7 @@
 
 ## 📖 Overview
 
-The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with SQLite for memory and audit trails. The web UI is Next.js.
+The text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and legacy SQLite fallback. The web UI is Next.js.
 
 Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Every turn passes through crisis safety routing before therapeutic generation, and the main routing decisions are covered by local evals plus Opik-first tracing.
 
@@ -58,7 +58,7 @@ A closed beta is planned.
 
 ## ✨ Key Features
 - Persistent memory across sessions: semantic facts, episodic arcs, procedural rules.
-- Crisis gate runs before every response, with a SQLite audit trail.
+- Crisis gate runs before every response, with an always-on durable audit trail.
 - Local eval runners, plus Opik as the primary trace surface for regression tracking.
 - LiveKit voice in the browser, backed by OpenAI Realtime — configurable voices, transcription hints, interruption handling.
 - Telegram DM gateway with allow-listing, `/end`, markdown rendering, and session rotation.

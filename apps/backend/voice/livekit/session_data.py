@@ -6,7 +6,7 @@ within the same session.
 
 This data is session-scoped (lives in memory for the duration of
 the LiveKit job). Anything that must survive process restarts
-should be persisted to SQLite via the runtime.
+should be persisted through the configured runtime backend.
 """
 
 from __future__ import annotations

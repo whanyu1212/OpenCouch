@@ -21,15 +21,15 @@ shared session-end seam (`/end`, timeout, shutdown, API end-session).
 
 :::tip The difference is between turns, not within a turn
 Both layers run identical graph nodes in identical order. The
-persistent layer saves state to SQLite after each turn and restores
-it via reducers on the next.
+persistent layer saves state through the configured backend after each
+turn and restores it via reducers on the next.
 :::
 
 :::note Voice has its own seam
 The LiveKit voice runtime (`voice/livekit/agent.py`) lazy-creates
 **one shared `PersistentAgentRuntime` per worker process**, so it
-shares the SQLite-backed memory store, crisis log, and embedding
-provider with text mode. But voice does **not** drive turns
+shares the configured memory store, crisis log, and embedding provider
+with text mode. But voice does **not** drive turns
 through `run_turn` / `run_turn_stream`. On disconnect it
 serializes the room transcript and hands it to
 `runtime.end_transcript_session(...)` — a separate seam from
@@ -197,6 +197,8 @@ skipped.
 | `agent/state.py` | All state fragments + `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
-| `agent/audit/sqlite_crisis_log.py` | SQLite crisis log with retention purge |
+| `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
+| `agent/audit/legacy/sqlite_crisis_log.py` | Legacy SQLite crisis-log fallback |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
-| `agent/audit/sqlite_session_feedback.py` | SQLite feedback store |
+| `agent/audit/postgres_session_feedback.py` | Primary Postgres feedback store |
+| `agent/audit/legacy/sqlite_session_feedback.py` | Legacy SQLite feedback fallback |

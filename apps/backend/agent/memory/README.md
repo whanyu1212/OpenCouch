@@ -44,7 +44,9 @@ There are 3 main memory shapes:
 ### Storage
 
 - [store.py](./store.py): `MemoryStore` protocol, `StoreRecord`, in-memory `OpenCouchMemoryStore`, namespace conventions, search thresholds.
-- [sqlite_store.py](./sqlite_store.py): durable SQLite implementation of the same store interface.
+- [postgres_store.py](./postgres_store.py): primary durable Postgres implementation of the same store interface.
+- [legacy/sqlite_store.py](./legacy/sqlite_store.py): legacy SQLite implementation kept for compatibility fallback and migration coverage.
+- [sqlite_store.py](./sqlite_store.py): compatibility import shim for the legacy SQLite store.
 - [modes.py](./modes.py): `MemoryMode` enum used by the runtime to choose in-memory vs durable behavior.
 
 ### Retrieval
@@ -93,7 +95,7 @@ There are 3 main memory shapes:
 If you are trying to understand a specific behavior, start here:
 
 - “How is memory stored?”
-  Start with [store.py](./store.py), then [sqlite_store.py](./sqlite_store.py).
+  Start with [store.py](./store.py), then [postgres_store.py](./postgres_store.py). For legacy fallback behavior, see [legacy/sqlite_store.py](./legacy/sqlite_store.py).
 
 - “How does retrieval work?”
   Start with [retrieval.py](./retrieval.py), then [embeddings.py](./embeddings.py), then [text_tokens.py](./text_tokens.py).

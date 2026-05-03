@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect memory produced by the LiveKit voice path.
+"""Inspect legacy SQLite memory produced by the LiveKit voice path.
 
 Usage:
     python scripts/inspect_voice_memory.py --owner hy
@@ -7,6 +7,7 @@ Usage:
     python scripts/inspect_voice_memory.py --owner hy --namespace semantic
     python scripts/inspect_voice_memory.py --all-owners
     python scripts/inspect_voice_memory.py --owner hy --raw
+    python scripts/inspect_voice_memory.py --sqlite-path apps/backend/.store/memory.sqlite3 --all-owners
 
 This script is more opinionated than ``scripts/inspect_memory.py``:
 
@@ -19,8 +20,10 @@ This script is more opinionated than ``scripts/inspect_memory.py``:
   per-session provenance, so owner-level inspection can show them, but
   thread-level inspection cannot attribute them safely
 
-Run from the repo root or ``apps/backend/``. The script auto-detects
-``.store/memory.sqlite3``.
+Run from the repo root or ``apps/backend/``. This is a legacy SQLite
+inspector; Postgres-first environments should query Postgres directly.
+The script auto-detects ``.store/memory.sqlite3`` unless ``--sqlite-path``
+is provided.
 """
 
 from __future__ import annotations
@@ -34,12 +37,19 @@ from pathlib import Path
 from typing import Any
 
 
-def find_db() -> Path:
-    """Locate the memory SQLite database.
+def find_db(sqlite_path: str | None = None) -> Path:
+    """Locate the legacy memory SQLite database.
 
     Returns:
         Path: Path to ``memory.sqlite3``.
     """
+
+    if sqlite_path is not None:
+        path = Path(sqlite_path).expanduser()
+        if path.exists():
+            return path
+        print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
+        sys.exit(1)
 
     candidates = [
         Path("apps/backend/.store/memory.sqlite3"),
@@ -399,9 +409,13 @@ def main() -> None:
         help="List owners that currently have voice-derived memory",
     )
     parser.add_argument("--raw", action="store_true", help="Print raw JSON payloads")
+    parser.add_argument(
+        "--sqlite-path",
+        help="Explicit legacy SQLite memory database path.",
+    )
     args = parser.parse_args()
 
-    db = find_db()
+    db = find_db(args.sqlite_path)
 
     if args.all_owners:
         owners = list_voice_owners(db)

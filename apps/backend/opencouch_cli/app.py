@@ -1,6 +1,6 @@
 """Interactive CLI for the OpenCouch agent runtime.
 
-Run from ``apps/backend/`` so default SQLite paths resolve to the
+Run from ``apps/backend/`` so default local paths resolve to the
 backend working directory. The CLI supports deterministic smoke tests,
 hybrid LLM runs, persistent local memory, thread switching, and optional
 voice mode.
@@ -12,8 +12,8 @@ Common invocations:
     deterministic graph paths.
 
 ``uv run python -m opencouch_cli --mode auto --memory-mode persistent``
-    Real model when configured, local SQLite persistence, and memory
-    writes enabled.
+    Real model when configured, durable local persistence, and memory
+    writes enabled. Postgres is recommended; SQLite remains a legacy fallback.
 
 ``uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice``
     Stable owner namespace for semantic, episodic, and procedural memory
@@ -290,7 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--memory-mode",
         choices=["guest", "persistent", "ask"],
         default="ask",
-        help="Local memory behavior: guest (ephemeral), persistent (SQLite), or ask at startup.",
+        help="Local memory behavior: guest (ephemeral), persistent (configured backend), or ask at startup.",
     )
     parser.add_argument(
         "--response-model-tier",

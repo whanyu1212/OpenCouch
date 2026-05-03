@@ -59,7 +59,7 @@ from agent.memory.procedural import (
 )
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import PersistentAgentRuntime
-from core.config import create_configured_llm_client
+from core.config import create_configured_llm_client, get_settings
 from services.llm.base import BaseLLMClient
 
 DATASET_PATH = (
@@ -1448,12 +1448,25 @@ async def _run_case(
         f"end_session={run_end_session})",
     )
 
+    settings = get_settings()
+    runtime_kwargs: dict[str, Any] = {}
+    if settings.persistence_backend == "postgres" and settings.memory_database_url:
+        runtime_kwargs = {
+            "thread_persistence_backend": "postgres",
+            "thread_database_url": settings.memory_database_url,
+            "crisis_log_persistence_backend": "postgres",
+            "crisis_log_database_url": settings.memory_database_url,
+            "session_feedback_persistence_backend": "postgres",
+            "session_feedback_database_url": settings.memory_database_url,
+        }
+
     with tempfile.TemporaryDirectory(prefix="opencouch-session-eval-") as tmpdir:
         sqlite_path = Path(tmpdir) / "threads.sqlite3"
         async with PersistentAgentRuntime(
             sqlite_path=sqlite_path,
             memory_store=OpenCouchMemoryStore(),
             memory_mode=MemoryMode.LOCAL,
+            **runtime_kwargs,
         ) as runtime:
             thread_id = f"eval-{case['id']}-{uuid4().hex[:8]}"
             user_id = f"eval-user-{case['id']}"

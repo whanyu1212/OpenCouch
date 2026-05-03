@@ -35,8 +35,8 @@ memory retrieval and all operational gates are skipped entirely.
 | Execution | LangGraph `StateGraph` with split input/internal/output schemas | Explicit branches, deterministic ordering, checkpoint persistence; narrow output schema avoids reducer double-counting on subgraph completion |
 | LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface; `WorkflowContext` exposes both control LLM and optional response LLM |
 | Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` first, Gemini `gemini-embedding-001` fallback; null provider when no API key |
-| Storage | SQLite via `aiosqlite` | Single-file, no server, survives restart; four separate DBs to keep audit/feedback isolated from prompt memory |
-| Memory | `MemoryStore` protocol | In-memory for incognito/tests; SQLite for persistent |
+| Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
+| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres for durable local/runtime paths; SQLite legacy fallback |
 | Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
 | Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime via `compose_sources()` |
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
@@ -49,18 +49,19 @@ memory retrieval and all operational gates are skipped entirely.
 
 ## Persistence
 
-:::info Four SQLite databases
-Each under `.store/`, each owning its schema independently. Paths
-overridable via CLI flags. Incognito mode uses in-memory backends
-for all four — nothing touches disk.
+:::info Durable persistence backends
+Dockerized Postgres is the recommended local/runtime persistence path for
+thread checkpoints, active-session state, memory, crisis log, session
+feedback, and voice finalization status. Legacy SQLite files under `.store/`
+remain available for compatibility fallback and focused migration tests.
 :::
 
-| Database | Owner | What it persists | Retention |
+| Store | Primary backend | Legacy fallback | What it persists |
 |---|---|---|---|
-| `threads.sqlite3` | LangGraph checkpointer | Conversation state snapshots | Indefinite |
-| `memory.sqlite3` | `SqliteMemoryStore` | Semantic facts, episodic arcs, procedural profiles | User-controlled |
-| `crisis.sqlite3` | `SqliteCrisisLogBackend` | Crisis event audit trail | 90 days |
-| `session_feedback.sqlite3` | `SqliteSessionFeedbackBackend` | End-of-session thumbs ratings | 180 days |
+| Thread checkpoints | Postgres checkpointer | `threads.sqlite3` | Conversation state snapshots |
+| Memory | `PostgresMemoryStore` | `SqliteMemoryStore` | Semantic facts, episodic arcs, procedural profiles |
+| Crisis log | `PostgresCrisisLogBackend` | `SqliteCrisisLogBackend` | Crisis event audit trail |
+| Session feedback | `PostgresSessionFeedbackBackend` | `SqliteSessionFeedbackBackend` | End-of-session thumbs ratings |
 
 ---
 

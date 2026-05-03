@@ -13,9 +13,11 @@ recall toggles.
 | `__init__.py` | Package marker and short package-level contract. |
 | `models.py` | Source-of-truth pydantic models for crisis logs, classifier audit metadata, and session feedback records. |
 | `crisis_log.py` | Defines `CrisisLogBackend` plus in-memory and null crisis-log implementations. Used by tests, incognito mode, and explicit fixtures. |
-| `sqlite_crisis_log.py` | Durable SQLite implementation of `CrisisLogBackend` for local/synced runtimes. Stores indexed query columns plus the full serialized `CrisisLogRecord`. |
+| `postgres_crisis_log.py` | Primary Postgres implementation of `CrisisLogBackend` for durable local/runtime deployments. |
+| `postgres_session_feedback.py` | Primary Postgres implementation of `SessionFeedbackBackend` for durable local/runtime deployments. |
+| `legacy/sqlite_crisis_log.py` | Legacy SQLite implementation of `CrisisLogBackend` for compatibility fallback and migration coverage. |
 | `session_feedback.py` | Defines `SessionFeedbackBackend` plus in-memory and null feedback implementations. Used for end-of-session thumbs feedback. |
-| `sqlite_session_feedback.py` | Durable SQLite implementation of `SessionFeedbackBackend` for local/synced runtimes. Stores session-keyed feedback rows plus the full serialized `SessionFeedbackRecord`. |
+| `legacy/sqlite_session_feedback.py` | Legacy SQLite implementation of `SessionFeedbackBackend` for compatibility fallback and migration coverage. |
 
 ## Graph Significance
 
@@ -38,7 +40,7 @@ The crisis log is always-on across memory modes:
 
 - Incognito mode uses `InMemoryCrisisLogBackend`, so records exist only for the
   runtime lifetime.
-- Local/synced modes use `SqliteCrisisLogBackend`, so records survive restarts.
+- Local/synced modes use the configured durable backend; Postgres is recommended and SQLite remains a legacy fallback.
 - `NullCrisisLogBackend` should stay limited to explicit tests.
 
 ## Runtime Significance

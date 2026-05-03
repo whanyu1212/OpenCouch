@@ -23,7 +23,7 @@ At a high level:
 
 There are two important lifetimes in this package:
 
-- Worker lifetime: `_ensure_runtime()` lazily creates a shared durable `PersistentAgentRuntime` once per worker process. That runtime owns the SQLite-backed persistence layer and the optional control-model client used for session-end extraction.
+- Worker lifetime: `_ensure_runtime()` lazily creates a shared durable `PersistentAgentRuntime` once per worker process. That runtime owns the configured persistence layer (Postgres recommended, SQLite legacy fallback) and the optional control-model client used for session-end extraction.
 - Session lifetime: each LiveKit job creates one `AgentSession[SessionData]` for one room conversation. `SessionData` is the in-memory state object shared across the default agent, crisis agent, tools, and tasks for the duration of that job. The effective memory mode is resolved per session from token metadata, participant metadata, or `OPENCOUCH_MEMORY_MODE`.
 
 The session itself is created in `opencouch_voice()` with:

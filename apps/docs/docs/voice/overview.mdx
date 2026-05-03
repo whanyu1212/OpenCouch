@@ -42,7 +42,7 @@ sessions and what isn't.
 
 | Lifetime | Lives in | What it owns |
 |---|---|---|
-| **Worker process** | `voice/livekit/agent.py` | One shared `PersistentAgentRuntime` (lazy-init), the SQLite-backed memory store, the optional control LLM client. Survives across LiveKit jobs. |
+| **Worker process** | `voice/livekit/agent.py` | One shared `PersistentAgentRuntime` (lazy-init), the configured memory store, the optional control LLM client. Survives across LiveKit jobs. |
 | **Session (one room)** | `AgentSession[SessionData]` | One room conversation. The typed `SessionData` carries `user_id`, `thread_id`, `memory_mode`, `crisis_level` / `max_crisis_level`, `proactive_recall_enabled`, `pending_memory_delete`, `therapeutic_instructions`, `injected_semantic_memory_keys`, `recent_exercise_types`. Lives in memory; anything that must persist goes through the runtime. |
 
 ---
