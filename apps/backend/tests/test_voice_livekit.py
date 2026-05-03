@@ -9,6 +9,12 @@ from types import SimpleNamespace
 import pytest
 
 from fastapi.testclient import TestClient
+
+pytest.importorskip(
+    "livekit.agents",
+    reason="LiveKit agent tests require the optional voice extra.",
+)
+
 from livekit.agents import ChatContext
 
 import main
