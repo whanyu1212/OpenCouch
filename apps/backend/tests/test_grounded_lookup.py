@@ -13,10 +13,8 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput, ResponseStyleType, ResponseCategory
 from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.nodes.grounded_lookup_gate import (
-    _detect_grounded_lookup_action,
-    run_grounded_lookup_gate_node,
-)
+from agent.grounded_lookup.router import detect_grounded_lookup_action
+from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded_lookup import answer_grounded_lookup
@@ -147,29 +145,29 @@ def _state(message: str) -> AgentState:
 
 
 def test_detect_grounded_lookup_requires_explicit_factual_signal() -> None:
-    assert _detect_grounded_lookup_action(
+    assert detect_grounded_lookup_action(
         "Can you look up affordable counselling services in Singapore?"
     ) == {"query": "Can you look up affordable counselling services in Singapore?"}
-    assert _detect_grounded_lookup_action(
+    assert detect_grounded_lookup_action(
         "Can you check if 988 works outside the US?"
     ) == {"query": "Can you check if 988 works outside the US?"}
     assert (
-        _detect_grounded_lookup_action(
+        detect_grounded_lookup_action(
             "Can you check whether this wearable is evidence-based for anxiety?"
         )
         is None
     )
     assert (
-        _detect_grounded_lookup_action("I'm overwhelmed about finding a therapist.")
+        detect_grounded_lookup_action("I'm overwhelmed about finding a therapist.")
         is None
     )
     assert (
-        _detect_grounded_lookup_action("Can you check if I'm being unreasonable?")
+        detect_grounded_lookup_action("Can you check if I'm being unreasonable?")
         is None
     )
-    assert _detect_grounded_lookup_action("Something else is on my mind today.") is None
+    assert detect_grounded_lookup_action("Something else is on my mind today.") is None
     assert (
-        _detect_grounded_lookup_action(
+        detect_grounded_lookup_action(
             "Before we wrap up, what's the main thing from today?"
         )
         is None

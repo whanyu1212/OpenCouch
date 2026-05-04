@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.runtime import Runtime
 
 from agent.models import ResponseStyleType, ResponseCategory
+from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded_lookup import GroundedLookupStatus, answer_grounded_lookup
@@ -38,9 +39,7 @@ def _base_delta(
         "response_style_type": ResponseStyleType.OPERATIONAL,
         "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
-        "diagnostics": {
-            "grounded_lookup_ms": round((time.monotonic() - started_at) * 1000, 2)
-        },
+        "diagnostics": {"grounded_lookup_ms": elapsed_ms(started_at)},
     }
 
 

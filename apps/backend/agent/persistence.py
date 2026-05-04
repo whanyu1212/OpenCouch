@@ -9,7 +9,6 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -24,6 +23,7 @@ from agent.active_session_manager import (
 from agent.active_session_store import PostgresActiveSessionStore
 from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
+from agent.graph_constants import FINALIZE_TURN_NODE, GRAPH_NODE_TO_STATUS_STAGE
 from agent.memory.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
@@ -64,6 +64,15 @@ from agent.nodes.commit_session_memory import run_commit_session_memory
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.summarize_session import run_summarize_session
+from agent.runtime.types import (
+    ActiveSessionExists,
+    ExpectedSessionLiveness,
+    PersistentTurnResult,
+    SessionInterrupted,
+    SessionLeaseExpired,
+    SessionStatus,
+    ThreadSummary,
+)
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -80,23 +89,6 @@ AgentWorkflow = CompiledStateGraph[
     AgentGraphInputState,
     AgentGraphOutputState,
 ]
-
-# Keep graph node names and CLI/API stage labels aligned in one place.
-_NODE_TO_STAGE = {
-    "load_memory_node": "load_memory",
-    "crisis_gate_node": "crisis_gate",
-    "crisis_resource_lookup_node": "crisis_resource_lookup",
-    "crisis_response_node": "crisis_response",
-    "crisis_log_node": "crisis_log",
-    "memory_control_gate_node": "memory_control_gate",
-    "memory_control_node": "memory_control",
-    "grounded_lookup_gate_node": "grounded_lookup_gate",
-    "grounded_answer_node": "grounded_lookup",
-    "therapeutic_subgraph": "therapeutic",
-    "extract_semantic_facts_node": "extract_facts",
-    "extract_procedural_rules_node": "extract_procedural",
-    "finalize_turn_node": "finalize",
-}
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _STORE_DIR = BACKEND_ROOT / ".store"
@@ -118,86 +110,6 @@ _EXERCISE_STATE_FIELDS = (
     "exercise_therapeutic_approach",
     "exercise_selection_options",
 )
-ExpectedSessionLiveness = Literal["active", "absent"]
-
-
-class SessionStatus(StrEnum):
-    """Runtime liveness states for active-session coordination."""
-
-    ABSENT = "absent"
-    ACTIVE = "active"
-    EXPIRED_UNFINALIZED = "expired_unfinalized"
-    INTERRUPTED = "interrupted"
-    ROTATION_REQUIRED = "rotation_required"
-
-
-class SessionLeaseExpired(RuntimeError):
-    """Raised when a turn was submitted against a non-active session lease."""
-
-    def __init__(self, thread_id: str, status: SessionStatus) -> None:
-        """Initialize the liveness mismatch error.
-
-        Args:
-            thread_id: Thread whose lease check failed.
-            status: Observed session status.
-        """
-
-        self.thread_id = thread_id
-        self.status = status
-        super().__init__(
-            f"thread {thread_id!r} is not active; observed status={status.value}"
-        )
-
-
-class ActiveSessionExists(RuntimeError):
-    """Raised when a caller expected no active session but one exists."""
-
-    def __init__(self, thread_id: str, status: SessionStatus) -> None:
-        """Initialize the active-session conflict.
-
-        Args:
-            thread_id: Thread whose absence check failed.
-            status: Observed session status.
-        """
-
-        self.thread_id = thread_id
-        self.status = status
-        super().__init__(
-            f"thread {thread_id!r} already has session status={status.value}"
-        )
-
-
-class SessionInterrupted(RuntimeError):
-    """Raised when a persisted session needs explicit recovery finalization."""
-
-    def __init__(self, thread_id: str) -> None:
-        """Initialize the interrupted-session error.
-
-        Args:
-            thread_id: Thread whose session is interrupted.
-        """
-
-        self.thread_id = thread_id
-        super().__init__(f"thread {thread_id!r} has an interrupted session")
-
-
-@dataclass(slots=True)
-class PersistentTurnResult:
-    """Return value for one persisted conversation turn."""
-
-    output: AgentOutput
-    state: AgentState
-    history: list[Message]
-
-
-@dataclass(slots=True)
-class ThreadSummary:
-    """Compact persisted-thread summary for CLI thread management."""
-
-    thread_id: str
-    turn_count: int
-    message_count: int
-    has_context: bool
 
 
 @dataclass(slots=True)
@@ -833,7 +745,7 @@ class PersistentAgentRuntime:
             await graph.aupdate_state(
                 self._config_for_thread(thread_id),
                 delta,
-                as_node="finalize_turn_node",
+                as_node=FINALIZE_TURN_NODE,
             )
         except Exception:
             if suppress_errors:
@@ -2108,9 +2020,9 @@ class PersistentAgentRuntime:
                     elif chunk["type"] == "updates" and chunk["ns"] == ():
                         # Skip subgraph internals to avoid duplicate status events.
                         for node_name in chunk["data"]:
-                            stage = _NODE_TO_STAGE.get(node_name, node_name)
+                            stage = GRAPH_NODE_TO_STATUS_STAGE.get(node_name, node_name)
                             yield StatusEvent(stage=stage)
-                            if node_name == "finalize_turn_node":
+                            if node_name == FINALIZE_TURN_NODE:
                                 finalize_seen = True
                                 ready_output = self._response_ready_output(
                                     final_state,

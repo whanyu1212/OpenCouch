@@ -19,6 +19,7 @@ from agent.memory.control import (
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural import aget_procedural_profile
 from agent.models import ResponseStyleType, ResponseCategory
+from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -41,9 +42,7 @@ def _base_delta(response_text: str, *, started_at: float) -> dict[str, Any]:
         "response_style_type": ResponseStyleType.OPERATIONAL,
         "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
-        "diagnostics": {
-            "memory_control_ms": round((time.monotonic() - started_at) * 1000, 2)
-        },
+        "diagnostics": {"memory_control_ms": elapsed_ms(started_at)},
     }
 
 

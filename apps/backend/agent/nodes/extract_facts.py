@@ -63,6 +63,7 @@ from agent.memory.orchestration import (
     should_skip_memory_extraction,
 )
 from agent.memory.service import MemoryService
+from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -117,7 +118,7 @@ async def run_extract_semantic_facts_node(
 
         return {
             "diagnostics": {
-                "extract_facts_ms": round((time.monotonic() - start) * 1000, 2),
+                "extract_facts_ms": elapsed_ms(start),
                 "semantic_writes": semantic_writes,
                 "semantic_bumps": semantic_bumps,
                 "semantic_candidates": semantic_candidates,
