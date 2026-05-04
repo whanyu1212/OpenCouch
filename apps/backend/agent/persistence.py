@@ -46,6 +46,12 @@ from agent.runtime.checkpointer import (
     open_checkpointer,
     validate_thread_checkpointer_config,
 )
+from agent.runtime.session_state import (
+    session_continuity_clear_delta,
+    slice_state_to_active_session,
+    transcript_length,
+    turn_count_from_state,
+)
 from agent.models import (
     AgentInput,
     AgentOutput,
@@ -97,12 +103,6 @@ DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
 SESSION_TIMEOUT = timedelta(minutes=20)
-_EXERCISE_STATE_FIELDS = (
-    "exercise_type",
-    "exercise_step",
-    "exercise_therapeutic_approach",
-    "exercise_selection_options",
-)
 
 
 @dataclass(slots=True)
@@ -609,9 +609,7 @@ class PersistentAgentRuntime:
             The transcript length, or ``0`` when state is absent.
         """
 
-        if state is None:
-            return 0
-        return len(state.get("transcript", []) or [])
+        return transcript_length(state)
 
     @staticmethod
     def _slice_state_to_active_session(
@@ -629,17 +627,10 @@ class PersistentAgentRuntime:
             A shallow state copy limited to the active session window.
         """
 
-        transcript = list(state.get("transcript", []) or [])
-        start = min(max(transcript_start_index, 0), len(transcript))
-        windowed = cast(AgentState, dict(state))
-        windowed["transcript"] = transcript[start:]
-
-        if "history" in state:
-            history = list(state.get("history", []) or [])
-            history_start = min(start, len(history))
-            windowed["history"] = history[history_start:]
-
-        return windowed
+        return slice_state_to_active_session(
+            state,
+            transcript_start_index=transcript_start_index,
+        )
 
     @staticmethod
     def _session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
@@ -652,25 +643,7 @@ class PersistentAgentRuntime:
             A partial state update that clears stale session continuity.
         """
 
-        if state is None:
-            return {}
-
-        delta: dict[str, Any] = {}
-        exercise_state = state.get("exercise_state", {}) or {}
-        if any(
-            exercise_state.get(field) is not None for field in _EXERCISE_STATE_FIELDS
-        ):
-            delta["exercise_state"] = {
-                "exercise_type": None,
-                "exercise_step": None,
-                "exercise_therapeutic_approach": None,
-                "exercise_selection_options": None,
-            }
-
-        if state.get("therapeutic_approach") is not None:
-            delta["therapeutic_approach"] = None
-
-        return delta
+        return session_continuity_clear_delta(state)
 
     async def _clear_session_continuity_in_checkpoint(
         self,
@@ -1449,10 +1422,7 @@ class PersistentAgentRuntime:
             The persisted turn count.
         """
 
-        if state is None:
-            return 0
-        session_progress = state.get("session_progress", {}) or {}
-        return int(session_progress.get("turn_count", 0) or 0)
+        return turn_count_from_state(state)
 
     @staticmethod
     def _build_turn_initial_state(
