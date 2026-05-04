@@ -84,6 +84,7 @@ from agent.memory.procedural_prompts import (
     build_procedural_writer_user_prompt,
 )
 from agent.memory.service import MemoryService
+from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
@@ -142,7 +143,7 @@ async def run_extract_procedural_rules_node(
 
         return {
             "diagnostics": {
-                "extract_procedural_ms": round((time.monotonic() - start) * 1000, 2),
+                "extract_procedural_ms": elapsed_ms(start),
                 "procedural_writes": procedural_writes,
                 "procedural_candidates": procedural_candidates,
                 "procedural_commit_now_candidates": procedural_commit_now_candidates,

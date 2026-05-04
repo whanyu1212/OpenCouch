@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Literal
+from typing import Any
 
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
+from agent.graph_constants import (
+    CRISIS_RESOURCE_LOOKUP_NODE,
+    MEMORY_CONTROL_GATE_NODE,
+    CrisisGateNextNode,
+)
 from agent.models import CrisisAssessment, ResponseStyleType, ResponseCategory
+from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.safety.service import CrisisRiskService
 from agent.state import AgentState
@@ -63,7 +69,7 @@ def _build_crisis_delta(
 async def run_crisis_gate_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
-) -> Command[Literal["crisis_resource_lookup_node", "memory_control_gate_node"]]:
+) -> Command[CrisisGateNextNode]:
     """Run the crisis gate for the current turn.
 
     Args:
@@ -81,7 +87,7 @@ async def run_crisis_gate_node(
         llm_client=runtime.context.llm_client,
     )
 
-    gate_duration_ms = (time.monotonic() - gate_start) * 1000
+    gate_duration_ms = elapsed_ms(gate_start)
     delta = _build_crisis_delta(
         result.assessment,
         override_kind=result.override_kind,
@@ -90,9 +96,9 @@ async def run_crisis_gate_node(
         duration_ms=gate_duration_ms,
     )
     assessment = result.assessment
-    next_node: Literal["crisis_resource_lookup_node", "memory_control_gate_node"] = (
-        "crisis_resource_lookup_node"
+    next_node: CrisisGateNextNode = (
+        CRISIS_RESOURCE_LOOKUP_NODE
         if assessment.needs_crisis_response
-        else "memory_control_gate_node"
+        else MEMORY_CONTROL_GATE_NODE
     )
     return Command(update=delta, goto=next_node)

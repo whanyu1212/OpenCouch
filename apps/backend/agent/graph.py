@@ -20,7 +20,6 @@ Responsibilities:
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -29,6 +28,20 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.graph_constants import (
+    CRISIS_GATE_NODE,
+    CRISIS_LOG_NODE,
+    CRISIS_RESOURCE_LOOKUP_NODE,
+    CRISIS_RESPONSE_NODE,
+    FINALIZE_TURN_NODE,
+    GROUNDED_ANSWER_NODE,
+    GROUNDED_LOOKUP_GATE_NODE,
+    LOAD_MEMORY_NODE,
+    MEMORY_CONTROL_GATE_NODE,
+    MEMORY_CONTROL_NODE,
+    MEMORY_EXTRACTION_NODE,
+    THERAPEUTIC_SUBGRAPH_NODE,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
@@ -50,6 +63,7 @@ from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
+from agent.observability.tracing import apply_graph_tracing
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from agent.therapeutic.graph import build_therapeutic_subgraph
@@ -215,76 +229,64 @@ def build_agent_workflow(
     # Shared retry policy for the top-level I/O nodes.
     _io_retry = RetryPolicy(max_attempts=2)
 
-    workflow.add_node("load_memory_node", run_load_memory_node, retry_policy=_io_retry)
-    workflow.add_node("crisis_gate_node", run_crisis_gate_node, retry_policy=_io_retry)
+    workflow.add_node(LOAD_MEMORY_NODE, run_load_memory_node, retry_policy=_io_retry)
+    workflow.add_node(CRISIS_GATE_NODE, run_crisis_gate_node, retry_policy=_io_retry)
     workflow.add_node(
-        "memory_control_gate_node",
+        MEMORY_CONTROL_GATE_NODE,
         run_memory_control_gate_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(
-        "memory_control_node",
+        MEMORY_CONTROL_NODE,
         run_memory_control_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(
-        "grounded_lookup_gate_node",
+        GROUNDED_LOOKUP_GATE_NODE,
         run_grounded_lookup_gate_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(
-        "grounded_answer_node",
+        GROUNDED_ANSWER_NODE,
         run_grounded_answer_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(
-        "crisis_resource_lookup_node",
+        CRISIS_RESOURCE_LOOKUP_NODE,
         run_crisis_resource_lookup_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(
-        "crisis_response_node", run_crisis_response_node, retry_policy=_io_retry
+        CRISIS_RESPONSE_NODE, run_crisis_response_node, retry_policy=_io_retry
     )
-    workflow.add_node("crisis_log_node", run_crisis_log_node, retry_policy=_io_retry)
-    workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
+    workflow.add_node(CRISIS_LOG_NODE, run_crisis_log_node, retry_policy=_io_retry)
+    workflow.add_node(THERAPEUTIC_SUBGRAPH_NODE, therapeutic_subgraph)
     workflow.add_node(
-        "memory_extraction_node",
+        MEMORY_EXTRACTION_NODE,
         run_memory_extraction_node,
         retry_policy=_io_retry,
     )
-    workflow.add_node("finalize_turn_node", run_finalize_turn_node)
+    workflow.add_node(FINALIZE_TURN_NODE, run_finalize_turn_node)
 
     # Safety-first entry.
-    workflow.add_edge(START, "crisis_gate_node")
+    workflow.add_edge(START, CRISIS_GATE_NODE)
 
     # Crisis branch skips memory load.
-    workflow.add_edge("crisis_resource_lookup_node", "crisis_response_node")
-    workflow.add_edge("crisis_response_node", "crisis_log_node")
-    workflow.add_edge("crisis_log_node", "finalize_turn_node")
+    workflow.add_edge(CRISIS_RESOURCE_LOOKUP_NODE, CRISIS_RESPONSE_NODE)
+    workflow.add_edge(CRISIS_RESPONSE_NODE, CRISIS_LOG_NODE)
+    workflow.add_edge(CRISIS_LOG_NODE, FINALIZE_TURN_NODE)
 
-    workflow.add_edge("memory_control_node", "finalize_turn_node")
-    workflow.add_edge("grounded_answer_node", "finalize_turn_node")
-    workflow.add_edge("load_memory_node", "therapeutic_subgraph")
-    workflow.add_edge("therapeutic_subgraph", "finalize_turn_node")
+    workflow.add_edge(MEMORY_CONTROL_NODE, FINALIZE_TURN_NODE)
+    workflow.add_edge(GROUNDED_ANSWER_NODE, FINALIZE_TURN_NODE)
+    workflow.add_edge(LOAD_MEMORY_NODE, THERAPEUTIC_SUBGRAPH_NODE)
+    workflow.add_edge(THERAPEUTIC_SUBGRAPH_NODE, FINALIZE_TURN_NODE)
 
     # Checkpoint the reply before kicking off memory side effects.
-    workflow.add_edge("finalize_turn_node", "memory_extraction_node")
-    workflow.add_edge("memory_extraction_node", END)
+    workflow.add_edge(FINALIZE_TURN_NODE, MEMORY_EXTRACTION_NODE)
+    workflow.add_edge(MEMORY_EXTRACTION_NODE, END)
 
     compiled = workflow.compile(checkpointer=checkpointer)
-
-    tracing_disabled = os.getenv("OPENCOUCH_DISABLE_TRACING", "").strip().lower()
-    if (
-        tracing_disabled not in {"1", "true", "yes", "on"}
-        and os.getenv("OPIK_API_KEY")
-        and os.getenv("OPIK_WORKSPACE")
-    ):
-        from opik.integrations.langchain import OpikTracer, track_langgraph
-
-        project_name = os.getenv("OPIK_PROJECT_NAME") or "opencouch-dev"
-        compiled = track_langgraph(compiled, OpikTracer(project_name=project_name))
-
-    return compiled
+    return apply_graph_tracing(compiled)
 
 
 # ── Public entrypoints ───────────────────────────────────────────────────────
