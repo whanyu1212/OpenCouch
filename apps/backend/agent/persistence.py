@@ -25,28 +25,27 @@ from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.graph_constants import FINALIZE_TURN_NODE, GRAPH_NODE_TO_STATUS_STAGE
 from agent.memory.candidates import SessionMemoryBuffer
-from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
-from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
-from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
-from agent.audit.session_feedback import (
-    InMemorySessionFeedbackBackend,
-    SessionFeedbackBackend,
-)
-from agent.audit.legacy.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.legacy.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.audit.crisis_log import CrisisLogBackend
+from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.embeddings import (
-    EmbeddingProvider,
-    NullEmbeddingProvider,
-    create_configured_embedding_provider,
-)
+from agent.memory.embeddings import EmbeddingProvider
 from agent.audit.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
-from agent.memory.postgres_store import PostgresMemoryStore
-from agent.memory.legacy.sqlite_store import SqliteMemoryStore
-from agent.memory.store import MemoryStore, OpenCouchMemoryStore
+from agent.memory.store import MemoryStore
+from agent.runtime.backends import (
+    create_crisis_log_backend,
+    create_embedding_provider,
+    create_memory_store,
+    create_session_feedback_backend,
+    effective_thread_persistence_backend,
+)
+from agent.runtime.checkpointer import (
+    ALLOWED_MSGPACK_MODULES as CHECKPOINT_ALLOWED_MSGPACK_MODULES,
+    open_checkpointer,
+    validate_thread_checkpointer_config,
+)
 from agent.models import (
     AgentInput,
     AgentOutput,
@@ -76,7 +75,6 @@ from agent.runtime.types import (
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from services.llm.base import BaseLLMClient
@@ -97,12 +95,7 @@ DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
 DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
 DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
-ALLOWED_MSGPACK_MODULES = [
-    ("agent.models", "Channel"),
-    ("agent.models", "CrisisAssessment"),
-    ("agent.models", "ResponseCategory"),
-    ("agent.models", "ResponseStyleType"),
-]
+ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
 SESSION_TIMEOUT = timedelta(minutes=20)
 _EXERCISE_STATE_FIELDS = (
     "exercise_type",
@@ -195,15 +188,15 @@ class PersistentAgentRuntime:
             Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
         )
 
-        self._thread_persistence_backend = (
-            "sqlite" if is_incognito else thread_persistence_backend
+        self._thread_persistence_backend = effective_thread_persistence_backend(
+            memory_mode=memory_mode,
+            thread_persistence_backend=thread_persistence_backend,
         )
         self._thread_database_url = thread_database_url
-        if self._thread_persistence_backend == "postgres" and not thread_database_url:
-            raise ValueError(
-                "thread_database_url is required when "
-                "thread_persistence_backend='postgres'"
-            )
+        validate_thread_checkpointer_config(
+            thread_persistence_backend=self._thread_persistence_backend,
+            thread_database_url=thread_database_url,
+        )
 
         self._saver_cm: AbstractAsyncContextManager[Any] | None = None
         self._checkpointer: AsyncSqliteSaver | AsyncPostgresSaver | None = None
@@ -219,57 +212,31 @@ class PersistentAgentRuntime:
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
         self._thread_locks: dict[str, asyncio.Lock] = {}
 
-        if memory_store is not None:
-            self._memory_store = memory_store
-        elif is_incognito:
-            self._memory_store = OpenCouchMemoryStore()
-        elif memory_backend == "postgres":
-            if not memory_database_url:
-                raise ValueError(
-                    "memory_database_url is required when memory_backend='postgres'"
-                )
-            self._memory_store = PostgresMemoryStore(memory_database_url)
-        else:
-            self._memory_store = SqliteMemoryStore(memory_sqlite_path)
-
-        if crisis_log_backend is not None:
-            self._crisis_log_backend = crisis_log_backend
-        elif is_incognito:
-            self._crisis_log_backend = InMemoryCrisisLogBackend()
-        elif crisis_log_persistence_backend == "postgres":
-            if not crisis_log_database_url:
-                raise ValueError(
-                    "crisis_log_database_url is required when "
-                    "crisis_log_persistence_backend='postgres'"
-                )
-            self._crisis_log_backend = PostgresCrisisLogBackend(crisis_log_database_url)
-        else:
-            self._crisis_log_backend = SqliteCrisisLogBackend(crisis_log_sqlite_path)
-
-        if session_feedback_backend is not None:
-            self._session_feedback_backend = session_feedback_backend
-        elif is_incognito:
-            self._session_feedback_backend = InMemorySessionFeedbackBackend()
-        elif session_feedback_persistence_backend == "postgres":
-            if not session_feedback_database_url:
-                raise ValueError(
-                    "session_feedback_database_url is required when "
-                    "session_feedback_persistence_backend='postgres'"
-                )
-            self._session_feedback_backend = PostgresSessionFeedbackBackend(
-                session_feedback_database_url
-            )
-        else:
-            self._session_feedback_backend = SqliteSessionFeedbackBackend(
-                feedback_sqlite_path,
-            )
-
-        if embedding_provider is not None:
-            self._embedding_provider: EmbeddingProvider = embedding_provider
-        elif is_incognito:
-            self._embedding_provider = NullEmbeddingProvider()
-        else:
-            self._embedding_provider = create_configured_embedding_provider()
+        self._memory_store = create_memory_store(
+            memory_mode=memory_mode,
+            memory_store=memory_store,
+            memory_backend=memory_backend,
+            memory_database_url=memory_database_url,
+            memory_sqlite_path=memory_sqlite_path,
+        )
+        self._crisis_log_backend = create_crisis_log_backend(
+            memory_mode=memory_mode,
+            crisis_log_backend=crisis_log_backend,
+            crisis_log_persistence_backend=crisis_log_persistence_backend,
+            crisis_log_database_url=crisis_log_database_url,
+            crisis_log_sqlite_path=crisis_log_sqlite_path,
+        )
+        self._session_feedback_backend = create_session_feedback_backend(
+            memory_mode=memory_mode,
+            session_feedback_backend=session_feedback_backend,
+            session_feedback_persistence_backend=session_feedback_persistence_backend,
+            session_feedback_database_url=session_feedback_database_url,
+            feedback_sqlite_path=feedback_sqlite_path,
+        )
+        self._embedding_provider: EmbeddingProvider = create_embedding_provider(
+            memory_mode=memory_mode,
+            embedding_provider=embedding_provider,
+        )
 
         # Runtime-managed per-thread session trackers.
         self._session_starts: dict[str, str] = {}
@@ -297,21 +264,12 @@ class PersistentAgentRuntime:
             The initialized runtime instance.
         """
 
-        if self._thread_persistence_backend == "sqlite" and self.sqlite_path != Path(
-            ":memory:"
-        ):
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-
-        serde = JsonPlusSerializer(allowed_msgpack_modules=ALLOWED_MSGPACK_MODULES)
-        if self._thread_persistence_backend == "postgres":
-            self._saver_cm = AsyncPostgresSaver.from_conn_string(
-                cast(str, self._thread_database_url),
-                serde=serde,
-            )
-        else:
-            self._saver_cm = AsyncSqliteSaver.from_conn_string(str(self.sqlite_path))
+        self._saver_cm = open_checkpointer(
+            thread_persistence_backend=self._thread_persistence_backend,
+            sqlite_path=self.sqlite_path,
+            thread_database_url=self._thread_database_url,
+        )
         self._checkpointer = await self._saver_cm.__aenter__()
-        self._checkpointer.serde = serde
         await self._ensure_runtime_schema()
         await self._prewarm()
         self._session_sweeper_task = asyncio.create_task(self._session_sweeper_loop())
