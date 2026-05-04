@@ -13,7 +13,10 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput, ResponseStyleType, ResponseCategory
 from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.grounded_lookup.router import detect_grounded_lookup_action
+from agent.grounded_lookup.router import (
+    GroundedLookupAction,
+    detect_grounded_lookup_action,
+)
 from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -147,10 +150,12 @@ def _state(message: str) -> AgentState:
 def test_detect_grounded_lookup_requires_explicit_factual_signal() -> None:
     assert detect_grounded_lookup_action(
         "Can you look up affordable counselling services in Singapore?"
-    ) == {"query": "Can you look up affordable counselling services in Singapore?"}
+    ) == GroundedLookupAction(
+        query="Can you look up affordable counselling services in Singapore?"
+    )
     assert detect_grounded_lookup_action(
         "Can you check if 988 works outside the US?"
-    ) == {"query": "Can you check if 988 works outside the US?"}
+    ) == GroundedLookupAction(query="Can you check if 988 works outside the US?")
     assert (
         detect_grounded_lookup_action(
             "Can you check whether this wearable is evidence-based for anxiety?"

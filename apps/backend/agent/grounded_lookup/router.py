@@ -4,15 +4,43 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.conversation import format_recent_history
+from agent.grounded_lookup.patterns import (
+    AMBIGUOUS_LOOKUP_SIGNAL_RE as _AMBIGUOUS_LOOKUP_SIGNAL_RE,
+    CHECK_IF_RE as _CHECK_IF_RE,
+    CURRENT_INFO_RE as _CURRENT_INFO_RE,
+    LOOKUP_VERB_RE as _LOOKUP_VERB_RE,
+    THERAPEUTIC_SUBJECTIVE_RE as _THERAPEUTIC_SUBJECTIVE_RE,
+    VERIFY_RE as _VERIFY_RE,
+)
+from agent.grounded_lookup.prompts import (
+    build_grounded_lookup_prompt as _build_grounded_lookup_prompt,
+    build_grounded_lookup_system_prompt as _build_grounded_lookup_system_prompt,
+)
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GroundedLookupAction:
+    """Resolved grounded lookup action."""
+
+    query: str
+
+
+@dataclass(frozen=True)
+class GroundedLookupRoute:
+    """Resolved grounded lookup route decision."""
+
+    action: GroundedLookupAction | None
+    classifier_path: str
+    llm_failure_occurred: bool
 
 
 class GroundedLookupDecision(BaseModel):
@@ -29,87 +57,14 @@ class GroundedLookupDecision(BaseModel):
     confidence: Literal["low", "medium", "high"]
 
 
-_LOOKUP_VERB_RE = re.compile(
-    r"\b(look up|search(?: for| online| the web)?|web search|google|"
-    r"check official|check current|"
-    r"find (?:official|current|verified|local|nearby|resources|services|"
-    r"clinics|directories))\b",
-    re.I,
-)
-_CHECK_IF_RE = re.compile(r"\bcan you check (?:if|whether)\b", re.I)
-_VERIFY_RE = re.compile(r"\bverify(?: whether| if| that)?\b", re.I)
-_CURRENT_INFO_RE = re.compile(
-    r"\b(latest|current|up[- ]?to[- ]?date|still available|still works|"
-    r"eligibility|official rules?|law|regulation|policy|price|cost|schedule)\b",
-    re.I,
-)
-_THERAPEUTIC_SUBJECTIVE_RE = re.compile(
-    r"\b(being unreasonable|overreacting|bad person|wrong for feeling|"
-    r"should i feel|why do i feel|what does it mean that i|"
-    r"is it normal to feel|am i wrong|am i bad)\b",
-    re.I,
-)
-_AMBIGUOUS_LOOKUP_SIGNAL_RE = re.compile(
-    r"\b(can you check|can you verify|verify whether|verify if|fact[- ]?check|"
-    r"evidence[- ]?based|research|stud(?:y|ies)|clinical trials?|proven|"
-    r"legit|reliable|source|sources|citation|citations|website|url|link|"
-    r"wearables?|apps?|does .{0,40} work|is .{0,40} effective|"
-    r"is .{0,40} safe)\b",
-    re.I,
-)
-
-
-def _build_grounded_lookup_prompt(state: AgentState) -> str:
-    """Build the LLM prompt for ambiguous grounded-lookup routing.
-
-    Args:
-        state (AgentState): Current graph state.
-
-    Returns:
-        str: Prompt asking for a structured lookup-routing decision.
-    """
-
-    recent_history = format_recent_history(state, limit=6, empty="(none)")
-    return (
-        "Decide whether the user's message should route to grounded web/current "
-        "factual lookup before therapeutic response generation.\n\n"
-        "Route to lookup only when the user is asking for external factual, "
-        "current, official, research, evidence, price, eligibility, schedule, "
-        "resource, URL, product, or service information that should be verified "
-        "outside the conversation.\n\n"
-        "Do not route to lookup for subjective therapeutic reassurance, emotional "
-        "validation, relationship advice, or questions like 'am I overreacting?', "
-        "'am I a bad person?', 'is it normal to feel this way?', or 'what should "
-        "I do about this feeling?'.\n\n"
-        "If lookup is needed, set should_lookup=true and provide a concise search "
-        "query. If uncertain, set should_lookup=false.\n\n"
-        "Recent conversation:\n"
-        f"{recent_history}\n\n"
-        f'Current user message: "{state.get("message", "")}"'
-    )
-
-
-def _build_grounded_lookup_system_prompt() -> str:
-    """Build the system prompt for the grounded-lookup classifier.
-
-    Returns:
-        str: System instruction for structured lookup routing.
-    """
-
-    return (
-        "You are a strict routing classifier. Return only the structured "
-        "decision. You do not answer the user."
-    )
-
-
-def detect_grounded_lookup_action(message: str) -> dict[str, Any] | None:
+def detect_grounded_lookup_action(message: str) -> GroundedLookupAction | None:
     """Detect an explicit factual/current lookup request.
 
     Args:
         message (str): Current user message.
 
     Returns:
-        dict[str, Any] | None: A serializable lookup action, or ``None`` for
+        GroundedLookupAction | None: A resolved lookup action, or ``None`` for
             ordinary therapeutic routing.
     """
 
@@ -132,9 +87,9 @@ def detect_grounded_lookup_action(message: str) -> dict[str, Any] | None:
     if has_lookup_verb or (
         has_check_or_verify and (has_current_info or has_numeric_or_url)
     ):
-        return {"query": stripped}
+        return GroundedLookupAction(query=stripped)
     if has_current_info and is_question:
-        return {"query": stripped}
+        return GroundedLookupAction(query=stripped)
     return None
 
 
@@ -161,7 +116,7 @@ async def _classify_grounded_lookup_action(
     state: AgentState,
     *,
     llm_client: BaseLLMClient,
-) -> dict[str, Any] | None:
+) -> GroundedLookupAction | None:
     """Classify an ambiguous message as grounded lookup or ordinary support.
 
     Args:
@@ -169,8 +124,8 @@ async def _classify_grounded_lookup_action(
         llm_client (BaseLLMClient): Configured control-plane LLM client.
 
     Returns:
-        dict[str, Any] | None: Grounded lookup action, or ``None`` when ordinary
-            routing should handle the turn.
+        GroundedLookupAction | None: Grounded lookup action, or ``None`` when
+            ordinary routing should handle the turn.
     """
 
     decision: GroundedLookupDecision = await llm_client.generate_structured(
@@ -185,14 +140,14 @@ async def _classify_grounded_lookup_action(
     query = (decision.query or "").strip() or state.get("message", "").strip()
     if not query:
         return None
-    return {"query": query}
+    return GroundedLookupAction(query=query)
 
 
 async def resolve_grounded_lookup_action(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-) -> tuple[dict[str, Any] | None, str, bool]:
+) -> GroundedLookupRoute:
     """Resolve grounded lookup routing using hard rules plus LLM middle path.
 
     Args:
@@ -200,20 +155,32 @@ async def resolve_grounded_lookup_action(
         llm_client (BaseLLMClient | None): Optional control-plane LLM client.
 
     Returns:
-        tuple[dict[str, Any] | None, str, bool]: Tuple of lookup action,
-            classifier path, and whether an LLM failure occurred.
+        GroundedLookupRoute: Resolved route decision with optional lookup
+            action, classifier path, and LLM-failure flag.
     """
 
     message = state.get("message", "")
     hard_action = detect_grounded_lookup_action(message)
     if hard_action is not None:
-        return hard_action, "deterministic", False
+        return GroundedLookupRoute(
+            action=hard_action,
+            classifier_path="deterministic",
+            llm_failure_occurred=False,
+        )
 
     if not _needs_lookup_classifier(message):
-        return None, "not_attempted", False
+        return GroundedLookupRoute(
+            action=None,
+            classifier_path="not_attempted",
+            llm_failure_occurred=False,
+        )
 
     if llm_client is None:
-        return None, "deterministic", False
+        return GroundedLookupRoute(
+            action=None,
+            classifier_path="deterministic",
+            llm_failure_occurred=False,
+        )
 
     try:
         action = await _classify_grounded_lookup_action(state, llm_client=llm_client)
@@ -222,6 +189,14 @@ async def resolve_grounded_lookup_action(
             "Grounded lookup LLM classifier failed; using deterministic fallback.",
             exc_info=True,
         )
-        return None, "deterministic", True
+        return GroundedLookupRoute(
+            action=None,
+            classifier_path="deterministic",
+            llm_failure_occurred=True,
+        )
 
-    return action, "llm_primary", False
+    return GroundedLookupRoute(
+        action=action,
+        classifier_path="llm_primary",
+        llm_failure_occurred=False,
+    )

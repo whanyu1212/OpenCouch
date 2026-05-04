@@ -35,21 +35,17 @@ async def run_grounded_lookup_gate_node(
     """
 
     start = time.monotonic()
-    (
-        action,
-        classifier_path,
-        llm_failure_occurred,
-    ) = await resolve_grounded_lookup_action(
+    route = await resolve_grounded_lookup_action(
         state,
         llm_client=runtime.context.llm_client,
     )
     diagnostics = {
         "grounded_lookup_gate_ms": elapsed_ms(start),
-        "grounded_lookup_classifier_path": classifier_path,
-        "grounded_lookup_llm_failure_occurred": llm_failure_occurred,
+        "grounded_lookup_classifier_path": route.classifier_path,
+        "grounded_lookup_llm_failure_occurred": route.llm_failure_occurred,
     }
 
-    if action is None:
+    if route.action is None:
         return Command(
             update={
                 "grounded_lookup": {"query": "", "status": "not_attempted"},
@@ -61,7 +57,10 @@ async def run_grounded_lookup_gate_node(
     return Command(
         update={
             "route": "grounded_lookup",
-            "grounded_lookup": {"query": action["query"], "status": "not_attempted"},
+            "grounded_lookup": {
+                "query": route.action.query,
+                "status": "not_attempted",
+            },
             "diagnostics": diagnostics,
         },
         goto=GROUNDED_ANSWER_NODE,
