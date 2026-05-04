@@ -69,21 +69,17 @@ async def run_memory_control_gate_node(
             goto=GROUNDED_LOOKUP_GATE_NODE,
         )
 
-    (
-        action,
-        classifier_path,
-        llm_failure_occurred,
-    ) = await resolve_memory_control_action(
+    route = await resolve_memory_control_action(
         state,
         llm_client=runtime.context.llm_client,
     )
     diagnostics = {
         "memory_control_gate_ms": elapsed_ms(start),
-        "memory_control_classifier_path": classifier_path,
-        "memory_control_llm_failure_occurred": llm_failure_occurred,
+        "memory_control_classifier_path": route.classifier_path,
+        "memory_control_llm_failure_occurred": route.llm_failure_occurred,
     }
 
-    if action is None:
+    if route.action is None:
         return Command(
             update={
                 "memory_control": {"action": {}},
@@ -95,7 +91,7 @@ async def run_memory_control_gate_node(
     return Command(
         update={
             "route": "memory_control",
-            "memory_control": {"action": action},
+            "memory_control": {"action": route.action.to_state_action()},
             "diagnostics": diagnostics,
         },
         goto=MEMORY_CONTROL_NODE,

@@ -3,16 +3,51 @@
 from __future__ import annotations
 
 import logging
-import re
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent.conversation import format_recent_history
+from agent.memory_control.patterns import (
+    AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE as _AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE,
+    INDEX_RE as _INDEX_RE,
+    NO_RE as _NO_RE,
+    PREFERENCE_RULE_RE as _PREFERENCE_RULE_RE,
+    YES_RE as _YES_RE,
+)
+from agent.memory_control.prompts import (
+    build_memory_control_prompt as _build_memory_control_prompt,
+    build_memory_control_system_prompt as _build_memory_control_system_prompt,
+)
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MemoryControlAction:
+    """Resolved memory-control action."""
+
+    payload: dict[str, Any]
+
+    def to_state_action(self) -> dict[str, Any]:
+        """Return a serializable action for graph state updates.
+
+        Returns:
+            dict[str, Any]: Serializable memory-control action payload.
+        """
+
+        return dict(self.payload)
+
+
+@dataclass(frozen=True)
+class MemoryControlRoute:
+    """Resolved memory-control route decision."""
+
+    action: MemoryControlAction | None
+    classifier_path: str
+    llm_failure_occurred: bool
 
 
 class MemoryControlDecision(BaseModel):
@@ -40,45 +75,6 @@ class MemoryControlDecision(BaseModel):
     )
     reasoning: str = Field(min_length=1, max_length=240)
     confidence: Literal["low", "medium", "high"]
-
-
-_YES_RE = re.compile(
-    r"^\s*(yes|yep|yeah|please do|do it|confirm|delete it)(?:,\s*delete it)?\s*[.!]?\s*$",
-    re.I,
-)
-_NO_RE = re.compile(
-    r"^\s*(no|nope|cancel|never mind|don't|do not|stop)\s*[.!]?\s*$", re.I
-)
-_INDEX_RE = re.compile(r"(?:#|number\s+)?(?P<index>\d+)")
-_AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE = re.compile(
-    r"("
-    r"\bcan you (?:remember|keep in mind|save|stop remembering|stop using|"
-    r"stop bringing (?:this|that|it) up|stop bringing up)\b|"
-    r"\bcould you (?:remember|keep in mind|save|stop remembering|stop using|"
-    r"stop bringing (?:this|that|it) up|stop bringing up)\b|"
-    r"\bplease (?:remember|keep in mind|save|stop remembering|stop using|"
-    r"stop bringing (?:this|that|it) up|stop bringing up)\b|"
-    r"^\s*keep in mind that\b|^\s*remember (?:this|that)\b|"
-    r"^\s*save (?:this|that)\b|"
-    r"\bdon't (?:remember|save|store|bring up|bring (?:this|that|it) up|"
-    r"mention|use)\b|"
-    r"\bdo not (?:remember|save|store|bring up|bring (?:this|that|it) up|"
-    r"mention|use)\b|"
-    r"\bstop (?:remembering|saving|storing|bringing up|"
-    r"bringing (?:this|that|it) up|mentioning|using)\b|"
-    r"\bforget (?:this|that|what i said|the thing|the memory|my|about)\b|"
-    r"\bdelete (?:this|that|what i said|the thing|the memory|my|about)\b|"
-    r"\bremove (?:this|that|what i said|the thing|the memory|my|about)\b|"
-    r"\bwhat (?:do|have) you (?:remember|know|saved)\b"
-    r")",
-    re.I,
-)
-_PREFERENCE_RULE_RE = re.compile(
-    r"\b(prefer|preference|respond|repl(?:y|ies)|answer|ask|remind|bring up|"
-    r"mention|use|avoid|tone|style|brief|short(?:er)?|concise|gentle|direct|"
-    r"format|language|call me|address me)\b",
-    re.I,
-)
 
 
 def is_pending_confirmation(message: str) -> bool:
@@ -127,14 +123,14 @@ def _extract_after_marker(text: str, markers: tuple[str, ...]) -> str:
     return ""
 
 
-def _detect_indexed_forget(lowered: str) -> dict[str, Any] | None:
+def _detect_indexed_forget(lowered: str) -> MemoryControlAction | None:
     """Detect explicit ``forget <kind> #N`` memory commands.
 
     Args:
         lowered (str): Normalized lowercase user message.
 
     Returns:
-        dict[str, Any] | None: Serializable memory-control action, or ``None``
+        MemoryControlAction | None: Resolved memory-control action, or ``None``
             when no indexed deletion command is present.
     """
 
@@ -148,22 +144,24 @@ def _detect_indexed_forget(lowered: str) -> dict[str, Any] | None:
         kind = "session"
     elif "rule" in lowered or "preference" in lowered:
         kind = "rule"
-    return {
-        "type": "forget_by_index",
-        "target_kind": kind,
-        "target_index": int(match.group("index")),
-    }
+    return MemoryControlAction(
+        {
+            "type": "forget_by_index",
+            "target_kind": kind,
+            "target_index": int(match.group("index")),
+        }
+    )
 
 
-def detect_memory_control_action(message: str) -> dict[str, Any] | None:
+def detect_memory_control_action(message: str) -> MemoryControlAction | None:
     """Detect explicit memory-control intent from one user message.
 
     Args:
         message (str): Current user message.
 
     Returns:
-        dict[str, Any] | None: A serializable action dict, or ``None`` when the
-            message should proceed through the normal therapeutic path.
+        MemoryControlAction | None: Resolved memory-control action, or ``None``
+            when the message should proceed through the normal therapeutic path.
     """
 
     stripped = message.strip()
@@ -185,7 +183,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             "show memory",
         )
     ):
-        return {"type": "list"}
+        return MemoryControlAction({"type": "list"})
 
     if any(
         phrase in lowered
@@ -196,7 +194,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             "is recall on",
         )
     ):
-        return {"type": "status"}
+        return MemoryControlAction({"type": "status"})
 
     if any(
         phrase in lowered
@@ -213,7 +211,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             "do not bring up old memories",
         )
     ):
-        return {"type": "set_recall", "enabled": False}
+        return MemoryControlAction({"type": "set_recall", "enabled": False})
 
     if "unless i ask" in lowered and any(
         phrase in lowered
@@ -229,7 +227,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             "do not use",
         )
     ):
-        return {"type": "set_recall", "enabled": False}
+        return MemoryControlAction({"type": "set_recall", "enabled": False})
 
     if any(
         phrase in lowered
@@ -243,7 +241,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             "bring up past sessions if relevant",
         )
     ):
-        return {"type": "set_recall", "enabled": True}
+        return MemoryControlAction({"type": "set_recall", "enabled": True})
 
     indexed = _detect_indexed_forget(lowered)
     if indexed is not None:
@@ -272,7 +270,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             ),
         )
         if query:
-            return {"type": "forget_by_query", "query": query}
+            return MemoryControlAction({"type": "forget_by_query", "query": query})
 
     if any(verb in lowered for verb in ("forget", "delete", "remove")) and any(
         noun in lowered
@@ -295,7 +293,7 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             ),
         )
         if query:
-            return {"type": "forget_by_query", "query": query}
+            return MemoryControlAction({"type": "forget_by_query", "query": query})
 
     if any(
         lowered.startswith(prefix)
@@ -316,60 +314,14 @@ def detect_memory_control_action(message: str) -> dict[str, Any] | None:
             ),
         )
         if preference:
-            return {
-                "type": "save_preference",
-                "rule_text": f"You prefer {preference.rstrip('.')}.",
-            }
+            return MemoryControlAction(
+                {
+                    "type": "save_preference",
+                    "rule_text": f"You prefer {preference.rstrip('.')}.",
+                }
+            )
 
     return None
-
-
-def _build_memory_control_prompt(state: AgentState) -> str:
-    """Build the LLM prompt for ambiguous memory-control routing.
-
-    Args:
-        state (AgentState): Current graph state.
-
-    Returns:
-        str: Prompt asking for a structured memory-control decision.
-    """
-
-    recent_history = format_recent_history(state, limit=6, empty="(none)")
-    return (
-        "Decide whether the user's message is an explicit request to manage "
-        "OpenCouch's saved memory before ordinary therapeutic routing.\n\n"
-        "Route to memory control only for requests to list or inspect saved "
-        "memories, check memory status, enable or disable proactive recall, "
-        "delete a concrete saved memory, or save a preference about how the "
-        "assistant should respond or use memory.\n\n"
-        "Do not route ordinary autobiographical facts, requests for help with "
-        "human memory, or reflective statements such as 'I remember...', "
-        "'I keep forgetting...', or 'help me remember to...'. Do not route "
-        "new facts like names, pets, places, or life details; normal memory "
-        "extraction handles those later. Use action_type='none' when uncertain.\n\n"
-        "For forget_by_query, provide a concrete saved-memory target from the "
-        "message or recent conversation. Do not confirm deletion; the memory "
-        "control node will ask the user before deleting anything.\n\n"
-        "For save_preference, only save response or memory-use preferences. "
-        "Return rule_text as a concise second-person rule, for example "
-        "'You prefer concise replies.'\n\n"
-        "Recent conversation:\n"
-        f"{recent_history}\n\n"
-        f'Current user message: "{state.get("message", "")}"'
-    )
-
-
-def _build_memory_control_system_prompt() -> str:
-    """Build the system prompt for the memory-control classifier.
-
-    Returns:
-        str: System instruction for structured memory-control routing.
-    """
-
-    return (
-        "You are a strict routing classifier. Return only the structured "
-        "decision. You do not answer the user."
-    )
 
 
 def _needs_memory_control_classifier(message: str) -> bool:
@@ -409,7 +361,7 @@ def _normalize_preference_rule(rule_text: str) -> str:
     return f"You prefer {normalized[0].lower()}{normalized[1:]}"
 
 
-def _decision_to_action(decision: MemoryControlDecision) -> dict[str, Any] | None:
+def _decision_to_action(decision: MemoryControlDecision) -> MemoryControlAction | None:
     """Convert a structured classifier decision into a safe action.
 
     Args:
@@ -417,25 +369,25 @@ def _decision_to_action(decision: MemoryControlDecision) -> dict[str, Any] | Non
             decision.
 
     Returns:
-        dict[str, Any] | None: A serializable memory-control action, or ``None``
+        MemoryControlAction | None: Resolved memory-control action, or ``None``
             when the decision is too vague or unsupported.
     """
 
     if decision.confidence == "low" or decision.action_type == "none":
         return None
     if decision.action_type == "list":
-        return {"type": "list"}
+        return MemoryControlAction({"type": "list"})
     if decision.action_type == "status":
-        return {"type": "status"}
+        return MemoryControlAction({"type": "status"})
     if decision.action_type == "set_recall":
         if decision.enabled is None:
             return None
-        return {"type": "set_recall", "enabled": decision.enabled}
+        return MemoryControlAction({"type": "set_recall", "enabled": decision.enabled})
     if decision.action_type == "forget_by_query":
         query = " ".join((decision.query or "").strip().split())
         if not query or query.lower() in {"this", "that", "it"}:
             return None
-        return {"type": "forget_by_query", "query": query}
+        return MemoryControlAction({"type": "forget_by_query", "query": query})
     if decision.action_type == "save_preference":
         raw_rule = " ".join((decision.rule_text or "").strip().split())
         if not raw_rule or not _PREFERENCE_RULE_RE.search(raw_rule):
@@ -443,7 +395,7 @@ def _decision_to_action(decision: MemoryControlDecision) -> dict[str, Any] | Non
         rule_text = _normalize_preference_rule(raw_rule)
         if not rule_text:
             return None
-        return {"type": "save_preference", "rule_text": rule_text}
+        return MemoryControlAction({"type": "save_preference", "rule_text": rule_text})
     return None
 
 
@@ -451,7 +403,7 @@ async def _classify_memory_control_action(
     state: AgentState,
     *,
     llm_client: BaseLLMClient,
-) -> dict[str, Any] | None:
+) -> MemoryControlAction | None:
     """Classify an ambiguous message as memory control or ordinary routing.
 
     Args:
@@ -459,8 +411,8 @@ async def _classify_memory_control_action(
         llm_client (BaseLLMClient): Configured control-plane LLM client.
 
     Returns:
-        dict[str, Any] | None: Memory-control action, or ``None`` when ordinary
-            routing should handle the turn.
+        MemoryControlAction | None: Resolved memory-control action, or ``None``
+            when ordinary routing should handle the turn.
     """
 
     decision: MemoryControlDecision = await llm_client.generate_structured(
@@ -475,7 +427,7 @@ async def resolve_memory_control_action(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-) -> tuple[dict[str, Any] | None, str, bool]:
+) -> MemoryControlRoute:
     """Resolve memory-control routing using hard rules plus LLM middle path.
 
     Args:
@@ -483,20 +435,32 @@ async def resolve_memory_control_action(
         llm_client (BaseLLMClient | None): Optional control-plane LLM client.
 
     Returns:
-        tuple[dict[str, Any] | None, str, bool]: Tuple of action, classifier
-            path, and whether an LLM failure occurred.
+        MemoryControlRoute: Resolved route decision with optional memory-control
+            action, classifier path, and LLM-failure flag.
     """
 
     message = state.get("message", "")
     hard_action = detect_memory_control_action(message)
     if hard_action is not None:
-        return hard_action, "deterministic", False
+        return MemoryControlRoute(
+            action=hard_action,
+            classifier_path="deterministic",
+            llm_failure_occurred=False,
+        )
 
     if not _needs_memory_control_classifier(message):
-        return None, "not_attempted", False
+        return MemoryControlRoute(
+            action=None,
+            classifier_path="not_attempted",
+            llm_failure_occurred=False,
+        )
 
     if llm_client is None:
-        return None, "deterministic", False
+        return MemoryControlRoute(
+            action=None,
+            classifier_path="deterministic",
+            llm_failure_occurred=False,
+        )
 
     try:
         action = await _classify_memory_control_action(state, llm_client=llm_client)
@@ -505,6 +469,14 @@ async def resolve_memory_control_action(
             "Memory control LLM classifier failed; using deterministic fallback.",
             exc_info=True,
         )
-        return None, "deterministic", True
+        return MemoryControlRoute(
+            action=None,
+            classifier_path="deterministic",
+            llm_failure_occurred=True,
+        )
 
-    return action, "llm_primary", False
+    return MemoryControlRoute(
+        action=action,
+        classifier_path="llm_primary",
+        llm_failure_occurred=False,
+    )

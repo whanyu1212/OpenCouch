@@ -18,6 +18,11 @@ from agent.memory.procedural import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
+from agent.memory_control.router import (
+    MemoryControlAction,
+    detect_memory_control_action,
+    resolve_memory_control_action,
+)
 from agent.models import AgentInput
 from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
@@ -130,6 +135,153 @@ async def _seed_memory(
             evidence=["Please keep replies short."],
         ),
     )
+
+
+def test_detect_memory_control_action_returns_typed_action() -> None:
+    action = detect_memory_control_action("What do you remember about me?")
+
+    assert action == MemoryControlAction({"type": "list"})
+    assert action.to_state_action() == {"type": "list"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_routes_deterministic_request() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "none",
+            "reasoning": "should not be called",
+            "confidence": "high",
+        }
+    )
+
+    route = await resolve_memory_control_action(
+        _state("What do you remember about me?"),
+        llm_client=llm,
+    )
+
+    assert route.action == MemoryControlAction({"type": "list"})
+    assert route.classifier_path == "deterministic"
+    assert route.llm_failure_occurred is False
+    assert llm.structured_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_skips_non_control_message() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "list",
+            "reasoning": "should not be called",
+            "confidence": "high",
+        }
+    )
+
+    route = await resolve_memory_control_action(
+        _state("I keep remembering the argument."),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "not_attempted"
+    assert route.llm_failure_occurred is False
+    assert llm.structured_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_uses_llm_for_preference() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "save_preference",
+            "rule_text": "shorter replies when I am panicking",
+            "reasoning": "User asks to keep a response preference in mind.",
+            "confidence": "high",
+        }
+    )
+
+    route = await resolve_memory_control_action(
+        _state("Could you keep in mind that I prefer shorter replies?"),
+        llm_client=llm,
+    )
+
+    assert route.action == MemoryControlAction(
+        {
+            "type": "save_preference",
+            "rule_text": "You prefer shorter replies when I am panicking.",
+        }
+    )
+    assert route.classifier_path == "llm_primary"
+    assert route.llm_failure_occurred is False
+    assert len(llm.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_rejects_low_confidence_decision() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "forget_by_query",
+            "query": "the argument",
+            "reasoning": "Ambiguous user wording.",
+            "confidence": "low",
+        }
+    )
+
+    route = await resolve_memory_control_action(
+        _state("Can you forget what I said earlier?"),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "llm_primary"
+    assert route.llm_failure_occurred is False
+    assert len(llm.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_rejects_vague_delete_target() -> None:
+    llm = _FakeMemoryControlLLM(
+        {
+            "action_type": "forget_by_query",
+            "query": "that",
+            "reasoning": "Target is too vague.",
+            "confidence": "high",
+        }
+    )
+
+    route = await resolve_memory_control_action(
+        _state("Please forget that."),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "llm_primary"
+    assert route.llm_failure_occurred is False
+    assert len(llm.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_falls_back_without_llm() -> None:
+    route = await resolve_memory_control_action(
+        _state("Can you keep in mind that I prefer shorter replies?"),
+        llm_client=None,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "deterministic"
+    assert route.llm_failure_occurred is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_memory_control_action_marks_llm_failure() -> None:
+    llm = _FakeMemoryControlLLM(RuntimeError("classifier unavailable"))
+
+    route = await resolve_memory_control_action(
+        _state("Can you keep in mind that I prefer shorter replies?"),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "deterministic"
+    assert route.llm_failure_occurred is True
+    assert len(llm.structured_calls) == 1
 
 
 @pytest.mark.asyncio
