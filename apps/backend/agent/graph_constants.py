@@ -41,6 +41,6 @@ GRAPH_NODE_TO_STATUS_STAGE = {
     GROUNDED_LOOKUP_GATE_NODE: "grounded_lookup_gate",
     GROUNDED_ANSWER_NODE: "grounded_lookup",
     THERAPEUTIC_SUBGRAPH_NODE: "therapeutic",
-    MEMORY_EXTRACTION_NODE: "memory_extraction",
+    MEMORY_EXTRACTION_NODE: "memory_extraction_node",
     FINALIZE_TURN_NODE: "finalize",
 }
