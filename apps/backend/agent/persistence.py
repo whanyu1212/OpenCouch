@@ -1646,10 +1646,7 @@ class PersistentAgentRuntime:
         if persisted is not None:
             self._hydrate_runtime_session_tracking(persisted)
         has_active_session = (
-            persisted is not None
-            or thread_id in self._session_starts
-            or thread_id in self._session_transcript_starts
-            or thread_id in self._session_memory_buffers
+            persisted is not None or self._has_runtime_session_tracking(thread_id)
         )
 
         if not has_active_session:
