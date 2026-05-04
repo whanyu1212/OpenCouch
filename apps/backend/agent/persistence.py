@@ -47,6 +47,9 @@ from agent.runtime.checkpointer import (
     validate_thread_checkpointer_config,
 )
 from agent.runtime.session_state import (
+    active_transcript_length,
+    crisis_level_from_state,
+    has_runtime_session_tracking,
     session_continuity_clear_delta,
     slice_state_to_active_session,
     transcript_length,
@@ -57,7 +60,6 @@ from agent.models import (
     AgentOutput,
     Channel,
     ChunkEvent,
-    CrisisAssessment,
     DoneEvent,
     Message,
     MessageRole,
@@ -726,10 +728,11 @@ class PersistentAgentRuntime:
             ``True`` when any runtime session tracker exists for the thread.
         """
 
-        return (
-            thread_id in self._session_starts
-            or thread_id in self._session_transcript_starts
-            or thread_id in self._session_memory_buffers
+        return has_runtime_session_tracking(
+            thread_id,
+            session_starts=self._session_starts,
+            session_transcript_starts=self._session_transcript_starts,
+            session_memory_buffers=self._session_memory_buffers,
         )
 
     def _hydrate_runtime_session_tracking(
@@ -960,12 +963,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        turn_crisis = final_state.get("crisis")
-        turn_level = 0
-        if isinstance(turn_crisis, CrisisAssessment):
-            turn_level = turn_crisis.level
-        elif isinstance(turn_crisis, Mapping):
-            turn_level = int(turn_crisis.get("level", 0) or 0)
+        turn_level = crisis_level_from_state(final_state)
         prior_max = self._max_crisis_levels.get(thread_id, 0)
         self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
 
@@ -976,8 +974,11 @@ class PersistentAgentRuntime:
 
         if session_transcript_soft_limit is None:
             return
-        start = self._session_transcript_starts.get(thread_id, 0)
-        active_transcript_len = max(0, self._transcript_length(final_state) - start)
+        transcript_start_index = self._session_transcript_starts.get(thread_id, 0)
+        active_transcript_len = active_transcript_length(
+            final_state,
+            transcript_start_index=transcript_start_index,
+        )
         if active_transcript_len >= session_transcript_soft_limit:
             await self._set_active_session_rotation_required(thread_id)
 
