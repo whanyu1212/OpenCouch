@@ -13,7 +13,11 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput, ResponseStyleType, ResponseCategory
 from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.grounded_lookup.router import detect_grounded_lookup_action
+from agent.grounded_lookup.router import (
+    GroundedLookupAction,
+    detect_grounded_lookup_action,
+    resolve_grounded_lookup_action,
+)
 from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -147,10 +151,12 @@ def _state(message: str) -> AgentState:
 def test_detect_grounded_lookup_requires_explicit_factual_signal() -> None:
     assert detect_grounded_lookup_action(
         "Can you look up affordable counselling services in Singapore?"
-    ) == {"query": "Can you look up affordable counselling services in Singapore?"}
+    ) == GroundedLookupAction(
+        query="Can you look up affordable counselling services in Singapore?"
+    )
     assert detect_grounded_lookup_action(
         "Can you check if 988 works outside the US?"
-    ) == {"query": "Can you check if 988 works outside the US?"}
+    ) == GroundedLookupAction(query="Can you check if 988 works outside the US?")
     assert (
         detect_grounded_lookup_action(
             "Can you check whether this wearable is evidence-based for anxiety?"
@@ -172,6 +178,117 @@ def test_detect_grounded_lookup_requires_explicit_factual_signal() -> None:
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_grounded_lookup_action_routes_deterministic_request() -> None:
+    llm = _FakeLookupClassifierLLM(should_lookup=False)
+
+    route = await resolve_grounded_lookup_action(
+        _state("Can you look up affordable counselling services in Singapore?"),
+        llm_client=llm,
+    )
+
+    assert route.action == GroundedLookupAction(
+        query="Can you look up affordable counselling services in Singapore?"
+    )
+    assert route.classifier_path == "deterministic"
+    assert route.llm_failure_occurred is False
+    assert llm.structured_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_grounded_lookup_action_skips_ordinary_support() -> None:
+    llm = _FakeLookupClassifierLLM(should_lookup=True)
+
+    route = await resolve_grounded_lookup_action(
+        _state("I'm overwhelmed about finding a therapist."),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "not_attempted"
+    assert route.llm_failure_occurred is False
+    assert llm.structured_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_grounded_lookup_action_uses_llm_for_ambiguous_request() -> None:
+    llm = _FakeLookupClassifierLLM(
+        should_lookup=True,
+        query="wearable evidence base for anxiety",
+    )
+
+    route = await resolve_grounded_lookup_action(
+        _state("Can you check whether this wearable is evidence-based for anxiety?"),
+        llm_client=llm,
+    )
+
+    assert route.action == GroundedLookupAction(
+        query="wearable evidence base for anxiety"
+    )
+    assert route.classifier_path == "llm_primary"
+    assert route.llm_failure_occurred is False
+    assert len(llm.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_grounded_lookup_action_rejects_low_confidence_llm() -> None:
+    llm = _FakeLookupClassifierLLM(
+        should_lookup=True,
+        query="unclear search",
+        confidence="low",
+    )
+
+    route = await resolve_grounded_lookup_action(
+        _state("Is this advice evidence-based for people like me?"),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "llm_primary"
+    assert route.llm_failure_occurred is False
+    assert len(llm.structured_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_grounded_lookup_action_falls_back_without_llm() -> None:
+    route = await resolve_grounded_lookup_action(
+        _state("Is grounding proven to work?"),
+        llm_client=None,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "deterministic"
+    assert route.llm_failure_occurred is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_grounded_lookup_action_marks_llm_failure() -> None:
+    class _FailingLookupClassifierLLM(_FakeLookupClassifierLLM):
+        async def generate_structured(
+            self,
+            *,
+            prompt: str,
+            response_schema: type[StructuredResponseT],
+            system_instruction: str | None = None,
+        ) -> StructuredResponseT:
+            self.structured_calls.append(
+                {"prompt": prompt, "system_instruction": system_instruction}
+            )
+            raise RuntimeError("classifier unavailable")
+
+    llm = _FailingLookupClassifierLLM(should_lookup=True)
+
+    route = await resolve_grounded_lookup_action(
+        _state("Is grounding proven to work?"),
+        llm_client=llm,
+    )
+
+    assert route.action is None
+    assert route.classifier_path == "deterministic"
+    assert route.llm_failure_occurred is True
+    assert len(llm.structured_calls) == 1
 
 
 @pytest.mark.asyncio
