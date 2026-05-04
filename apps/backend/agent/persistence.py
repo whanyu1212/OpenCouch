@@ -7,7 +7,6 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -23,7 +22,7 @@ from agent.active_session_manager import (
 from agent.active_session_store import PostgresActiveSessionStore
 from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
-from agent.graph_constants import FINALIZE_TURN_NODE, GRAPH_NODE_TO_STATUS_STAGE
+from agent.graph_constants import FINALIZE_TURN_NODE
 from agent.memory.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.audit.session_feedback import SessionFeedbackBackend
@@ -32,6 +31,17 @@ from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
 from agent.audit.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.models import StoredSessionArc
+from agent.runtime.session_finalization import (
+    extract_memory_from_transcript,
+    finalize_session_window,
+)
+from agent.runtime.streaming import (
+    chunk_event_from_custom_payload,
+    messages_from_transcript,
+    response_ready_output,
+    stamp_turn_total_ms,
+    status_stage_for_node,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
@@ -57,20 +67,13 @@ from agent.runtime.session_state import (
 )
 from agent.models import (
     AgentInput,
-    AgentOutput,
     Channel,
-    ChunkEvent,
     DoneEvent,
     Message,
-    MessageRole,
     ResponseReadyEvent,
     StatusEvent,
     StreamEvent,
 )
-from agent.nodes.commit_session_memory import run_commit_session_memory
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
-from agent.nodes.summarize_session import run_summarize_session
 from agent.runtime.types import (
     ActiveSessionExists,
     ExpectedSessionLiveness,
@@ -105,13 +108,6 @@ DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
 SESSION_TIMEOUT = timedelta(minutes=20)
-
-
-@dataclass(slots=True)
-class _RuntimeShim:
-    """Minimal runtime shim for direct node reuse outside LangGraph."""
-
-    context: WorkflowContext
 
 
 class PersistentAgentRuntime:
@@ -982,124 +978,6 @@ class PersistentAgentRuntime:
         if active_transcript_len >= session_transcript_soft_limit:
             await self._set_active_session_rotation_required(thread_id)
 
-    async def _finalize_session_window(
-        self,
-        *,
-        thread_id: str,
-        state: AgentState,
-        started_at: str,
-        ended_at: str,
-        crisis_level_max: int,
-        session_buffer: SessionMemoryBuffer | None,
-        llm_client: BaseLLMClient | None,
-    ) -> StoredSessionArc | None:
-        """Run the shared session-end summarization and memory commit path.
-
-        Args:
-            thread_id: The thread identifier being finalized.
-            state: The state window to summarize.
-            started_at: The session start timestamp.
-            ended_at: The session end timestamp.
-            crisis_level_max: The max crisis level observed in the session.
-            session_buffer: The buffered session memory candidates.
-            llm_client: The LLM client used by the summarizer.
-
-        Returns:
-            The stored session arc, or ``None`` when summarization is skipped.
-        """
-
-        approach_hint = session_buffer.dominant_approach() if session_buffer else None
-
-        stored_arc = await run_summarize_session(
-            state,
-            llm_client=llm_client,
-            memory_store=self._memory_store,
-            memory_mode=self.memory_mode,
-            session_id=thread_id,
-            started_at=started_at,
-            ended_at=ended_at,
-            crisis_level_max=crisis_level_max,
-            embedding_provider=self._embedding_provider,
-            approach_hint=approach_hint,
-        )
-
-        commit_result = await run_commit_session_memory(
-            state,
-            memory_store=self._memory_store,
-            session_buffer=session_buffer,
-            stored_arc=stored_arc,
-            embedding_provider=self._embedding_provider,
-            llm_client=llm_client,
-        )
-        if commit_result is not None:
-            logger.info(
-                "end_session: committed %d semantic facts, %d procedural rules "
-                "(%d semantic bumps, %d semantic skipped, %d procedural skipped)",
-                commit_result.semantic_writes,
-                commit_result.procedural_writes,
-                commit_result.semantic_bumps,
-                commit_result.semantic_skips,
-                commit_result.procedural_skips,
-            )
-        return stored_arc
-
-    async def _extract_memory_from_transcript(
-        self,
-        *,
-        thread_id: str,
-        user_id: str | None,
-        transcript: list[dict[str, Any]],
-        llm_client: BaseLLMClient | None,
-        session_buffer: SessionMemoryBuffer,
-    ) -> None:
-        """Replay transcript user turns through the extractor nodes.
-
-        Args:
-            thread_id: The thread identifier for provenance.
-            user_id: The resolved user identifier, if any.
-            transcript: The serialized transcript to replay.
-            llm_client: The LLM client used by the extractors.
-            session_buffer: The session buffer to populate during replay.
-
-        Returns:
-            None.
-        """
-
-        runtime = _RuntimeShim(
-            context=WorkflowContext(
-                llm_client=llm_client,
-                memory_store=self._memory_store,
-                crisis_log_backend=self._crisis_log_backend,
-                memory_mode=self.memory_mode,
-                embedding_provider=self._embedding_provider,
-                session_memory_buffer=session_buffer,
-            )
-        )
-
-        user_turn_count = 0
-        for transcript_index, turn in enumerate(transcript):
-            if turn.get("role") != "user":
-                continue
-
-            message = (turn.get("content") or "").strip()
-            if not message:
-                continue
-
-            user_turn_count += 1
-            state = cast(
-                AgentState,
-                {
-                    "message": message,
-                    "user_id": user_id,
-                    "session_id": thread_id,
-                    "transcript": list(transcript[: transcript_index + 1]),
-                    "session_progress": {"turn_count": user_turn_count},
-                    "route": "therapeutic",
-                },
-            )
-            await run_extract_semantic_facts_node(state, cast(Any, runtime))
-            await run_extract_procedural_rules_node(state, cast(Any, runtime))
-
     @property
     def memory_store(self) -> MemoryStore:
         """Return the runtime's unified memory store.
@@ -1207,31 +1085,6 @@ class PersistentAgentRuntime:
             session_memory_buffer=self._session_memory_buffer_for_thread(thread_id),
         )
 
-    @staticmethod
-    def _messages_from_transcript(
-        transcript: list[dict[str, Any]],
-    ) -> list[Message]:
-        """Materialize validated messages from a serialized transcript.
-
-        Args:
-            transcript: The serialized transcript entries.
-
-        Returns:
-            The validated ``Message`` objects.
-        """
-
-        messages: list[Message] = []
-        for turn in transcript:
-            role = turn.get("role")
-            content = (turn.get("content") or "").strip()
-            if role not in {"system", "user", "assistant"} or not content:
-                continue
-            style = turn.get("response_style") if role == "assistant" else None
-            messages.append(
-                Message(role=MessageRole(role), content=content, response_style=style)
-            )
-        return messages
-
     def _get_graph(self) -> AgentWorkflow:
         """Return the compiled LangGraph workflow for this runtime.
 
@@ -1274,7 +1127,7 @@ class PersistentAgentRuntime:
         state = await self.get_state(thread_id)
         if state is None:
             return []
-        return self._messages_from_transcript(state.get("transcript", []))
+        return messages_from_transcript(state.get("transcript", []))
 
     async def session_status(self, thread_id: str) -> SessionStatus:
         """Return the active-session liveness status for a thread.
@@ -1395,7 +1248,7 @@ class PersistentAgentRuntime:
         summaries: list[ThreadSummary] = []
         for thread_id in thread_ids:
             state = await self.get_state(thread_id)
-            history = self._messages_from_transcript(
+            history = messages_from_transcript(
                 state.get("transcript", []) if state is not None else []
             )
             session_progress: Mapping[str, Any] = (
@@ -1461,51 +1314,6 @@ class PersistentAgentRuntime:
             ),
             prior_turn_count=prior_turn_count,
         )
-
-    @staticmethod
-    def _stamp_turn_total_ms(
-        state: AgentState,
-        *,
-        started_at: float,
-    ) -> None:
-        """Record total turn latency in state diagnostics.
-
-        Args:
-            state: Final graph state for the turn.
-            started_at: Monotonic timestamp captured before graph execution.
-        """
-
-        if "diagnostics" not in state or state["diagnostics"] is None:
-            state["diagnostics"] = {}
-        state["diagnostics"]["turn_total_ms"] = round(
-            (time.monotonic() - started_at) * 1000,
-            2,
-        )
-
-    @staticmethod
-    def _response_ready_output(
-        state: Mapping[str, Any] | None,
-        *,
-        finalize_seen: bool,
-        response_ready_emitted: bool,
-    ) -> AgentOutput | None:
-        """Return the durable output once finalize has completed.
-
-        Args:
-            state: Latest streamed state snapshot.
-            finalize_seen: Whether the finalize node has emitted an update.
-            response_ready_emitted: Whether a ready event was already emitted.
-
-        Returns:
-            The finalized output, if it is ready to surface.
-        """
-
-        if state is None or not finalize_seen or response_ready_emitted:
-            return None
-        response_text = str(state.get("response_text", "") or "").strip()
-        if not response_text:
-            return None
-        return state_to_output(state)
 
     async def run_turn(
         self,
@@ -1586,7 +1394,7 @@ class PersistentAgentRuntime:
                         AgentState, {**dict(initial_state), **dict(graph_output)}
                     )
 
-                self._stamp_turn_total_ms(final_state, started_at=turn_start)
+                stamp_turn_total_ms(final_state, started_at=turn_start)
 
                 await self._record_successful_turn_tracking(
                     thread_id,
@@ -1597,9 +1405,7 @@ class PersistentAgentRuntime:
                 result = PersistentTurnResult(
                     output=state_to_output(final_state),
                     state=final_state,
-                    history=self._messages_from_transcript(
-                        final_state.get("transcript", [])
-                    ),
+                    history=messages_from_transcript(final_state.get("transcript", [])),
                 )
 
                 await self._clear_active_session_mutation(thread_id, mutation_token)
@@ -1686,14 +1492,17 @@ class PersistentAgentRuntime:
                 ended_at = _iso_now()
                 crisis_level_max = self._max_crisis_levels.get(thread_id, 0)
                 session_buffer = self._session_memory_buffers.get(thread_id)
-                stored_arc = await self._finalize_session_window(
+                stored_arc = await finalize_session_window(
+                    session_state,
                     thread_id=thread_id,
-                    state=session_state,
                     started_at=started_at,
                     ended_at=ended_at,
                     crisis_level_max=crisis_level_max,
                     session_buffer=session_buffer,
                     llm_client=effective_llm_client,
+                    memory_store=self._memory_store,
+                    memory_mode=self.memory_mode,
+                    embedding_provider=self._embedding_provider,
                 )
                 await self._clear_session_continuity_in_checkpoint(
                     thread_id,
@@ -1742,12 +1551,16 @@ class PersistentAgentRuntime:
 
         self._remember_llm_client(thread_id, llm_client)
         session_buffer = SessionMemoryBuffer(session_id=thread_id)
-        await self._extract_memory_from_transcript(
+        await extract_memory_from_transcript(
             thread_id=thread_id,
             user_id=user_id,
             transcript=transcript,
             llm_client=self._effective_llm_client(thread_id, llm_client),
             session_buffer=session_buffer,
+            memory_store=self._memory_store,
+            memory_mode=self.memory_mode,
+            crisis_log_backend=self._crisis_log_backend,
+            embedding_provider=self._embedding_provider,
         )
         session_state = cast(
             AgentState,
@@ -1757,14 +1570,17 @@ class PersistentAgentRuntime:
                 "transcript": list(transcript),
             },
         )
-        return await self._finalize_session_window(
+        return await finalize_session_window(
+            session_state,
             thread_id=thread_id,
-            state=session_state,
             started_at=started_at or _iso_now(),
             ended_at=ended_at or _iso_now(),
             crisis_level_max=crisis_level_max,
             session_buffer=session_buffer,
             llm_client=self._effective_llm_client(thread_id, llm_client),
+            memory_store=self._memory_store,
+            memory_mode=self.memory_mode,
+            embedding_provider=self._embedding_provider,
         )
 
     async def finalize_active_sessions(
@@ -1939,40 +1755,47 @@ class PersistentAgentRuntime:
                 ):
                     if chunk["type"] == "custom":
                         # Forward token chunks from any namespace.
-                        payload = chunk["data"]
-                        if isinstance(payload, dict) and payload.get("type") == "chunk":
-                            yield ChunkEvent(text=payload["text"])
+                        event = chunk_event_from_custom_payload(chunk["data"])
+                        if event is not None:
+                            yield event
                             chunks_emitted = True
                     elif chunk["type"] == "updates" and chunk["ns"] == ():
                         # Skip subgraph internals to avoid duplicate status events.
                         for node_name in chunk["data"]:
-                            stage = GRAPH_NODE_TO_STATUS_STAGE.get(node_name, node_name)
-                            yield StatusEvent(stage=stage)
+                            yield StatusEvent(stage=status_stage_for_node(node_name))
                             if node_name == FINALIZE_TURN_NODE:
                                 finalize_seen = True
-                                ready_output = self._response_ready_output(
+                                ready_output = response_ready_output(
                                     final_state,
                                     finalize_seen=finalize_seen,
                                     response_ready_emitted=response_ready_emitted,
                                 )
                                 if ready_output is not None:
                                     if not chunks_emitted:
-                                        yield ChunkEvent(
-                                            text=ready_output.response_text
+                                        yield chunk_event_from_custom_payload(
+                                            {
+                                                "type": "chunk",
+                                                "text": ready_output.response_text,
+                                            }
                                         )
                                         chunks_emitted = True
                                     yield ResponseReadyEvent(output=ready_output)
                                     response_ready_emitted = True
                     elif chunk["type"] == "values" and chunk["ns"] == ():
                         final_state = cast(AgentState, chunk["data"])
-                        ready_output = self._response_ready_output(
+                        ready_output = response_ready_output(
                             final_state,
                             finalize_seen=finalize_seen,
                             response_ready_emitted=response_ready_emitted,
                         )
                         if ready_output is not None:
                             if not chunks_emitted:
-                                yield ChunkEvent(text=ready_output.response_text)
+                                yield chunk_event_from_custom_payload(
+                                    {
+                                        "type": "chunk",
+                                        "text": ready_output.response_text,
+                                    }
+                                )
                                 chunks_emitted = True
                             yield ResponseReadyEvent(output=ready_output)
                             response_ready_emitted = True
@@ -1987,7 +1810,7 @@ class PersistentAgentRuntime:
                         )
                     final_state = fallback
 
-                self._stamp_turn_total_ms(final_state, started_at=turn_start)
+                stamp_turn_total_ms(final_state, started_at=turn_start)
 
                 await self._record_successful_turn_tracking(
                     thread_id,
