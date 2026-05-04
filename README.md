@@ -48,9 +48,11 @@
 
 ## 📖 Overview
 
-OpenCouch bridges conversational AI with structured therapeutic frameworks. Under the hood, the text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. The web UI is built with Next.js.
+OpenCouch is a chat and voice companion for day-to-day emotional support, self-reflection, and practical coping. It combines modern conversational AI with structured therapeutic patterns, so users can move between open-ended conversation, guided exercises, and longer-term reflection without starting over each time.
 
-Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing. Local evals and Opik traces are used to catch regressions in the main routing decisions.
+Unlike chatting with ChatGPT, Gemini, or Claude on the web, OpenCouch is not a blank general-purpose assistant. It is built around mental-health-adjacent product needs: safety-aware routing, continuity across sessions, structured memory, and concrete coping workflows. General AI chat can be helpful in the moment, but OpenCouch is designed to support ongoing daily use—remembering what has mattered, guiding users through exercises like grounding or thought work, and keeping the experience focused on emotional support rather than generic task completion.
+
+Under the hood, the text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing, and local evals plus Opik traces help catch regressions in core routing behavior.
 
 Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime handles the speech-to-speech model interaction. The older direct Realtime harness remains in the backend for experiments.
 
@@ -451,24 +453,14 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 ## 📝 Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights:
+See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of **May 2026**:
 
-- **Postgres-backed Compose runtime** — the one-command stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization through Dockerized Postgres, while SQLite remains a compatibility default outside Compose.
-- **Lean production-mode Compose web** — backend and web Dockerfiles are consolidated, stale dev/prod Dockerfile splits were removed, and the Compose web service now runs `next build` + `next start`; first builds can take longer.
-- **Voice and session UX updates** — Home is now an explicit primary action, setup help lives in a Getting Started dialog, chat session endings show summary actions, voice ending opens an options dialog, and voice sessions expose assistant voice selection with clearer mic warmup states.
-- **Thin nodes, fat services refactor** — memory/session/crisis graph nodes now stay narrowly orchestration-focused while service modules own retrieval, episodic summarization, held-candidate promotion, and deterministic backstops; routing eval harnesses and Docusaurus architecture/state docs were updated to match the refactor, with hybrid routing evals passing for grounded lookup (`14/14`), memory control (`11/11`), and therapeutic routing (`54/54`).
-- **Route-persistent text streaming** — active text replies keep streaming while you move between Chat, Voice, Memory, and State, and Voice start is blocked until the text turn finishes.
-- **OpenAI hybrid prompt stabilization** — text and LiveKit voice prompts now share tighter safety, support, closing, guided-exercise, and continuity behavior; ambiguous level-1 safety language asks a direct check without premature emergency-resource escalation, and the OpenAI hybrid eval sweep passes across routing, behavior, trajectory, memory, and voice runners.
-- **Session experience refresh** — the web app now has a responsive session setup flow, desktop nav rail, mobile tab bar, session pill controls, refreshed chat and voice pages, and a lightweight memory-model diagram for persistent vs incognito sessions.
-- **LiveKit prewarm path** — the voice worker preloads blocking VAD/runtime assets and supports a one-time first-output warmup request from the browser to reduce initial voice-session latency.
-- **Therapeutic subgraph refactor** — dispatcher, guided-exercise, prompt-building, streaming, registry, and shared response-generation internals are split into focused modules while preserving compatibility imports.
-- **LLM-primary routing and policy gates** — therapeutic routing, grounded lookup, memory control, memory write policy, exercise continuation, and exercise selection now use LLM classifiers first with deterministic fallbacks.
-- **Guided exercise improvements** — 13 state-tracked exercises share a registry, ambiguous exercise requests can offer options instead of defaulting to grounding, and exercise eval coverage tracks selection, flow, and memory behavior.
-- **Web UI hardening** — Next.js lint/build now run in CI, persisted session setup avoids hydration flashes, REST and WebSocket failures surface in the UI, and LiveKit voice loading is route-aware.
-- **LiveKit voice path** — browser voice sessions use LiveKit token issuance, a LiveKit Agents worker, OpenAI Realtime model backing, transcript/finalization handling, and the existing crisis/memory runtime.
-- **Telegram gateway** — direct-message support includes allow-listing, `/end`, Markdown-to-HTML rendering, session rotation, startup recovery, lease retry handling, and non-blocking sweeps.
-- **Memory and audit cleanup** — memory internals, audit backends, extraction policy, and retrieval quality were reorganized for clearer subsystem boundaries and more stable eval behavior.
-- **Regression coverage** — backend tests and deterministic/hybrid eval runners cover crisis, therapeutic routing, behavior, exercises, long trajectories, memory trajectories, summarization, extraction, and procedural writer checks.
+- **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose.
+- **May 2026 — Full local product stack** — the one-command Compose setup runs Postgres, the FastAPI backend, production-mode Next.js web UI, and the LiveKit voice worker together for a closer-to-real local environment.
+- **Apr–May 2026 — Web and voice experience refresh** — chat, memory, state, and voice routes now have stronger session continuity, clearer setup/end-session flows, voice selection, mic warmup states, and route-persistent text streaming.
+- **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests, hybrid evals, and Opik tracing.
+- **Recent — Guided support coverage** — OpenCouch includes 13 state-tracked coping exercises, including grounding, breathing, thought work, and values reflection, with evaluation coverage for selection, flow, and memory behavior.
+- **Recent — Channel expansion** — Telegram direct-message support now includes allow-listing, `/end`, markdown rendering, session rotation, startup recovery, and non-blocking maintenance sweeps.
 
 ---
 
@@ -488,20 +480,23 @@ We welcome contributions. Run the relevant checks in [Development & Validation](
 
 ## 🗺️ Roadmap
 
-| Status | Component | Initiative |
+OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory, safety, and voice experience before expanding to more platforms.
+
+| Horizon | Area | Focus |
 |:---|:---|:---|
-| ✅ **Shipped** | **Web Frontend** | Next.js UI with chat, threading, and memory inspection |
-| ✅ **Shipped** | **Voice Chat** | LiveKit voice sessions backed by OpenAI Realtime, safety routing, and memory |
-| ✅ **Shipped** | **Guided Exercises** | 13 interactive exercises with multi-turn state tracking |
-| ✅ **Shipped** | **Session Feedback** | End-of-session rating system via UI and CLI |
-| ✅ **Shipped** | **API Layer** | FastAPI REST + WebSocket streaming |
-| ✅ **Dogfood** | **Telegram Gateway** | Interim text-first channel with allow-listing, Markdown rendering, and thread rotation; not intended for WebRTC voice |
-| 🧭 **Later** | **iOS App** | Native mobile client for chat and LiveKit voice once the web and backend voice paths are stable |
-| ⏳ **Planned** | **Additional Messaging Channels** | WhatsApp and Discord adapters |
-| ⏳ **Planned** | **Graph Memory** | Graphiti + Neo4j for entity-relationship reasoning |
-| ⏳ **Planned** | **Consolidation** | Background fact merging, dormant marking, and undo support |
-| ⏳ **Planned** | **Acoustic Safety** | Paralinguistic crisis detection (prosodic flatness, etc.) |
-| 🛑 **Blocked** | **Clinical Review** | Expert clinician audit of knowledge files and safety logic |
+| ✅ **Shipped** | **Core product** | Web chat, threading, persistent/incognito sessions, memory inspection, and session feedback |
+| ✅ **Shipped** | **Voice** | LiveKit-backed browser voice sessions with OpenAI Realtime, safety routing, transcript handling, and memory integration |
+| ✅ **Shipped** | **Guided support** | 13 state-tracked coping exercises for grounding, breathing, thought work, values reflection, and related flows |
+| ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, Postgres-backed persistence, LangGraph checkpoints, crisis audit, and feedback storage |
+| 🧪 **Dogfood** | **Messaging** | Telegram direct-message gateway with allow-listing, Markdown rendering, `/end`, and session rotation |
+| 🔜 **Next** | **Product stabilization** | Closed beta readiness, onboarding polish, reliability improvements, clearer session lifecycle, and feedback-driven UX fixes |
+| 🔜 **Next** | **Memory quality** | Background fact consolidation, dormant/obsolete memory handling, better review controls, and undo support |
+| 🔜 **Next** | **Safety & evaluation** | Broader eval coverage, clinician-informed review of safety behavior, and stronger regression monitoring |
+| 🧭 **Later** | **Mobile** | Native iOS app once the web and backend voice paths are stable |
+| 🧭 **Later** | **More channels** | WhatsApp and Discord adapters after the core messaging abstraction is stable |
+| 🧭 **Later** | **Graph memory** | Graphiti + Neo4j exploration for entity-relationship reasoning |
+| 🧭 **Later** | **Acoustic safety** | Paralinguistic crisis signals such as prosody, flatness, or distress markers |
+| 🛑 **Blocked** | **Clinical review** | Expert clinician audit of knowledge files, prompts, guided exercises, and safety logic |
 
 ---
 
