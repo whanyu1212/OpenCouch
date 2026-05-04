@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
+from agent.models import CrisisAssessment
 from agent.state import AgentState
 
 EXERCISE_STATE_FIELDS = (
@@ -102,3 +104,68 @@ def turn_count_from_state(state: AgentState | None) -> int:
         return 0
     session_progress = state.get("session_progress", {}) or {}
     return int(session_progress.get("turn_count", 0) or 0)
+
+
+def has_runtime_session_tracking(
+    thread_id: str,
+    *,
+    session_starts: Mapping[str, Any],
+    session_transcript_starts: Mapping[str, Any],
+    session_memory_buffers: Mapping[str, Any],
+) -> bool:
+    """Return whether a thread has in-process session tracking.
+
+    Args:
+        thread_id (str): Thread identifier to check.
+        session_starts (Mapping[str, Any]): Session start timestamps by thread.
+        session_transcript_starts (Mapping[str, Any]): Transcript start indexes
+            by thread.
+        session_memory_buffers (Mapping[str, Any]): Session memory buffers by
+            thread.
+
+    Returns:
+        bool: ``True`` when any runtime session tracker exists for the thread.
+    """
+
+    return (
+        thread_id in session_starts
+        or thread_id in session_transcript_starts
+        or thread_id in session_memory_buffers
+    )
+
+
+def active_transcript_length(
+    state: AgentState,
+    *,
+    transcript_start_index: int,
+) -> int:
+    """Return transcript length within the active session window.
+
+    Args:
+        state (AgentState): Thread state snapshot.
+        transcript_start_index (int): Transcript index where the active session
+            begins.
+
+    Returns:
+        int: Non-negative active-session transcript length.
+    """
+
+    return max(0, transcript_length(state) - transcript_start_index)
+
+
+def crisis_level_from_state(state: AgentState) -> int:
+    """Extract the crisis level from a graph state.
+
+    Args:
+        state (AgentState): Graph state snapshot.
+
+    Returns:
+        int: Crisis level, defaulting to ``0`` when absent or unrecognized.
+    """
+
+    crisis = state.get("crisis")
+    if isinstance(crisis, CrisisAssessment):
+        return crisis.level
+    if isinstance(crisis, Mapping):
+        return int(crisis.get("level", 0) or 0)
+    return 0
