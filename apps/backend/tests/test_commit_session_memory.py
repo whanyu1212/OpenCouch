@@ -552,7 +552,12 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
 
         assert await store.arecord_count(("user-1", "semantic")) == 0
         assert (
-            len(runtime._session_memory_buffers["thread-test"].semantic_candidates) == 1
+            len(
+                runtime._session_tracker.session_memory_buffers[
+                    "thread-test"
+                ].semantic_candidates
+            )
+            == 1
         )
 
         stored_arc = await runtime.end_session("thread-test", llm_client=fake)
@@ -560,7 +565,7 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
         assert stored_arc is not None
         assert await store.arecord_count(("user-1", "episodic")) == 1
         assert await store.arecord_count(("user-1", "semantic")) == 1
-        assert "thread-test" not in runtime._session_memory_buffers
+        assert "thread-test" not in runtime._session_tracker.session_memory_buffers
 
 
 @pytest.mark.asyncio
@@ -608,7 +613,11 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
 
         assert await store.arecord_count(("user-1", "procedural")) == 0
         assert (
-            len(runtime._session_memory_buffers["thread-test"].procedural_candidates)
+            len(
+                runtime._session_tracker.session_memory_buffers[
+                    "thread-test"
+                ].procedural_candidates
+            )
             == 2
         )
 
@@ -621,4 +630,4 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
         assert profile_record is not None
         assert len(profile_record.value["rules"]) == 1
         assert profile_record.value["rules"][0]["write_timing"] == "promotion"
-        assert "thread-test" not in runtime._session_memory_buffers
+        assert "thread-test" not in runtime._session_tracker.session_memory_buffers

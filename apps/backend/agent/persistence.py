@@ -42,6 +42,7 @@ from agent.runtime.streaming import (
     stamp_turn_total_ms,
     status_stage_for_node,
 )
+from agent.runtime.session_tracking import RuntimeSessionTracker
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
@@ -59,7 +60,6 @@ from agent.runtime.checkpointer import (
 from agent.runtime.session_state import (
     active_transcript_length,
     crisis_level_from_state,
-    has_runtime_session_tracking,
     session_continuity_clear_delta,
     slice_state_to_active_session,
     transcript_length,
@@ -236,11 +236,7 @@ class PersistentAgentRuntime:
             embedding_provider=embedding_provider,
         )
 
-        # Runtime-managed per-thread session trackers.
-        self._session_starts: dict[str, str] = {}
-        self._max_crisis_levels: dict[str, int] = {}
-        self._session_memory_buffers: dict[str, SessionMemoryBuffer] = {}
-        self._session_transcript_starts: dict[str, int] = {}
+        self._session_tracker = RuntimeSessionTracker()
         if self._thread_persistence_backend == "postgres":
             self._active_session_store = PostgresActiveSessionStore(
                 checkpointer_getter=self._ensure_postgres_open
@@ -505,7 +501,7 @@ class PersistentAgentRuntime:
         """
 
         if self.memory_mode == MemoryMode.INCOGNITO:
-            return list(self._session_starts)
+            return self._session_tracker.thread_ids()
         return await self._active_session_manager.list_persisted_active_session_ids()
 
     async def _save_persisted_active_session(
@@ -708,10 +704,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        self._session_starts.pop(thread_id, None)
-        self._max_crisis_levels.pop(thread_id, None)
-        self._session_memory_buffers.pop(thread_id, None)
-        self._session_transcript_starts.pop(thread_id, None)
+        self._session_tracker.clear(thread_id)
         self._thread_llm_clients.pop(thread_id, None)
 
     def _has_runtime_session_tracking(self, thread_id: str) -> bool:
@@ -724,12 +717,7 @@ class PersistentAgentRuntime:
             ``True`` when any runtime session tracker exists for the thread.
         """
 
-        return has_runtime_session_tracking(
-            thread_id,
-            session_starts=self._session_starts,
-            session_transcript_starts=self._session_transcript_starts,
-            session_memory_buffers=self._session_memory_buffers,
-        )
+        return self._session_tracker.has_tracking(thread_id)
 
     def _hydrate_runtime_session_tracking(
         self,
@@ -744,14 +732,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        self._session_starts[session.thread_id] = session.started_at
-        self._max_crisis_levels[session.thread_id] = session.max_crisis_level
-        self._session_transcript_starts[session.thread_id] = (
-            session.transcript_start_index
-        )
-        self._session_memory_buffers[session.thread_id] = (
-            session.session_buffer.model_copy(deep=True)
-        )
+        self._session_tracker.hydrate(session)
 
     def _remember_llm_client(
         self,
@@ -808,21 +789,12 @@ class PersistentAgentRuntime:
             None.
         """
 
-        started_at = self._session_starts.get(thread_id)
-        transcript_start_index = self._session_transcript_starts.get(thread_id)
-        if started_at is None or transcript_start_index is None:
-            return
-
-        session = PersistedActiveSessionState(
-            thread_id=thread_id,
-            started_at=started_at,
+        session = self._session_tracker.to_persisted_session(
+            thread_id,
             last_active_at=last_active_at or _iso_now(),
-            transcript_start_index=transcript_start_index,
-            max_crisis_level=self._max_crisis_levels.get(thread_id, 0),
-            session_buffer=self._session_memory_buffer_for_thread(thread_id).model_copy(
-                deep=True
-            ),
         )
+        if session is None:
+            return
         await self._save_persisted_active_session(session)
 
     async def _finalize_expired_sessions_once(self) -> None:
@@ -927,13 +899,10 @@ class PersistentAgentRuntime:
         if persisted is None:
             await self._clear_session_continuity_in_checkpoint(thread_id, prior_state)
             now = _iso_now()
-            self._session_starts[thread_id] = now
-            self._max_crisis_levels[thread_id] = 0
-            self._session_transcript_starts[thread_id] = self._transcript_length(
-                prior_state
-            )
-            self._session_memory_buffers[thread_id] = SessionMemoryBuffer(
-                session_id=thread_id
+            self._session_tracker.start_session(
+                thread_id,
+                started_at=now,
+                transcript_start_index=self._transcript_length(prior_state),
             )
             await self._persist_runtime_session_tracking(
                 thread_id,
@@ -960,8 +929,7 @@ class PersistentAgentRuntime:
         """
 
         turn_level = crisis_level_from_state(final_state)
-        prior_max = self._max_crisis_levels.get(thread_id, 0)
-        self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
+        self._session_tracker.record_crisis_level(thread_id, turn_level)
 
         turn_approach = final_state.get("therapeutic_approach")
         self._session_memory_buffer_for_thread(thread_id).record_approach(turn_approach)
@@ -970,7 +938,7 @@ class PersistentAgentRuntime:
 
         if session_transcript_soft_limit is None:
             return
-        transcript_start_index = self._session_transcript_starts.get(thread_id, 0)
+        transcript_start_index = self._session_tracker.transcript_start_index(thread_id)
         active_transcript_len = active_transcript_length(
             final_state,
             transcript_start_index=transcript_start_index,
@@ -1051,11 +1019,7 @@ class PersistentAgentRuntime:
             The per-thread session memory buffer.
         """
 
-        if thread_id not in self._session_memory_buffers:
-            self._session_memory_buffers[thread_id] = SessionMemoryBuffer(
-                session_id=thread_id
-            )
-        return self._session_memory_buffers[thread_id]
+        return self._session_tracker.session_memory_buffer_for_thread(thread_id)
 
     def _context_for_turn(
         self,
@@ -1481,17 +1445,22 @@ class PersistentAgentRuntime:
                 return None
 
             try:
-                transcript_start_index = self._session_transcript_starts.get(
-                    thread_id, 0
+                transcript_start_index = self._session_tracker.transcript_start_index(
+                    thread_id
                 )
                 session_state = self._slice_state_to_active_session(
                     state,
                     transcript_start_index=transcript_start_index,
                 )
-                started_at = self._session_starts.get(thread_id, _iso_now())
+                started_at = self._session_tracker.started_at(
+                    thread_id,
+                    default=_iso_now(),
+                )
                 ended_at = _iso_now()
-                crisis_level_max = self._max_crisis_levels.get(thread_id, 0)
-                session_buffer = self._session_memory_buffers.get(thread_id)
+                crisis_level_max = self._session_tracker.max_crisis_level(thread_id)
+                session_buffer = self._session_tracker.session_memory_buffer_or_none(
+                    thread_id
+                )
                 stored_arc = await finalize_session_window(
                     session_state,
                     thread_id=thread_id,

@@ -22,7 +22,7 @@ These tests cover the new contract:
    the outer ``turn_total_ms`` (stamped by ``run_turn_stream`` itself).
 
 3. **Session tracking bookkeeping.** The stream path updates
-   ``_session_starts`` and ``_max_crisis_levels`` the same way
+   runtime session start and max-crisis tracking the same way
    ``run_turn`` does — so /end / /exit summaries work regardless of
    which entry point the CLI used.
 
@@ -281,19 +281,19 @@ class TestRunTurnStreamSessionTracking:
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
             # Before: no start time tracked
-            assert "t-stream-6" not in runtime._session_starts
+            assert not runtime._session_tracker.has_tracking("t-stream-6")
 
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-6", message="hi"
             )
 
             # After: session start is tracked
-            assert "t-stream-6" in runtime._session_starts
+            assert runtime._session_tracker.has_tracking("t-stream-6")
             assert done is not None
 
     @pytest.mark.asyncio
     async def test_stream_tracks_max_crisis_level(self) -> None:
-        """The stream path updates _max_crisis_levels like run_turn does."""
+        """The stream path updates max-crisis tracking like run_turn does."""
 
         async with PersistentAgentRuntime(
             sqlite_path=":memory:",
@@ -304,8 +304,8 @@ class TestRunTurnStreamSessionTracking:
 
             # Non-crisis turn → tracked level is 0 (the default), not
             # missing. The lookup should have been written.
-            assert "t-stream-7" in runtime._max_crisis_levels
-            assert runtime._max_crisis_levels["t-stream-7"] == 0
+            assert runtime._session_tracker.has_tracking("t-stream-7")
+            assert runtime._session_tracker.max_crisis_level("t-stream-7") == 0
 
 
 class TestRunTurnStreamParity:
