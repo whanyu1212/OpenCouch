@@ -16,7 +16,10 @@ from agent.memory.models import (
     SemanticFact,
     StoredSessionArc,
 )
-from agent.memory.procedural import aadd_procedural_rule, aget_procedural_profile
+from agent.memory.procedural_profile import (
+    aadd_procedural_rule,
+    aget_procedural_profile,
+)
 from agent.memory.store import OpenCouchMemoryStore
 
 RUNNER_PATH = (

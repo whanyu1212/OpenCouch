@@ -51,18 +51,18 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.memory.backstops import get_deterministic_semantic_backstops
-from agent.memory.extraction_prompts import (
+from agent.memory.policy.backstops import get_deterministic_semantic_backstops
+from agent.memory.prompts.extraction import (
     build_extraction_system_prompt,
     build_extraction_user_prompt,
 )
 from agent.memory.models import ExtractionResult
 from agent.memory.modes import MemoryMode
-from agent.memory.orchestration import (
+from agent.memory.policy.turn_routing import (
     get_session_turn_index,
     should_skip_memory_extraction,
 )
-from agent.memory.service import MemoryService
+from agent.memory.turn_write_service import TurnWriteService
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
@@ -192,7 +192,7 @@ async def run_extract_semantic_facts_node(
     if not extraction.facts:
         return _diagnostics_delta(reason=extraction.reason)
 
-    result = await MemoryService().process_semantic_facts(
+    result = await TurnWriteService().process_semantic_facts(
         writes=extraction.facts,
         message=state["message"],
         reason=extraction.reason,

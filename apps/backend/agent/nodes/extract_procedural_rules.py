@@ -75,15 +75,15 @@ from langgraph.runtime import Runtime
 
 from agent.memory.models import ProceduralExtractionResult
 from agent.memory.modes import MemoryMode
-from agent.memory.orchestration import (
+from agent.memory.policy.turn_routing import (
     get_session_turn_index,
     should_skip_memory_extraction,
 )
-from agent.memory.procedural_prompts import (
+from agent.memory.prompts.procedural import (
     build_procedural_writer_system_prompt,
     build_procedural_writer_user_prompt,
 )
-from agent.memory.service import MemoryService
+from agent.memory.turn_write_service import TurnWriteService
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
@@ -206,7 +206,7 @@ async def run_extract_procedural_rules_node(
     if not result.rules:
         return _diagnostics_delta(reason=result.reason)
 
-    processing = await MemoryService().process_procedural_rules(
+    processing = await TurnWriteService().process_procedural_rules(
         drafts=result.rules,
         message=state["message"],
         reason=result.reason,

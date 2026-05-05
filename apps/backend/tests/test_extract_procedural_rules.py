@@ -24,14 +24,14 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.models import (
     ProceduralExtractionResult,
     ProceduralRuleDraft,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
     build_procedural_rule,
@@ -592,7 +592,7 @@ class TestStatePreservation:
         node runs, then verifies it's still set afterward.
         """
 
-        from agent.memory.procedural import aset_proactive_recall
+        from agent.memory.procedural_profile import aset_proactive_recall
 
         store = OpenCouchMemoryStore()
         # Pre-set the recall toggle to True

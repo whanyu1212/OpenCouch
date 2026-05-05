@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent.active_session_manager import PersistedActiveSessionState
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 
 
 class RuntimeSessionTracker:

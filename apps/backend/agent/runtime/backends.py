@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Literal
 
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
-from agent.audit.legacy.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.legacy.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.audit.sqlite.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.sqlite.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.audit.session_feedback import (
@@ -19,7 +19,7 @@ from agent.memory.embeddings import (
     NullEmbeddingProvider,
     create_configured_embedding_provider,
 )
-from agent.memory.legacy.sqlite_store import SqliteMemoryStore
+from agent.memory.sqlite_store import SqliteMemoryStore
 from agent.memory.modes import MemoryMode
 from agent.memory.postgres_store import PostgresMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore

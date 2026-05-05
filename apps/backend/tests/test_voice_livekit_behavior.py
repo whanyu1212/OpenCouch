@@ -39,7 +39,7 @@ from livekit.agents.types import (
     NotGivenOr,
 )
 
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aadd_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,

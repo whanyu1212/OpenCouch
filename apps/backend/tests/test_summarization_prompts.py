@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.memory.summarization_prompts import (
+from agent.memory.prompts.summarization import (
     build_summarization_system_prompt,
     build_summarization_user_prompt,
 )

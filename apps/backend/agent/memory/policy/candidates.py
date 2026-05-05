@@ -17,9 +17,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agent.memory.constants import classify_procedural_request
 from agent.memory.models import MemoryWrite, ProceduralRuleDraft
-from agent.memory.semantic_policy import (
+from agent.memory.policy.constants import classify_procedural_request
+from agent.memory.policy.semantic import (
     SEMANTIC_SESSION_ONLY_CATEGORIES,
     SEMANTIC_STABLE_CATEGORIES,
     contains_emerging_pattern,

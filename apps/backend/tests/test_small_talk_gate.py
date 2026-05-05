@@ -19,7 +19,7 @@ write (false positive) is unrecoverable.
 
 import pytest
 
-from agent.memory.small_talk_gate import (
+from agent.memory.policy.small_talk import (
     MAX_SMALL_TALK_LENGTH,
     SMALL_TALK_VOCABULARY,
     is_small_talk,

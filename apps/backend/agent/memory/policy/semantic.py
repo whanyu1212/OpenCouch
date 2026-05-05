@@ -7,7 +7,7 @@ early-turn guard so those paths do not drift.
 
 from __future__ import annotations
 
-from agent.memory.constants import contains_any as _contains_any
+from agent.memory.policy.constants import contains_any as _contains_any
 
 SEMANTIC_STABLE_CATEGORIES: frozenset[str] = frozenset(
     {

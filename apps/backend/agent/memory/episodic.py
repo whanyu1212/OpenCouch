@@ -1,4 +1,26 @@
-"""Episodic memory service helpers."""
+"""Episodic memory helpers for session-end arc writes.
+
+Episodic memory stores **one record per session arc** in the
+``(owner_id, "episodic")`` namespace. Each arc summarizes what happened
+during a single session — themes, mood trajectory, approach used —
+and is written exactly once at session end by ``summarize_session_node``.
+
+Module layout:
+
+- :func:`prepare_session_summary_metadata` — derives duration seconds and
+  user-turn count from raw timestamps and transcript. Pure helper used by
+  the summarization node before it calls the LLM.
+- :func:`session_arc_to_stored` — converts an LLM-produced
+  :class:`SessionArc` into a :class:`StoredSessionArc` by attaching the
+  fields the store layer needs (id, owner, timestamps, write provenance).
+- :func:`write_session_arc` — persists a stored arc into the episodic
+  namespace using the standard ``(owner_id, "episodic")`` shape.
+
+Episodic writes are append-only on the hot path; reconciliation between
+arcs (merging or superseding old session summaries) is not done here.
+The retrieval-side helpers that read these arcs live in
+:mod:`agent.memory.recall`.
+"""
 
 from __future__ import annotations
 
@@ -53,7 +75,18 @@ def session_arc_to_stored(
     owner_id: str,
     crisis_level_max: int = 0,
 ) -> StoredSessionArc:
-    """Convert an LLM-produced SessionArc to a stored shape."""
+    """Convert an LLM-produced SessionArc into a stored shape.
+
+    Args:
+        arc (SessionArc): LLM-produced session arc with summary and themes.
+        owner_id (str): Owner whose episodic namespace receives the arc.
+        crisis_level_max (int): Highest crisis level observed during the
+            session (0 when no crisis was detected).
+
+    Returns:
+        StoredSessionArc: Arc enriched with id, owner, timestamps, and
+            write provenance ready for the episodic namespace.
+    """
 
     now = _iso_now()
     return StoredSessionArc(
@@ -78,7 +111,20 @@ async def write_session_arc(
     embedding: list[float] | None = None,
     embedding_model: str | None = None,
 ) -> None:
-    """Persist a stored session arc to the episodic namespace."""
+    """Persist a stored session arc into the episodic namespace.
+
+    Args:
+        store (MemoryStore): Memory store to write into.
+        owner_id (str): Owner whose episodic namespace receives the arc.
+        stored_arc (StoredSessionArc): Arc to persist; its ``id`` is used
+            as the record key.
+        embedding (list[float] | None): Optional precomputed summary
+            embedding for hybrid retrieval.
+        embedding_model (str | None): Optional embedding model identifier.
+
+    Returns:
+        None: Persists the arc record under ``(owner_id, "episodic")``.
+    """
 
     namespace = (owner_id, "episodic")
     await store.aput(

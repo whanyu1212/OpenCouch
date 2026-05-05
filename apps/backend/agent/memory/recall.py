@@ -1,4 +1,43 @@
-"""Memory retrieval service for building turn-scoped working memory."""
+"""Per-turn memory retrieval that builds the working-memory bundle.
+
+Runs at the start of every turn (called by ``load_memory_node``) and
+returns the structured :class:`LoadMemoryResult` the response nodes use
+to ground their replies. Pulls from all three memory shapes:
+
+- **Semantic** facts via hybrid lexical + embedding retrieval, filtered
+  to active records and capped at :data:`SEMANTIC_WORKING_MEMORY_LIMIT`.
+- **Episodic** arcs via the same hybrid path plus a first-turn
+  catch-up entry that injects the most recent prior session's summary
+  even if it doesn't match the current query.
+- **Procedural** rules and the ``proactive_recall_enabled`` toggle from
+  the user's :class:`ProceduralProfile`.
+
+Design rules:
+
+1. **Skip work when stores are empty.** A new user has no semantic or
+   episodic records, so the function short-circuits to
+   ``retrieval_path="skipped_empty_store"`` and avoids the embedding
+   call entirely. Procedural state is still loaded because it has its
+   own profile-shaped storage.
+2. **Embedding fallback is silent.** If the embedding provider fails
+   for any reason (network blip, quota exceeded, model rejected the
+   input), retrieval falls back to pure lexical recall and the path
+   is reported as ``token_recall_after_embed_error`` for observability.
+   The turn never blocks on embeddings.
+3. **Diagnostics over logs.** The returned :class:`LoadMemoryResult`
+   carries a ``diagnostics`` dict that flows back into the per-turn
+   diagnostics state delta. The CLI ``/memory status`` command reads
+   from there. The module also emits one INFO log per call as a
+   secondary signal for grepping.
+4. **First-turn catch-up is one extra read.** Only when ``is_first_turn``
+   is true, we additionally call ``store.alatest((owner, "episodic"))``
+   so the agent can open the session by referring to the prior arc.
+   Subsequent turns rely solely on query-driven retrieval.
+
+The actual ranking math lives in :mod:`agent.memory.retrieval`; this
+module orchestrates the per-namespace fetches and assembles them into
+the working-memory shape the rest of the agent expects.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +47,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.reconciliation import is_active_semantic_record_value
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful

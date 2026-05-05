@@ -1,4 +1,4 @@
-"""Unit tests for ``agent/memory/procedural.py``.
+"""Unit tests for ``agent/memory/procedural_profile.py``.
 
 Covers the profile-as-single-document storage pattern: empty-default-on-
 miss, round-trip serialization, additive helpers (``aadd_procedural_rule``,
@@ -18,7 +18,7 @@ import asyncio
 import pytest
 
 from agent.memory.models import ProceduralProfile, ProceduralRule
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     PROCEDURAL_KEY,
     aadd_procedural_rule,
     aclear_procedural_rules,
@@ -404,7 +404,7 @@ async def test_aset_recall_on_new_user_creates_profile() -> None:
 async def test_eviction_archives_oldest_when_exceeding_cap() -> None:
     """Adding a rule past MAX_ACTIVE_RULES evicts the oldest by added_at."""
 
-    from agent.memory.procedural import MAX_ACTIVE_RULES
+    from agent.memory.procedural_profile import MAX_ACTIVE_RULES
 
     store = OpenCouchMemoryStore()
 

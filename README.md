@@ -154,7 +154,7 @@ The first run can take a while. Docker needs to pull base images, install backen
 
 The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
 
-Inside Compose, the API and voice worker default to `OPENCOUCH_PERSISTENCE_BACKEND=postgres`. That routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization status through the shared Postgres service. Outside Compose, SQLite remains the compatibility default unless you export the same Postgres environment variables yourself.
+Inside Compose, the API and voice worker default to `OPENCOUCH_PERSISTENCE_BACKEND=postgres`. That routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization status through the shared Postgres service. The backend default is also Postgres outside Compose, so you must export `OPENCOUCH_MEMORY_DATABASE_URL` (and friends) — or set `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` to opt into the SQLite fallback for local-only installs without Docker.
 
 For text-only development without LiveKit credentials, start just the API, Postgres, and production-mode web UI:
 

@@ -25,9 +25,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from agent.memory.candidates import build_procedural_candidate, build_semantic_candidate
 from agent.memory.models import EntityRef, MemoryWrite, ProceduralRuleDraft
-from agent.memory.write_policy import (
+from agent.memory.policy.candidates import (
+    build_procedural_candidate,
+    build_semantic_candidate,
+)
+from agent.memory.policy.write import (
     decide_procedural_candidate,
     decide_semantic_candidate,
 )

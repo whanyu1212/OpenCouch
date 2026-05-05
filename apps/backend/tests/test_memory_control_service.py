@@ -11,8 +11,9 @@ from agent.graph import build_initial_state
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory_control.service import execute_memory_control_action
+from agent.memory.user_controls.service import execute_memory_control_action
 from agent.models import AgentInput
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -93,6 +94,43 @@ async def test_service_unknown_action_returns_capability_reply() -> None:
 
     assert "I can show saved memory" in result.response_text
     assert result.memory_control == {"pending_action": None}
+
+
+@pytest.mark.asyncio
+async def test_service_set_recall_without_enabled_returns_capability_reply() -> None:
+    """Malformed set_recall (missing required ``enabled``) must not silently disable.
+
+    Discriminated-union validation rejects the action; the service falls through
+    to the capability reply rather than defaulting ``enabled=False`` and turning
+    off proactive recall behind the user's back. The result must not emit a
+    ``procedural_profile`` update — that would propagate a fabricated value into
+    graph state.
+    """
+
+    store = OpenCouchMemoryStore()
+    state = _state("turn proactive recall")
+    state["memory_control"]["action"] = {"type": "set_recall"}
+
+    result = await execute_memory_control_action(state, _context(store=store))
+
+    assert "I can show saved memory" in result.response_text
+    assert result.procedural_profile is None
+    assert result.memory_control == {"pending_action": None}
+
+
+@pytest.mark.asyncio
+async def test_service_save_preference_without_rule_returns_capability_reply() -> None:
+    """Malformed save_preference (missing ``rule_text``) must not save a blank rule."""
+
+    store = OpenCouchMemoryStore()
+    state = _state("remember preference")
+    state["memory_control"]["action"] = {"type": "save_preference"}
+
+    result = await execute_memory_control_action(state, _context(store=store))
+
+    assert "I can show saved memory" in result.response_text
+    profile = await aget_procedural_profile(store, user_id="user-1")
+    assert profile.rules == []
 
 
 @pytest.mark.asyncio

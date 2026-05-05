@@ -1,21 +1,21 @@
-"""Routing policy for explicit user memory-control requests."""
+"""Routing policy for explicit user memory-management requests."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-from agent.memory_control.patterns import (
+from agent.memory.user_controls.patterns import (
     AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE as _AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE,
     INDEX_RE as _INDEX_RE,
     NO_RE as _NO_RE,
     PREFERENCE_RULE_RE as _PREFERENCE_RULE_RE,
     YES_RE as _YES_RE,
 )
-from agent.memory_control.prompts import (
+from agent.memory.prompts.control import (
     build_memory_control_prompt as _build_memory_control_prompt,
     build_memory_control_system_prompt as _build_memory_control_system_prompt,
 )
@@ -25,9 +25,100 @@ from services.llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 
+# ── Typed memory-control actions ─────────────────────────────────────────
+#
+# The wire format on graph state remains a plain dict (so LangGraph state
+# serialization is unchanged). These typed models give the service layer a
+# pydantic discriminated union it can validate inbound dicts against and
+# dispatch on with ``match`` instead of ``dict.get`` defensiveness.
+
+
+class _ActionBase(BaseModel):
+    """Base for typed memory-control actions (frozen, allow extras for fwd-compat)."""
+
+    model_config = {"frozen": True, "extra": "ignore"}
+
+
+class ListAction(_ActionBase):
+    type: Literal["list"] = "list"
+
+
+class StatusAction(_ActionBase):
+    type: Literal["status"] = "status"
+
+
+class SetRecallAction(_ActionBase):
+    type: Literal["set_recall"] = "set_recall"
+    enabled: bool
+
+
+class SavePreferenceAction(_ActionBase):
+    type: Literal["save_preference"] = "save_preference"
+    rule_text: str = Field(min_length=1)
+
+
+class ForgetByIndexAction(_ActionBase):
+    type: Literal["forget_by_index"] = "forget_by_index"
+    target_kind: Literal["fact", "session", "rule"]
+    target_index: int = Field(ge=1)
+
+
+class ForgetByQueryAction(_ActionBase):
+    type: Literal["forget_by_query"] = "forget_by_query"
+    query: str = Field(min_length=1)
+
+
+class ConfirmPendingAction(_ActionBase):
+    type: Literal["confirm_pending"] = "confirm_pending"
+
+
+class CancelPendingAction(_ActionBase):
+    type: Literal["cancel_pending"] = "cancel_pending"
+
+
+TypedMemoryAction = Annotated[
+    Union[
+        ListAction,
+        StatusAction,
+        SetRecallAction,
+        SavePreferenceAction,
+        ForgetByIndexAction,
+        ForgetByQueryAction,
+        ConfirmPendingAction,
+        CancelPendingAction,
+    ],
+    Field(discriminator="type"),
+]
+
+_TYPED_ACTION_ADAPTER: TypeAdapter[TypedMemoryAction] = TypeAdapter(TypedMemoryAction)
+
+
+def parse_memory_control_action(payload: dict[str, Any]) -> TypedMemoryAction | None:
+    """Parse a graph-state action dict into a typed memory-control action.
+
+    Args:
+        payload: Action dict as carried on graph state (``{"type": ..., ...}``).
+
+    Returns:
+        Parsed typed action, or ``None`` when the dict is missing a known
+        ``type`` discriminator or fails per-type validation.
+    """
+
+    if not payload or "type" not in payload:
+        return None
+    try:
+        return _TYPED_ACTION_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
+
+
 @dataclass(frozen=True)
 class MemoryControlAction:
-    """Resolved memory-control action."""
+    """Resolved memory-management action.
+
+    Wraps a serializable dict payload to keep LangGraph state interop
+    unchanged. Use :meth:`parsed` to obtain a typed model for dispatch.
+    """
 
     payload: dict[str, Any]
 
@@ -35,15 +126,25 @@ class MemoryControlAction:
         """Return a serializable action for graph state updates.
 
         Returns:
-            dict[str, Any]: Serializable memory-control action payload.
+            dict[str, Any]: Serializable memory-management action payload.
         """
 
         return dict(self.payload)
 
+    def parsed(self) -> TypedMemoryAction | None:
+        """Return the typed action model, or ``None`` when payload is invalid.
+
+        Returns:
+            Typed memory-control action, or ``None`` when the payload's
+            ``type`` is unknown or required fields are missing/invalid.
+        """
+
+        return parse_memory_control_action(self.payload)
+
 
 @dataclass(frozen=True)
 class MemoryControlRoute:
-    """Resolved memory-control route decision."""
+    """Resolved memory-management route decision."""
 
     action: MemoryControlAction | None
     classifier_path: str
@@ -51,7 +152,7 @@ class MemoryControlRoute:
 
 
 class MemoryControlDecision(BaseModel):
-    """Structured output for ambiguous memory-control routing."""
+    """Structured output for ambiguous memory-management routing."""
 
     action_type: Literal[
         "none",
@@ -60,7 +161,7 @@ class MemoryControlDecision(BaseModel):
         "set_recall",
         "forget_by_query",
         "save_preference",
-    ] = Field(description="The memory-control action to take, or none.")
+    ] = Field(description="The memory-management action to take, or none.")
     enabled: bool | None = Field(
         default=None,
         description="Desired proactive-recall state for set_recall actions.",
@@ -78,7 +179,7 @@ class MemoryControlDecision(BaseModel):
 
 
 def is_pending_confirmation(message: str) -> bool:
-    """Return whether a message confirms a pending memory-control action.
+    """Return whether a message confirms a pending memory-management action.
 
     Args:
         message (str): Current user message.
@@ -91,7 +192,7 @@ def is_pending_confirmation(message: str) -> bool:
 
 
 def is_pending_cancellation(message: str) -> bool:
-    """Return whether a message cancels a pending memory-control action.
+    """Return whether a message cancels a pending memory-management action.
 
     Args:
         message (str): Current user message.
@@ -130,7 +231,7 @@ def _detect_indexed_forget(lowered: str) -> MemoryControlAction | None:
         lowered (str): Normalized lowercase user message.
 
     Returns:
-        MemoryControlAction | None: Resolved memory-control action, or ``None``
+        MemoryControlAction | None: Resolved memory-management action, or ``None``
             when no indexed deletion command is present.
     """
 
@@ -154,13 +255,13 @@ def _detect_indexed_forget(lowered: str) -> MemoryControlAction | None:
 
 
 def detect_memory_control_action(message: str) -> MemoryControlAction | None:
-    """Detect explicit memory-control intent from one user message.
+    """Detect explicit memory-management intent from one user message.
 
     Args:
         message (str): Current user message.
 
     Returns:
-        MemoryControlAction | None: Resolved memory-control action, or ``None``
+        MemoryControlAction | None: Resolved memory-management action, or ``None``
             when the message should proceed through the normal therapeutic path.
     """
 
@@ -331,7 +432,7 @@ def _needs_memory_control_classifier(message: str) -> bool:
         message (str): Current user message.
 
     Returns:
-        bool: ``True`` when the message contains memory-control-shaped signals
+        bool: ``True`` when the message contains memory-management-shaped signals
             that are not decisive enough for a hard deterministic route.
     """
 
@@ -365,11 +466,11 @@ def _decision_to_action(decision: MemoryControlDecision) -> MemoryControlAction 
     """Convert a structured classifier decision into a safe action.
 
     Args:
-        decision (MemoryControlDecision): LLM-produced memory-control routing
+        decision (MemoryControlDecision): LLM-produced memory-management routing
             decision.
 
     Returns:
-        MemoryControlAction | None: Resolved memory-control action, or ``None``
+        MemoryControlAction | None: Resolved memory-management action, or ``None``
             when the decision is too vague or unsupported.
     """
 
@@ -404,14 +505,14 @@ async def _classify_memory_control_action(
     *,
     llm_client: BaseLLMClient,
 ) -> MemoryControlAction | None:
-    """Classify an ambiguous message as memory control or ordinary routing.
+    """Classify an ambiguous message as memory management or ordinary routing.
 
     Args:
         state (AgentState): Current graph state.
         llm_client (BaseLLMClient): Configured control-plane LLM client.
 
     Returns:
-        MemoryControlAction | None: Resolved memory-control action, or ``None``
+        MemoryControlAction | None: Resolved memory-management action, or ``None``
             when ordinary routing should handle the turn.
     """
 
@@ -428,14 +529,14 @@ async def resolve_memory_control_action(
     *,
     llm_client: BaseLLMClient | None,
 ) -> MemoryControlRoute:
-    """Resolve memory-control routing using hard rules plus LLM middle path.
+    """Resolve memory-management routing using hard rules plus LLM middle path.
 
     Args:
         state (AgentState): Current graph state.
         llm_client (BaseLLMClient | None): Optional control-plane LLM client.
 
     Returns:
-        MemoryControlRoute: Resolved route decision with optional memory-control
+        MemoryControlRoute: Resolved route decision with optional memory-management
             action, classifier path, and LLM-failure flag.
     """
 
@@ -466,7 +567,7 @@ async def resolve_memory_control_action(
         action = await _classify_memory_control_action(state, llm_client=llm_client)
     except Exception:
         logger.warning(
-            "Memory control LLM classifier failed; using deterministic fallback.",
+            "Memory management LLM classifier failed; using deterministic fallback.",
             exc_info=True,
         )
         return MemoryControlRoute(

@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.memory.load_memory_service import (
+from agent.memory.recall import (
     SEMANTIC_SEARCH_LIMIT,
     SEMANTIC_WORKING_MEMORY_LIMIT,
 )
@@ -542,7 +542,10 @@ class TestProceduralRetrieval:
         store = OpenCouchMemoryStore()
         # Plant a rule in the store under the eval-user namespace — the
         # guest-mode read must NOT return it.
-        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+        from agent.memory.procedural_profile import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+        )
 
         rule = build_procedural_rule(
             rule_text="You prefer shorter responses.",
@@ -599,7 +602,10 @@ class TestProceduralRetrieval:
         regardless of the current user message.
         """
 
-        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+        from agent.memory.procedural_profile import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+        )
 
         store = OpenCouchMemoryStore()
         first = build_procedural_rule(
@@ -637,7 +643,7 @@ class TestProceduralRetrieval:
         stored toggle and the prompt layer.
         """
 
-        from agent.memory.procedural import aset_proactive_recall
+        from agent.memory.procedural_profile import aset_proactive_recall
 
         store = OpenCouchMemoryStore()
         await aset_proactive_recall(store, user_id="thread-test", enabled=True)
@@ -694,7 +700,7 @@ class TestProceduralRetrieval:
         this string, so drift would be a UX regression.
         """
 
-        from agent.memory.procedural import (
+        from agent.memory.procedural_profile import (
             aadd_procedural_rule,
             build_procedural_rule,
             aset_proactive_recall,

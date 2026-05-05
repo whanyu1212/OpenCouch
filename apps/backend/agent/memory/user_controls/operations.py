@@ -1,4 +1,4 @@
-"""User-directed memory control helpers.
+"""User-directed memory-management helpers.
 
 These helpers back conversational memory-management turns. They intentionally
 operate below graph nodes and above the raw store so nodes can stay small while
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     adelete_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,
@@ -105,7 +105,7 @@ def _target_from_record(
         rule_id: Optional procedural rule id.
 
     Returns:
-        Serializable memory-control target.
+        Serializable memory-management target.
     """
 
     return {
@@ -195,7 +195,7 @@ async def save_preference_rule(
         evidence=[evidence],
         confidence="high",
         source="explicit_user",
-        write_reason="explicit conversational memory-control request",
+        write_reason="explicit conversational memory-management request",
     )
     result = await aupsert_procedural_rule(store, user_id=owner_id, rule=rule)
     stored_rule = result.profile.rules[-1] if result.profile.rules else rule

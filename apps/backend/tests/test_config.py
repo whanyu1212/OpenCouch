@@ -7,13 +7,28 @@ import pytest
 from core import config
 
 
-def test_get_settings_defaults_to_sqlite_backend(
+def test_get_settings_defaults_to_postgres_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Unset persistence env vars should keep SQLite as the default backend."""
+    """Unset persistence env vars should resolve to Postgres as the default backend."""
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.delenv("OPENCOUCH_PERSISTENCE_BACKEND", raising=False)
+    monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
+
+    settings = config.get_settings()
+
+    assert settings.persistence_backend == "postgres"
+    assert settings.memory_database_url is None
+
+
+def test_get_settings_reads_sqlite_backend_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite remains an explicit fallback via the env override."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "sqlite")
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
 
     settings = config.get_settings()

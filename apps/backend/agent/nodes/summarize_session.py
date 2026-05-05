@@ -51,7 +51,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from agent.memory.episodic_service import (
+from agent.memory.episodic import (
     prepare_session_summary_metadata,
     session_arc_to_stored,
     write_session_arc,
@@ -60,7 +60,7 @@ from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.models import StoredSessionArc, SummarizationResult
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.memory.summarization_prompts import (
+from agent.memory.prompts.summarization import (
     build_summarization_system_prompt,
     build_summarization_user_prompt,
 )

@@ -32,7 +32,7 @@ from openai import AsyncOpenAI
 
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
 
 if TYPE_CHECKING:

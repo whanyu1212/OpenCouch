@@ -31,7 +31,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aadd_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,

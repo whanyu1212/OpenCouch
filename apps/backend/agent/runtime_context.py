@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode

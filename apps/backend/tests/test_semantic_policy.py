@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.memory.semantic_policy import (
+from agent.memory.policy.semantic import (
     contains_emerging_pattern,
     contains_negative_self_belief,
     has_durability_marker,

@@ -7,12 +7,12 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.candidates import (
+from agent.memory.models import EntityRef, MemoryWrite, ProceduralRuleDraft
+from agent.memory.policy.candidates import (
     build_procedural_candidate,
     build_semantic_candidate,
 )
-from agent.memory.models import EntityRef, MemoryWrite, ProceduralRuleDraft
-from agent.memory.write_policy import (
+from agent.memory.policy.write import (
     decide_procedural_candidate_llm_primary,
     decide_procedural_candidate,
     decide_semantic_candidate_llm_primary,

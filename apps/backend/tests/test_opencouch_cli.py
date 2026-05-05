@@ -1334,7 +1334,10 @@ async def test_memory_list_rules_renders_populated_rules(capsys) -> None:
     index, rule text, evidence, date, and confidence."""
 
     from agent.memory.modes import MemoryMode
-    from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1388,7 +1391,10 @@ async def test_memory_list_rules_isolates_threads(capsys) -> None:
     not leak into a separate thread's view.
     """
 
-    from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1425,7 +1431,7 @@ async def test_memory_list_rules_isolates_threads(capsys) -> None:
 async def test_memory_recall_on_from_off_writes_and_explains(capsys) -> None:
     """Flipping OFF → ON writes the toggle and shows the first-run explanation."""
 
-    from agent.memory.procedural import aget_procedural_profile
+    from agent.memory.procedural_profile import aget_procedural_profile
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1458,7 +1464,10 @@ async def test_memory_recall_on_from_off_writes_and_explains(capsys) -> None:
 async def test_memory_recall_off_from_on_writes_confirmation(capsys) -> None:
     """Flipping ON → OFF writes the toggle and shows the brief confirmation."""
 
-    from agent.memory.procedural import aget_procedural_profile, aset_proactive_recall
+    from agent.memory.procedural_profile import (
+        aget_procedural_profile,
+        aset_proactive_recall,
+    )
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1486,7 +1495,10 @@ async def test_memory_recall_off_from_on_writes_confirmation(capsys) -> None:
 async def test_memory_recall_already_on_is_noop(capsys) -> None:
     """Setting recall ON when already ON should produce a warning, no write."""
 
-    from agent.memory.procedural import aget_procedural_profile, aset_proactive_recall
+    from agent.memory.procedural_profile import (
+        aget_procedural_profile,
+        aset_proactive_recall,
+    )
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1530,7 +1542,7 @@ async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
 async def test_memory_forget_rule_y_confirms_and_deletes(capsys, monkeypatch) -> None:
     """A y/Y confirmation removes the rule from the profile."""
 
-    from agent.memory.procedural import (
+    from agent.memory.procedural_profile import (
         aadd_procedural_rule,
         aget_procedural_profile,
         build_procedural_rule,
@@ -1578,7 +1590,7 @@ async def test_memory_forget_rule_y_confirms_and_deletes(capsys, monkeypatch) ->
 async def test_memory_forget_rule_n_cancels(capsys, monkeypatch) -> None:
     """A 'n' or empty confirmation must NOT touch the profile."""
 
-    from agent.memory.procedural import (
+    from agent.memory.procedural_profile import (
         aadd_procedural_rule,
         aget_procedural_profile,
         build_procedural_rule,
@@ -1615,7 +1627,10 @@ async def test_memory_forget_rule_n_cancels(capsys, monkeypatch) -> None:
 async def test_memory_forget_rule_out_of_range_warns(capsys) -> None:
     """Deleting a rule that doesn't exist should produce a warning."""
 
-    from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1678,7 +1693,7 @@ async def test_memory_status_shows_recall_toggle_state(capsys) -> None:
     """/memory status should render the actual recall toggle state
     (on or off) rather than a phase-2+ placeholder."""
 
-    from agent.memory.procedural import aset_proactive_recall
+    from agent.memory.procedural_profile import aset_proactive_recall
     from opencouch_cli.app import handle_command
 
     runtime = FakeProceduralRuntime()
@@ -1795,7 +1810,7 @@ class TestUserIdCommandIntegration:
         This is the canonical 'multi-session dogfood unblock' test —
         the thing that was impossible before the flag landed."""
 
-        from agent.memory.procedural import (
+        from agent.memory.procedural_profile import (
             aadd_procedural_rule,
             build_procedural_rule,
         )
@@ -1854,7 +1869,7 @@ class TestUserIdCommandIntegration:
         If owner_id() accidentally fell back to thread_id when
         user_id was set, bob would see alice's rules."""
 
-        from agent.memory.procedural import (
+        from agent.memory.procedural_profile import (
             aadd_procedural_rule,
             build_procedural_rule,
         )
@@ -1943,7 +1958,10 @@ class TestUserIdCommandIntegration:
     async def test_memory_status_counts_active_owner_records_only(self, capsys) -> None:
         """The status panel should mirror the active owner-facing counts."""
 
-        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+        from agent.memory.procedural_profile import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+        )
         from opencouch_cli.app import handle_command
 
         runtime = FakeProceduralRuntime()
@@ -2431,8 +2449,8 @@ async def _seed_semantic_fact(
 
     Bypasses the extractor LLM pipeline so the forget tests can focus
     on the delete path without needing a working extractor. The record
-    shape mimics what the real :func:`_memory_write_to_semantic_fact`
-    produces in ``agent/nodes/extract_facts.py``.
+    shape mimics what the real :func:`memory_write_to_semantic_fact`
+    produces in ``agent.memory.semantic_writes``.
     """
 
     namespace = (owner_id, "semantic")
@@ -2827,7 +2845,10 @@ class TestMemoryClear:
     async def test_clear_all_wipes_three_namespaces(self, capsys, monkeypatch) -> None:
         """`/memory clear all` sweeps facts, sessions, and rules in one op."""
 
-        from agent.memory.procedural import aadd_procedural_rule, build_procedural_rule
+        from agent.memory.procedural_profile import (
+            aadd_procedural_rule,
+            build_procedural_rule,
+        )
 
         runtime = FakeProceduralRuntime()
         session = _session()
@@ -2873,7 +2894,7 @@ class TestMemoryClear:
         episodic_count = await runtime.memory_store.arecord_count(
             (session.owner_id(), "episodic")
         )
-        from agent.memory.procedural import aget_procedural_profile
+        from agent.memory.procedural_profile import aget_procedural_profile
 
         profile = await aget_procedural_profile(
             runtime.memory_store, user_id=session.owner_id()
@@ -2889,7 +2910,7 @@ class TestMemoryClear:
         """`/memory clear rules` wipes rules but leaves ``proactive_recall_enabled``
         alone because it's a user preference, not content."""
 
-        from agent.memory.procedural import (
+        from agent.memory.procedural_profile import (
             aadd_procedural_rule,
             aget_procedural_profile,
             aset_proactive_recall,

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from agent.active_session_store import ActiveSessionStore
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.modes import MemoryMode
 
 

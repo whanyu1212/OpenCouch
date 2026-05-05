@@ -11,30 +11,22 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from agent.memory.candidates import (
+from agent.memory.policy.candidates import (
     ProceduralCandidate,
     SemanticCandidate,
     SessionMemoryBuffer,
 )
-from agent.memory.dedup import find_near_duplicate
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aupsert_procedural_rule,
     build_procedural_rule,
 )
-from agent.memory.reconciliation import (
-    filter_semantic_collision_candidates,
-    plan_semantic_write_llm_primary,
+from agent.memory.semantic_writes import (
+    BatchWriteItem,
+    apply_semantic_writes_batch,
 )
-from agent.memory.service import (
-    _bump_last_referenced_at,
-    _fetch_existing_user_records,
-    _mark_fact_superseded,
-    _memory_write_to_semantic_fact,
-    _write_new_fact,
-)
-from agent.memory.store import MemoryStore, StoreRecord
+from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
-from agent.memory.write_policy import (
+from agent.memory.policy.write import (
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
 )
@@ -516,155 +508,38 @@ async def commit_session_memory(
         )
     )
     if semantic_candidates_to_commit:
-        try:
-            existing_records = await _fetch_existing_user_records(
-                memory_store,
-                owner_id=owner_id,
+        batch_items: list[BatchWriteItem] = []
+        for candidate in semantic_candidates_to_commit:
+            write_timing = (
+                "promotion"
+                if candidate.policy_recommendation == "require_repetition"
+                else "session_end"
             )
-        except Exception:
-            logger.warning(
-                "commit_session_memory: failed to fetch existing semantic records; "
-                "skipping session-end semantic commit.",
-                exc_info=True,
+            write_reason = (
+                "repetition-qualified semantic candidate promoted at session end"
+                if write_timing == "promotion"
+                else "session-end semantic candidate supported by transcript and episodic summary"
             )
-            result.semantic_skips += len(semantic_candidates_to_commit)
-            semantic_candidates_to_commit = []
-            existing_records = []
-
-        candidate_embeddings: list[list[float] | None] = [None] * len(
-            semantic_candidates_to_commit
-        )
-        embedding_model_name: str | None = None
-        if semantic_candidates_to_commit and embedding_provider is not None:
-            try:
-                quotes = [
-                    candidate.payload.evidence_quote
-                    for candidate in semantic_candidates_to_commit
-                ]
-                candidate_embeddings = await embedding_provider.aembed(
-                    quotes,
-                    task_type="RETRIEVAL_DOCUMENT",
-                )
-                embedding_model_name = embedding_provider.model_name
-                if all(embedding is None for embedding in candidate_embeddings):
-                    embedding_model_name = None
-            except Exception:
-                logger.warning(
-                    "commit_session_memory: embedding batch failed; writing session-end "
-                    "semantic facts without embeddings.",
-                    exc_info=True,
-                )
-                candidate_embeddings = [None] * len(semantic_candidates_to_commit)
-                embedding_model_name = None
-
-        for candidate_index, candidate in enumerate(semantic_candidates_to_commit):
-            write = candidate.payload
-            collision_records = filter_semantic_collision_candidates(
-                write,
-                existing_records,
-            )
-            try:
-                matched = find_near_duplicate(write, collision_records)
-            except Exception:
-                logger.warning(
-                    "commit_session_memory: dedup check failed for buffered semantic "
-                    "candidate %r; skipping it.",
-                    write.evidence_quote[:60],
-                    exc_info=True,
-                )
-                result.semantic_skips += 1
-                continue
-
-            if matched is not None:
-                try:
-                    await _bump_last_referenced_at(
-                        memory_store,
-                        matched_record=matched,
-                    )
-                    result.semantic_bumps += 1
-                except Exception:
-                    logger.warning(
-                        "commit_session_memory: failed to bump last_referenced_at on %r.",
-                        matched.key,
-                        exc_info=True,
-                    )
-                    result.semantic_skips += 1
-                continue
-
-            try:
-                write_timing = (
-                    "promotion"
-                    if candidate.policy_recommendation == "require_repetition"
-                    else "session_end"
-                )
-                write_reason = (
-                    "repetition-qualified semantic candidate promoted at session end"
-                    if write_timing == "promotion"
-                    else "session-end semantic candidate supported by transcript and episodic summary"
-                )
-                fact = _memory_write_to_semantic_fact(
-                    write,
+            batch_items.append(
+                BatchWriteItem(
+                    candidate=candidate,
                     write_timing=write_timing,
                     write_reason=write_reason,
                     policy_version="phase3_v1",
                 )
-                reconciliation = await plan_semantic_write_llm_primary(
-                    fact,
-                    collision_records,
-                    llm_client=llm_client,
-                )
-                if reconciliation.bump_record is not None:
-                    await _bump_last_referenced_at(
-                        memory_store,
-                        matched_record=reconciliation.bump_record,
-                    )
-                    result.semantic_bumps += 1
-                    continue
-                this_embedding = candidate_embeddings[candidate_index]
-                this_model = (
-                    embedding_model_name if this_embedding is not None else None
-                )
-                await _write_new_fact(
-                    memory_store,
-                    owner_id=owner_id,
-                    fact=fact,
-                    embedding=this_embedding,
-                    embedding_model=this_model,
-                )
-                result.semantic_writes += 1
-                existing_records.append(
-                    StoreRecord(
-                        namespace=(owner_id, "semantic"),
-                        key=fact.id,
-                        value=fact.model_dump(mode="json"),
-                        embedding=this_embedding,
-                        embedding_model=this_model,
-                    )
-                )
-                for superseded_record in reconciliation.supersede_records:
-                    try:
-                        await _mark_fact_superseded(
-                            memory_store,
-                            matched_record=superseded_record,
-                            replacement_fact_id=fact.id,
-                        )
-                        superseded_record.value["last_referenced_at"] = fact.created_at
-                        superseded_record.value["dormant_at"] = fact.created_at
-                        superseded_record.value["superseded_by"] = fact.id
-                    except Exception:
-                        logger.warning(
-                            "commit_session_memory: failed to mark stale fact %r "
-                            "as superseded after writing replacement.",
-                            superseded_record.key,
-                            exc_info=True,
-                        )
-            except Exception:
-                logger.warning(
-                    "commit_session_memory: failed to write buffered semantic candidate %r.",
-                    write.evidence_quote[:60],
-                    exc_info=True,
-                )
-                result.semantic_skips += 1
+            )
+
+        batch_outcome = await apply_semantic_writes_batch(
+            memory_store,
+            owner_id=owner_id,
+            items=batch_items,
+            llm_client=llm_client,
+            embedding_provider=embedding_provider,
+            log_context="commit_session_memory",
+        )
+        result.semantic_writes += batch_outcome.written
+        result.semantic_bumps += batch_outcome.bumped
+        result.semantic_skips += batch_outcome.skipped
 
     procedural_candidates_to_commit, result.procedural_skips = (
         _select_procedural_candidates_to_commit(

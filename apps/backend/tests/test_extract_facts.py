@@ -39,8 +39,8 @@ from agent.memory.models import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.candidates import SessionMemoryBuffer
-from agent.memory.service import _memory_write_to_semantic_fact
+from agent.memory.policy.candidates import SessionMemoryBuffer
+from agent.memory.semantic_writes import memory_write_to_semantic_fact
 from agent.models import AgentInput
 from agent.nodes.extract_facts import run_extract_semantic_facts_node
 from agent.runtime_context import WorkflowContext
@@ -212,7 +212,7 @@ class _MockRuntime:
         )
 
 
-# ─── 1. _memory_write_to_semantic_fact helper tests ─────────────────────
+# ─── 1. memory_write_to_semantic_fact helper tests ─────────────────────
 
 
 class TestMemoryWriteToSemanticFact:
@@ -223,7 +223,7 @@ class TestMemoryWriteToSemanticFact:
             evidence_quote="specific test quote",
             source_turn_index=5,
         )
-        fact = _memory_write_to_semantic_fact(write)
+        fact = memory_write_to_semantic_fact(write)
 
         assert fact.evidence_quote == "specific test quote"
         assert fact.source_turn_index == 5
@@ -238,13 +238,13 @@ class TestMemoryWriteToSemanticFact:
 
     def test_generates_unique_id_per_call(self) -> None:
         write = _make_memory_write()
-        fact_a = _memory_write_to_semantic_fact(write)
-        fact_b = _memory_write_to_semantic_fact(write)
+        fact_a = memory_write_to_semantic_fact(write)
+        fact_b = memory_write_to_semantic_fact(write)
         assert fact_a.id != fact_b.id
 
     def test_sets_default_metadata_fields(self) -> None:
         write = _make_memory_write()
-        fact = _memory_write_to_semantic_fact(write)
+        fact = memory_write_to_semantic_fact(write)
 
         assert fact.dormant_at is None
         assert fact.superseded_by is None
@@ -257,7 +257,7 @@ class TestMemoryWriteToSemanticFact:
 
     def test_returned_type_is_semantic_fact(self) -> None:
         write = _make_memory_write()
-        fact = _memory_write_to_semantic_fact(write)
+        fact = memory_write_to_semantic_fact(write)
         assert isinstance(fact, SemanticFact)
 
 
@@ -417,7 +417,7 @@ class TestExtractFactsNodeUnit:
         seed_write = _make_memory_write(
             evidence_quote="my sister Sarah came over last night"
         )
-        seed_fact = _memory_write_to_semantic_fact(seed_write)
+        seed_fact = memory_write_to_semantic_fact(seed_write)
         # Manually set an older timestamp so we can detect the bump.
         old_ts = "2026-01-01T00:00:00Z"
         seed_value = seed_fact.model_dump(mode="json")
@@ -466,7 +466,7 @@ class TestExtractFactsNodeUnit:
                 object_identifier=f"irrelevant-event-{index}",
                 evidence_quote=f"irrelevant semantic fact {index}",
             )
-            filler_fact = _memory_write_to_semantic_fact(filler_write)
+            filler_fact = memory_write_to_semantic_fact(filler_write)
             await store.aput(
                 namespace,
                 key=filler_fact.id,
@@ -476,7 +476,7 @@ class TestExtractFactsNodeUnit:
         seed_write = _make_memory_write(
             evidence_quote="my sister Sarah came over last night",
         )
-        seed_fact = _memory_write_to_semantic_fact(seed_write)
+        seed_fact = memory_write_to_semantic_fact(seed_write)
         old_ts = "2026-01-01T00:00:00Z"
         seed_value = seed_fact.model_dump(mode="json")
         seed_value["last_referenced_at"] = old_ts
@@ -515,7 +515,7 @@ class TestExtractFactsNodeUnit:
             evidence_quote="my sister Sarah visited",
             object_identifier="Sarah",
         )
-        seed_fact = _memory_write_to_semantic_fact(seed_write)
+        seed_fact = memory_write_to_semantic_fact(seed_write)
         await store.aput(
             ("user-1", "semantic"),
             key=seed_fact.id,
