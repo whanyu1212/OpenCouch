@@ -25,12 +25,12 @@ from agent.memory.reconciliation import (
     filter_semantic_collision_candidates,
     plan_semantic_write_llm_primary,
 )
-from agent.memory.service import (
-    _bump_last_referenced_at,
-    _fetch_existing_user_records,
-    _mark_fact_superseded,
-    _memory_write_to_semantic_fact,
-    _write_new_fact,
+from agent.memory.semantic_writes import (
+    bump_semantic_last_referenced_at,
+    fetch_existing_semantic_records,
+    mark_semantic_fact_superseded,
+    memory_write_to_semantic_fact,
+    write_new_semantic_fact,
 )
 from agent.memory.store import MemoryStore, StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
@@ -517,7 +517,7 @@ async def commit_session_memory(
     )
     if semantic_candidates_to_commit:
         try:
-            existing_records = await _fetch_existing_user_records(
+            existing_records = await fetch_existing_semantic_records(
                 memory_store,
                 owner_id=owner_id,
             )
@@ -577,7 +577,7 @@ async def commit_session_memory(
 
             if matched is not None:
                 try:
-                    await _bump_last_referenced_at(
+                    await bump_semantic_last_referenced_at(
                         memory_store,
                         matched_record=matched,
                     )
@@ -602,7 +602,7 @@ async def commit_session_memory(
                     if write_timing == "promotion"
                     else "session-end semantic candidate supported by transcript and episodic summary"
                 )
-                fact = _memory_write_to_semantic_fact(
+                fact = memory_write_to_semantic_fact(
                     write,
                     write_timing=write_timing,
                     write_reason=write_reason,
@@ -614,7 +614,7 @@ async def commit_session_memory(
                     llm_client=llm_client,
                 )
                 if reconciliation.bump_record is not None:
-                    await _bump_last_referenced_at(
+                    await bump_semantic_last_referenced_at(
                         memory_store,
                         matched_record=reconciliation.bump_record,
                     )
@@ -624,7 +624,7 @@ async def commit_session_memory(
                 this_model = (
                     embedding_model_name if this_embedding is not None else None
                 )
-                await _write_new_fact(
+                await write_new_semantic_fact(
                     memory_store,
                     owner_id=owner_id,
                     fact=fact,
@@ -643,7 +643,7 @@ async def commit_session_memory(
                 )
                 for superseded_record in reconciliation.supersede_records:
                     try:
-                        await _mark_fact_superseded(
+                        await mark_semantic_fact_superseded(
                             memory_store,
                             matched_record=superseded_record,
                             replacement_fact_id=fact.id,
