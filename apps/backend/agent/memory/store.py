@@ -3,7 +3,7 @@
 The :class:`MemoryStore` protocol is the async interface the agent's
 nodes use to read and write long-term memory. It is implemented by
 this module's :class:`OpenCouchMemoryStore` and by
-:class:`agent.memory.legacy.sqlite_store.SqliteMemoryStore`.
+:class:`agent.memory.sqlite_store.SqliteMemoryStore`.
 
 Records are grouped by namespace, usually ``(user_id, kind)`` where
 ``kind`` is ``"semantic"``, ``"episodic"``, or ``"procedural"``. The
@@ -281,7 +281,7 @@ class OpenCouchMemoryStore:
     discarded when the instance is garbage collected. Tests and
     incognito-mode sessions prefer this implementation because it has
     no connection lifecycle and no disk writes. Legacy SQLite fallback
-    runtimes use :class:`agent.memory.legacy.sqlite_store.SqliteMemoryStore`.
+    runtimes use :class:`agent.memory.sqlite_store.SqliteMemoryStore`.
 
     The store is **not** thread-safe. Each runtime instance should own
     its own store; do not share a single instance across runtimes or

@@ -11,7 +11,7 @@ from agent.graph import build_initial_state
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.user_controls.service import execute_memory_control_action
 from agent.models import AgentInput

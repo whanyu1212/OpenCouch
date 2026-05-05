@@ -22,7 +22,10 @@ from agent.memory.models import (
     ProceduralRuleDraft,
     SemanticFact,
 )
-from agent.memory.procedural import aupsert_procedural_rule, build_procedural_rule
+from agent.memory.procedural_profile import (
+    aupsert_procedural_rule,
+    build_procedural_rule,
+)
 from agent.memory.semantic_writes import (
     BatchWriteItem,
     apply_semantic_writes_batch,

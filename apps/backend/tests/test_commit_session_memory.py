@@ -23,7 +23,7 @@ from agent.memory.models import (
     SessionArc,
     SummarizationResult,
 )
-from agent.memory.episodic_service import (
+from agent.memory.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
 from agent.memory.modes import MemoryMode

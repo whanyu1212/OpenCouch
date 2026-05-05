@@ -34,8 +34,9 @@ Module layout:
   model to a dict so the store layer stays model-agnostic.
 - :func:`aupsert_procedural_rule` — load → reconcile → put convenience
   for duplicate and conflict handling.
-- :func:`aadd_procedural_rule` — compatibility wrapper that routes
-  through the upsert helper and returns only the updated profile.
+- :func:`aadd_procedural_rule` — convenience wrapper that routes
+  through the upsert helper and returns only the updated profile,
+  for callers that don't need the upsert metadata.
 - :func:`aset_proactive_recall` — load → toggle → put convenience.
   The CLI ``/memory recall on|off`` command uses this.
 - :func:`aget_proactive_recall` — reads just the toggle without

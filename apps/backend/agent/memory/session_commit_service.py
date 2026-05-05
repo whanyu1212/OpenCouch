@@ -16,7 +16,7 @@ from agent.memory.policy.candidates import (
     SemanticCandidate,
     SessionMemoryBuffer,
 )
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aupsert_procedural_rule,
     build_procedural_rule,
 )

@@ -9,7 +9,7 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.memory.load_memory_service import load_memory_for_turn
+from agent.memory.recall import load_memory_for_turn
 from agent.memory.modes import MemoryMode
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id

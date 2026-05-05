@@ -31,7 +31,7 @@ from agent.memory.models import (
     ProceduralRuleDraft,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
     build_procedural_rule,
@@ -592,7 +592,7 @@ class TestStatePreservation:
         node runs, then verifies it's still set afterward.
         """
 
-        from agent.memory.procedural import aset_proactive_recall
+        from agent.memory.procedural_profile import aset_proactive_recall
 
         store = OpenCouchMemoryStore()
         # Pre-set the recall toggle to True

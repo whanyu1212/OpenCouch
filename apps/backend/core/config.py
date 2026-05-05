@@ -21,10 +21,11 @@ PersistenceBackend = Literal["sqlite", "postgres"]
 # Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
-# Keep SQLite as the compatibility default for now. Dockerized Postgres is the
-# recommended local persistent path and may become the default once the
-# remaining legacy SQLite surfaces are retired.
-DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "sqlite"
+# Postgres is the default persistent backend (Docker compose ships it as the
+# primary persistence path). SQLite remains available as an explicit fallback
+# via OPENCOUCH_PERSISTENCE_BACKEND=sqlite for local-only installs without
+# Docker.
+DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
 
 _DOTENV_LOADED = False
 

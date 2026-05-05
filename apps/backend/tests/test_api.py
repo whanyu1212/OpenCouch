@@ -18,7 +18,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent.memory.models import ProceduralProfile, ProceduralRule
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
 )

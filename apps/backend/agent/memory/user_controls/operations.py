@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     adelete_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,

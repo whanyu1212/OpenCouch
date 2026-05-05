@@ -33,7 +33,7 @@ from agent.audit.session_feedback import (
     NullSessionFeedbackBackend,
     SessionFeedbackBackend,
 )
-from agent.audit.legacy.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.audit.sqlite.sqlite_session_feedback import SqliteSessionFeedbackBackend
 
 
 # ─── Test helpers ────────────────────────────────────────────────────

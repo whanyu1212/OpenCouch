@@ -15,7 +15,7 @@ from agent.memory.user_controls.operations import (
     set_memory_recall,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.user_controls.router import (
     CancelPendingAction,
     ConfirmPendingAction,

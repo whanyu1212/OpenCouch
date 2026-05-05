@@ -51,7 +51,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact, StoredSessionArc
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aadd_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,

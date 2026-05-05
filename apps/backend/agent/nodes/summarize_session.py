@@ -51,7 +51,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from agent.memory.episodic_service import (
+from agent.memory.episodic import (
     prepare_session_summary_metadata,
     session_arc_to_stored,
     write_session_arc,

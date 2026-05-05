@@ -12,7 +12,7 @@ from agent.graph import build_initial_state
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aadd_procedural_rule,
     aget_procedural_profile,
     build_procedural_rule,

@@ -19,7 +19,7 @@ from livekit.agents import ChatContext
 
 import main
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aadd_procedural_rule,
     aget_procedural_profile,
     build_procedural_rule,

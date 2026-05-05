@@ -166,7 +166,7 @@ constraint on the opaque `id`.
 | `agent/audit/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord`, plus crisis-log models |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
 | `agent/audit/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
-| `agent/audit/legacy/sqlite_session_feedback.py` | Legacy SQLite fallback with CHECK constraints and retention purge |
+| `agent/audit/sqlite/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
 | `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |

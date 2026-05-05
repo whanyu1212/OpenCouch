@@ -59,7 +59,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural import aget_procedural_profile
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.runtime_context import WorkflowContext

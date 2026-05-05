@@ -198,7 +198,7 @@ skipped.
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
-| `agent/audit/legacy/sqlite_crisis_log.py` | Legacy SQLite crisis-log fallback |
+| `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_session_feedback.py` | Primary Postgres feedback store |
-| `agent/audit/legacy/sqlite_session_feedback.py` | Legacy SQLite feedback fallback |
+| `agent/audit/sqlite/sqlite_session_feedback.py` | SQLite feedback fallback backend |

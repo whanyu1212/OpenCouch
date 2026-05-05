@@ -65,7 +65,7 @@ from agent.persistence import (
     PersistentAgentRuntime,
     ThreadSummary,
 )
-from agent.memory.procedural import (
+from agent.memory.procedural_profile import (
     aclear_procedural_rules,
     adelete_procedural_rule,
     aget_procedural_profile,
