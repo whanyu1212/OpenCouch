@@ -11,10 +11,10 @@ from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.nodes.commit_session_memory import run_commit_session_memory
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.runtime.session_commit import run_commit_session_memory
+from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
-from agent.nodes.summarize_session import run_summarize_session
+from agent.runtime.session_summarize import run_summarize_session
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient

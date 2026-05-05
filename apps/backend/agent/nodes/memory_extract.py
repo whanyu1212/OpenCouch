@@ -13,13 +13,13 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
 
-async def run_memory_extraction_node(
+async def run_memory_extract_node(
     state: AgentState,
     runtime: Runtime[WorkflowContext],
 ) -> dict[str, Any]:

@@ -42,7 +42,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.semantic_writes import memory_write_to_semantic_fact
 from agent.models import AgentInput
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient, StructuredResponseT
@@ -594,7 +594,9 @@ class TestExtractFactsNodeUnit:
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state()
 
-        with caplog.at_level(logging.WARNING, logger="agent.nodes.extract_facts"):
+        with caplog.at_level(
+            logging.WARNING, logger="agent.nodes.extract_semantic_facts"
+        ):
             delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["diagnostics"]["semantic_writes"] == 0

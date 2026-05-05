@@ -28,7 +28,7 @@ from agent.memory.episodic import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.nodes.commit_session_memory import run_commit_session_memory
+from agent.runtime.session_commit import run_commit_session_memory
 from agent.persistence import PersistentAgentRuntime
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient, StructuredResponseT

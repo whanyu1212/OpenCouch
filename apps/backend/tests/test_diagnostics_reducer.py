@@ -30,10 +30,10 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
 from agent.nodes.crisis_gate import _build_crisis_delta
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.load_memory import run_load_memory_node
-from agent.nodes.memory_extraction import run_memory_extraction_node
+from agent.nodes.memory_extract import run_memory_extract_node
 from agent.models import CrisisAssessment
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, _merge_dicts
@@ -246,7 +246,7 @@ async def test_memory_extraction_node_merges_extractor_diagnostics() -> None:
     """The wrapper node should merge semantic and procedural diagnostics."""
 
     state = _state_with_pre_existing_diagnostics()
-    delta = await run_memory_extraction_node(state, _FakeRuntime())  # type: ignore[arg-type]
+    delta = await run_memory_extract_node(state, _FakeRuntime())  # type: ignore[arg-type]
     diag = delta.get("diagnostics", {})
 
     _assert_no_spread(diag, "memory_extraction_node")

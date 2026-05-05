@@ -29,6 +29,7 @@ from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.recall import LoadMemoryResult, load_memory_for_turn
 from agent.audit.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.models import StoredSessionArc
 from agent.runtime.session_finalization import (
@@ -138,6 +139,7 @@ class PersistentAgentRuntime:
         session_sweep_interval_seconds: float = 30.0,
         finalize_active_sessions_on_close: bool = True,
         auto_finalize_excluded: Callable[[str], bool] | None = None,
+        speculative_memory_prefetch: bool = True,
     ) -> None:
         """Initialize the runtime.
 
@@ -176,6 +178,11 @@ class PersistentAgentRuntime:
                 best-effort finalize unresolved sessions.
             auto_finalize_excluded: Optional predicate for thread ids that
                 external channel registries own and should finalize explicitly.
+            speculative_memory_prefetch: When ``True`` (default), schedule a
+                turn-memory load at turn start so it overlaps with the
+                crisis/control/grounded gates. The wasted work on non-load
+                paths is bounded; set to ``False`` to revert to the strictly
+                sequential load.
         """
 
         self.memory_mode = memory_mode
@@ -206,6 +213,7 @@ class PersistentAgentRuntime:
         )
         self._finalize_active_sessions_on_close = finalize_active_sessions_on_close
         self._auto_finalize_excluded = auto_finalize_excluded
+        self._speculative_memory_prefetch = speculative_memory_prefetch
         self._session_sweeper_task: asyncio.Task[None] | None = None
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
         self._thread_locks: dict[str, asyncio.Lock] = {}
@@ -1025,6 +1033,9 @@ class PersistentAgentRuntime:
         self,
         *,
         thread_id: str,
+        message: str,
+        prior_state: AgentState | None,
+        user_id: str | None,
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None = None,
     ) -> WorkflowContext:
@@ -1032,6 +1043,14 @@ class PersistentAgentRuntime:
 
         Args:
             thread_id: The thread identifier.
+            message: The user message for this turn. Used to seed the
+                speculative memory pre-fetch with the same query the graph
+                will use.
+            prior_state: The last checkpointed state for this thread, used
+                to compute ``is_first_turn`` for the pre-fetch.
+            user_id: The optional user identifier. Together with ``thread_id``
+                it determines the memory owner the same way the graph does
+                via :func:`agent.state.resolve_owner_id`.
             llm_client: The control-plane LLM client.
             response_llm_client: Optional response-writer override.
 
@@ -1047,6 +1066,65 @@ class PersistentAgentRuntime:
             memory_mode=self.memory_mode,
             embedding_provider=self._embedding_provider,
             session_memory_buffer=self._session_memory_buffer_for_thread(thread_id),
+            pre_fetched_memory=self._schedule_memory_prefetch(
+                thread_id=thread_id,
+                user_id=user_id,
+                message=message,
+                prior_state=prior_state,
+            ),
+        )
+
+    def _schedule_memory_prefetch(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        message: str,
+        prior_state: AgentState | None,
+    ) -> asyncio.Task[LoadMemoryResult] | None:
+        """Schedule a speculative turn-memory load when applicable.
+
+        The fetch overlaps with the crisis/control/grounded gates so that the
+        therapeutic path can ``await`` an already-resolved result. The
+        crisis/control/grounded paths discard the result; the wasted work is
+        bounded to one DB query batch plus the embedding compute.
+
+        Args:
+            thread_id: The thread identifier; used as the memory owner when
+                no ``user_id`` is set.
+            user_id: Optional user identifier; takes precedence over
+                ``thread_id`` for owner resolution to mirror
+                :func:`agent.state.resolve_owner_id`.
+            message: User message text used as the retrieval query.
+            prior_state: Last checkpointed state for the thread; used to
+                compute ``is_first_turn``.
+
+        Returns:
+            The scheduled ``asyncio.Task`` when speculation is active; ``None``
+            when speculation is disabled, the runtime is incognito, or the
+            owner could not be resolved (defensive — should not occur for
+            normal turn inputs).
+        """
+
+        if not self._speculative_memory_prefetch:
+            return None
+        if self.memory_mode == MemoryMode.INCOGNITO:
+            return None
+
+        owner_id = user_id or thread_id
+        if not owner_id:
+            return None
+
+        is_first_turn = self._transcript_length(prior_state) == 0
+        return asyncio.create_task(
+            load_memory_for_turn(
+                memory_store=self._memory_store,
+                embedding_provider=self._embedding_provider,
+                owner_id=owner_id,
+                query=message,
+                is_first_turn=is_first_turn,
+            ),
+            name=f"memory-prefetch:{thread_id}",
         )
 
     def _get_graph(self) -> AgentWorkflow:
@@ -1348,6 +1426,9 @@ class PersistentAgentRuntime:
                     ),
                     context=self._context_for_turn(
                         thread_id=thread_id,
+                        message=message,
+                        prior_state=prior_state,
+                        user_id=user_id,
                         llm_client=llm_client,
                         response_llm_client=response_llm_client,
                     ),
@@ -1715,6 +1796,9 @@ class PersistentAgentRuntime:
                     ),
                     context=self._context_for_turn(
                         thread_id=thread_id,
+                        message=message,
+                        prior_state=prior_state,
+                        user_id=user_id,
                         llm_client=llm_client,
                         response_llm_client=response_llm_client,
                     ),

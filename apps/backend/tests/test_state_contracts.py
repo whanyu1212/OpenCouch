@@ -23,7 +23,7 @@ from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
+from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
