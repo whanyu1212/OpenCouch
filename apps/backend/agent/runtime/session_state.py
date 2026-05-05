@@ -106,34 +106,6 @@ def turn_count_from_state(state: AgentState | None) -> int:
     return int(session_progress.get("turn_count", 0) or 0)
 
 
-def has_runtime_session_tracking(
-    thread_id: str,
-    *,
-    session_starts: Mapping[str, Any],
-    session_transcript_starts: Mapping[str, Any],
-    session_memory_buffers: Mapping[str, Any],
-) -> bool:
-    """Return whether a thread has in-process session tracking.
-
-    Args:
-        thread_id (str): Thread identifier to check.
-        session_starts (Mapping[str, Any]): Session start timestamps by thread.
-        session_transcript_starts (Mapping[str, Any]): Transcript start indexes
-            by thread.
-        session_memory_buffers (Mapping[str, Any]): Session memory buffers by
-            thread.
-
-    Returns:
-        bool: ``True`` when any runtime session tracker exists for the thread.
-    """
-
-    return (
-        thread_id in session_starts
-        or thread_id in session_transcript_starts
-        or thread_id in session_memory_buffers
-    )
-
-
 def active_transcript_length(
     state: AgentState,
     *,

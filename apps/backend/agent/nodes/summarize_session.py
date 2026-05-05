@@ -116,8 +116,7 @@ async def run_summarize_session(
             rather than inferring from the transcript.
         ended_at: ISO-8601 timestamp for session end. Defaults to now().
         crisis_level_max: Peak crisis-gate level observed during the
-            session (0-3). The runtime tracks this in its
-            ``_max_crisis_levels`` dict, updated after every
+            session (0-3). The runtime tracks this after every
             ``run_turn`` invocation. The LLM does NOT produce this
             field — it's a deterministic max-of-per-turn-crisis-gate-
             verdicts, so the crisis gate stays the single source of
