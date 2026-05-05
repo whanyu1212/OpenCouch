@@ -15,7 +15,6 @@ from agent.memory.candidates import (
     build_procedural_candidate,
     build_semantic_candidate,
 )
-from agent.memory.dedup import find_near_duplicate
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.models import (
     MemoryWrite,
@@ -24,18 +23,11 @@ from agent.memory.models import (
     SemanticFact,
 )
 from agent.memory.procedural import aupsert_procedural_rule, build_procedural_rule
-from agent.memory.reconciliation import (
-    filter_semantic_collision_candidates,
-    plan_semantic_write_llm_primary,
-)
 from agent.memory.semantic_writes import (
-    bump_semantic_last_referenced_at,
+    apply_semantic_write,
     fetch_existing_semantic_records,
-    mark_semantic_fact_superseded,
-    memory_write_to_semantic_fact,
-    write_new_semantic_fact,
 )
-from agent.memory.store import MemoryStore, StoreRecord
+from agent.memory.store import MemoryStore
 from agent.memory.write_policy import (
     decide_procedural_candidate_llm_primary,
     decide_semantic_candidate_llm_primary,
@@ -202,102 +194,25 @@ class MemoryService:
         written_items: list[SemanticFact] = []
         for candidate_index, (candidate, decision) in enumerate(immediate_candidates):
             write = candidate.payload
-            collision_records = filter_semantic_collision_candidates(
-                write,
-                existing_records,
+            this_embedding = candidate_embeddings[candidate_index]
+            this_model = embedding_model_name if this_embedding is not None else None
+            outcome = await apply_semantic_write(
+                store,
+                owner_id=owner_id,
+                write=write,
+                existing_records=existing_records,
+                llm_client=llm_client,
+                write_timing="immediate",
+                write_reason=decision.reason,
+                policy_version=decision.policy_version,
+                embedding=this_embedding,
+                embedding_model=this_model,
+                log_context="memory_service",
             )
-            try:
-                matched = find_near_duplicate(write, collision_records)
-            except Exception:
-                logger.warning(
-                    "memory_service: semantic dedup check raised for candidate %r; "
-                    "skipping this candidate.",
-                    write.evidence_quote[:40],
-                    exc_info=True,
-                )
-                continue
-
-            if matched is not None:
-                try:
-                    await bump_semantic_last_referenced_at(
-                        store, matched_record=matched
-                    )
-                    bumped += 1
-                except Exception:
-                    logger.warning(
-                        "memory_service: failed to bump last_referenced_at on "
-                        "matched record %r; continuing with other candidates.",
-                        matched.key,
-                        exc_info=True,
-                    )
-                continue
-
-            try:
-                fact = memory_write_to_semantic_fact(
-                    write,
-                    write_timing="immediate",
-                    write_reason=decision.reason,
-                    policy_version=decision.policy_version,
-                )
-                reconciliation = await plan_semantic_write_llm_primary(
-                    fact,
-                    collision_records,
-                    llm_client=llm_client,
-                )
-                if reconciliation.bump_record is not None:
-                    await bump_semantic_last_referenced_at(
-                        store,
-                        matched_record=reconciliation.bump_record,
-                    )
-                    bumped += 1
-                    continue
-
-                this_embedding = candidate_embeddings[candidate_index]
-                this_model = (
-                    embedding_model_name if this_embedding is not None else None
-                )
-                await write_new_semantic_fact(
-                    store,
-                    owner_id=owner_id,
-                    fact=fact,
-                    embedding=this_embedding,
-                    embedding_model=this_model,
-                )
-                written += 1
-                written_items.append(fact)
-                existing_records.append(
-                    StoreRecord(
-                        namespace=(owner_id, "semantic"),
-                        key=fact.id,
-                        value=fact.model_dump(mode="json"),
-                        embedding=this_embedding,
-                        embedding_model=this_model,
-                    )
-                )
-                for superseded_record in reconciliation.supersede_records:
-                    try:
-                        await mark_semantic_fact_superseded(
-                            store,
-                            matched_record=superseded_record,
-                            replacement_fact_id=fact.id,
-                        )
-                        superseded_record.value["last_referenced_at"] = fact.created_at
-                        superseded_record.value["dormant_at"] = fact.created_at
-                        superseded_record.value["superseded_by"] = fact.id
-                    except Exception:
-                        logger.warning(
-                            "memory_service: failed to mark stale fact %r as "
-                            "superseded after writing replacement.",
-                            superseded_record.key,
-                            exc_info=True,
-                        )
-            except Exception:
-                logger.warning(
-                    "memory_service: failed to write semantic candidate %r; "
-                    "continuing with other candidates.",
-                    write.evidence_quote[:40],
-                    exc_info=True,
-                )
+            written += outcome.written
+            bumped += outcome.bumped
+            if outcome.fact is not None:
+                written_items.append(outcome.fact)
 
         logger.info(
             "memory_service: semantic turn complete — %d written, %d bumped, "

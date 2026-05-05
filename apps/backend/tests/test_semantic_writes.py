@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent.memory.models import EntityRef, MemoryWrite
 from agent.memory.semantic_writes import (
+    apply_semantic_write,
     bump_semantic_last_referenced_at,
     fetch_existing_semantic_records,
     mark_semantic_fact_superseded,
@@ -111,3 +112,100 @@ async def test_mark_semantic_fact_superseded_preserves_embedding_metadata() -> N
     assert updated.value["superseded_by"] == "replacement-fact"
     assert updated.embedding == [0.3, 0.4]
     assert updated.embedding_model == "test-embedding"
+
+
+async def test_apply_semantic_write_persists_new_fact_and_updates_cache() -> None:
+    store = OpenCouchMemoryStore()
+    existing_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+    write = _memory_write()
+
+    outcome = await apply_semantic_write(
+        store,
+        owner_id="user-1",
+        write=write,
+        existing_records=existing_records,
+        llm_client=None,
+        write_timing="immediate",
+        write_reason="test write",
+        policy_version="test_v1",
+        embedding=[0.5, 0.6],
+        embedding_model="test-embedding",
+    )
+
+    assert outcome.written == 1
+    assert outcome.bumped == 0
+    assert outcome.skipped == 0
+    assert outcome.fact is not None
+    assert len(existing_records) == 1
+
+    stored = await store.aget(("user-1", "semantic"), outcome.fact.id)
+    assert stored is not None
+    assert stored.embedding == [0.5, 0.6]
+    assert stored.embedding_model == "test-embedding"
+    assert stored.value["write_reason"] == "test write"
+
+
+async def test_apply_semantic_write_bumps_duplicate_without_new_record() -> None:
+    store = OpenCouchMemoryStore()
+    fact = memory_write_to_semantic_fact(_memory_write())
+    seed_value = fact.model_dump(mode="json")
+    seed_value["last_referenced_at"] = "2026-01-01T00:00:00Z"
+    await store.aput(("user-1", "semantic"), key=fact.id, value=seed_value)
+    existing_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+
+    outcome = await apply_semantic_write(
+        store,
+        owner_id="user-1",
+        write=_memory_write(),
+        existing_records=existing_records,
+        llm_client=None,
+        write_timing="immediate",
+        write_reason="duplicate",
+        policy_version="test_v1",
+    )
+
+    assert outcome.written == 0
+    assert outcome.bumped == 1
+    assert outcome.skipped == 0
+    assert outcome.fact is None
+    assert len(await fetch_existing_semantic_records(store, owner_id="user-1")) == 1
+
+    updated = await store.aget(("user-1", "semantic"), fact.id)
+    assert updated is not None
+    assert updated.value["last_referenced_at"] != "2026-01-01T00:00:00Z"
+
+
+async def test_apply_semantic_write_supersedes_stale_same_slot_record() -> None:
+    store = OpenCouchMemoryStore()
+    old_fact = memory_write_to_semantic_fact(_memory_write())
+    await write_new_semantic_fact(store, owner_id="user-1", fact=old_fact)
+    existing_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+    new_write = _memory_write().model_copy(
+        update={
+            "object": EntityRef(type="Person", identifier="Sarah Chen"),
+            "evidence_quote": "My sister Sarah Chen called last night.",
+        }
+    )
+
+    outcome = await apply_semantic_write(
+        store,
+        owner_id="user-1",
+        write=new_write,
+        existing_records=existing_records,
+        llm_client=None,
+        write_timing="immediate",
+        write_reason="more specific",
+        policy_version="test_v1",
+    )
+
+    assert outcome.written == 1
+    assert outcome.fact is not None
+
+    old_record = await store.aget(("user-1", "semantic"), old_fact.id)
+    assert old_record is not None
+    assert old_record.value["superseded_by"] == outcome.fact.id
+    assert old_record.value["dormant_at"] is not None
+
+    active_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+    assert len(active_records) == 2
+    assert existing_records[-1].key == outcome.fact.id
