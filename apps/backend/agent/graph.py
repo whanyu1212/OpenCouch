@@ -33,13 +33,14 @@ from agent.graph_constants import (
     CRISIS_LOG_NODE,
     CRISIS_RESOURCE_LOOKUP_NODE,
     CRISIS_RESPONSE_NODE,
+    EXTRACT_PROCEDURAL_RULES_NODE,
+    EXTRACT_SEMANTIC_FACTS_NODE,
     FINALIZE_TURN_NODE,
     GROUNDED_ANSWER_NODE,
     GROUNDED_LOOKUP_GATE_NODE,
     LOAD_MEMORY_NODE,
     MEMORY_CONTROL_GATE_NODE,
     MEMORY_CONTROL_NODE,
-    MEMORY_EXTRACTION_NODE,
     THERAPEUTIC_SUBGRAPH_NODE,
 )
 from agent.memory.modes import MemoryMode
@@ -56,8 +57,9 @@ from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
+from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
+from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
-from agent.nodes.memory_extract import run_memory_extract_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.nodes.load_memory import run_load_memory_node
@@ -208,7 +210,9 @@ def build_agent_workflow(
                       → finalize_turn_node
 
         finalize_turn_node
-          → memory_extraction_node → END
+          ├─ extract_semantic_facts_node ─┐
+          └─ extract_procedural_rules_node ─→ END
+          (parallel edges; diagnostics merge via the _merge_dicts reducer)
 
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
@@ -262,8 +266,13 @@ def build_agent_workflow(
     workflow.add_node(CRISIS_LOG_NODE, run_crisis_log_node, retry_policy=_io_retry)
     workflow.add_node(THERAPEUTIC_SUBGRAPH_NODE, therapeutic_subgraph)
     workflow.add_node(
-        MEMORY_EXTRACTION_NODE,
-        run_memory_extract_node,
+        EXTRACT_SEMANTIC_FACTS_NODE,
+        run_extract_semantic_facts_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        EXTRACT_PROCEDURAL_RULES_NODE,
+        run_extract_procedural_rules_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(FINALIZE_TURN_NODE, run_finalize_turn_node)
@@ -281,9 +290,13 @@ def build_agent_workflow(
     workflow.add_edge(LOAD_MEMORY_NODE, THERAPEUTIC_SUBGRAPH_NODE)
     workflow.add_edge(THERAPEUTIC_SUBGRAPH_NODE, FINALIZE_TURN_NODE)
 
-    # Checkpoint the reply before kicking off memory side effects.
-    workflow.add_edge(FINALIZE_TURN_NODE, MEMORY_EXTRACTION_NODE)
-    workflow.add_edge(MEMORY_EXTRACTION_NODE, END)
+    # Checkpoint the reply before kicking off memory side effects. The two
+    # extractors run in parallel; LangGraph merges their diagnostics deltas
+    # via the ``_merge_dicts`` reducer at the join point on END.
+    workflow.add_edge(FINALIZE_TURN_NODE, EXTRACT_SEMANTIC_FACTS_NODE)
+    workflow.add_edge(FINALIZE_TURN_NODE, EXTRACT_PROCEDURAL_RULES_NODE)
+    workflow.add_edge(EXTRACT_SEMANTIC_FACTS_NODE, END)
+    workflow.add_edge(EXTRACT_PROCEDURAL_RULES_NODE, END)
 
     compiled = workflow.compile(checkpointer=checkpointer)
     return apply_graph_tracing(compiled)

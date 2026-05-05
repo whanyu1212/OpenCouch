@@ -141,7 +141,8 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         "crisis_response_node",
         "crisis_log_node",
         "therapeutic_subgraph",
-        "memory_extraction_node",
+        "extract_semantic_facts_node",
+        "extract_procedural_rules_node",
         "finalize_turn_node",
     }
     assert node_ids == expected_nodes, (
@@ -168,8 +169,10 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         ("grounded_answer_node", "finalize_turn_node"),
         ("load_memory_node", "therapeutic_subgraph"),
         ("therapeutic_subgraph", "finalize_turn_node"),
-        ("finalize_turn_node", "memory_extraction_node"),
-        ("memory_extraction_node", "__end__"),
+        ("finalize_turn_node", "extract_semantic_facts_node"),
+        ("finalize_turn_node", "extract_procedural_rules_node"),
+        ("extract_semantic_facts_node", "__end__"),
+        ("extract_procedural_rules_node", "__end__"),
     }
     assert edge_tuples == expected_edges, (
         f"Edge set mismatch.\n"

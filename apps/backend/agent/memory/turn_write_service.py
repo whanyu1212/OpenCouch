@@ -7,6 +7,7 @@ session-end promotion.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -103,13 +104,26 @@ class TurnWriteService:
         repeat_required = 0
         policy_drops = 0
 
-        for write in writes:
-            candidate = build_semantic_candidate(write, message=message)
-            decision = await decide_semantic_candidate_llm_primary(
-                candidate,
-                llm_client=llm_client,
+        # Build candidates synchronously, then fan out the per-candidate
+        # policy decisions in parallel. The decision functions are pure
+        # async with no shared state and no ordering dependency, so
+        # ``gather`` is safe; LLM-failure fallbacks are handled inside the
+        # decision function and surface as deterministic decisions, not
+        # raised exceptions.
+        candidates = [
+            build_semantic_candidate(write, message=message) for write in writes
+        ]
+        decisions = await asyncio.gather(
+            *(
+                decide_semantic_candidate_llm_primary(
+                    candidate,
+                    llm_client=llm_client,
+                )
+                for candidate in candidates
             )
+        )
 
+        for candidate, decision in zip(candidates, decisions):
             if decision.action == "commit_now":
                 immediate_candidates.append((candidate, decision))
             elif decision.action == "commit_at_session_end":
@@ -231,18 +245,29 @@ class TurnWriteService:
         session_end_holds = 0
         policy_drops = 0
 
-        for draft in drafts:
-            candidate = build_procedural_candidate(
+        # Build candidates synchronously, then fan out the per-candidate
+        # policy decisions in parallel — same shape as
+        # :meth:`process_semantic_facts`.
+        candidates = [
+            build_procedural_candidate(
                 draft,
                 message=message,
                 session_id=session_id,
                 turn_index=turn_index,
             )
-            decision = await decide_procedural_candidate_llm_primary(
-                candidate,
-                llm_client=llm_client,
+            for draft in drafts
+        ]
+        decisions = await asyncio.gather(
+            *(
+                decide_procedural_candidate_llm_primary(
+                    candidate,
+                    llm_client=llm_client,
+                )
+                for candidate in candidates
             )
+        )
 
+        for candidate, decision in zip(candidates, decisions):
             if decision.action == "commit_now":
                 immediate_candidates.append((candidate, decision))
             elif decision.action == "commit_at_session_end":

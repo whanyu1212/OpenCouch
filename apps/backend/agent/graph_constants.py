@@ -14,7 +14,8 @@ MEMORY_CONTROL_NODE = "memory_control_node"
 GROUNDED_LOOKUP_GATE_NODE = "grounded_lookup_gate_node"
 GROUNDED_ANSWER_NODE = "grounded_answer_node"
 THERAPEUTIC_SUBGRAPH_NODE = "therapeutic_subgraph"
-MEMORY_EXTRACTION_NODE = "memory_extraction_node"
+EXTRACT_SEMANTIC_FACTS_NODE = "extract_semantic_facts_node"
+EXTRACT_PROCEDURAL_RULES_NODE = "extract_procedural_rules_node"
 FINALIZE_TURN_NODE = "finalize_turn_node"
 
 CrisisGateNextNode: TypeAlias = Literal[
@@ -41,6 +42,7 @@ GRAPH_NODE_TO_STATUS_STAGE = {
     GROUNDED_LOOKUP_GATE_NODE: "grounded_lookup_gate",
     GROUNDED_ANSWER_NODE: "grounded_lookup",
     THERAPEUTIC_SUBGRAPH_NODE: "therapeutic",
-    MEMORY_EXTRACTION_NODE: "memory_extraction_node",
+    EXTRACT_SEMANTIC_FACTS_NODE: "extract_semantic_facts",
+    EXTRACT_PROCEDURAL_RULES_NODE: "extract_procedural_rules",
     FINALIZE_TURN_NODE: "finalize",
 }

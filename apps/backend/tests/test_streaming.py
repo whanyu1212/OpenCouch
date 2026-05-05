@@ -90,11 +90,20 @@ class TestRunTurnStreamStages:
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
-        Expected stage order:
-            crisis_gate → memory_control_gate → grounded_lookup_gate →
-            load_memory → therapeutic → finalize → memory_extraction_node
+        Expected stages (in two phases):
+          - Linear (ordered):
+              crisis_gate → memory_control_gate → grounded_lookup_gate →
+              load_memory → therapeutic → finalize
+          - Parallel (set, order non-deterministic):
+              {extract_semantic_facts, extract_procedural_rules}
 
-        A ResponseReadyEvent is emitted after finalize, before memory extraction.
+        After finalize, the two extractors run on parallel edges, so the
+        relative order of their status events depends on event-loop
+        scheduling and LLM/DB timing. The pre-finalize ordering remains
+        strict.
+
+        A ResponseReadyEvent is emitted after finalize, before the
+        extractors begin.
         """
 
         async with PersistentAgentRuntime(
@@ -108,17 +117,22 @@ class TestRunTurnStreamStages:
 
         assert ready is not None
         assert done is not None
-        # The stages should appear in the order the graph executes them.
         stage_names = [event.stage for event in statuses]
-        assert stage_names == [
+
+        # Linear pre-finalize stages must appear in this exact order.
+        assert stage_names[:6] == [
             "crisis_gate",
             "memory_control_gate",
             "grounded_lookup_gate",
             "load_memory",
             "therapeutic",
             "finalize",
-            "memory_extraction_node",
         ]
+        # Both extractors must follow finalize as a set, in any order.
+        assert set(stage_names[6:]) == {
+            "extract_semantic_facts",
+            "extract_procedural_rules",
+        }
         # In deterministic mode (no LLM client), no chunks are emitted —
         # the response comes from the fallback template via DoneEvent only.
         # When an LLM client is present, chunks stream during the

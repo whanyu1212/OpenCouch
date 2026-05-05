@@ -33,7 +33,6 @@ from agent.nodes.crisis_gate import _build_crisis_delta
 from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.load_memory import run_load_memory_node
-from agent.nodes.memory_extract import run_memory_extract_node
 from agent.models import CrisisAssessment
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, _merge_dicts
@@ -238,35 +237,31 @@ def test_no_diagnostics_spreading_in_codebase() -> None:
     )
 
 
-# ── Graph topology: terminal memory extraction ──────────────────────────────
+# ── Graph topology: parallel terminal extractors ────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_memory_extraction_node_merges_extractor_diagnostics() -> None:
-    """The wrapper node should merge semantic and procedural diagnostics."""
+def test_extractors_run_as_parallel_edges_after_finalize() -> None:
+    """The two extractors should run in parallel after ``finalize_turn``,
+    converging at END through the ``_merge_dicts`` reducer.
 
-    state = _state_with_pre_existing_diagnostics()
-    delta = await run_memory_extract_node(state, _FakeRuntime())  # type: ignore[arg-type]
-    diag = delta.get("diagnostics", {})
-
-    _assert_no_spread(diag, "memory_extraction_node")
-    assert "extract_facts_ms" in diag
-    assert "extract_facts_reason" in diag
-    assert "extract_procedural_ms" in diag
-    assert "extract_procedural_reason" in diag
-
-
-def test_memory_extraction_node_is_terminal_after_finalize() -> None:
-    """Top-level graph should have one terminal memory extraction node."""
+    The earlier topology funneled both extractors through a single wrapper
+    node (``memory_extraction_node``) that manually merged their diagnostics
+    deltas. With native parallel edges plus the diagnostics reducer that
+    wrapper became redundant — these assertions pin the post-refactor shape.
+    """
 
     graph = build_agent_workflow()
     graph_def = graph.get_graph()
     edge_tuples = {(e.source, e.target) for e in graph_def.edges}
 
-    assert ("finalize_turn_node", "memory_extraction_node") in edge_tuples
-    assert ("memory_extraction_node", "__end__") in edge_tuples
-    assert ("finalize_turn_node", "extract_semantic_facts_node") not in edge_tuples
-    assert ("finalize_turn_node", "extract_procedural_rules_node") not in edge_tuples
+    assert ("finalize_turn_node", "extract_semantic_facts_node") in edge_tuples
+    assert ("finalize_turn_node", "extract_procedural_rules_node") in edge_tuples
+    assert ("extract_semantic_facts_node", "__end__") in edge_tuples
+    assert ("extract_procedural_rules_node", "__end__") in edge_tuples
+
+    # The old wrapper edges must be gone.
+    assert ("finalize_turn_node", "memory_extraction_node") not in edge_tuples
+    assert ("memory_extraction_node", "__end__") not in edge_tuples
 
 
 # ── End-to-end: diagnostics merge across all nodes ──────────────────────────

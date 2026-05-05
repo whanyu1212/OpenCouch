@@ -27,10 +27,14 @@ contains exactly ``transcript`` - nothing else. It runs on both branches
 via the existing converge-before-END edges:
 
     crisis_resource_lookup_node → crisis_response_node → crisis_log_node
-      → finalize_turn_node → memory_extraction_node → END
-    memory_control_node → finalize_turn_node → memory_extraction_node → END
-    grounded_answer_node → finalize_turn_node → memory_extraction_node → END
-    therapeutic_subgraph → finalize_turn_node → memory_extraction_node → END
+      → finalize_turn_node → {extract_semantic_facts_node,
+                              extract_procedural_rules_node} → END
+    memory_control_node → finalize_turn_node → {extract_semantic_facts_node,
+                                                extract_procedural_rules_node} → END
+    grounded_answer_node → finalize_turn_node → {extract_semantic_facts_node,
+                                                 extract_procedural_rules_node} → END
+    therapeutic_subgraph → finalize_turn_node → {extract_semantic_facts_node,
+                                                 extract_procedural_rules_node} → END
 
 The guard against appending an empty response is important: if some
 response node short-circuits without setting ``response_text``, we'd
