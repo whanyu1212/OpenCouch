@@ -1,4 +1,12 @@
-"""Legacy SQLite active-session store implementation."""
+"""SQLite-backed implementation of :class:`ActiveSessionStore`.
+
+The Postgres implementation and shared protocol/DDL constants live in
+:mod:`agent.active_session_store`. This module is the SQLite fallback,
+selectable via ``OPENCOUCH_PERSISTENCE_BACKEND=sqlite`` for installs
+without Docker. It piggybacks on the LangGraph SQLite checkpointer
+connection rather than opening its own, since the active-session table
+lives alongside thread checkpoints in the same SQLite file.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +23,7 @@ from agent.active_session_store import (
 
 
 class SqliteActiveSessionStore:
-    """Legacy SQLite active-session store using the runtime checkpointer connection."""
+    """SQLite active-session store using the runtime checkpointer connection."""
 
     def __init__(
         self,

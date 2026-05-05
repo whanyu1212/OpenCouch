@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from agent.active_session_store import PostgresActiveSessionStore
-from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
+from agent.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode

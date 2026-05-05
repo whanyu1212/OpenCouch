@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 if TYPE_CHECKING:
-    from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
+    from agent.active_session_store_sqlite import SqliteActiveSessionStore
 
 ACTIVE_SESSION_STATE_DDL = """
 CREATE TABLE IF NOT EXISTS opencouch_active_sessions (
@@ -264,7 +264,7 @@ def __getattr__(name: str) -> Any:
     """Lazily expose compatibility imports for legacy active-session stores."""
 
     if name == "SqliteActiveSessionStore":
-        from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
+        from agent.active_session_store_sqlite import SqliteActiveSessionStore
 
         return SqliteActiveSessionStore
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
