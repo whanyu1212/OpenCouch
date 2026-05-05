@@ -24,8 +24,8 @@ from agent.memory.models import (
 )
 from agent.memory.procedural import aupsert_procedural_rule, build_procedural_rule
 from agent.memory.semantic_writes import (
-    apply_semantic_write,
-    fetch_existing_semantic_records,
+    BatchWriteItem,
+    apply_semantic_writes_batch,
 )
 from agent.memory.store import MemoryStore
 from agent.memory.write_policy import (
@@ -141,16 +141,25 @@ class MemoryService:
                 written_items=[],
             )
 
-        try:
-            existing_records = await fetch_existing_semantic_records(
-                store, owner_id=owner_id
+        batch_items = [
+            BatchWriteItem(
+                candidate=candidate,
+                write_timing="immediate",
+                write_reason=decision.reason,
+                policy_version=decision.policy_version,
             )
-        except Exception:
-            logger.warning(
-                "memory_service: failed to fetch existing semantic records for "
-                "dedup; skipping all candidates for this turn.",
-                exc_info=True,
-            )
+            for candidate, decision in immediate_candidates
+        ]
+        batch_outcome = await apply_semantic_writes_batch(
+            store,
+            owner_id=owner_id,
+            items=batch_items,
+            llm_client=llm_client,
+            embedding_provider=embedding_provider,
+            log_context="memory_service",
+        )
+
+        if batch_outcome.fetch_failed:
             return SemanticProcessingResult(
                 written=0,
                 bumped=0,
@@ -163,77 +172,26 @@ class MemoryService:
                 written_items=[],
             )
 
-        candidate_embeddings: list[list[float] | None] = [None] * len(
-            immediate_candidates
-        )
-        embedding_model_name: str | None = None
-        if embedding_provider is not None:
-            try:
-                quotes = [
-                    candidate.payload.evidence_quote
-                    for candidate, _ in immediate_candidates
-                ]
-                candidate_embeddings = await embedding_provider.aembed(
-                    quotes,
-                    task_type="RETRIEVAL_DOCUMENT",
-                )
-                embedding_model_name = embedding_provider.model_name
-                if all(e is None for e in candidate_embeddings):
-                    embedding_model_name = None
-            except Exception:
-                logger.warning(
-                    "memory_service: semantic embedding batch failed; writing facts "
-                    "without embeddings for this turn.",
-                    exc_info=True,
-                )
-                candidate_embeddings = [None] * len(immediate_candidates)
-                embedding_model_name = None
-
-        written = 0
-        bumped = 0
-        written_items: list[SemanticFact] = []
-        for candidate_index, (candidate, decision) in enumerate(immediate_candidates):
-            write = candidate.payload
-            this_embedding = candidate_embeddings[candidate_index]
-            this_model = embedding_model_name if this_embedding is not None else None
-            outcome = await apply_semantic_write(
-                store,
-                owner_id=owner_id,
-                write=write,
-                existing_records=existing_records,
-                llm_client=llm_client,
-                write_timing="immediate",
-                write_reason=decision.reason,
-                policy_version=decision.policy_version,
-                embedding=this_embedding,
-                embedding_model=this_model,
-                log_context="memory_service",
-            )
-            written += outcome.written
-            bumped += outcome.bumped
-            if outcome.fact is not None:
-                written_items.append(outcome.fact)
-
         logger.info(
             "memory_service: semantic turn complete — %d written, %d bumped, "
             "%d immediate, %d held_for_session, %d repeat_required, %d dropped",
-            written,
-            bumped,
+            batch_outcome.written,
+            batch_outcome.bumped,
             len(immediate_candidates),
             session_end_holds,
             repeat_required,
             policy_drops,
         )
         return SemanticProcessingResult(
-            written=written,
-            bumped=bumped,
+            written=batch_outcome.written,
+            bumped=batch_outcome.bumped,
             candidates=len(writes),
             commit_now_candidates=len(immediate_candidates),
             session_end_holds=session_end_holds,
             repeat_required=repeat_required,
             policy_drops=policy_drops,
             reason=reason,
-            written_items=written_items,
+            written_items=batch_outcome.written_items,
         )
 
     async def process_procedural_rules(

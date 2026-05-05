@@ -18,7 +18,7 @@ from typing import cast
 
 from livekit.agents import RunContext, function_tool
 
-from agent.memory.control import (
+from agent.memory.user_controls import (
     MemoryControlTarget,
     delete_memory_target,
     find_memory_target_by_index,

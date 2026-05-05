@@ -1,4 +1,4 @@
-"""Regex patterns for memory-control routing policy."""
+"""Regex patterns for memory-management routing policy."""
 
 from __future__ import annotations
 

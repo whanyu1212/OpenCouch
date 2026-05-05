@@ -1,4 +1,4 @@
-"""Prompt builders for memory-control routing classification."""
+"""Prompt builders for memory-management routing classification."""
 
 from __future__ import annotations
 
@@ -7,20 +7,20 @@ from agent.state import AgentState
 
 
 def build_memory_control_prompt(state: AgentState) -> str:
-    """Build the LLM prompt for ambiguous memory-control routing.
+    """Build the LLM prompt for ambiguous memory-management routing.
 
     Args:
         state (AgentState): Current graph state.
 
     Returns:
-        str: Prompt asking for a structured memory-control decision.
+        str: Prompt asking for a structured memory-management decision.
     """
 
     recent_history = format_recent_history(state, limit=6, empty="(none)")
     return (
         "Decide whether the user's message is an explicit request to manage "
         "OpenCouch's saved memory before ordinary therapeutic routing.\n\n"
-        "Route to memory control only for requests to list or inspect saved "
+        "Route to memory management only for requests to list or inspect saved "
         "memories, check memory status, enable or disable proactive recall, "
         "delete a concrete saved memory, or save a preference about how the "
         "assistant should respond or use memory.\n\n"
@@ -31,7 +31,7 @@ def build_memory_control_prompt(state: AgentState) -> str:
         "extraction handles those later. Use action_type='none' when uncertain.\n\n"
         "For forget_by_query, provide a concrete saved-memory target from the "
         "message or recent conversation. Do not confirm deletion; the memory "
-        "control node will ask the user before deleting anything.\n\n"
+        "management node will ask the user before deleting anything.\n\n"
         "For save_preference, only save response or memory-use preferences. "
         "Return rule_text as a concise second-person rule, for example "
         "'You prefer concise replies.'\n\n"
@@ -42,10 +42,10 @@ def build_memory_control_prompt(state: AgentState) -> str:
 
 
 def build_memory_control_system_prompt() -> str:
-    """Build the system prompt for the memory-control classifier.
+    """Build the system prompt for the memory-management classifier.
 
     Returns:
-        str: System instruction for structured memory-control routing.
+        str: System instruction for structured memory-management routing.
     """
 
     return (

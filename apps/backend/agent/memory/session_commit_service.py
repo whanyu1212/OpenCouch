@@ -21,8 +21,8 @@ from agent.memory.procedural import (
     build_procedural_rule,
 )
 from agent.memory.semantic_writes import (
-    apply_semantic_write,
-    fetch_existing_semantic_records,
+    BatchWriteItem,
+    apply_semantic_writes_batch,
 )
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
@@ -508,49 +508,8 @@ async def commit_session_memory(
         )
     )
     if semantic_candidates_to_commit:
-        try:
-            existing_records = await fetch_existing_semantic_records(
-                memory_store,
-                owner_id=owner_id,
-            )
-        except Exception:
-            logger.warning(
-                "commit_session_memory: failed to fetch existing semantic records; "
-                "skipping session-end semantic commit.",
-                exc_info=True,
-            )
-            result.semantic_skips += len(semantic_candidates_to_commit)
-            semantic_candidates_to_commit = []
-            existing_records = []
-
-        candidate_embeddings: list[list[float] | None] = [None] * len(
-            semantic_candidates_to_commit
-        )
-        embedding_model_name: str | None = None
-        if semantic_candidates_to_commit and embedding_provider is not None:
-            try:
-                quotes = [
-                    candidate.payload.evidence_quote
-                    for candidate in semantic_candidates_to_commit
-                ]
-                candidate_embeddings = await embedding_provider.aembed(
-                    quotes,
-                    task_type="RETRIEVAL_DOCUMENT",
-                )
-                embedding_model_name = embedding_provider.model_name
-                if all(embedding is None for embedding in candidate_embeddings):
-                    embedding_model_name = None
-            except Exception:
-                logger.warning(
-                    "commit_session_memory: embedding batch failed; writing session-end "
-                    "semantic facts without embeddings.",
-                    exc_info=True,
-                )
-                candidate_embeddings = [None] * len(semantic_candidates_to_commit)
-                embedding_model_name = None
-
-        for candidate_index, candidate in enumerate(semantic_candidates_to_commit):
-            write = candidate.payload
+        batch_items: list[BatchWriteItem] = []
+        for candidate in semantic_candidates_to_commit:
             write_timing = (
                 "promotion"
                 if candidate.policy_recommendation == "require_repetition"
@@ -561,24 +520,26 @@ async def commit_session_memory(
                 if write_timing == "promotion"
                 else "session-end semantic candidate supported by transcript and episodic summary"
             )
-            this_embedding = candidate_embeddings[candidate_index]
-            this_model = embedding_model_name if this_embedding is not None else None
-            outcome = await apply_semantic_write(
-                memory_store,
-                owner_id=owner_id,
-                write=write,
-                existing_records=existing_records,
-                llm_client=llm_client,
-                write_timing=write_timing,
-                write_reason=write_reason,
-                policy_version="phase3_v1",
-                embedding=this_embedding,
-                embedding_model=this_model,
-                log_context="commit_session_memory",
+            batch_items.append(
+                BatchWriteItem(
+                    candidate=candidate,
+                    write_timing=write_timing,
+                    write_reason=write_reason,
+                    policy_version="phase3_v1",
+                )
             )
-            result.semantic_writes += outcome.written
-            result.semantic_bumps += outcome.bumped
-            result.semantic_skips += outcome.skipped
+
+        batch_outcome = await apply_semantic_writes_batch(
+            memory_store,
+            owner_id=owner_id,
+            items=batch_items,
+            llm_client=llm_client,
+            embedding_provider=embedding_provider,
+            log_context="commit_session_memory",
+        )
+        result.semantic_writes += batch_outcome.written
+        result.semantic_bumps += batch_outcome.bumped
+        result.semantic_skips += batch_outcome.skipped
 
     procedural_candidates_to_commit, result.procedural_skips = (
         _select_procedural_candidates_to_commit(

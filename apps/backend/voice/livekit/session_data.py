@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from agent.memory.control import MemoryControlTarget
+from agent.memory.user_controls import MemoryControlTarget
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from services.llm.base import BaseLLMClient

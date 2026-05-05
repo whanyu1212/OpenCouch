@@ -2431,8 +2431,8 @@ async def _seed_semantic_fact(
 
     Bypasses the extractor LLM pipeline so the forget tests can focus
     on the delete path without needing a working extractor. The record
-    shape mimics what the real :func:`_memory_write_to_semantic_fact`
-    produces in ``agent/nodes/extract_facts.py``.
+    shape mimics what the real :func:`memory_write_to_semantic_fact`
+    produces in ``agent.memory.semantic_writes``.
     """
 
     namespace = (owner_id, "semantic")
