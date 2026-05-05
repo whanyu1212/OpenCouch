@@ -39,7 +39,7 @@ from agent.memory.models import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.semantic_writes import memory_write_to_semantic_fact
 from agent.models import AgentInput
 from agent.nodes.extract_facts import run_extract_semantic_facts_node

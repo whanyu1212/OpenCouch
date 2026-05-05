@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.memory.small_talk_gate import is_small_talk
+from agent.memory.policy.small_talk import is_small_talk
 from agent.state import AgentState
 
 

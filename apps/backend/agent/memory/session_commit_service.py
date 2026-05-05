@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from agent.memory.candidates import (
+from agent.memory.policy.candidates import (
     ProceduralCandidate,
     SemanticCandidate,
     SessionMemoryBuffer,
@@ -26,7 +26,7 @@ from agent.memory.semantic_writes import (
 )
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
-from agent.memory.write_policy import (
+from agent.memory.policy.write import (
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
 )

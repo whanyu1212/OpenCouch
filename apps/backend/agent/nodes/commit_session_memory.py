@@ -11,7 +11,7 @@ from agent.memory.session_commit_service import (
 from agent.state import AgentState
 
 if TYPE_CHECKING:
-    from agent.memory.candidates import SessionMemoryBuffer
+    from agent.memory.policy.candidates import SessionMemoryBuffer
     from agent.memory.embeddings import EmbeddingProvider
     from agent.memory.models import StoredSessionArc
     from agent.memory.store import MemoryStore

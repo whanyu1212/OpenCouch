@@ -23,7 +23,7 @@ from agent.active_session_store import PostgresActiveSessionStore
 from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.graph_constants import FINALIZE_TURN_NODE
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import hash_session_id, iso_now

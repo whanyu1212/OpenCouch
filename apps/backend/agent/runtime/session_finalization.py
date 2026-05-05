@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, cast
 
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode

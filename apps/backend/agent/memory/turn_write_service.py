@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from agent.memory.candidates import (
+from agent.memory.policy.candidates import (
     SessionMemoryBuffer,
     build_procedural_candidate,
     build_semantic_candidate,
@@ -28,7 +28,7 @@ from agent.memory.semantic_writes import (
     apply_semantic_writes_batch,
 )
 from agent.memory.store import MemoryStore
-from agent.memory.write_policy import (
+from agent.memory.policy.write import (
     decide_procedural_candidate_llm_primary,
     decide_semantic_candidate_llm_primary,
 )
@@ -64,7 +64,7 @@ class ProceduralProcessingResult:
     written_items: list[ProceduralRule] = field(default_factory=list)
 
 
-class MemoryService:
+class TurnWriteService:
     """Process extracted memory candidates and persist approved writes."""
 
     async def process_semantic_facts(

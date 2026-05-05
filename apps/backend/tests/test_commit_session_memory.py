@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from agent.memory.candidates import (
+from agent.memory.policy.candidates import (
     SessionMemoryBuffer,
     build_procedural_candidate,
     build_semantic_candidate,

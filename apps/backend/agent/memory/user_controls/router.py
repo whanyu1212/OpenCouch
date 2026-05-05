@@ -15,7 +15,7 @@ from agent.memory.user_controls.patterns import (
     PREFERENCE_RULE_RE as _PREFERENCE_RULE_RE,
     YES_RE as _YES_RE,
 )
-from agent.memory.user_controls.prompts import (
+from agent.memory.prompts.control import (
     build_memory_control_prompt as _build_memory_control_prompt,
     build_memory_control_system_prompt as _build_memory_control_system_prompt,
 )

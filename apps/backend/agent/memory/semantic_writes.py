@@ -17,7 +17,7 @@ from agent.memory.reconciliation import (
 from agent.memory.store import MemoryStore, StoreRecord
 
 if TYPE_CHECKING:
-    from agent.memory.candidates import SemanticCandidate
+    from agent.memory.policy.candidates import SemanticCandidate
     from agent.memory.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)

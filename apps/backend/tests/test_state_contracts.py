@@ -14,7 +14,7 @@ import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.graph import build_agent_workflow, build_initial_state
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.modes import MemoryMode
 from agent.memory.models import DispatchDecision
 from agent.memory.store import OpenCouchMemoryStore

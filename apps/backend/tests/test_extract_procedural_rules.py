@@ -24,7 +24,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.candidates import SessionMemoryBuffer
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.models import (
     ProceduralExtractionResult,

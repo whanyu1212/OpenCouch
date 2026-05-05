@@ -15,15 +15,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.memory.candidates import (
+from agent.memory.policy.candidates import (
     PolicyDecision,
     ProceduralCandidate,
     SemanticCandidate,
 )
-from agent.memory.constants import (
+from agent.memory.policy.constants import (
     classify_procedural_request,
 )
-from agent.memory.semantic_policy import (
+from agent.memory.policy.semantic import (
     SEMANTIC_SESSION_ONLY_CATEGORIES,
     SEMANTIC_STABLE_CATEGORIES,
     contains_emerging_pattern,
