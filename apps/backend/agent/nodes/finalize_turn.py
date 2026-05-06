@@ -43,6 +43,7 @@ otherwise pollute the transcript with a blank assistant turn.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from langgraph.runtime import Runtime
@@ -78,10 +79,21 @@ async def run_finalize_turn_node(
     """
 
     response_text = str(state.get("response_text", "") or "").strip()
+
+    # Mark the moment the response is locked in so the runtime can later
+    # compute ``post_finalize_ms`` — the wall-clock between this point
+    # and graph termination. Used to measure the latency wedge that
+    # background extraction (#5) would close.
+    finalize_done_at_monotonic = time.monotonic()
+
     if not response_text:
         # Nothing to append. Better to leave the transcript alone than
         # to write a blank assistant turn that the CLI would render.
-        return {}
+        return {
+            "diagnostics": {
+                "finalize_done_at_monotonic": finalize_done_at_monotonic,
+            }
+        }
 
     # Stamp the routing mode onto the assistant turn so it round-trips through
     # the checkpoint and surfaces in the CLI's /history panel.
@@ -98,4 +110,7 @@ async def run_finalize_turn_node(
     # checkpoint automatically.
     return {
         "transcript": [assistant_turn],
+        "diagnostics": {
+            "finalize_done_at_monotonic": finalize_done_at_monotonic,
+        },
     }

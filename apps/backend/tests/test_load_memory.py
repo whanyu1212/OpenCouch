@@ -1325,11 +1325,11 @@ class TestFinalizeTurnNode:
         }
 
     @pytest.mark.asyncio
-    async def test_empty_response_text_returns_empty_delta(self) -> None:
-        """If ``response_text`` is empty or missing, the node must return an
-        empty delta so the transcript stays clean. This guards against a
-        branch short-circuiting without producing a reply, which would
-        otherwise inject a blank assistant turn."""
+    async def test_empty_response_text_returns_no_transcript_delta(self) -> None:
+        """If ``response_text`` is empty or missing, the node must NOT append
+        an assistant turn. The diagnostics ``finalize_done_at_monotonic``
+        marker is still emitted because it tracks "finalize ran" rather
+        than "a transcript turn was written"."""
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -1340,10 +1340,11 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert "transcript" not in delta
+        assert "finalize_done_at_monotonic" in delta["diagnostics"]
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_response_returns_empty_delta(self) -> None:
+    async def test_whitespace_only_response_returns_no_transcript_delta(self) -> None:
         """Whitespace-only responses should be treated as empty and not
         pollute the transcript."""
 
@@ -1356,12 +1357,13 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert "transcript" not in delta
+        assert "finalize_done_at_monotonic" in delta["diagnostics"]
 
     @pytest.mark.asyncio
-    async def test_missing_response_slot_returns_empty_delta(self) -> None:
+    async def test_missing_response_slot_returns_no_transcript_delta(self) -> None:
         """If the response field is entirely absent (defensive case), the
-        node should return empty rather than crash."""
+        node should not crash and must not append a phantom assistant turn."""
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -1371,12 +1373,14 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert "transcript" not in delta
+        assert "finalize_done_at_monotonic" in delta["diagnostics"]
 
     @pytest.mark.asyncio
     async def test_does_not_touch_other_state_keys(self) -> None:
-        """The node's delta must contain only transcript.
-        This keeps it a focused single-responsibility node."""
+        """The node's delta must contain only transcript and the
+        finalize-timing diagnostic. The diagnostic is the boundary marker
+        ``stamp_turn_total_ms`` reads to compute ``post_finalize_ms``."""
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -1389,4 +1393,5 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert set(delta.keys()) == {"transcript"}
+        assert set(delta.keys()) == {"transcript", "diagnostics"}
+        assert set(delta["diagnostics"].keys()) == {"finalize_done_at_monotonic"}

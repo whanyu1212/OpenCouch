@@ -11,8 +11,15 @@ Responsibilities:
 
     Graph assembly compiles a safety-first ``StateGraph``. ``crisis_gate_node``
     routes with ``Command`` to either the crisis branch or the therapeutic
-    branch. Both branches converge at ``finalize_turn_node`` before terminal
-    memory extraction side effects run.
+    branch. Both branches converge at ``finalize_turn_node`` and then END.
+
+    Memory extraction (semantic + procedural) is *not* a graph node. It runs
+    as a background task dispatched by the runtime layer
+    (:class:`agent.persistence.PersistentAgentRuntime`) after the graph
+    terminates, so the user-visible turn does not wait on extraction LLM
+    calls. The one-shot ``run_agent`` entrypoint runs extraction
+    synchronously after ``ainvoke`` so that callers without a runtime still
+    get the side effects they expect.
 
     The public entrypoint, ``run_agent``, compiles a fresh workflow with
     in-memory defaults for callers that do not need thread-persistent behavior.
@@ -33,8 +40,6 @@ from agent.graph_constants import (
     CRISIS_LOG_NODE,
     CRISIS_RESOURCE_LOOKUP_NODE,
     CRISIS_RESPONSE_NODE,
-    EXTRACT_PROCEDURAL_RULES_NODE,
-    EXTRACT_SEMANTIC_FACTS_NODE,
     FINALIZE_TURN_NODE,
     GROUNDED_ANSWER_NODE,
     GROUNDED_LOOKUP_GATE_NODE,
@@ -53,12 +58,14 @@ from agent.models import (
     ResponseStyleType,
     ResponseCategory,
 )
+from agent.memory.extraction_service import (
+    extract_procedural_rules,
+    extract_semantic_facts,
+)
 from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
-from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
@@ -209,10 +216,14 @@ def build_agent_workflow(
                    └─ load_memory_node → therapeutic_subgraph
                       → finalize_turn_node
 
-        finalize_turn_node
-          ├─ extract_semantic_facts_node ─┐
-          └─ extract_procedural_rules_node ─→ END
-          (parallel edges; diagnostics merge via the _merge_dicts reducer)
+        finalize_turn_node → END
+
+    Memory extraction (semantic facts + procedural rules) is run by the
+    *runtime*, not the graph. ``PersistentAgentRuntime`` schedules
+    extraction as a background ``asyncio.Task`` after each ``run_turn``;
+    ``run_agent`` runs it synchronously after ``ainvoke``. Either way, the
+    graph's responsibility ends at ``finalize_turn_node`` so the
+    user-visible turn does not wait on extractor LLM calls.
 
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
@@ -265,16 +276,6 @@ def build_agent_workflow(
     )
     workflow.add_node(CRISIS_LOG_NODE, run_crisis_log_node, retry_policy=_io_retry)
     workflow.add_node(THERAPEUTIC_SUBGRAPH_NODE, therapeutic_subgraph)
-    workflow.add_node(
-        EXTRACT_SEMANTIC_FACTS_NODE,
-        run_extract_semantic_facts_node,
-        retry_policy=_io_retry,
-    )
-    workflow.add_node(
-        EXTRACT_PROCEDURAL_RULES_NODE,
-        run_extract_procedural_rules_node,
-        retry_policy=_io_retry,
-    )
     workflow.add_node(FINALIZE_TURN_NODE, run_finalize_turn_node)
 
     # Safety-first entry.
@@ -290,13 +291,10 @@ def build_agent_workflow(
     workflow.add_edge(LOAD_MEMORY_NODE, THERAPEUTIC_SUBGRAPH_NODE)
     workflow.add_edge(THERAPEUTIC_SUBGRAPH_NODE, FINALIZE_TURN_NODE)
 
-    # Checkpoint the reply before kicking off memory side effects. The two
-    # extractors run in parallel; LangGraph merges their diagnostics deltas
-    # via the ``_merge_dicts`` reducer at the join point on END.
-    workflow.add_edge(FINALIZE_TURN_NODE, EXTRACT_SEMANTIC_FACTS_NODE)
-    workflow.add_edge(FINALIZE_TURN_NODE, EXTRACT_PROCEDURAL_RULES_NODE)
-    workflow.add_edge(EXTRACT_SEMANTIC_FACTS_NODE, END)
-    workflow.add_edge(EXTRACT_PROCEDURAL_RULES_NODE, END)
+    # Memory extraction is dispatched by the runtime after the graph
+    # terminates — see ``PersistentAgentRuntime._schedule_extraction``
+    # and ``agent.graph.run_agent``.
+    workflow.add_edge(FINALIZE_TURN_NODE, END)
 
     compiled = workflow.compile(checkpointer=checkpointer)
     return apply_graph_tracing(compiled)
@@ -337,8 +335,9 @@ async def run_agent(
     store = memory_store or OpenCouchMemoryStore()
     crisis_log = crisis_log_backend or InMemoryCrisisLogBackend()
 
+    initial_state = build_initial_state(agent_input, include_input_history=True)
     final_state = await workflow.ainvoke(
-        build_initial_state(agent_input, include_input_history=True),
+        initial_state,
         context=WorkflowContext(
             llm_client=llm_client,
             memory_store=store,
@@ -346,4 +345,85 @@ async def run_agent(
             memory_mode=memory_mode,
         ),
     )
+
+    # ``run_agent`` is the one-shot entrypoint used by tests and eval
+    # runners — it has no thread lock, no per-thread drain, and no
+    # ``__aexit__`` shutdown drain. Running extraction synchronously
+    # here preserves the contract that callers without a runtime see
+    # extraction's side effects before this function returns.
+    # Merge initial_state (carries ``message`` and other input-only fields
+    # that fall out of the public output schema) with final_state. The
+    # graph's output schema strips private channels including ``route``,
+    # so derive it from the public ``crisis`` assessment to preserve the
+    # crisis-skip path in extraction policy.
+    extraction_state = {**dict(initial_state), **dict(final_state)}
+    crisis_assessment = final_state.get("crisis")
+    if crisis_assessment is not None and getattr(crisis_assessment, "level", 0) >= 2:
+        extraction_state["route"] = "crisis"
+    extraction_diagnostics = await _run_extraction_synchronously(
+        extraction_state,
+        llm_client=llm_client,
+        memory_store=store,
+        memory_mode=memory_mode,
+    )
+    if extraction_diagnostics:
+        merged_diag = {
+            **dict(final_state.get("diagnostics", {})),
+            **extraction_diagnostics,
+        }
+        if isinstance(final_state, dict):
+            final_state = {**final_state, "diagnostics": merged_diag}
+        else:
+            final_state = {**dict(final_state), "diagnostics": merged_diag}
     return state_to_output(final_state)
+
+
+async def _run_extraction_synchronously(
+    state: Mapping[str, Any],
+    *,
+    llm_client: BaseLLMClient | None,
+    memory_store: MemoryStore,
+    memory_mode: MemoryMode,
+) -> dict[str, Any]:
+    """Run both extractors sequentially and merge their diagnostics.
+
+    Used by ``run_agent`` (no runtime). The runtime path
+    (:meth:`PersistentAgentRuntime.run_turn`) dispatches extraction as a
+    background task instead — this function exists so that one-shot
+    callers without a runtime still see extraction side effects before
+    they receive their ``AgentOutput``.
+
+    Args:
+        state: The terminal graph state for the turn.
+        llm_client: Optional control-plane LLM. ``None`` skips extraction.
+        memory_store: Memory store to receive writes.
+        memory_mode: Persistence tier for the turn.
+
+    Returns:
+        Merged diagnostics dict from both extractors. Empty when
+        extraction was skipped (e.g., ``MemoryMode.INCOGNITO``).
+    """
+
+    import asyncio
+
+    semantic_outcome, procedural_outcome = await asyncio.gather(
+        extract_semantic_facts(
+            state,  # type: ignore[arg-type]
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+            embedding_provider=None,
+            session_buffer=None,
+        ),
+        extract_procedural_rules(
+            state,  # type: ignore[arg-type]
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+            session_buffer=None,
+        ),
+    )
+    return {
+        **semantic_outcome.as_diagnostics(),
+        **procedural_outcome.as_diagnostics(),
+    }

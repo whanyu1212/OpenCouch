@@ -26,6 +26,10 @@ from agent.graph_constants import FINALIZE_TURN_NODE
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.audit.session_feedback import SessionFeedbackBackend
+from agent.memory.extraction_service import (
+    extract_procedural_rules,
+    extract_semantic_facts,
+)
 from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
@@ -109,6 +113,11 @@ DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
 SESSION_TIMEOUT = timedelta(minutes=20)
+# Maximum seconds to wait for a prior turn's background extraction to drain
+# before the next turn proceeds with possibly-stale memory state. Set higher
+# than the observed p95 (~17s in measurement campaigns) but bounded so an
+# LLM provider stall cannot indefinitely block subsequent turns.
+EXTRACTION_DRAIN_TIMEOUT_SECONDS = 30.0
 
 
 class PersistentAgentRuntime:
@@ -140,6 +149,7 @@ class PersistentAgentRuntime:
         finalize_active_sessions_on_close: bool = True,
         auto_finalize_excluded: Callable[[str], bool] | None = None,
         speculative_memory_prefetch: bool = True,
+        extract_in_foreground: bool = False,
     ) -> None:
         """Initialize the runtime.
 
@@ -183,6 +193,13 @@ class PersistentAgentRuntime:
                 crisis/control/grounded gates. The wasted work on non-load
                 paths is bounded; set to ``False`` to revert to the strictly
                 sequential load.
+            extract_in_foreground: When ``True``, run memory extraction
+                synchronously inside :meth:`run_turn` / :meth:`run_turn_stream`
+                rather than dispatching it as a background task. This is the
+                test-determinism flag: tests that read post-turn memory state
+                or the extraction diagnostics should set it. Production
+                runtimes leave it ``False`` (the default) to keep extraction
+                off the user-visible turn path.
         """
 
         self.memory_mode = memory_mode
@@ -214,6 +231,11 @@ class PersistentAgentRuntime:
         self._finalize_active_sessions_on_close = finalize_active_sessions_on_close
         self._auto_finalize_excluded = auto_finalize_excluded
         self._speculative_memory_prefetch = speculative_memory_prefetch
+        self._extract_in_foreground = extract_in_foreground
+        # Per-thread in-flight extraction tasks. Drained by the next turn's
+        # ``_prepare_session_for_turn`` (so turn N+1 sees turn N's writes)
+        # and by ``__aexit__`` at shutdown.
+        self._pending_extractions: dict[str, asyncio.Task[None]] = {}
         self._session_sweeper_task: asyncio.Task[None] | None = None
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
         self._thread_locks: dict[str, asyncio.Lock] = {}
@@ -293,6 +315,11 @@ class PersistentAgentRuntime:
             except asyncio.CancelledError:
                 pass
             self._session_sweeper_task = None
+        # Drain background extractions before closing the memory store so
+        # in-flight writes still find a live store. finalize_active_sessions
+        # below also writes to the store, so the order is: drain → finalize
+        # → close.
+        await self._drain_all_extractions()
         if self._finalize_active_sessions_on_close:
             await self.finalize_active_sessions(llm_client=self._default_llm_client)
         await self._memory_store.aclose()
@@ -877,6 +904,12 @@ class PersistentAgentRuntime:
             None.
         """
 
+        # Drain the prior turn's background extraction so that turn N+1's
+        # memory retrieval (load_memory_node) sees turn N's writes. The
+        # drain is bounded by EXTRACTION_DRAIN_TIMEOUT_SECONDS to protect
+        # against LLM provider stalls.
+        await self._drain_thread_extractions(thread_id)
+
         status = await self._session_status_unlocked(thread_id)
         if expected_liveness == "active" and status != SessionStatus.ACTIVE:
             if status == SessionStatus.INTERRUPTED:
@@ -1126,6 +1159,195 @@ class PersistentAgentRuntime:
             ),
             name=f"memory-prefetch:{thread_id}",
         )
+
+    async def _run_extraction_pair(
+        self,
+        *,
+        state: AgentState,
+        llm_client: BaseLLMClient | None,
+        session_buffer: SessionMemoryBuffer,
+    ) -> dict[str, Any]:
+        """Run both extractors in parallel and return their merged diagnostics.
+
+        Used by both the foreground path (``extract_in_foreground=True`` in
+        tests) and the background dispatch path (production). The two
+        extractors are independent — one's failure must not affect the
+        other — so we use ``return_exceptions=True`` and log any failure.
+
+        Args:
+            state: Final graph state for the turn.
+            llm_client: Control LLM for extraction. ``None`` causes both
+                extractors to skip silently.
+            session_buffer: Session-scoped candidate buffer for held writes.
+
+        Returns:
+            Merged diagnostics from both extractors. Empty when both skipped.
+        """
+
+        results = await asyncio.gather(
+            extract_semantic_facts(
+                state,
+                llm_client=llm_client,
+                memory_store=self._memory_store,
+                memory_mode=self.memory_mode,
+                embedding_provider=self._embedding_provider,
+                session_buffer=session_buffer,
+            ),
+            extract_procedural_rules(
+                state,
+                llm_client=llm_client,
+                memory_store=self._memory_store,
+                memory_mode=self.memory_mode,
+                session_buffer=session_buffer,
+            ),
+            return_exceptions=True,
+        )
+        diagnostics: dict[str, Any] = {}
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Background extraction task raised; diagnostics partial.",
+                    exc_info=result,
+                )
+                continue
+            diagnostics.update(result.as_diagnostics())
+        return diagnostics
+
+    def _schedule_extraction(
+        self,
+        *,
+        thread_id: str,
+        state: AgentState,
+        llm_client: BaseLLMClient | None,
+    ) -> None:
+        """Dispatch extraction as a background task on the runtime.
+
+        Replaces the prior turn's pending task in ``_pending_extractions``;
+        the prior task should already be drained by
+        ``_prepare_session_for_turn`` before the next turn reaches this
+        point, so this assignment shouldn't usually overwrite a live task.
+        Defensive: if it does overwrite, the prior task is allowed to
+        run to completion in the background — its diagnostics are simply
+        discarded.
+
+        Args:
+            thread_id: Thread the extraction belongs to.
+            state: Final graph state captured before extraction starts.
+            llm_client: Control LLM for extraction.
+        """
+
+        session_buffer = self._session_memory_buffer_for_thread(thread_id)
+
+        async def _run() -> None:
+            try:
+                await self._run_extraction_pair(
+                    state=state,
+                    llm_client=llm_client,
+                    session_buffer=session_buffer,
+                )
+                # Re-persist the active-session record so the buffer's
+                # newly-added candidates survive past this point. Without
+                # this, end_session called between turns would hydrate
+                # from the pre-extraction snapshot and clobber the
+                # in-memory buffer that just got populated.
+                try:
+                    await self._persist_runtime_session_tracking(thread_id)
+                except Exception:
+                    logger.warning(
+                        "Background extraction post-persist failed for thread %s; "
+                        "in-memory buffer remains correct but persistence is stale.",
+                        thread_id,
+                        exc_info=True,
+                    )
+            finally:
+                # Self-clean from registry on completion. Guard against the
+                # registry having moved on if a later turn re-scheduled.
+                current = self._pending_extractions.get(thread_id)
+                if current is not None and current.done():
+                    self._pending_extractions.pop(thread_id, None)
+
+        task = asyncio.create_task(_run(), name=f"extract:{thread_id}")
+        self._pending_extractions[thread_id] = task
+
+    async def _drain_thread_extractions(self, thread_id: str) -> None:
+        """Block until the prior turn's extraction task for this thread completes.
+
+        Called from ``_prepare_session_for_turn`` so that turn N+1 sees turn
+        N's memory writes. Bounded by ``EXTRACTION_DRAIN_TIMEOUT_SECONDS`` so
+        a stalled extraction (e.g., an LLM provider hang — we observed
+        100s+ outliers in the latency profile) cannot indefinitely block
+        subsequent turns; the next turn proceeds with possibly-stale memory
+        and the stuck task continues running until it completes or is
+        drained at shutdown.
+
+        Args:
+            thread_id: Thread whose pending extraction should be drained.
+        """
+
+        task = self._pending_extractions.get(thread_id)
+        if task is None or task.done():
+            self._pending_extractions.pop(thread_id, None)
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=EXTRACTION_DRAIN_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Extraction drain exceeded %.1fs for thread %s; cancelling "
+                "the stalled task and proceeding with possibly-stale memory "
+                "state. (A long stall almost always means the LLM call is "
+                "hung; letting the task run on indefinitely orphans it.)",
+                EXTRACTION_DRAIN_TIMEOUT_SECONDS,
+                thread_id,
+            )
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        except Exception:
+            logger.warning(
+                "Extraction drain raised for thread %s; proceeding.",
+                thread_id,
+                exc_info=True,
+            )
+        finally:
+            self._pending_extractions.pop(thread_id, None)
+
+    async def _drain_all_extractions(self) -> None:
+        """Drain every in-flight extraction task. Used at shutdown.
+
+        Awaits all pending tasks with the same per-task timeout to keep
+        shutdown bounded. Errors are logged but never raised, matching
+        the existing best-effort shutdown contract used by
+        :attr:`_finalize_active_sessions_on_close`.
+        """
+
+        if not self._pending_extractions:
+            return
+        tasks = list(self._pending_extractions.values())
+        self._pending_extractions.clear()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=EXTRACTION_DRAIN_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Extraction shutdown drain exceeded %.1fs; cancelling "
+                "stuck tasks so the event loop can close cleanly.",
+                EXTRACTION_DRAIN_TIMEOUT_SECONDS,
+            )
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Best-effort await of the cancellations so event-loop
+            # shutdown doesn't see "Task was destroyed but it is
+            # pending!" warnings. Suppress exceptions because cancelled
+            # tasks raise CancelledError here.
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _get_graph(self) -> AgentWorkflow:
         """Return the compiled LangGraph workflow for this runtime.
@@ -1447,6 +1669,45 @@ class PersistentAgentRuntime:
                     session_transcript_soft_limit=session_transcript_soft_limit,
                 )
 
+                # ``final_state`` is the public output-schema slice and is
+                # missing the input-only fields (``message``, ``user_id``,
+                # ``session_id``) that extraction reads. Merge with
+                # ``initial_state`` to restore those, with final_state's
+                # post-graph reducer values winning over the seed.
+                extraction_state = cast(
+                    AgentState,
+                    {**dict(initial_state), **dict(final_state)},
+                )
+                if self._extract_in_foreground:
+                    # Foreground path: run extraction synchronously and merge
+                    # its diagnostics into final_state so callers (and tests)
+                    # see the extract_facts_*/extract_procedural_* keys in
+                    # the same turn. Used by tests that assert on extraction
+                    # behavior end-to-end.
+                    extraction_diagnostics = await self._run_extraction_pair(
+                        state=extraction_state,
+                        llm_client=llm_client,
+                        session_buffer=self._session_memory_buffer_for_thread(
+                            thread_id
+                        ),
+                    )
+                    if extraction_diagnostics:
+                        existing = final_state.get("diagnostics") or {}
+                        final_state["diagnostics"] = {
+                            **existing,
+                            **extraction_diagnostics,
+                        }
+                    # Re-persist after extraction so the populated buffer
+                    # survives a later end_session that hydrates from
+                    # persistence.
+                    await self._persist_runtime_session_tracking(thread_id)
+                else:
+                    self._schedule_extraction(
+                        thread_id=thread_id,
+                        state=extraction_state,
+                        llm_client=llm_client,
+                    )
+
                 result = PersistentTurnResult(
                     output=state_to_output(final_state),
                     state=final_state,
@@ -1490,6 +1751,11 @@ class PersistentAgentRuntime:
         Returns:
             The written session arc, or ``None`` when summarization is skipped.
         """
+
+        # Drain any in-flight extraction so the buffer (and the
+        # persisted record it post-persists) reflects the most recent
+        # turn's writes before we hydrate and finalize.
+        await self._drain_thread_extractions(thread_id)
 
         effective_llm_client = self._effective_llm_client(thread_id, llm_client)
         status = await self._session_status_unlocked(thread_id)
@@ -1609,7 +1875,6 @@ class PersistentAgentRuntime:
             session_buffer=session_buffer,
             memory_store=self._memory_store,
             memory_mode=self.memory_mode,
-            crisis_log_backend=self._crisis_log_backend,
             embedding_provider=self._embedding_provider,
         )
         session_state = cast(
@@ -1870,6 +2135,32 @@ class PersistentAgentRuntime:
                     final_state,
                     session_transcript_soft_limit=session_transcript_soft_limit,
                 )
+
+                extraction_state = cast(
+                    AgentState,
+                    {**dict(initial_state), **dict(final_state)},
+                )
+                if self._extract_in_foreground:
+                    extraction_diagnostics = await self._run_extraction_pair(
+                        state=extraction_state,
+                        llm_client=llm_client,
+                        session_buffer=self._session_memory_buffer_for_thread(
+                            thread_id
+                        ),
+                    )
+                    if extraction_diagnostics:
+                        existing = final_state.get("diagnostics") or {}
+                        final_state["diagnostics"] = {
+                            **existing,
+                            **extraction_diagnostics,
+                        }
+                    await self._persist_runtime_session_tracking(thread_id)
+                else:
+                    self._schedule_extraction(
+                        thread_id=thread_id,
+                        state=extraction_state,
+                        llm_client=llm_client,
+                    )
 
                 await self._clear_active_session_mutation(thread_id, mutation_token)
                 yield DoneEvent(output=state_to_output(final_state))

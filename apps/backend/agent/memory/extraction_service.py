@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from agent.memory.models import ExtractionResult, ProceduralExtractionResult
 from agent.memory.modes import MemoryMode
@@ -65,7 +66,8 @@ logger = logging.getLogger(__name__)
 class SemanticExtractionOutcome:
     """Result of one semantic-extraction service call.
 
-    Carries the per-call telemetry the node wraps into diagnostics.
+    Carries the per-call telemetry that the runtime merges into per-turn
+    diagnostics via :meth:`as_diagnostics`.
     """
 
     duration_ms: float
@@ -77,6 +79,26 @@ class SemanticExtractionOutcome:
     semantic_repeat_required: int = 0
     semantic_policy_drops: int = 0
     reason: str = ""
+
+    def as_diagnostics(self) -> dict[str, Any]:
+        """Render this outcome as the dict the runtime merges into diagnostics.
+
+        Returns:
+            Diagnostics-shaped dict with the standard ``extract_facts_*``
+            and ``semantic_*`` keys.
+        """
+
+        return {
+            "extract_facts_ms": self.duration_ms,
+            "semantic_writes": self.semantic_writes,
+            "semantic_bumps": self.semantic_bumps,
+            "semantic_candidates": self.semantic_candidates,
+            "semantic_commit_now_candidates": self.semantic_commit_now_candidates,
+            "semantic_session_end_holds": self.semantic_session_end_holds,
+            "semantic_repeat_required": self.semantic_repeat_required,
+            "semantic_policy_drops": self.semantic_policy_drops,
+            "extract_facts_reason": self.reason,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +112,24 @@ class ProceduralExtractionOutcome:
     procedural_session_end_holds: int = 0
     procedural_policy_drops: int = 0
     reason: str = ""
+
+    def as_diagnostics(self) -> dict[str, Any]:
+        """Render this outcome as the dict the runtime merges into diagnostics.
+
+        Returns:
+            Diagnostics-shaped dict with the standard ``extract_procedural_*``
+            and ``procedural_*`` keys.
+        """
+
+        return {
+            "extract_procedural_ms": self.duration_ms,
+            "procedural_writes": self.procedural_writes,
+            "procedural_candidates": self.procedural_candidates,
+            "procedural_commit_now_candidates": self.procedural_commit_now_candidates,
+            "procedural_session_end_holds": self.procedural_session_end_holds,
+            "procedural_policy_drops": self.procedural_policy_drops,
+            "extract_procedural_reason": self.reason,
+        }
 
 
 async def extract_semantic_facts(

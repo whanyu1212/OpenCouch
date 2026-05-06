@@ -3,30 +3,23 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.extraction_service import (
+    extract_procedural_rules,
+    extract_semantic_facts,
+)
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.session_commit import run_commit_session_memory
-from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.runtime.session_summarize import run_summarize_session
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class _TranscriptReplayRuntime:
-    """Minimal runtime adapter for reusing extraction nodes outside LangGraph."""
-
-    context: WorkflowContext
 
 
 async def finalize_session_window(
@@ -108,10 +101,9 @@ async def extract_memory_from_transcript(
     session_buffer: SessionMemoryBuffer,
     memory_store: MemoryStore,
     memory_mode: MemoryMode,
-    crisis_log_backend: Any,
     embedding_provider: EmbeddingProvider | None,
 ) -> None:
-    """Replay transcript user turns through the extractor nodes.
+    """Replay transcript user turns through the extraction services.
 
     Args:
         thread_id (str): The thread identifier for provenance.
@@ -119,27 +111,14 @@ async def extract_memory_from_transcript(
         transcript (list[dict[str, Any]]): The serialized transcript to replay.
         llm_client (BaseLLMClient | None): The LLM client used by extraction.
         session_buffer (SessionMemoryBuffer): The session buffer to populate.
-        memory_store (MemoryStore): Store available to extraction nodes.
+        memory_store (MemoryStore): Store available to extraction.
         memory_mode (MemoryMode): Runtime memory mode.
-        crisis_log_backend (Any): Crisis log backend available in workflow
-            context.
         embedding_provider (EmbeddingProvider | None): Optional embedding
             provider for extraction writes.
 
     Returns:
         None: This helper only mutates the provided session buffer.
     """
-
-    runtime = _TranscriptReplayRuntime(
-        context=WorkflowContext(
-            llm_client=llm_client,
-            memory_store=memory_store,
-            crisis_log_backend=crisis_log_backend,
-            memory_mode=memory_mode,
-            embedding_provider=embedding_provider,
-            session_memory_buffer=session_buffer,
-        )
-    )
 
     user_turn_count = 0
     for transcript_index, turn in enumerate(transcript):
@@ -162,5 +141,18 @@ async def extract_memory_from_transcript(
                 "route": "therapeutic",
             },
         )
-        await run_extract_semantic_facts_node(state, cast(Any, runtime))
-        await run_extract_procedural_rules_node(state, cast(Any, runtime))
+        await extract_semantic_facts(
+            state,
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+            embedding_provider=embedding_provider,
+            session_buffer=session_buffer,
+        )
+        await extract_procedural_rules(
+            state,
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+            session_buffer=session_buffer,
+        )

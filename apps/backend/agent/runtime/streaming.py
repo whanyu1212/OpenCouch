@@ -42,7 +42,19 @@ def stamp_turn_total_ms(
     *,
     started_at: float,
 ) -> None:
-    """Record total turn latency in state diagnostics.
+    """Record total turn latency and the post-finalize tail in diagnostics.
+
+    Two related metrics land here:
+
+    - ``turn_total_ms``: end-to-end wall-clock from graph entry to graph
+      termination.
+    - ``post_finalize_ms``: wall-clock from when ``finalize_turn_node``
+      locked in the response to graph termination. This is the window
+      where the user has *already received* their response (when streaming)
+      but the graph is still running terminal extractors. It quantifies
+      the latency wedge that background extraction (Opportunity #5)
+      would close. Absent when ``finalize_turn_node`` did not run for
+      this turn (early failure paths).
 
     Args:
         state (AgentState): Final graph state for the turn.
@@ -52,12 +64,17 @@ def stamp_turn_total_ms(
         None: Mutates the state's diagnostics mapping in place.
     """
 
+    end_at = time.monotonic()
     if "diagnostics" not in state or state["diagnostics"] is None:
         state["diagnostics"] = {}
-    state["diagnostics"]["turn_total_ms"] = round(
-        (time.monotonic() - started_at) * 1000,
-        2,
-    )
+    state["diagnostics"]["turn_total_ms"] = round((end_at - started_at) * 1000, 2)
+
+    finalize_done_at = state["diagnostics"].pop("finalize_done_at_monotonic", None)
+    if finalize_done_at is not None:
+        state["diagnostics"]["post_finalize_ms"] = round(
+            (end_at - float(finalize_done_at)) * 1000,
+            2,
+        )
 
 
 def response_ready_output(

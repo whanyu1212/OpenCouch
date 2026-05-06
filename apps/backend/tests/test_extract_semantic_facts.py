@@ -37,15 +37,42 @@ from agent.memory.models import (
     MemoryWrite,
     SemanticFact,
 )
+from agent.memory.extraction_service import extract_semantic_facts
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.semantic_writes import memory_write_to_semantic_fact
 from agent.models import AgentInput
-from agent.nodes.extract_semantic_facts import run_extract_semantic_facts_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient, StructuredResponseT
+
+
+async def run_extract_semantic_facts_node(
+    state: AgentState,
+    runtime: "_MockRuntime",
+) -> dict[str, dict]:
+    """Test-only adapter mimicking the old node's delta shape.
+
+    Earlier the extractor was a LangGraph node returning a diagnostics
+    delta dict. After the lift to a runtime-managed service, the call
+    shape is ``await extract_semantic_facts(state, **kwargs)`` returning
+    a typed outcome. Tests here continue to assert on the old delta
+    shape (``delta["diagnostics"][...]``); this adapter keeps that
+    contract while delegating to the service so the test bodies don't
+    have to be rewritten one-by-one.
+    """
+
+    ctx = runtime.context
+    outcome = await extract_semantic_facts(
+        state,
+        llm_client=ctx.llm_client,
+        memory_store=ctx.memory_store,
+        memory_mode=ctx.memory_mode,
+        embedding_provider=getattr(ctx, "embedding_provider", None),
+        session_buffer=ctx.session_memory_buffer,
+    )
+    return {"diagnostics": outcome.as_diagnostics()}
 
 
 # ─── Test helpers ────────────────────────────────────────────────────────

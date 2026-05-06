@@ -395,6 +395,9 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
         **paths,
         memory_mode=MemoryMode.LOCAL,
         finalize_active_sessions_on_close=False,
+        # Synchronous extraction so post-turn assertions see the fact in
+        # the store immediately, not after the next turn's drain.
+        extract_in_foreground=True,
     ) as runtime_a:
         result = await runtime_a.run_turn(
             thread_id="thread-a",
@@ -736,6 +739,7 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
+        extract_in_foreground=True,
     ) as runtime_a:
         await runtime_a.run_turn(
             thread_id="thread-old",

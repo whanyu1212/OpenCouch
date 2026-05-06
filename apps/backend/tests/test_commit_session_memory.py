@@ -597,6 +597,10 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_store=store,
         memory_mode=MemoryMode.LOCAL,
+        # Foreground so the post-turn buffer-length assertion observes
+        # both turns' extracted candidates without depending on the
+        # next-turn drain.
+        extract_in_foreground=True,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",

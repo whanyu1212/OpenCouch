@@ -120,7 +120,11 @@ class TestRunTurnStreamStages:
         stage_names = [event.stage for event in statuses]
 
         # Linear pre-finalize stages must appear in this exact order.
-        assert stage_names[:6] == [
+        # Memory extraction stages are no longer emitted by the graph —
+        # extraction runs as a runtime-managed background task after
+        # finalize, outside the LangGraph status stream. ``finalize`` is
+        # the terminal graph stage.
+        assert stage_names == [
             "crisis_gate",
             "memory_control_gate",
             "grounded_lookup_gate",
@@ -128,11 +132,6 @@ class TestRunTurnStreamStages:
             "therapeutic",
             "finalize",
         ]
-        # Both extractors must follow finalize as a set, in any order.
-        assert set(stage_names[6:]) == {
-            "extract_semantic_facts",
-            "extract_procedural_rules",
-        }
         # In deterministic mode (no LLM client), no chunks are emitted —
         # the response comes from the fallback template via DoneEvent only.
         # When an LLM client is present, chunks stream during the
@@ -195,12 +194,19 @@ class TestRunTurnStreamDiagnostics:
 
     @pytest.mark.asyncio
     async def test_diagnostics_carry_per_stage_timings(self) -> None:
-        """Each node stamps its own timing key into diagnostics."""
+        """Each node stamps its own timing key into diagnostics.
+
+        Uses ``extract_in_foreground=True`` so the extraction service
+        timings land in the DoneEvent's diagnostics. In production the
+        runtime runs extraction as a background task and these keys are
+        omitted from per-turn output.
+        """
 
         async with PersistentAgentRuntime(
             sqlite_path=":memory:",
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
+            extract_in_foreground=True,
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-3", message="hi"
@@ -255,6 +261,41 @@ class TestRunTurnStreamDiagnostics:
             )
         ]
         assert diag["turn_total_ms"] >= max(stage_times)
+
+    @pytest.mark.asyncio
+    async def test_diagnostics_carry_post_finalize_ms(self) -> None:
+        """``post_finalize_ms`` measures the wall-clock between
+        ``finalize_turn_node`` writing the response and the graph
+        terminating. It quantifies the latency wedge that background
+        extraction (#5) would close — the dashboard reads this to decide
+        whether the optimization is worth the contract churn.
+
+        Invariants:
+            - The key must be present and numeric on a normal turn.
+            - It must be ≥ 0 (graph cannot terminate before finalize).
+            - It must be ≤ ``turn_total_ms`` (post-finalize is a subset
+              of the turn's total wall-clock).
+            - The internal scaffolding key
+              ``finalize_done_at_monotonic`` must NOT leak into the
+              public diagnostics — ``stamp_turn_total_ms`` pops it.
+        """
+
+        async with PersistentAgentRuntime(
+            sqlite_path=":memory:",
+            memory_sqlite_path=":memory:",
+            crisis_log_sqlite_path=":memory:",
+        ) as runtime:
+            _, _, _, done = await _collect_stream(
+                runtime, thread_id="t-stream-post-finalize", message="hi"
+            )
+
+        assert done is not None
+        diag = done.output.diagnostics
+        assert "post_finalize_ms" in diag
+        assert isinstance(diag["post_finalize_ms"], (int, float))
+        assert diag["post_finalize_ms"] >= 0.0
+        assert diag["post_finalize_ms"] <= diag["turn_total_ms"]
+        assert "finalize_done_at_monotonic" not in diag
 
     @pytest.mark.asyncio
     async def test_diagnostics_include_retrieval_counts(self) -> None:
