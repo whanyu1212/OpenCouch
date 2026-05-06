@@ -16,7 +16,6 @@ from langchain_core.runnables import RunnableConfig
 
 from agent.runtime.active_session import (
     ActiveSessionManager,
-    PersistedActiveSessionRow,
     PersistedActiveSessionState,
 )
 from agent.runtime.active_session_store import PostgresActiveSessionStore
@@ -447,89 +446,12 @@ class PersistentAgentRuntime:
             )
             return False
 
-    def _new_mutation_token(self) -> str:
-        """Return a process-scoped mutation token.
-
-        Returns:
-            A mutation token that identifies this runtime instance.
-        """
-
-        return self._active_session_manager.new_mutation_token()
-
-    def _is_mutation_in_flight(self, token: str | None) -> bool:
-        """Return whether a mutation token is actively running in this process.
-
-        Args:
-            token: Persisted mutation token.
-
-        Returns:
-            True when this runtime currently owns an in-flight mutation.
-        """
-
-        return self._active_session_manager.is_mutation_in_flight(token)
-
-    @asynccontextmanager
-    async def _active_session_mutation(
-        self,
-        thread_id: str,
-        *,
-        mutation_kind: str,
-        finalize_required_reason: str | None = None,
-    ) -> AsyncIterator[str]:
-        """Track an in-flight active-session mutation for recovery.
-
-        Args:
-            thread_id: Thread identifier.
-            mutation_kind: Mutation kind for diagnostics.
-            finalize_required_reason: Optional durable recovery reason.
-
-        Yields:
-            The process-scoped mutation token.
-        """
-
-        async with self._active_session_manager.active_session_mutation(
-            thread_id,
-            mutation_kind=mutation_kind,
-            finalize_required_reason=finalize_required_reason,
-        ) as mutation_token:
-            yield mutation_token
-
-    async def _load_persisted_active_session_row(
-        self,
-        thread_id: str,
-    ) -> PersistedActiveSessionRow | None:
-        """Load a raw active-session row.
-
-        Args:
-            thread_id: Thread identifier.
-
-        Returns:
-            The persisted row, or ``None`` when absent.
-        """
-
-        return await self._active_session_manager.load_persisted_active_session_row(
-            thread_id
-        )
-
-    async def _load_persisted_active_session(
-        self,
-        thread_id: str,
-    ) -> PersistedActiveSessionState | None:
-        """Load the persisted active-session record for a thread.
-
-        Args:
-            thread_id: The thread identifier to read.
-
-        Returns:
-            The persisted session record, or ``None`` when absent.
-        """
-
-        return await self._active_session_manager.load_persisted_active_session(
-            thread_id
-        )
-
-    async def _list_persisted_active_session_ids(self) -> list[str]:
+    async def _list_active_thread_ids(self) -> list[str]:
         """List thread ids with unresolved active sessions.
+
+        Incognito runtimes have no persisted store, so they return the
+        in-process tracker's known threads. Persistent runtimes delegate
+        to the active-session manager.
 
         Returns:
             The unresolved active-session thread ids.
@@ -538,94 +460,6 @@ class PersistentAgentRuntime:
         if self.memory_mode == MemoryMode.INCOGNITO:
             return self._session_tracker.thread_ids()
         return await self._active_session_manager.list_persisted_active_session_ids()
-
-    async def _save_persisted_active_session(
-        self,
-        session: PersistedActiveSessionState,
-    ) -> None:
-        """Persist one active-session record.
-
-        Args:
-            session: The session record to upsert.
-
-        Returns:
-            None.
-        """
-
-        await self._active_session_manager.save_persisted_active_session(session)
-
-    async def _set_active_session_mutation(
-        self,
-        thread_id: str,
-        *,
-        mutation_token: str,
-        mutation_kind: str,
-        finalize_required_reason: str | None = None,
-    ) -> None:
-        """Persist a best-effort marker for an in-flight session mutation.
-
-        Args:
-            thread_id: Thread identifier.
-            mutation_token: Process-scoped mutation token.
-            mutation_kind: Mutation kind for diagnostics.
-            finalize_required_reason: Optional durable recovery reason.
-
-        Returns:
-            None.
-        """
-
-        await self._active_session_manager.set_active_session_mutation(
-            thread_id,
-            mutation_token=mutation_token,
-            mutation_kind=mutation_kind,
-            finalize_required_reason=finalize_required_reason,
-        )
-
-    async def _clear_active_session_mutation(
-        self,
-        thread_id: str,
-        mutation_token: str,
-    ) -> None:
-        """Clear a mutation marker when the current process owns it.
-
-        Args:
-            thread_id: Thread identifier.
-            mutation_token: Token to clear.
-
-        Returns:
-            None.
-        """
-
-        await self._active_session_manager.clear_active_session_mutation(
-            thread_id,
-            mutation_token,
-        )
-
-    async def _set_active_session_rotation_required(self, thread_id: str) -> None:
-        """Mark a persisted active session for channel-level rotation.
-
-        Args:
-            thread_id: Thread identifier.
-
-        Returns:
-            None.
-        """
-
-        await self._active_session_manager.set_active_session_rotation_required(
-            thread_id
-        )
-
-    async def _delete_persisted_active_session(self, thread_id: str) -> None:
-        """Delete the persisted active-session record for a thread.
-
-        Args:
-            thread_id: The thread identifier to delete.
-
-        Returns:
-            None.
-        """
-
-        await self._active_session_manager.delete_persisted_active_session(thread_id)
 
     @staticmethod
     def _transcript_length(state: AgentState | None) -> int:
@@ -830,7 +664,7 @@ class PersistentAgentRuntime:
         )
         if session is None:
             return
-        await self._save_persisted_active_session(session)
+        await self._active_session_manager.save_persisted_active_session(session)
 
     async def _finalize_expired_sessions_once(self) -> None:
         """Finalize any sessions that crossed the inactivity timeout.
@@ -840,7 +674,7 @@ class PersistentAgentRuntime:
         """
 
         try:
-            active_thread_ids = await self._list_persisted_active_session_ids()
+            active_thread_ids = await self._list_active_thread_ids()
         except Exception:
             logger.warning(
                 "finalize_expired_sessions_once: failed to list active sessions",
@@ -852,7 +686,11 @@ class PersistentAgentRuntime:
             try:
                 if self._auto_finalization_excluded(active_thread_id):
                     continue
-                persisted = await self._load_persisted_active_session(active_thread_id)
+                persisted = (
+                    await self._active_session_manager.load_persisted_active_session(
+                        active_thread_id
+                    )
+                )
                 if persisted is None or not self._session_has_expired(persisted):
                     continue
                 logger.info(
@@ -923,7 +761,9 @@ class PersistentAgentRuntime:
             if status == SessionStatus.ROTATION_REQUIRED:
                 raise SessionLeaseExpired(thread_id, status)
 
-        persisted = await self._load_persisted_active_session(thread_id)
+        persisted = await self._active_session_manager.load_persisted_active_session(
+            thread_id
+        )
         if persisted is not None:
             self._hydrate_runtime_session_tracking(persisted)
             if self._session_has_expired(persisted):
@@ -985,7 +825,9 @@ class PersistentAgentRuntime:
             transcript_start_index=transcript_start_index,
         )
         if active_transcript_len >= session_transcript_soft_limit:
-            await self._set_active_session_rotation_required(thread_id)
+            await self._active_session_manager.set_active_session_rotation_required(
+                thread_id
+            )
 
     @property
     def memory_store(self) -> MemoryStore:
@@ -1420,7 +1262,9 @@ class PersistentAgentRuntime:
                 return SessionStatus.ACTIVE
             return SessionStatus.ABSENT
 
-        row = await self._load_persisted_active_session_row(thread_id)
+        row = await self._active_session_manager.load_persisted_active_session_row(
+            thread_id
+        )
         if row is None:
             if self._has_runtime_session_tracking(thread_id):
                 return SessionStatus.ACTIVE
@@ -1430,7 +1274,9 @@ class PersistentAgentRuntime:
             return SessionStatus.INTERRUPTED
 
         if row.mutation_token is not None:
-            if not self._is_mutation_in_flight(row.mutation_token):
+            if not self._active_session_manager.is_mutation_in_flight(
+                row.mutation_token
+            ):
                 return SessionStatus.INTERRUPTED
 
         if row.rotate_after_this_turn:
@@ -1480,7 +1326,9 @@ class PersistentAgentRuntime:
 
             checkpointer = self._ensure_open()
             await checkpointer.adelete_thread(thread_id)
-            await self._delete_persisted_active_session(thread_id)
+            await self._active_session_manager.delete_persisted_active_session(
+                thread_id
+            )
             self._clear_runtime_session_tracking(thread_id)
 
     async def list_threads(self, *, limit: int = 20) -> list[ThreadSummary]:
@@ -1633,7 +1481,7 @@ class PersistentAgentRuntime:
                 prior_turn_count=prior_turn_count,
             )
 
-            async with self._active_session_mutation(
+            async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="turn",
             ) as mutation_token:
@@ -1714,7 +1562,9 @@ class PersistentAgentRuntime:
                     history=messages_from_transcript(final_state.get("transcript", [])),
                 )
 
-                await self._clear_active_session_mutation(thread_id, mutation_token)
+                await self._active_session_manager.clear_active_session_mutation(
+                    thread_id, mutation_token
+                )
                 return result
 
     async def end_session(
@@ -1759,7 +1609,9 @@ class PersistentAgentRuntime:
 
         effective_llm_client = self._effective_llm_client(thread_id, llm_client)
         status = await self._session_status_unlocked(thread_id)
-        persisted = await self._load_persisted_active_session(thread_id)
+        persisted = await self._active_session_manager.load_persisted_active_session(
+            thread_id
+        )
         if persisted is not None:
             self._hydrate_runtime_session_tracking(persisted)
         has_active_session = (
@@ -1774,7 +1626,7 @@ class PersistentAgentRuntime:
             if persisted is None:
                 yield None
                 return
-            async with self._active_session_mutation(
+            async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="finalize",
                 finalize_required_reason=(
@@ -1787,7 +1639,9 @@ class PersistentAgentRuntime:
             state = await self.get_state(thread_id)
 
             if state is None:
-                await self._delete_persisted_active_session(thread_id)
+                await self._active_session_manager.delete_persisted_active_session(
+                    thread_id
+                )
                 self._clear_runtime_session_tracking(thread_id)
                 return None
 
@@ -1825,12 +1679,14 @@ class PersistentAgentRuntime:
                     state,
                     suppress_errors=True,
                 )
-                await self._delete_persisted_active_session(thread_id)
+                await self._active_session_manager.delete_persisted_active_session(
+                    thread_id
+                )
                 self._clear_runtime_session_tracking(thread_id)
                 return stored_arc
             except Exception:
                 if mutation_token is not None:
-                    await self._clear_active_session_mutation(
+                    await self._active_session_manager.clear_active_session_mutation(
                         thread_id,
                         mutation_token,
                     )
@@ -1913,7 +1769,7 @@ class PersistentAgentRuntime:
         """
 
         try:
-            active_thread_ids = await self._list_persisted_active_session_ids()
+            active_thread_ids = await self._list_active_thread_ids()
         except Exception:
             logger.warning(
                 "finalize_active_sessions: failed to list active sessions",
@@ -2047,7 +1903,7 @@ class PersistentAgentRuntime:
             finalize_seen = False
             response_ready_emitted = False
 
-            async with self._active_session_mutation(
+            async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="turn",
             ) as mutation_token:
@@ -2162,5 +2018,7 @@ class PersistentAgentRuntime:
                         llm_client=llm_client,
                     )
 
-                await self._clear_active_session_mutation(thread_id, mutation_token)
+                await self._active_session_manager.clear_active_session_mutation(
+                    thread_id, mutation_token
+                )
                 yield DoneEvent(output=state_to_output(final_state))
