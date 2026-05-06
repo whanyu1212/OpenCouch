@@ -32,10 +32,8 @@ import pytest
 from agent.memory.models import EntityRef, ExtractionResult, MemoryWrite
 from agent.memory.modes import MemoryMode
 from agent.models import Channel
-from agent.persistence import (
-    EXTRACTION_DRAIN_TIMEOUT_SECONDS,
-    PersistentAgentRuntime,
-)
+from agent.persistence import PersistentAgentRuntime
+from agent.runtime.turn_extraction import EXTRACTION_DRAIN_TIMEOUT_SECONDS
 from services.llm.base import BaseLLMClient, StructuredResponseT
 
 from tests.test_persistence_cross_restart import (
@@ -260,7 +258,9 @@ async def test_drain_timeout_does_not_block_next_turn_forever(
     with timeout and proceeds anyway.
     """
 
-    monkeypatch.setattr("agent.persistence.EXTRACTION_DRAIN_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(
+        "agent.runtime.turn_extraction.EXTRACTION_DRAIN_TIMEOUT_SECONDS", 0.5
+    )
 
     paths = _runtime_paths(tmp_path)
     stalling = _StallingExtractionLLM()

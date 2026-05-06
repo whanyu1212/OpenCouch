@@ -292,8 +292,8 @@ def build_agent_workflow(
     workflow.add_edge(THERAPEUTIC_SUBGRAPH_NODE, FINALIZE_TURN_NODE)
 
     # Memory extraction is dispatched by the runtime after the graph
-    # terminates — see ``PersistentAgentRuntime._schedule_extraction``
-    # and ``agent.graph.run_agent``.
+    # terminates — see ``TurnExtractionCoordinator.schedule`` and
+    # ``agent.graph.run_agent``.
     workflow.add_edge(FINALIZE_TURN_NODE, END)
 
     compiled = workflow.compile(checkpointer=checkpointer)
