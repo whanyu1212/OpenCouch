@@ -24,7 +24,7 @@ from agent.gates.safety.crisis_rules import (
 )
 from agent.gates.safety.service import CrisisAssessmentSchema
 from agent.runtime_context import WorkflowContext
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from services.base import BaseLLMClient, StructuredResponseT
 
 
 class _MockRuntime:

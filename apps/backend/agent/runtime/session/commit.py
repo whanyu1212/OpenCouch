@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
     from agent.memory.models import StoredSessionArc
     from agent.memory.store import MemoryStore
-    from services.llm.base import BaseLLMClient
+    from services.base import BaseLLMClient
 
 
 async def run_commit_session_memory(

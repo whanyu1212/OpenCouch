@@ -34,7 +34,7 @@ from agent.persistence import (
     SessionStatus,
 )
 from core.config import PersistenceBackend, ResponseModelTier
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

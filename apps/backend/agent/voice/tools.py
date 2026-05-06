@@ -37,8 +37,8 @@ from agent.gates.safety.crisis_rules import (
 from agent.state import AgentState
 from agent.tools.grounded_lookup import answer_grounded_lookup
 from agent.tools.web_search import ResourceLookupStatus, find_local_crisis_resources
-from voice.livekit.activity import emit_voice_activity
-from voice.livekit.session_data import SessionData
+from agent.voice.activity import emit_voice_activity
+from agent.voice.session_data import SessionData
 
 logger = logging.getLogger(__name__)
 
@@ -826,7 +826,7 @@ async def crisis_check(
             userdata.user_id,
             concern[:100],
         )
-        from voice.livekit.agent import CrisisAgent, _copy_handoff_chat_ctx
+        from agent.voice.agent import CrisisAgent, _copy_handoff_chat_ctx
 
         return (
             CrisisAgent(
@@ -843,7 +843,7 @@ async def crisis_check(
             userdata.user_id,
             concern[:100],
         )
-        from voice.livekit.agent import CrisisAgent, _copy_handoff_chat_ctx
+        from agent.voice.agent import CrisisAgent, _copy_handoff_chat_ctx
 
         return (
             CrisisAgent(

@@ -30,7 +30,7 @@ from agent.memory.policy.semantic import (
     contains_negative_self_belief,
     looks_transient_context,
 )
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

@@ -23,7 +23,7 @@ from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode
 from agent.memory.recall import LoadMemoryResult
 from agent.memory.store import MemoryStore
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 
 @dataclass(slots=True, frozen=True)

@@ -57,7 +57,7 @@ from agent.memory.store import MemoryStore
 from agent.memory.turn_write_service import TurnWriteService
 from agent.observability.timing import elapsed_ms
 from agent.state import AgentState, resolve_owner_id
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

@@ -46,9 +46,9 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from voice.livekit.agent import CrisisAgent, TherapeuticAgent
-from voice.livekit.session_data import SessionData
-from voice.realtime import build_voice_system_prompt
+from agent.voice.agent import CrisisAgent, TherapeuticAgent
+from agent.voice.session_data import SessionData
+from agent.voice.config import build_voice_system_prompt
 
 
 class FakeLLMResponse(BaseModel):

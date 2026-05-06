@@ -34,7 +34,7 @@ from agent.memory.modes import MemoryMode
 from agent.models import Channel
 from agent.persistence import PersistentAgentRuntime
 from agent.runtime.turn_extraction import EXTRACTION_DRAIN_TIMEOUT_SECONDS
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from services.base import BaseLLMClient, StructuredResponseT
 
 from tests.test_persistence_cross_restart import (
     _FakeCrossRestartLLM,

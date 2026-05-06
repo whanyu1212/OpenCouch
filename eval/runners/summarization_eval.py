@@ -87,7 +87,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.session import run_summarize_session
 from agent.state import AgentState
 from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "summarization_v1.json"

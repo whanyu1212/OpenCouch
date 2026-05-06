@@ -37,7 +37,7 @@ from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "grounded_lookup_routing_v1.json"

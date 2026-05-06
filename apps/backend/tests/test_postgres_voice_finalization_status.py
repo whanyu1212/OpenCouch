@@ -8,7 +8,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 
-from voice.livekit.finalization_status import (
+from agent.voice.finalization_status import (
     get_voice_finalization_status,
     set_voice_finalization_status,
 )

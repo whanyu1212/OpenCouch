@@ -56,7 +56,7 @@ from core.config import (
     create_configured_response_llm_clients,
     get_settings,
 )
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

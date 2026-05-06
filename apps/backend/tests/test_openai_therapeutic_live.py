@@ -13,7 +13,7 @@ import pytest
 
 from agent.graph import run_agent
 from agent.models import AgentInput, ResponseCategory
-from services.llm.factory import create_llm_client
+from services.factory import create_llm_client
 
 
 def _has_live_openai_env() -> bool:

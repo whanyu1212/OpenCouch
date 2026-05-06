@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from openai import AsyncOpenAI
 
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from services.base import BaseLLMClient, StructuredResponseT
 
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 

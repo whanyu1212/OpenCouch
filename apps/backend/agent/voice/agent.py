@@ -3,13 +3,13 @@
 Runs as a standalone worker process::
 
     # Development mode (auto-reload)
-    uv run python -m voice.livekit.agent dev
+    uv run python -m agent.voice.agent dev
 
     # Production mode
-    uv run python -m voice.livekit.agent start
+    uv run python -m agent.voice.agent start
 
     # Interactive console (no room needed)
-    uv run python -m voice.livekit.agent console
+    uv run python -m agent.voice.agent console
 
 Environment variables:
     LIVEKIT_URL          — LiveKit server URL
@@ -59,9 +59,9 @@ from agent.persistence import (
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
 )
-from voice.livekit.activity import emit_voice_activity
-from voice.livekit.finalization_status import set_voice_finalization_status
-from voice.livekit.session_data import (
+from agent.voice.activity import emit_voice_activity
+from agent.voice.finalization_status import set_voice_finalization_status
+from agent.voice.session_data import (
     ProcessStage,
     SessionData,
     SessionIntent,
@@ -71,8 +71,8 @@ from voice.livekit.session_data import (
     parse_optional_voice_memory_mode,
     parse_voice_memory_mode,
 )
-from voice.livekit.tasks import GroundingTask
-from voice.livekit.tools import (
+from agent.voice.tasks import GroundingTask
+from agent.voice.tools import (
     answer_grounded_factual_lookup,
     cancel_memory_deletion,
     confirm_memory_deletion,
@@ -87,7 +87,7 @@ from voice.livekit.tools import (
     show_memory_status,
     show_saved_memory,
 )
-from voice.realtime import (
+from agent.voice.config import (
     DEFAULT_REALTIME_TRANSCRIPTION_LANGUAGE,
     DEFAULT_REALTIME_TRANSCRIPTION_PROMPT,
     build_voice_system_prompt,
@@ -300,7 +300,7 @@ def _resolve_livekit_session_metadata(
 
 
 # ── Memory loading helpers ──────────────────────────────────────────
-# Extracted from voice/realtime.py for reuse.  These return compact
+# Compact memory loaders for the voice system prompt.  These return
 # string lists suitable for build_voice_system_prompt().
 
 _MAX_MEMORY_ITEMS = 6

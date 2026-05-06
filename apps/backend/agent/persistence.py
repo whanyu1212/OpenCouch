@@ -87,7 +87,7 @@ from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

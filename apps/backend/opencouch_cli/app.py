@@ -102,7 +102,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 CLI_THEME = Theme(
     {
@@ -3545,7 +3545,7 @@ def _run_voice_mode(args) -> int:
     """Start the voice mode server and open the browser.
 
     Launches uvicorn serving the FastAPI app plus a background
-    ``voice.livekit.agent`` worker, then opens the LiveKit test page
+    ``agent.voice.agent`` worker, then opens the LiveKit test page
     in the default browser.
 
     The server runs in the foreground; Ctrl+C stops it.
@@ -3590,7 +3590,7 @@ def _run_voice_mode(args) -> int:
     worker_env["OPENCOUCH_MEMORY_MODE"] = (
         "guest" if args.memory_mode == "guest" else "persistent"
     )
-    worker_cmd = [sys.executable, "-m", "voice.livekit.agent", "start"]
+    worker_cmd = [sys.executable, "-m", "agent.voice.agent", "start"]
 
     console.print(Rule("[primary]OpenCouch Voice Mode[/primary]", style="panel"))
     console.print(

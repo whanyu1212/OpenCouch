@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from services.llm.base import BaseLLMClient
-from services.llm.google_genai import DEFAULT_GEMINI_MODEL, GeminiLLMClient
-from services.llm.openai_client import DEFAULT_OPENAI_MODEL, OpenAILLMClient
+from services.base import BaseLLMClient
+from services.google_genai import DEFAULT_GEMINI_MODEL, GeminiLLMClient
+from services.openai_client import DEFAULT_OPENAI_MODEL, OpenAILLMClient
 
 LLMProvider = Literal["gemini", "openai"]
 

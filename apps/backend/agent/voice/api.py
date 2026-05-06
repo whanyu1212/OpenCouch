@@ -1,4 +1,4 @@
-"""FastAPI routes for LiveKit voice sessions (Option C).
+"""FastAPI routes for LiveKit voice sessions.
 
 Provides a token endpoint that the frontend calls before connecting
 to a LiveKit room.  The token is a signed JWT that grants the
@@ -16,10 +16,7 @@ import json
 import logging
 import os
 import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
 from livekit.api import (
     AccessToken,
     RoomAgentDispatch,
@@ -29,14 +26,13 @@ from livekit.api import (
 from pydantic import BaseModel
 
 from core.config import load_runtime_env
-from voice.realtime import normalize_assistant_voice
-from voice.livekit.finalization_status import get_voice_finalization_status
-from voice.livekit.session_data import parse_voice_memory_mode
+from agent.voice.config import normalize_assistant_voice
+from agent.voice.finalization_status import get_voice_finalization_status
+from agent.voice.session_data import parse_voice_memory_mode
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/voice/livekit", tags=["voice-livekit"])
-TEST_PAGE_PATH = Path(__file__).parent / "test_page.html"
 
 
 class TokenRequest(BaseModel):
@@ -72,13 +68,6 @@ class VoiceFinalizationStatusResponse(BaseModel):
     status: str
     detail: str | None = None
     updated_at: str
-
-
-@router.get("/test")
-async def livekit_voice_test_page() -> HTMLResponse:
-    """Serve the standalone LiveKit browser test page."""
-
-    return HTMLResponse(TEST_PAGE_PATH.read_text())
 
 
 @router.get(

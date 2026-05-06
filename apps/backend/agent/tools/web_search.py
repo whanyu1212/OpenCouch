@@ -12,7 +12,7 @@ from typing import Literal
 
 from agent.conversation import format_recent_history
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 ResourceLookupStatus = Literal[

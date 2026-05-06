@@ -31,7 +31,7 @@ from agent.graph import run_agent
 from agent.models import AgentInput, AgentOutput, Message
 from agent.persistence import PersistentAgentRuntime
 from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "therapeutic_behavior_v1_1.json"

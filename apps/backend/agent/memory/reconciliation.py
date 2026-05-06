@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from agent.memory.models import MemoryWrite, ProceduralRule, SemanticFact
 from agent.memory.store import StoreRecord
 from agent.memory.text_tokens import tokenize_meaningful
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

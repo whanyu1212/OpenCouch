@@ -166,7 +166,7 @@ async def get_voice_finalization_status(
         database_url=database_url,
     )
     if resolved_database_url is not None:
-        from voice.livekit.postgres_finalization_status import (
+        from agent.voice.postgres_finalization_status import (
             get_postgres_voice_finalization_status,
         )
 
@@ -196,7 +196,7 @@ async def set_voice_finalization_status(
         database_url=database_url,
     )
     if resolved_database_url is not None:
-        from voice.livekit.postgres_finalization_status import (
+        from agent.voice.postgres_finalization_status import (
             set_postgres_voice_finalization_status,
         )
 

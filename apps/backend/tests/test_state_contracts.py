@@ -39,7 +39,7 @@ from agent.therapeutic.graph import (
 )
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 from agent.therapeutic.response import run_therapeutic_response_node
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from services.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeRuntime:

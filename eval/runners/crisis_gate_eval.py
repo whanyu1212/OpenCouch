@@ -25,7 +25,7 @@ from agent.gates.safety.service import (
     enforce_crisis_truth_table,
 )
 from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "crisis_detection_v1.json"

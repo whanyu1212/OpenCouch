@@ -65,7 +65,7 @@ from agent.memory.prompts.summarization import (
     build_summarization_user_prompt,
 )
 from agent.state import AgentState, resolve_owner_id
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider

@@ -427,7 +427,7 @@ class TestCrisisLogMetadata:
         from typing import cast
 
         from agent.gates.safety.service import CrisisAssessmentSchema
-        from services.llm.base import BaseLLMClient, StructuredResponseT
+        from services.base import BaseLLMClient, StructuredResponseT
 
         class _FakeCrisisLLM(BaseLLMClient):
             async def generate_text(

@@ -37,7 +37,7 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "exercise_selection_v1.json"

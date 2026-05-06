@@ -22,7 +22,7 @@ from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded_lookup import answer_grounded_lookup
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from services.base import BaseLLMClient, StructuredResponseT
 
 
 class _Runtime:

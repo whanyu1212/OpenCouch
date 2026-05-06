@@ -44,7 +44,7 @@ from agent.therapeutic.exercises.registry import (
     voice_exercise_ids,
 )
 from agent.therapeutic.exercises.types import ExerciseStep
-from voice.livekit.session_data import SessionData
+from agent.voice.session_data import SessionData
 
 logger = logging.getLogger(__name__)
 

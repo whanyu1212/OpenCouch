@@ -43,7 +43,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.store import MemoryStore
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

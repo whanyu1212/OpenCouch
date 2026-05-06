@@ -22,7 +22,7 @@ from agent.gates.grounded_lookup.prompts import (
     build_grounded_lookup_system_prompt as _build_grounded_lookup_system_prompt,
 )
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient
+from services.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

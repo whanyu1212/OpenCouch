@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from services.llm.factory import create_llm_client
-from services.llm.openai_client import DEFAULT_OPENAI_MODEL
-from services.llm.openai_client import OpenAILLMClient
+from services.factory import create_llm_client
+from services.openai_client import DEFAULT_OPENAI_MODEL
+from services.openai_client import OpenAILLMClient
 
 
 class _FakeResponses:
@@ -95,7 +95,7 @@ def _reset_fakes() -> None:
 async def test_openai_generate_text_omits_tools_without_search(monkeypatch) -> None:
     """Plain text generation should not send an empty tools list."""
 
-    monkeypatch.setattr("services.llm.openai_client.AsyncOpenAI", _FakeAsyncOpenAI)
+    monkeypatch.setattr("services.openai_client.AsyncOpenAI", _FakeAsyncOpenAI)
 
     client = OpenAILLMClient(api_key="test-key", model="test-model")
     text = await client.generate_text(prompt="hello", use_search=False)
@@ -110,7 +110,7 @@ async def test_openai_generate_text_omits_tools_without_search(monkeypatch) -> N
 async def test_openai_generate_text_uses_responses_web_search_tool(monkeypatch) -> None:
     """Search-enabled text generation should use the documented tool type."""
 
-    monkeypatch.setattr("services.llm.openai_client.AsyncOpenAI", _FakeAsyncOpenAI)
+    monkeypatch.setattr("services.openai_client.AsyncOpenAI", _FakeAsyncOpenAI)
 
     client = OpenAILLMClient(api_key="test-key", model="test-model")
     await client.generate_text(prompt="find current info", use_search=True)
@@ -122,7 +122,7 @@ async def test_openai_generate_text_uses_responses_web_search_tool(monkeypatch) 
 def test_create_llm_client_routes_openai_with_default_model(monkeypatch) -> None:
     """Factory should route OpenAI clients with the OpenAI default model."""
 
-    monkeypatch.setattr("services.llm.factory.OpenAILLMClient", _FakeProviderClient)
+    monkeypatch.setattr("services.factory.OpenAILLMClient", _FakeProviderClient)
 
     client = create_llm_client(provider="openai", api_key="openai-key")
 
@@ -135,7 +135,7 @@ def test_create_llm_client_routes_openai_with_default_model(monkeypatch) -> None
 def test_create_llm_client_routes_gemini_with_model_override(monkeypatch) -> None:
     """Factory should route Gemini clients and preserve model overrides."""
 
-    monkeypatch.setattr("services.llm.factory.GeminiLLMClient", _FakeProviderClient)
+    monkeypatch.setattr("services.factory.GeminiLLMClient", _FakeProviderClient)
 
     client = create_llm_client(
         provider="gemini",

@@ -6,7 +6,7 @@ from psycopg.rows import dict_row
 import psycopg
 
 from agent.memory.hashing import iso_now
-from voice.livekit.finalization_status import (
+from agent.voice.finalization_status import (
     VOICE_FINALIZATION_STATUS_DDL,
     VoiceFinalizationState,
     VoiceFinalizationStatus,
