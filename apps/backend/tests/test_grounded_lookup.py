@@ -13,7 +13,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput, ResponseStyleType, ResponseCategory
 from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.grounded_lookup.router import (
+from agent.gates.grounded_lookup.router import (
     GroundedLookupAction,
     detect_grounded_lookup_action,
     resolve_grounded_lookup_action,

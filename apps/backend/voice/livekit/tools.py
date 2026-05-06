@@ -18,7 +18,7 @@ from typing import cast
 
 from livekit.agents import RunContext, function_tool
 
-from agent.memory.user_controls import (
+from agent.gates.memory_control import (
     MemoryControlTarget,
     delete_memory_target,
     find_memory_target_by_index,
@@ -29,7 +29,7 @@ from agent.memory.user_controls import (
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import aget_procedural_profile
-from agent.safety.crisis_rules import (
+from agent.gates.safety.crisis_rules import (
     AMBIGUOUS_PATTERNS,
     CLEAR_SELF_HARM_PATTERNS,
     IMMINENT_PATTERNS,

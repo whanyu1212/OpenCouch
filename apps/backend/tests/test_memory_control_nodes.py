@@ -18,7 +18,7 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.user_controls.router import (
+from agent.gates.memory_control.router import (
     MemoryControlAction,
     detect_memory_control_action,
     resolve_memory_control_action,

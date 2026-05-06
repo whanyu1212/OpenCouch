@@ -12,7 +12,7 @@ from agent.graph_constants import (
     LOAD_MEMORY_NODE,
     GroundedLookupGateNextNode,
 )
-from agent.grounded_lookup.router import resolve_grounded_lookup_action
+from agent.gates.grounded_lookup.router import resolve_grounded_lookup_action
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState

@@ -90,7 +90,7 @@ work.
 
 Classification order:
 
-1. Deterministic hard overrides from `agent.safety.crisis_rules`.
+1. Deterministic hard overrides from `agent.gates.safety.crisis_rules`.
 2. LLM structured classifier when `llm_client` is available.
 3. Deterministic fallback when no LLM is available or the LLM call fails.
 

@@ -188,7 +188,7 @@ class _FakeExtractionLLM(BaseLLMClient):
             # Return a safe (level 0) crisis assessment so non-crisis
             # messages don't route to the crisis branch during these tests.
             self.crisis_calls += 1
-            from agent.safety.service import CrisisAssessmentSchema
+            from agent.gates.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

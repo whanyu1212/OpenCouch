@@ -144,7 +144,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
         schema_name = response_schema.__name__
 
         if schema_name == "CrisisAssessmentSchema":
-            from agent.safety.service import CrisisAssessmentSchema
+            from agent.gates.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

@@ -13,7 +13,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
 from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.user_controls.service import execute_memory_control_action
+from agent.gates.memory_control.service import execute_memory_control_action
 from agent.models import AgentInput
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState

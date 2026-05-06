@@ -9,11 +9,11 @@ from pydantic import BaseModel, Field
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import CrisisAssessment
-from agent.safety.crisis_rules import (
+from agent.gates.safety.crisis_rules import (
     assess_crisis_risk_deterministically,
     detect_crisis_override,
 )
-from agent.safety.prompts import (
+from agent.gates.safety.prompts import (
     build_crisis_classifier_prompt,
     build_crisis_classifier_system_prompt,
 )

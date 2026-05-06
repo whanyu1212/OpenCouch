@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.grounded_lookup.patterns import (
+from agent.gates.grounded_lookup.patterns import (
     AMBIGUOUS_LOOKUP_SIGNAL_RE as _AMBIGUOUS_LOOKUP_SIGNAL_RE,
     CHECK_IF_RE as _CHECK_IF_RE,
     CURRENT_INFO_RE as _CURRENT_INFO_RE,
@@ -17,7 +17,7 @@ from agent.grounded_lookup.patterns import (
     THERAPEUTIC_SUBJECTIVE_RE as _THERAPEUTIC_SUBJECTIVE_RE,
     VERIFY_RE as _VERIFY_RE,
 )
-from agent.grounded_lookup.prompts import (
+from agent.gates.grounded_lookup.prompts import (
     build_grounded_lookup_prompt as _build_grounded_lookup_prompt,
     build_grounded_lookup_system_prompt as _build_grounded_lookup_system_prompt,
 )

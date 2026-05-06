@@ -201,7 +201,7 @@ class _StallingExtractionLLM(BaseLLMClient):
             raise RuntimeError("unreachable")
 
         if schema_name == "CrisisAssessmentSchema":
-            from agent.safety.service import CrisisAssessmentSchema
+            from agent.gates.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

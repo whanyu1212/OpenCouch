@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agent.memory.user_controls.operations import (
+from agent.gates.memory_control.operations import (
     MemoryControlTarget,
     delete_memory_target,
     find_memory_target_by_index,
@@ -16,7 +16,7 @@ from agent.memory.user_controls.operations import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import aget_procedural_profile
-from agent.memory.user_controls.router import (
+from agent.gates.memory_control.router import (
     CancelPendingAction,
     ConfirmPendingAction,
     ForgetByIndexAction,

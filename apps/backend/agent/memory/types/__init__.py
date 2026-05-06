@@ -2,17 +2,7 @@
 
 from __future__ import annotations
 
-from agent.memory.types.audit import (
-    CrisisClassifierPath,
-    CrisisLogAggregate,
-    CrisisLogLevelCounts,
-    CrisisLogPathCounts,
-    CrisisLogRecord,
-    CrisisOverrideOutcome,
-    FeedbackLabel,
-    FeedbackSource,
-    SessionFeedbackRecord,
-)
+
 from agent.memory.types.episodic import (
     ACTContext,
     CBTContext,
@@ -81,15 +71,6 @@ __all__ = [
     "ProceduralProfile",
     "ProceduralRuleDraft",
     "ProceduralExtractionResult",
-    "CrisisOverrideOutcome",
-    "CrisisClassifierPath",
-    "CrisisLogRecord",
-    "CrisisLogLevelCounts",
-    "CrisisLogPathCounts",
-    "CrisisLogAggregate",
     "TherapeuticResponseStyle",
     "DispatchDecision",
-    "FeedbackLabel",
-    "FeedbackSource",
-    "SessionFeedbackRecord",
 ]

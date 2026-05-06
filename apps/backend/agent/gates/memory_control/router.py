@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-from agent.memory.user_controls.patterns import (
+from agent.gates.memory_control.patterns import (
     AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE as _AMBIGUOUS_MEMORY_CONTROL_SIGNAL_RE,
     INDEX_RE as _INDEX_RE,
     NO_RE as _NO_RE,

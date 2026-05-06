@@ -1,6 +1,6 @@
 """Safety-specific policy and classification helpers."""
 
-from agent.safety.crisis_rules import (
+from agent.gates.safety.crisis_rules import (
     assess_crisis_risk_deterministically,
     detect_crisis_override,
 )

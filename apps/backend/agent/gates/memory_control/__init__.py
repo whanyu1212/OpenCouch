@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent.memory.user_controls.operations import (
+from agent.gates.memory_control.operations import (
     MemoryControlTarget,
     delete_memory_target,
     find_memory_target_by_index,
@@ -26,7 +26,7 @@ from agent.memory.user_controls.operations import (
 )
 
 if TYPE_CHECKING:
-    from agent.memory.user_controls.router import (
+    from agent.gates.memory_control.router import (
         CancelPendingAction,
         ConfirmPendingAction,
         ForgetByIndexAction,
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
         parse_memory_control_action,
         resolve_memory_control_action,
     )
-    from agent.memory.user_controls.service import (
+    from agent.gates.memory_control.service import (
         MemoryControlServiceResult,
         execute_memory_control_action,
     )
@@ -85,14 +85,14 @@ def __getattr__(name: str) -> Any:
     """Lazily resolve router/service symbols on first access (PEP 562)."""
 
     if name in _LAZY_ROUTER_SYMBOLS:
-        from agent.memory.user_controls import router as _router
+        from agent.gates.memory_control import router as _router
 
         value = getattr(_router, name)
         globals()[name] = value
         return value
 
     if name in _LAZY_SERVICE_SYMBOLS:
-        from agent.memory.user_controls import service as _service
+        from agent.gates.memory_control import service as _service
 
         value = getattr(_service, name)
         globals()[name] = value

@@ -1,7 +1,7 @@
 """Crisis-mode prompt builders.
 
-Co-located with the safety classifier (``agent.safety.service``) and
-crisis-rule helpers (``agent.safety.crisis_rules``) because crisis-mode
+Co-located with the safety classifier (``agent.gates.safety.service``) and
+crisis-rule helpers (``agent.gates.safety.crisis_rules``) because crisis-mode
 is a safety feature. Builds on top of the shared prompt infrastructure
 in ``agent.prompts`` for source loading, composition, and history
 formatting.
