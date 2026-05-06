@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.prompts.shared import CORE_SOURCES
+from agent.prompts import CORE_SOURCES
 
 
 _RESPONSE_STYLE_BASE_KNOWLEDGE: dict[str, tuple[str, ...]] = {

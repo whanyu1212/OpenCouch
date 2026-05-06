@@ -31,7 +31,7 @@ from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
-from agent.therapeutic.dispatcher import run_therapeutic_dispatch_node
+from agent.therapeutic.dispatch import run_therapeutic_dispatch_node
 from agent.therapeutic.graph import (
     TherapeuticSubgraphInput,
     TherapeuticSubgraphOutput,

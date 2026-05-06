@@ -46,7 +46,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.dispatcher import (
+from agent.therapeutic.dispatch import (
     CLARIFYING_NODE,
     CLOSING_NODE,
     GUIDED_EXERCISE_NODE,

@@ -9,11 +9,11 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
 from agent.models import ResponseStyleType, ResponseCategory
-from agent.prompts import (
+from agent.runtime_context import WorkflowContext
+from agent.safety.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
 )
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
 logger = logging.getLogger(__name__)

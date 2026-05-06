@@ -9,13 +9,13 @@ from pydantic import BaseModel, Field
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import CrisisAssessment
-from agent.prompts import (
-    build_crisis_classifier_prompt,
-    build_crisis_classifier_system_prompt,
-)
 from agent.safety.crisis_rules import (
     assess_crisis_risk_deterministically,
     detect_crisis_override,
+)
+from agent.safety.prompts import (
+    build_crisis_classifier_prompt,
+    build_crisis_classifier_system_prompt,
 )
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient

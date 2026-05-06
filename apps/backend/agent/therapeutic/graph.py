@@ -37,7 +37,7 @@ from agent.state import (
     SessionMemoryState,
     SessionProgressState,
 )
-from agent.therapeutic.dispatcher import (
+from agent.therapeutic.dispatch import (
     GUIDED_EXERCISE_NODE,
     THERAPEUTIC_RESPONSE_NODE,
     run_therapeutic_dispatch_node,

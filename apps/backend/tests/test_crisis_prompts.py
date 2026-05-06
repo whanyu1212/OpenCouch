@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
-from agent.prompts.crisis import build_crisis_response_prompt
+from agent.safety.prompts import build_crisis_response_prompt
 from agent.state import AgentState
 
 

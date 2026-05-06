@@ -1,12 +1,15 @@
 """Crisis-mode prompt builders.
 
-Uses shared helpers from ``agent.prompts.shared`` for source loading,
-composition, and history formatting.
+Co-located with the safety classifier (``agent.safety.service``) and
+crisis-rule helpers (``agent.safety.crisis_rules``) because crisis-mode
+is a safety feature. Builds on top of the shared prompt infrastructure
+in ``agent.prompts`` for source loading, composition, and history
+formatting.
 """
 
 from __future__ import annotations
 
-from agent.prompts.shared import (
+from agent.prompts import (
     CORE_SOURCES,
     compose_sources as _compose,
     format_recent_history as _format_recent_history,

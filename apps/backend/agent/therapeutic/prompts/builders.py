@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from agent.prompts.shared import (
+from agent.prompts import (
     compose_sources as _compose,
     format_recent_history as _format_recent_history,
     load_prompt_source as _load_knowledge_file,
 )
 from agent.state import AgentState
-from agent.therapeutic.prompting.context import (
+from agent.therapeutic.prompts.context import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
     _format_working_memory,
     _has_episodic_context,
 )
-from agent.therapeutic.prompting.instructions import (
+from agent.therapeutic.prompts.instructions import (
     _CLARIFYING_INSTRUCTIONS,
     _CLOSING_INSTRUCTIONS,
     _CONTINUITY_FILE,
@@ -24,7 +24,7 @@ from agent.therapeutic.prompting.instructions import (
     _SUPPORTIVE_INSTRUCTIONS,
     _TECHNIQUE_INSTRUCTIONS,
 )
-from agent.therapeutic.prompting.sources import _knowledge_for_response_style
+from agent.therapeutic.prompts.sources import _knowledge_for_response_style
 
 _SAFETY_CHECK_FILE = "response_styles/safety_check.md"
 _SAFETY_CHECK_OVERRIDE = """

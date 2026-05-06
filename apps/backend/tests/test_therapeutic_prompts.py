@@ -36,9 +36,9 @@ from __future__ import annotations
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
-from agent.prompts import build_crisis_response_system_prompt
+from agent.safety.prompts import build_crisis_response_system_prompt
 from agent.state import AgentState
-from agent.therapeutic.dispatcher import build_therapeutic_dispatch_system_prompt
+from agent.therapeutic.dispatch import build_therapeutic_dispatch_system_prompt
 from agent.therapeutic.prompts import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
