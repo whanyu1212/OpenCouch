@@ -10,7 +10,7 @@ import aiosqlite
 
 from agent.memory.hashing import iso_now
 from agent.persistence import DEFAULT_MEMORY_DB_PATH
-from config import get_settings
+from config import MISSING_MEMORY_DATABASE_URL_MESSAGE, get_settings
 
 VoiceFinalizationState = Literal["in_progress", "completed", "failed"]
 
@@ -72,10 +72,7 @@ def _resolve_postgres_database_url(
     if settings.persistence_backend != "postgres":
         return None
     if not settings.memory_database_url:
-        raise ValueError(
-            "OPENCOUCH_MEMORY_DATABASE_URL is required when "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres"
-        )
+        raise ValueError(MISSING_MEMORY_DATABASE_URL_MESSAGE)
     return settings.memory_database_url
 
 

@@ -232,7 +232,7 @@ def test_postgres_thread_backend_requires_database_url() -> None:
     """Selecting the Postgres thread backend without a DSN should fail
     fast at runtime construction rather than later on first turn."""
 
-    with pytest.raises(ValueError, match="thread_database_url"):
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         PersistentAgentRuntime(
             memory_mode=MemoryMode.LOCAL,
             thread_persistence_backend="postgres",

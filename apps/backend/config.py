@@ -27,6 +27,19 @@ DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
 # Docker.
 DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
 
+# Shared, actionable error text raised by every postgres-without-URL guard
+# in the runtime. Lives here so the message stays consistent across the
+# checkpointer and voice-finalization validators that reference it.
+MISSING_MEMORY_DATABASE_URL_MESSAGE = (
+    "OPENCOUCH_PERSISTENCE_BACKEND=postgres requires "
+    "OPENCOUCH_MEMORY_DATABASE_URL. Add it to your .env — for the "
+    "local docker compose stack use "
+    "postgresql://opencouch:opencouch@localhost:5432/opencouch "
+    "(or @postgres:5432/opencouch from inside the compose network). "
+    "For a local-only install without docker, set "
+    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite instead."
+)
+
 _DOTENV_LOADED = False
 
 
@@ -87,8 +100,9 @@ def get_settings() -> Settings:
 
     Raises:
         ValueError: If `LLM_PROVIDER` or `OPENCOUCH_PERSISTENCE_BACKEND`
-            contains an unsupported value, or if `persistence_backend` is
-            `postgres` without a configured `OPENCOUCH_MEMORY_DATABASE_URL`.
+            contains an unsupported value. Postgres-without-URL is validated
+            downstream by the runtime constructor, where the error can be
+            surfaced with full context.
     """
 
     load_runtime_env()
@@ -103,17 +117,6 @@ def get_settings() -> Settings:
         "OPENCOUCH_PERSISTENCE_BACKEND",
         DEFAULT_PERSISTENCE_BACKEND,
     )
-    memory_database_url = os.getenv("OPENCOUCH_MEMORY_DATABASE_URL")
-    if persistence_backend == "postgres" and not memory_database_url:
-        raise ValueError(
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres requires "
-            "OPENCOUCH_MEMORY_DATABASE_URL. Add it to your .env — for the "
-            "local docker compose stack use "
-            "postgresql://opencouch:opencouch@localhost:5432/opencouch "
-            "(or @postgres:5432/opencouch from inside the compose network). "
-            "For a local-only install without docker, set "
-            "OPENCOUCH_PERSISTENCE_BACKEND=sqlite instead."
-        )
 
     return Settings(
         llm_provider=provider,
@@ -138,7 +141,7 @@ def get_settings() -> Settings:
             DEFAULT_OPENAI_QUALITY_MODEL,
         ),
         persistence_backend=persistence_backend,
-        memory_database_url=memory_database_url,
+        memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
         langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
         in {"1", "true", "yes", "on"},
         langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),

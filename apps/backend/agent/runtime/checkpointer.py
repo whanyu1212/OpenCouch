@@ -11,6 +11,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+from config import MISSING_MEMORY_DATABASE_URL_MESSAGE
+
 ThreadPersistenceBackend = Literal["sqlite", "postgres"]
 Checkpointer = AsyncSqliteSaver | AsyncPostgresSaver
 
@@ -40,9 +42,7 @@ def validate_thread_checkpointer_config(
     """
 
     if thread_persistence_backend == "postgres" and not thread_database_url:
-        raise ValueError(
-            "thread_database_url is required when thread_persistence_backend='postgres'"
-        )
+        raise ValueError(MISSING_MEMORY_DATABASE_URL_MESSAGE)
 
 
 def build_checkpoint_serializer() -> JsonPlusSerializer:
@@ -84,10 +84,7 @@ async def open_checkpointer(
     serializer = build_checkpoint_serializer()
     if thread_persistence_backend == "postgres":
         if not thread_database_url:
-            raise ValueError(
-                "thread_database_url is required when "
-                "thread_persistence_backend='postgres'"
-            )
+            raise ValueError(MISSING_MEMORY_DATABASE_URL_MESSAGE)
         context_manager = AsyncPostgresSaver.from_conn_string(
             thread_database_url,
             serde=serializer,

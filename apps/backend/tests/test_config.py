@@ -7,17 +7,24 @@ import pytest
 import config
 
 
-def test_get_settings_rejects_postgres_backend_without_database_url(
+def test_get_settings_defaults_to_postgres_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Postgres backend (default) without a configured URL must fail fast."""
+    """Unset persistence env vars resolve to the Postgres backend with a null URL.
+
+    The postgres-without-URL combination is rejected later by the runtime
+    constructor (see `validate_thread_checkpointer_config`); `get_settings`
+    itself returns a DTO and does not enforce the URL contract.
+    """
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.delenv("OPENCOUCH_PERSISTENCE_BACKEND", raising=False)
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
 
-    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
-        config.get_settings()
+    settings = config.get_settings()
+
+    assert settings.persistence_backend == "postgres"
+    assert settings.memory_database_url is None
 
 
 def test_get_settings_reads_sqlite_backend_override(
