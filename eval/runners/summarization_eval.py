@@ -84,7 +84,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.runtime.session_summarize import run_summarize_session
+from agent.runtime.session import run_summarize_session
 from agent.state import AgentState
 from core.config import create_configured_llm_client
 from services.llm.base import BaseLLMClient

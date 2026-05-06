@@ -14,8 +14,8 @@ from agent.memory.extraction_service import (
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.runtime.session_commit import run_commit_session_memory
-from agent.runtime.session_summarize import run_summarize_session
+from agent.runtime.session.commit import run_commit_session_memory
+from agent.runtime.session.summarize import run_summarize_session
 from agent.state import AgentState
 from services.llm.base import BaseLLMClient
 

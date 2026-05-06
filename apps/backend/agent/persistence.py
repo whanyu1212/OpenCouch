@@ -17,9 +17,9 @@ from langchain_core.runnables import RunnableConfig
 from agent.runtime.active_session import (
     ActiveSessionManager,
     PersistedActiveSessionState,
+    PostgresActiveSessionStore,
+    SqliteActiveSessionStore,
 )
-from agent.runtime.active_session_store import PostgresActiveSessionStore
-from agent.runtime.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.graph_constants import FINALIZE_TURN_NODE
 from agent.memory.policy.candidates import SessionMemoryBuffer
@@ -31,9 +31,16 @@ from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.recall import LoadMemoryResult, load_memory_for_turn
 from agent.audit.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.models import StoredSessionArc
-from agent.runtime.session_finalization import (
+from agent.runtime.session import (
+    RuntimeSessionTracker,
+    active_transcript_length,
+    crisis_level_from_state,
     extract_memory_from_transcript,
     finalize_session_window,
+    session_continuity_clear_delta,
+    slice_state_to_active_session,
+    transcript_length,
+    turn_count_from_state,
 )
 from agent.runtime.streaming import (
     chunk_event_from_custom_payload,
@@ -42,7 +49,6 @@ from agent.runtime.streaming import (
     stamp_turn_total_ms,
     status_stage_for_node,
 )
-from agent.runtime.session_tracking import RuntimeSessionTracker
 from agent.runtime.turn_extraction import TurnExtractionCoordinator
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
@@ -57,14 +63,6 @@ from agent.runtime.checkpointer import (
     ALLOWED_MSGPACK_MODULES as CHECKPOINT_ALLOWED_MSGPACK_MODULES,
     open_checkpointer,
     validate_thread_checkpointer_config,
-)
-from agent.runtime.session_state import (
-    active_transcript_length,
-    crisis_level_from_state,
-    session_continuity_clear_delta,
-    slice_state_to_active_session,
-    transcript_length,
-    turn_count_from_state,
 )
 from agent.models import (
     AgentInput,
