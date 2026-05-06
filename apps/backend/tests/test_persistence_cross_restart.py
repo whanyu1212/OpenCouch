@@ -1049,7 +1049,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
                 session_buffer=persisted.session_buffer,
             )
         )
-        runtime._clear_runtime_session_tracking("thread-timeout")
+        runtime._clear_thread_state("thread-timeout")
 
         llm.extraction_result = _empty_extraction_result()
         result = await runtime.run_turn(
@@ -1230,7 +1230,7 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
                 session_buffer=persisted.session_buffer,
             )
         )
-        runtime._clear_runtime_session_tracking("thread-sweeper")
+        runtime._clear_thread_state("thread-sweeper")
 
         await runtime._finalize_expired_sessions_once()
 

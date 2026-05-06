@@ -461,53 +461,6 @@ class PersistentAgentRuntime:
             return self._session_tracker.thread_ids()
         return await self._active_session_manager.list_persisted_active_session_ids()
 
-    @staticmethod
-    def _transcript_length(state: AgentState | None) -> int:
-        """Return the durable transcript length for a thread state.
-
-        Args:
-            state: The thread state snapshot.
-
-        Returns:
-            The transcript length, or ``0`` when state is absent.
-        """
-
-        return transcript_length(state)
-
-    @staticmethod
-    def _slice_state_to_active_session(
-        state: AgentState,
-        *,
-        transcript_start_index: int,
-    ) -> AgentState:
-        """Slice a state snapshot to the active-session transcript window.
-
-        Args:
-            state: The full thread state.
-            transcript_start_index: The transcript index where the active session begins.
-
-        Returns:
-            A shallow state copy limited to the active session window.
-        """
-
-        return slice_state_to_active_session(
-            state,
-            transcript_start_index=transcript_start_index,
-        )
-
-    @staticmethod
-    def _session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
-        """Build a delta that clears session-scoped continuity fields.
-
-        Args:
-            state: The current checkpointed state, if any.
-
-        Returns:
-            A partial state update that clears stale session continuity.
-        """
-
-        return session_continuity_clear_delta(state)
-
     async def _clear_session_continuity_in_checkpoint(
         self,
         thread_id: str,
@@ -530,7 +483,7 @@ class PersistentAgentRuntime:
                 ``suppress_errors`` is ``False``.
         """
 
-        delta = self._session_continuity_clear_delta(state)
+        delta = session_continuity_clear_delta(state)
         if not delta:
             return
 
@@ -551,57 +504,20 @@ class PersistentAgentRuntime:
                 return
             raise
 
-    def _session_has_expired(self, session: PersistedActiveSessionState) -> bool:
-        """Return whether an active session crossed the inactivity timeout.
+    def _clear_thread_state(self, thread_id: str) -> None:
+        """Drop all in-process state for one thread.
 
-        Args:
-            session: The persisted active-session record.
-
-        Returns:
-            ``True`` when the session is expired.
-        """
-
-        return self._active_session_manager.session_has_expired(session)
-
-    def _clear_runtime_session_tracking(self, thread_id: str) -> None:
-        """Drop all in-process session trackers for one thread.
+        Clears the session tracker (active-session metadata, transcript
+        start index, max crisis level, session memory buffer) and pops
+        the cached per-thread LLM client. Composite operation — both
+        pieces are runtime-owned and always cleared together.
 
         Args:
             thread_id: The thread identifier to clear.
-
-        Returns:
-            None.
         """
 
         self._session_tracker.clear(thread_id)
         self._thread_llm_clients.pop(thread_id, None)
-
-    def _has_runtime_session_tracking(self, thread_id: str) -> bool:
-        """Return whether a thread has in-process session trackers.
-
-        Args:
-            thread_id: The thread identifier to check.
-
-        Returns:
-            ``True`` when any runtime session tracker exists for the thread.
-        """
-
-        return self._session_tracker.has_tracking(thread_id)
-
-    def _hydrate_runtime_session_tracking(
-        self,
-        session: PersistedActiveSessionState,
-    ) -> None:
-        """Restore in-process trackers from a persisted session record.
-
-        Args:
-            session: The persisted session record to hydrate from.
-
-        Returns:
-            None.
-        """
-
-        self._session_tracker.hydrate(session)
 
     def _remember_llm_client(
         self,
@@ -691,7 +607,10 @@ class PersistentAgentRuntime:
                         active_thread_id
                     )
                 )
-                if persisted is None or not self._session_has_expired(persisted):
+                if (
+                    persisted is None
+                    or not self._active_session_manager.session_has_expired(persisted)
+                ):
                     continue
                 logger.info(
                     "session timeout reached for thread %s; auto-finalizing expired session",
@@ -765,8 +684,8 @@ class PersistentAgentRuntime:
             thread_id
         )
         if persisted is not None:
-            self._hydrate_runtime_session_tracking(persisted)
-            if self._session_has_expired(persisted):
+            self._session_tracker.hydrate(persisted)
+            if self._active_session_manager.session_has_expired(persisted):
                 logger.info(
                     "session timeout reached for thread %s; ending prior session before new turn",
                     thread_id,
@@ -774,7 +693,7 @@ class PersistentAgentRuntime:
                 await self._end_session_unlocked(thread_id, llm_client=llm_client)
                 persisted = None
 
-        if persisted is None and self._has_runtime_session_tracking(thread_id):
+        if persisted is None and self._session_tracker.has_tracking(thread_id):
             return
 
         if persisted is None:
@@ -783,7 +702,7 @@ class PersistentAgentRuntime:
             self._session_tracker.start_session(
                 thread_id,
                 started_at=now,
-                transcript_start_index=self._transcript_length(prior_state),
+                transcript_start_index=transcript_length(prior_state),
             )
             await self._persist_runtime_session_tracking(
                 thread_id,
@@ -990,7 +909,7 @@ class PersistentAgentRuntime:
         if not owner_id:
             return None
 
-        is_first_turn = self._transcript_length(prior_state) == 0
+        is_first_turn = transcript_length(prior_state) == 0
         return asyncio.create_task(
             load_memory_for_turn(
                 memory_store=self._memory_store,
@@ -1258,7 +1177,7 @@ class PersistentAgentRuntime:
         """
 
         if self.memory_mode == MemoryMode.INCOGNITO:
-            if self._has_runtime_session_tracking(thread_id):
+            if self._session_tracker.has_tracking(thread_id):
                 return SessionStatus.ACTIVE
             return SessionStatus.ABSENT
 
@@ -1266,7 +1185,7 @@ class PersistentAgentRuntime:
             thread_id
         )
         if row is None:
-            if self._has_runtime_session_tracking(thread_id):
+            if self._session_tracker.has_tracking(thread_id):
                 return SessionStatus.ACTIVE
             return SessionStatus.ABSENT
 
@@ -1292,7 +1211,7 @@ class PersistentAgentRuntime:
             )
             return SessionStatus.INTERRUPTED
 
-        if self._session_has_expired(session):
+        if self._active_session_manager.session_has_expired(session):
             return SessionStatus.EXPIRED_UNFINALIZED
 
         return SessionStatus.ACTIVE
@@ -1329,7 +1248,7 @@ class PersistentAgentRuntime:
             await self._active_session_manager.delete_persisted_active_session(
                 thread_id
             )
-            self._clear_runtime_session_tracking(thread_id)
+            self._clear_thread_state(thread_id)
 
     async def list_threads(self, *, limit: int = 20) -> list[ThreadSummary]:
         """List the most recent persisted threads.
@@ -1376,19 +1295,6 @@ class PersistentAgentRuntime:
                 )
             )
         return summaries
-
-    @staticmethod
-    def _turn_count_from_state(state: AgentState | None) -> int:
-        """Extract the persisted turn count from a checkpoint snapshot.
-
-        Args:
-            state: The checkpointed state snapshot, if any.
-
-        Returns:
-            The persisted turn count.
-        """
-
-        return turn_count_from_state(state)
 
     @staticmethod
     def _build_turn_initial_state(
@@ -1470,7 +1376,7 @@ class PersistentAgentRuntime:
                 llm_client=llm_client,
                 expected_liveness=expected_liveness,
             )
-            prior_turn_count = self._turn_count_from_state(prior_state)
+            prior_turn_count = turn_count_from_state(prior_state)
 
             initial_state = self._build_turn_initial_state(
                 thread_id=thread_id,
@@ -1613,9 +1519,9 @@ class PersistentAgentRuntime:
             thread_id
         )
         if persisted is not None:
-            self._hydrate_runtime_session_tracking(persisted)
+            self._session_tracker.hydrate(persisted)
         has_active_session = (
-            persisted is not None or self._has_runtime_session_tracking(thread_id)
+            persisted is not None or self._session_tracker.has_tracking(thread_id)
         )
 
         if not has_active_session:
@@ -1642,14 +1548,14 @@ class PersistentAgentRuntime:
                 await self._active_session_manager.delete_persisted_active_session(
                     thread_id
                 )
-                self._clear_runtime_session_tracking(thread_id)
+                self._clear_thread_state(thread_id)
                 return None
 
             try:
                 transcript_start_index = self._session_tracker.transcript_start_index(
                     thread_id
                 )
-                session_state = self._slice_state_to_active_session(
+                session_state = slice_state_to_active_session(
                     state,
                     transcript_start_index=transcript_start_index,
                 )
@@ -1682,7 +1588,7 @@ class PersistentAgentRuntime:
                 await self._active_session_manager.delete_persisted_active_session(
                     thread_id
                 )
-                self._clear_runtime_session_tracking(thread_id)
+                self._clear_thread_state(thread_id)
                 return stored_arc
             except Exception:
                 if mutation_token is not None:
@@ -1812,7 +1718,7 @@ class PersistentAgentRuntime:
 
         try:
             state = await self.get_state(thread_id)
-            turn_count = self._turn_count_from_state(state)
+            turn_count = turn_count_from_state(state)
 
             # Mirror the crisis-log privacy contract in incognito mode.
             if self.memory_mode == MemoryMode.INCOGNITO:
@@ -1886,7 +1792,7 @@ class PersistentAgentRuntime:
                 llm_client=llm_client,
                 expected_liveness=expected_liveness,
             )
-            prior_turn_count = self._turn_count_from_state(prior_state)
+            prior_turn_count = turn_count_from_state(prior_state)
 
             initial_state = self._build_turn_initial_state(
                 thread_id=thread_id,
