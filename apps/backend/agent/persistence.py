@@ -14,13 +14,13 @@ from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 
-from agent.active_session_manager import (
+from agent.runtime.active_session import (
     ActiveSessionManager,
     PersistedActiveSessionRow,
     PersistedActiveSessionState,
 )
-from agent.active_session_store import PostgresActiveSessionStore
-from agent.active_session_store_sqlite import SqliteActiveSessionStore
+from agent.runtime.active_session_store import PostgresActiveSessionStore
+from agent.runtime.active_session_store_sqlite import SqliteActiveSessionStore
 from agent.graph import build_agent_workflow, build_initial_state, state_to_output
 from agent.graph_constants import FINALIZE_TURN_NODE
 from agent.memory.policy.candidates import SessionMemoryBuffer

@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-if TYPE_CHECKING:
-    from agent.active_session_store_sqlite import SqliteActiveSessionStore
 
 ACTIVE_SESSION_STATE_DDL = """
 CREATE TABLE IF NOT EXISTS opencouch_active_sessions (
@@ -260,20 +257,9 @@ class PostgresActiveSessionStore:
                 )
 
 
-def __getattr__(name: str) -> Any:
-    """Lazily expose compatibility imports for legacy active-session stores."""
-
-    if name == "SqliteActiveSessionStore":
-        from agent.active_session_store_sqlite import SqliteActiveSessionStore
-
-        return SqliteActiveSessionStore
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 __all__ = [
     "ACTIVE_SESSION_EXTRA_COLUMNS",
     "ACTIVE_SESSION_STATE_DDL",
     "ActiveSessionStore",
     "PostgresActiveSessionStore",
-    "SqliteActiveSessionStore",
 ]
