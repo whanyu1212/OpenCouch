@@ -21,7 +21,7 @@ from agent.memory.models import (
     PFAContext,
     SessionArc,
 )
-from agent.working_memory import (
+from agent.memory.entries import (
     format_working_memory_entry,
     make_episodic_working_memory_entry,
 )

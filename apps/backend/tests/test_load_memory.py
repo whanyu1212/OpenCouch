@@ -39,7 +39,7 @@ from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.working_memory import format_working_memory_entry
+from agent.memory.entries import format_working_memory_entry
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent.state import AgentState
-from agent.working_memory import format_working_memory_entries
+from agent.memory.entries import format_working_memory_entries
 
 
 def _format_working_memory(state: AgentState) -> str:

@@ -51,7 +51,7 @@ from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.reconciliation import is_active_semantic_record_value
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
-from agent.working_memory import (
+from agent.memory.entries import (
     WorkingMemoryEntry,
     make_episodic_working_memory_entry,
     make_semantic_working_memory_entry,

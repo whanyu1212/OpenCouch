@@ -85,7 +85,7 @@ from agent.models import (
     friendly_stage,
 )
 from agent.state import AgentState
-from agent.working_memory import format_working_memory_entries
+from agent.memory.entries import format_working_memory_entries
 from core.config import (
     ResponseModelTier,
     create_configured_control_llm_client,

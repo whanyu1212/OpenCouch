@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent.working_memory import WorkingMemoryEntry
+from agent.memory.entries import WorkingMemoryEntry
 
 
 class Channel(str, Enum):

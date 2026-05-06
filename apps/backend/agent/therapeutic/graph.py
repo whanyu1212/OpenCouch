@@ -44,7 +44,7 @@ from agent.therapeutic.dispatch import (
 )
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 from agent.therapeutic.response import run_therapeutic_response_node
-from agent.working_memory import WorkingMemoryEntry
+from agent.memory.entries import WorkingMemoryEntry
 
 # Dispatcher node name exported so the parent graph (or tests) can
 # reference it without importing from dispatcher.py directly.
