@@ -39,8 +39,8 @@ from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
 from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
-from agent.memory.postgres_store import PostgresMemoryStore
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.store.postgres import PostgresMemoryStore
+from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import (
     DEFAULT_CRISIS_LOG_DB_PATH,

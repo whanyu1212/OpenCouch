@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.memory import postgres_store
+from agent.memory.store import postgres
 
 
 def test_schema_does_not_create_invalid_3072_hnsw_index() -> None:
@@ -13,7 +13,7 @@ def test_schema_does_not_create_invalid_3072_hnsw_index() -> None:
             dimension limit while keeping the fixed vector column available.
     """
 
-    schema = "\n".join(postgres_store.MEMORY_SCHEMA_DDL)
+    schema = "\n".join(postgres.MEMORY_SCHEMA_DDL)
 
     assert "embedding_vector_3072 vector(3072)" in schema
     assert "USING hnsw" not in schema

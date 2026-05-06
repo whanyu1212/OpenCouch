@@ -1,7 +1,7 @@
 """PostgreSQL-backed implementation of the :class:`MemoryStore` protocol.
 
 :class:`PostgresMemoryStore` mirrors the behavioral contract of
-:class:`agent.memory.sqlite_store.SqliteMemoryStore`, but persists
+:class:`agent.memory.store.sqlite.SqliteMemoryStore`, but persists
 records through a lazily opened psycopg async connection.
 
 This first-cut implementation intentionally keeps retrieval semantics in

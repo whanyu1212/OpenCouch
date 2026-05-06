@@ -57,7 +57,7 @@ from agent.memory.models import (
     SummarizationResult,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
 from services.llm.base import BaseLLMClient, StructuredResponseT

@@ -19,9 +19,9 @@ from agent.memory.embeddings import (
     NullEmbeddingProvider,
     create_configured_embedding_provider,
 )
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.modes import MemoryMode
-from agent.memory.postgres_store import PostgresMemoryStore
+from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 
 PersistenceBackend = Literal["sqlite", "postgres"]
