@@ -24,7 +24,7 @@ from agent.therapeutic.exercises.state import (
     _get_current_step,
 )
 from agent.therapeutic.prompts import build_guided_exercise_system_prompt
-from agent.therapeutic.response_styles.common import (
+from agent.therapeutic.response_styles import (
     StreamWriterFactory,
     generate_streamed_therapeutic_text,
     therapeutic_response_delta,

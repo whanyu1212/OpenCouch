@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Literal
 
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
-from agent.audit.sqlite.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.sqlite.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
+from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.audit.session_feedback import (
     InMemorySessionFeedbackBackend,
     SessionFeedbackBackend,
