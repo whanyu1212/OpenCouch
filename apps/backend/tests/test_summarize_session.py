@@ -34,7 +34,7 @@ from agent.memory.episodic import (
 )
 from agent.runtime.session import run_summarize_session
 from agent.state import AgentState
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────

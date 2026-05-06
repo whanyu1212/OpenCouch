@@ -4,7 +4,7 @@ import pytest
 
 from agent.graph import run_agent
 from agent.models import AgentInput, ResponseCategory
-from services.factory import create_llm_client
+from llm.factory import create_llm_client
 
 
 def _has_live_gemini_env() -> bool:

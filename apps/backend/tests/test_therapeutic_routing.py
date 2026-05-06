@@ -52,7 +52,7 @@ from agent.therapeutic.graph import (
     TherapeuticSubgraphOutput,
     build_therapeutic_subgraph,
 )
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ─── Fake LLM client for dispatcher integration tests ────────────────────

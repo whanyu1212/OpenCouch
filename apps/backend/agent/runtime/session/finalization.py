@@ -17,7 +17,7 @@ from agent.memory.store import MemoryStore
 from agent.runtime.session.commit import run_commit_session_memory
 from agent.runtime.session.summarize import run_summarize_session
 from agent.state import AgentState
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

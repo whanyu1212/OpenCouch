@@ -60,7 +60,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ─── Fake LLM client ───────────────────────────────────────────────────

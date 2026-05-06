@@ -10,7 +10,7 @@ import aiosqlite
 
 from agent.memory.hashing import iso_now
 from agent.persistence import DEFAULT_MEMORY_DB_PATH
-from core.config import get_settings
+from config import get_settings
 
 VoiceFinalizationState = Literal["in_progress", "completed", "failed"]
 

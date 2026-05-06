@@ -14,7 +14,7 @@ from agent.models import AgentInput, CrisisAssessment
 from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeRuntime:

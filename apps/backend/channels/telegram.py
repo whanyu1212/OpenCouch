@@ -33,8 +33,8 @@ from agent.persistence import (
     SessionLeaseExpired,
     SessionStatus,
 )
-from core.config import PersistenceBackend, ResponseModelTier
-from services.base import BaseLLMClient
+from config import PersistenceBackend, ResponseModelTier
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -642,7 +642,7 @@ def build_telegram_session_registry(
     """
 
     if database_url:
-        from channels.telegram_registry_postgres import PostgresTelegramSessionRegistry
+        from channels.registry.postgres import PostgresTelegramSessionRegistry
 
         return PostgresTelegramSessionRegistry(database_url)
 
@@ -651,7 +651,7 @@ def build_telegram_session_registry(
         "Postgres database URL is configured."
     )
 
-    from channels.legacy.telegram_registry_sqlite import SqliteTelegramSessionRegistry
+    from channels.registry.sqlite_fallback import SqliteTelegramSessionRegistry
 
     return SqliteTelegramSessionRegistry(sqlite_path)
 
@@ -969,7 +969,7 @@ class TelegramChannel:
         elif session_registry is not None:
             self._registry = session_registry
         else:
-            from channels.legacy.telegram_registry_sqlite import (
+            from channels.registry.sqlite_fallback import (
                 SqliteTelegramSessionRegistry,
             )
 

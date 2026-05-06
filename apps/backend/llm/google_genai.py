@@ -9,7 +9,7 @@ from typing import Any, cast
 from google import genai
 from google.genai import types
 
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
 

@@ -23,7 +23,7 @@ from agent.memory.procedural_profile import (
     aput_procedural_profile,
 )
 from agent.persistence import PersistentAgentRuntime
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeResponseTierLLM(BaseLLMClient):

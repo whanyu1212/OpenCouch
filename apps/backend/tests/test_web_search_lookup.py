@@ -12,7 +12,7 @@ from agent.tools.web_search import (
     _normalize_extracted_location,
     find_local_crisis_resources,
 )
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeLookupLLM(BaseLLMClient):

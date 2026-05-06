@@ -31,7 +31,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.session import run_commit_session_memory
 from agent.persistence import PersistentAgentRuntime
 from agent.state import AgentState
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 def _semantic_write(

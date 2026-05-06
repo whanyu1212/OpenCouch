@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core import config
+import config
 
 
 def test_get_settings_defaults_to_postgres_backend(

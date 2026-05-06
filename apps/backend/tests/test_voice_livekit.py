@@ -60,7 +60,7 @@ from agent.voice.agent import (
     _load_turn_relevant_semantic_facts,
 )
 import agent.voice.agent as livekit_agent_module
-import agent.voice.api as livekit_api_module
+import agent.voice.routes as livekit_api_module
 from agent.voice.activity import VOICE_ACTIVITY_TOPIC
 from agent.voice.session_data import SessionData, TherapeuticProcessState
 from agent.voice.finalization_status import (

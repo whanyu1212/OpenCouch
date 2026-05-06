@@ -19,7 +19,7 @@ from api.models import (
     ThreadSessionStatusResponse,
     ThreadSummaryResponse,
 )
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 router = APIRouter(prefix="/threads", tags=["threads"])
 

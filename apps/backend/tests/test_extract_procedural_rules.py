@@ -40,7 +40,7 @@ from agent.memory.procedural_profile import (
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 async def run_extract_procedural_rules_node(

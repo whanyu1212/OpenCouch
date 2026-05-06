@@ -86,7 +86,7 @@ from agent.models import (
 )
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entries
-from core.config import (
+from config import (
     ResponseModelTier,
     create_configured_control_llm_client,
     create_configured_response_llm_client,
@@ -102,7 +102,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 CLI_THEME = Theme(
     {

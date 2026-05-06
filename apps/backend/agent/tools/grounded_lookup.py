@@ -7,7 +7,7 @@ from typing import Literal
 
 from agent.conversation import format_recent_history
 from agent.state import AgentState
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

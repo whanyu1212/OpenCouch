@@ -18,7 +18,7 @@ from agent.gates.safety.prompts import (
     build_crisis_classifier_system_prompt,
 )
 from agent.state import AgentState
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

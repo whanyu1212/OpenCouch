@@ -20,7 +20,7 @@ from agent.memory.prompts.control import (
     build_memory_control_system_prompt as _build_memory_control_system_prompt,
 )
 from agent.state import AgentState
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

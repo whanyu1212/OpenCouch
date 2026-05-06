@@ -29,7 +29,7 @@ from channels.telegram import (
     build_telegram_session_registry,
     is_rotated_telegram_thread_id,
 )
-from core.config import (
+from config import (
     create_configured_control_llm_client,
     create_configured_response_llm_client,
     get_settings,

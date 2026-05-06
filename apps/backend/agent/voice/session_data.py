@@ -17,7 +17,7 @@ from typing import Literal
 from agent.gates.memory_control import MemoryControlTarget
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 _PERSISTENT_MODE_VALUES = {"persistent", "local", "synced"}
 _INCOGNITO_MODE_VALUES = {"guest", "incognito", "private"}

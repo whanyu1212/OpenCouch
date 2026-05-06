@@ -58,7 +58,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.memory.modes import MemoryMode
 from agent.persistence import PersistentAgentRuntime
-from core.config import create_configured_llm_client, get_settings
+from config import create_configured_llm_client, get_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASETS = [

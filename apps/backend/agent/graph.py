@@ -76,7 +76,7 @@ from agent.observability.tracing import apply_graph_tracing
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from agent.therapeutic.graph import build_therapeutic_subgraph
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 
 # ── State plumbing ───────────────────────────────────────────────────────────

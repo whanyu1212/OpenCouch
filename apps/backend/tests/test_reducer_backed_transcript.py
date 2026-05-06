@@ -34,7 +34,7 @@ from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.persistence import PersistentAgentRuntime
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
-from services.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ── Reducer annotation tests ───────────────────────────────────────────────

@@ -77,7 +77,7 @@ from agent.memory.reconciliation import (
     plan_procedural_rule_write_llm_primary,
 )
 from agent.memory.store import MemoryStore, Namespace
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 # The fixed record key for every user's procedural profile.
 PROCEDURAL_KEY = "user_response_style"

@@ -146,7 +146,7 @@ async def _ensure_runtime() -> PersistentAgentRuntime:
     if _runtime is not None:
         return _runtime
 
-    from core.config import get_settings
+    from config import get_settings
 
     settings = get_settings()
     _runtime = PersistentAgentRuntime(
@@ -166,7 +166,7 @@ async def _ensure_runtime() -> PersistentAgentRuntime:
     )
     await _runtime.__aenter__()
 
-    from core.config import create_configured_control_llm_client
+    from config import create_configured_control_llm_client
 
     try:
         _llm_client = create_configured_control_llm_client()

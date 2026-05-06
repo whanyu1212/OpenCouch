@@ -29,7 +29,7 @@ from agent.therapeutic.response_styles import (
     generate_streamed_therapeutic_text,
     therapeutic_response_delta,
 )
-from services.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

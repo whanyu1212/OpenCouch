@@ -55,8 +55,8 @@ from agent.therapeutic.dispatch import (
     SUPPORTIVE_NODE,
     run_therapeutic_dispatch_node,
 )
-from core.config import create_configured_llm_client
-from services.base import BaseLLMClient
+from config import create_configured_llm_client
+from llm.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "therapeutic_routing_v0.json"

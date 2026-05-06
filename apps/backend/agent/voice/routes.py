@@ -25,7 +25,7 @@ from livekit.api import (
 )
 from pydantic import BaseModel
 
-from core.config import load_runtime_env
+from config import load_runtime_env
 from agent.voice.config import normalize_assistant_voice
 from agent.voice.finalization_status import get_voice_finalization_status
 from agent.voice.session_data import parse_voice_memory_mode

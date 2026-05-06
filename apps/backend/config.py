@@ -9,10 +9,10 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
-from services.base import BaseLLMClient
-from services.factory import create_llm_client
-from services.google_genai import DEFAULT_GEMINI_MODEL
-from services.openai_client import DEFAULT_OPENAI_MODEL
+from llm.base import BaseLLMClient
+from llm.factory import create_llm_client
+from llm.google_genai import DEFAULT_GEMINI_MODEL
+from llm.openai_client import DEFAULT_OPENAI_MODEL
 
 LLMProvider = Literal["gemini", "openai"]
 ResponseModelTier = Literal["fast", "quality"]
@@ -41,8 +41,8 @@ def load_runtime_env() -> None:
     if _DOTENV_LOADED:
         return
 
-    backend_root = Path(__file__).resolve().parents[1]
-    repo_root = Path(__file__).resolve().parents[3]
+    backend_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parents[2]
 
     load_dotenv(repo_root / ".env", override=False)
     load_dotenv(repo_root / ".env.local", override=False)
@@ -87,7 +87,8 @@ def get_settings() -> Settings:
 
     Raises:
         ValueError: If `LLM_PROVIDER` or `OPENCOUCH_PERSISTENCE_BACKEND`
-            contains an unsupported value.
+            contains an unsupported value, or if `persistence_backend` is
+            `postgres` without a configured `OPENCOUCH_MEMORY_DATABASE_URL`.
     """
 
     load_runtime_env()
@@ -102,6 +103,17 @@ def get_settings() -> Settings:
         "OPENCOUCH_PERSISTENCE_BACKEND",
         DEFAULT_PERSISTENCE_BACKEND,
     )
+    memory_database_url = os.getenv("OPENCOUCH_MEMORY_DATABASE_URL")
+    if persistence_backend == "postgres" and not memory_database_url:
+        raise ValueError(
+            "OPENCOUCH_PERSISTENCE_BACKEND=postgres requires "
+            "OPENCOUCH_MEMORY_DATABASE_URL. Add it to your .env — for the "
+            "local docker compose stack use "
+            "postgresql://opencouch:opencouch@localhost:5432/opencouch "
+            "(or @postgres:5432/opencouch from inside the compose network). "
+            "For a local-only install without docker, set "
+            "OPENCOUCH_PERSISTENCE_BACKEND=sqlite instead."
+        )
 
     return Settings(
         llm_provider=provider,
@@ -126,7 +138,7 @@ def get_settings() -> Settings:
             DEFAULT_OPENAI_QUALITY_MODEL,
         ),
         persistence_backend=persistence_backend,
-        memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
+        memory_database_url=memory_database_url,
         langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
         in {"1", "true", "yes", "on"},
         langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),
