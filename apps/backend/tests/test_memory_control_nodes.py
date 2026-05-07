@@ -18,7 +18,7 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.user_controls.router import (
+from agent.gates.memory_control.router import (
     MemoryControlAction,
     detect_memory_control_action,
     resolve_memory_control_action,
@@ -28,7 +28,7 @@ from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _Runtime:

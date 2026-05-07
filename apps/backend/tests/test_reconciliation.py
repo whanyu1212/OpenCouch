@@ -18,7 +18,7 @@ from agent.memory.reconciliation import (
     plan_semantic_write,
 )
 from agent.memory.store import StoreRecord
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeReconciliationLLM(BaseLLMClient):

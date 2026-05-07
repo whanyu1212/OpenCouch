@@ -32,9 +32,9 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
-from agent.nodes.summarize_session import run_summarize_session
+from agent.runtime.session import run_summarize_session
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────
@@ -371,7 +371,7 @@ class TestSummarizerHappyPath:
         )
         state = _partial_state()
 
-        with caplog.at_level(logging.INFO, logger="agent.nodes.summarize_session"):
+        with caplog.at_level(logging.INFO, logger="agent.runtime.session.summarize"):
             await run_summarize_session(
                 state,
                 llm_client=fake,
@@ -434,7 +434,7 @@ class TestSummarizerFailureModes:
         )
         state = _partial_state()
 
-        with caplog.at_level(logging.WARNING, logger="agent.nodes.summarize_session"):
+        with caplog.at_level(logging.WARNING, logger="agent.runtime.session.summarize"):
             result = await run_summarize_session(
                 state,
                 llm_client=fake,
@@ -466,7 +466,7 @@ class TestSummarizerFailureModes:
         )
         state = _partial_state()
 
-        with caplog.at_level(logging.WARNING, logger="agent.nodes.summarize_session"):
+        with caplog.at_level(logging.WARNING, logger="agent.runtime.session.summarize"):
             result = await run_summarize_session(
                 state,
                 llm_client=fake,

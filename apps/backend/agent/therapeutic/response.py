@@ -21,7 +21,7 @@ from agent.therapeutic.prompts import (
     build_supportive_system_prompt,
     build_technique_system_prompt,
 )
-from agent.therapeutic.response_styles.common import (
+from agent.therapeutic.response_styles import (
     ResponsePostprocessor,
     SystemPromptBuilder,
     run_streamed_response_style,

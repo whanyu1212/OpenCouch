@@ -30,10 +30,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
 from agent.nodes.crisis_gate import _build_crisis_delta
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.load_memory import run_load_memory_node
-from agent.nodes.memory_extraction import run_memory_extraction_node
 from agent.models import CrisisAssessment
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, _merge_dicts
@@ -170,29 +167,6 @@ async def test_load_memory_node_does_not_spread_diagnostics() -> None:
     assert "load_memory_ms" in diag
 
 
-@pytest.mark.asyncio
-async def test_extract_facts_node_does_not_spread_diagnostics() -> None:
-    """extract_semantic_facts_node should return only its own diagnostics keys."""
-    state = _state_with_pre_existing_diagnostics()
-    # No LLM client → fast skip path, but still writes diagnostics.
-    delta = await run_extract_semantic_facts_node(state, _FakeRuntime())  # type: ignore[arg-type]
-    diag = delta.get("diagnostics", {})
-    _assert_no_spread(diag, "extract_semantic_facts_node")
-    assert "extract_facts_ms" in diag
-    assert "extract_facts_reason" in diag
-
-
-@pytest.mark.asyncio
-async def test_extract_procedural_rules_node_does_not_spread_diagnostics() -> None:
-    """extract_procedural_rules_node should return only its own diagnostics keys."""
-    state = _state_with_pre_existing_diagnostics()
-    delta = await run_extract_procedural_rules_node(state, _FakeRuntime())  # type: ignore[arg-type]
-    diag = delta.get("diagnostics", {})
-    _assert_no_spread(diag, "extract_procedural_rules_node")
-    assert "extract_procedural_ms" in diag
-    assert "extract_procedural_reason" in diag
-
-
 def test_crisis_gate_build_delta_does_not_spread_diagnostics() -> None:
     """_build_crisis_delta should return only its own diagnostics keys.
 
@@ -238,35 +212,29 @@ def test_no_diagnostics_spreading_in_codebase() -> None:
     )
 
 
-# ── Graph topology: terminal memory extraction ──────────────────────────────
+# ── Graph topology: extractors lifted out of the graph ─────────────────────
 
 
-@pytest.mark.asyncio
-async def test_memory_extraction_node_merges_extractor_diagnostics() -> None:
-    """The wrapper node should merge semantic and procedural diagnostics."""
+def test_finalize_terminates_at_end_with_no_extractor_nodes() -> None:
+    """Memory extraction is no longer in the graph topology.
 
-    state = _state_with_pre_existing_diagnostics()
-    delta = await run_memory_extraction_node(state, _FakeRuntime())  # type: ignore[arg-type]
-    diag = delta.get("diagnostics", {})
-
-    _assert_no_spread(diag, "memory_extraction_node")
-    assert "extract_facts_ms" in diag
-    assert "extract_facts_reason" in diag
-    assert "extract_procedural_ms" in diag
-    assert "extract_procedural_reason" in diag
-
-
-def test_memory_extraction_node_is_terminal_after_finalize() -> None:
-    """Top-level graph should have one terminal memory extraction node."""
+    Earlier shapes routed extraction through a wrapper node, then through
+    parallel terminal edges. Both became hot-path tax: extraction blocks
+    the user-visible turn even though its work is post-response. The
+    runtime now manages extraction as a background task (or runs it
+    synchronously after ``ainvoke`` for one-shot ``run_agent`` callers).
+    Pin the new shape: ``finalize_turn_node`` is the terminal node.
+    """
 
     graph = build_agent_workflow()
     graph_def = graph.get_graph()
     edge_tuples = {(e.source, e.target) for e in graph_def.edges}
+    node_names = set(graph_def.nodes)
 
-    assert ("finalize_turn_node", "memory_extraction_node") in edge_tuples
-    assert ("memory_extraction_node", "__end__") in edge_tuples
-    assert ("finalize_turn_node", "extract_semantic_facts_node") not in edge_tuples
-    assert ("finalize_turn_node", "extract_procedural_rules_node") not in edge_tuples
+    assert ("finalize_turn_node", "__end__") in edge_tuples
+    assert "extract_semantic_facts_node" not in node_names
+    assert "extract_procedural_rules_node" not in node_names
+    assert "memory_extraction_node" not in node_names
 
 
 # ── End-to-end: diagnostics merge across all nodes ──────────────────────────

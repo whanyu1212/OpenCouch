@@ -14,14 +14,16 @@ share runtime stores while keeping graph state scoped to the checkpoint.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode
+from agent.memory.recall import LoadMemoryResult
 from agent.memory.store import MemoryStore
-from services.llm.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,6 +48,12 @@ class WorkflowContext:
         session_memory_buffer: Optional per-thread candidate buffer. Hot-path
             extractors add held semantic/procedural candidates here so
             session-end commit can promote or drop them.
+        pre_fetched_memory: Optional in-flight memory fetch the runtime
+            scheduled at turn start so it overlaps with crisis/control/grounded
+            gates. ``load_memory_node`` awaits it on the therapeutic path.
+            ``None`` when speculation is disabled, the turn is incognito, or
+            the runtime did not pre-schedule (e.g., one-shot calls via
+            ``run_agent``).
     """
 
     llm_client: BaseLLMClient | None
@@ -55,6 +63,7 @@ class WorkflowContext:
     response_llm: BaseLLMClient | None = None
     embedding_provider: EmbeddingProvider | None = None
     session_memory_buffer: SessionMemoryBuffer | None = None
+    pre_fetched_memory: asyncio.Task[LoadMemoryResult] | None = None
 
     @property
     def control_llm(self) -> BaseLLMClient | None:

@@ -35,7 +35,7 @@ from agent.therapeutic.exercises.registry import (
     EXERCISE_THOUGHT_RECORD,
     EXERCISE_VALUES_COMPASS,
 )
-from voice.livekit.agent import (
+from agent.voice.agent import (
     CrisisAgent,
     HoldSpaceAgent,
     UnderstandingAgent,
@@ -59,17 +59,17 @@ from voice.livekit.agent import (
     _load_semantic_facts,
     _load_turn_relevant_semantic_facts,
 )
-import voice.livekit.agent as livekit_agent_module
-import voice.livekit.api as livekit_api_module
-from voice.livekit.activity import VOICE_ACTIVITY_TOPIC
-from voice.livekit.session_data import SessionData, TherapeuticProcessState
-from voice.livekit.finalization_status import (
+import agent.voice.agent as livekit_agent_module
+import agent.voice.routes as livekit_api_module
+from agent.voice.activity import VOICE_ACTIVITY_TOPIC
+from agent.voice.session_data import SessionData, TherapeuticProcessState
+from agent.voice.finalization_status import (
     VoiceFinalizationStatus,
     get_voice_finalization_status,
     set_voice_finalization_status,
 )
-from voice.livekit.tasks import _build_exercise_instructions, _resolve_exercise
-from voice.livekit.tools import (
+from agent.voice.tasks import _build_exercise_instructions, _resolve_exercise
+from agent.voice.tools import (
     answer_grounded_factual_lookup,
     cancel_memory_deletion,
     confirm_memory_deletion,
@@ -81,7 +81,7 @@ from voice.livekit.tools import (
     show_memory_status,
     show_saved_memory,
 )
-from voice.realtime import build_voice_system_prompt
+from agent.voice.config import build_voice_system_prompt
 
 
 class _FakeMemoryStore:

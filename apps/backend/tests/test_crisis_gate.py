@@ -18,13 +18,13 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord
 from agent.models import AgentInput, ResponseCategory
 from agent.nodes.crisis_gate import run_crisis_gate_node
-from agent.safety.crisis_rules import (
+from agent.gates.safety.crisis_rules import (
     assess_crisis_risk_deterministically,
     detect_crisis_override,
 )
-from agent.safety.service import CrisisAssessmentSchema
+from agent.gates.safety.service import CrisisAssessmentSchema
 from agent.runtime_context import WorkflowContext
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _MockRuntime:

@@ -28,14 +28,14 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from livekit.agents import ChatContext
 
-from voice.livekit.agent import (
+from agent.voice.agent import (
     _assess_therapeutic_process_state,
     _build_therapeutic_process_guidance,
     _compose_therapeutic_agent_instructions,
     _therapeutic_agent_kind_for_state,
 )
-from voice.livekit.session_data import TherapeuticProcessState
-from voice.realtime import build_voice_system_prompt
+from agent.voice.session_data import TherapeuticProcessState
+from agent.voice.config import build_voice_system_prompt
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1]

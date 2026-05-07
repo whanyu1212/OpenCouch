@@ -38,8 +38,8 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from voice.livekit.session_data import SessionData
-from voice.livekit.tools import (
+from agent.voice.session_data import SessionData
+from agent.voice.tools import (
     cancel_memory_deletion,
     confirm_memory_deletion,
     prepare_memory_deletion,

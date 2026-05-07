@@ -31,8 +31,8 @@ from agent.therapeutic.exercises.state import (
 )
 from agent.therapeutic.exercises.step_classifier import _classify_step_state_llm_primary
 from agent.therapeutic.exercises.types import ExerciseStep
-from agent.therapeutic.response_styles.common import therapeutic_response_delta
-from services.llm.base import BaseLLMClient
+from agent.therapeutic.response_styles import therapeutic_response_delta
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

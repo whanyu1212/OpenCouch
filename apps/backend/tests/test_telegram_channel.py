@@ -30,7 +30,7 @@ from channels.gateway import (
     run_telegram_gateway,
     telegram_gateway_lock_path,
 )
-from channels.legacy.telegram_registry_sqlite import SqliteTelegramSessionRegistry
+from channels.registry.sqlite_fallback import SqliteTelegramSessionRegistry
 from channels.telegram import (
     TELEGRAM_MAINTENANCE_MESSAGE,
     TELEGRAM_SESSION_CLOSED_MESSAGE,
@@ -45,9 +45,9 @@ from channels.telegram import (
     split_telegram_text,
     telegram_thread_id,
 )
-from channels.telegram_registry_postgres import PostgresTelegramSessionRegistry
+from channels.registry.postgres import PostgresTelegramSessionRegistry
 from agent.persistence import PersistentAgentRuntime, SessionLeaseExpired, SessionStatus
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
 

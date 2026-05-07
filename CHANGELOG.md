@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-05-07 — Agent Module Restructure + Service Extraction + Latency Wins
+
+This entry covers ~50 commits on `refactor/agent-restructure` since the 2026-05-03 entry, with a net **−1043 lines across 172 files** — a structural simplification rather than a feature push, plus one user-perceptible latency improvement and end-of-week dogfooding ergonomics.
+
+### Module structure cleanup
+- Promoted the agent into its own coherent package by moving `voice/` into `agent/voice/`, `active_session_*` into `agent/runtime/`, and `working-memory entries` under `agent/memory/`, ending the long-standing split where related code lived in sibling top-level directories
+- Promoted `memory/store/` to a package with backend-specific submodules (in-memory, SQLite, Postgres) and grouped risk-gating subsystems under `agent/gates/` so safety, grounded lookup, and memory control share a discoverable home
+- Flattened `services/llm/` into `llm/` after dissolving the single-purpose `services/` parent directory, and flattened other 1-file directories that were adding navigation overhead without organisational value
+- Co-located prompts with their consumers (rather than in a global `prompts/` tree), dissolved facade modules that only re-exported, deleted second-tier wrappers, and removed dead delegation wrappers in `persistence.py`
+- Symmetrized audit backends so `crisis_log` and `session_feedback` follow the same SQLite/Postgres backend layout as the memory store
+
+### Service and coordinator extraction
+- Extracted the `TurnExtractionCoordinator` to own background-extraction lifecycle (start, await, cancel, finalize) instead of scattering coordination across multiple call sites
+- Extracted standalone services for memory control, session finalization, runtime streaming, runtime session tracking, runtime backend factories, and runtime session-state calculations, each pulled out of large composite modules into focused units with clearer single responsibilities
+- Consolidated the memory write loop, prompts, and `user_controls` API into a coherent shape; extracted shared semantic-memory write primitives and a shared write executor so policy decisions and execution share the same code path
+
+### Typed router results
+- Replaced loose dict-shaped routing decisions with typed result models for the agent router, grounded-lookup router, and memory-control router, eliminating a class of "did I spell the key right?" bugs and giving downstream consumers static type information
+
+### Performance
+- Moved memory extraction **off the user-visible turn** so the assistant reply renders without waiting for semantic + procedural extraction to complete (the largest single change in this window at +1355/−361 lines), addressing the ~250–300ms median and ~600–800ms p95 `post_finalize_ms` measured during the prior latency profiling round
+- Added native parallel extractor edges and parallel candidate-policy evaluation so multi-extractor turns no longer serialise unnecessarily
+- Added speculative pre-fetch of turn memory in `nodes/` so the response writer rarely waits on a cold retrieval
+
+### Local dogfooding ergonomics
+- Added an upfront `get_settings()` validation that raises a clear, actionable `ValueError` when `OPENCOUCH_PERSISTENCE_BACKEND=postgres` (the default) is selected without `OPENCOUCH_MEMORY_DATABASE_URL`, replacing the previous abstract `thread_database_url is required when thread_persistence_backend='postgres'` failure that surfaced deep inside the runtime — the new message names both escape hatches (set the URL with the docker compose default, or switch to `OPENCOUCH_PERSISTENCE_BACKEND=sqlite`)
+- Added `scripts/cli_dogfood.sh`, a thin wrapper that ensures the Dockerized Postgres service is healthy (`docker compose up -d postgres --wait`) before launching the CLI from `apps/backend`, forwarding any flags through `"$@"`; raw `uv run python -m opencouch_cli` invocations remain canonical for guest, deterministic, and SQLite-fallback cases that do not need Postgres
+- Updated the root README CLI section to introduce the wrapper alongside the existing raw invocations, with a backlink to the Environment section and an explicit "when not to use it" callout
+
+### Validation
+- Backend test suite (62 test files) green throughout the refactor; structural changes were rename/move-only with import updates, so behaviour is unchanged
+- Branch net delta confirms the cleanup intent: −1043 lines across 172 changed files, with the largest deletions concentrated in dissolved facade and wrapper modules
+
 ## 2026-05-03 — Postgres Compose Runtime + Voice UX Polish
 
 ### Local persistence and Compose

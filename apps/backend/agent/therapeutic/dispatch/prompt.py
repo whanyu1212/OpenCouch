@@ -5,7 +5,7 @@ from __future__ import annotations
 from agent.conversation import format_recent_history
 from agent.state import AgentState
 from agent.therapeutic.dispatch.regex_catalog import _TRIGGER_LIST_SENTENCE
-from agent.working_memory import format_working_memory_entries
+from agent.memory.entries import format_working_memory_entries
 
 
 _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (

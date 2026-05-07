@@ -20,7 +20,7 @@ backend_dir = REPO_ROOT / "apps" / "backend"
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from agent.therapeutic.dispatcher import (  # noqa: E402
+from agent.therapeutic.dispatch import (  # noqa: E402
     build_therapeutic_dispatch_prompt,
     build_therapeutic_dispatch_system_prompt,
 )

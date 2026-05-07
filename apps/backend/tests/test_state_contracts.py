@@ -23,8 +23,6 @@ from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
 from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
@@ -33,7 +31,7 @@ from agent.nodes.memory_control import run_memory_control_node
 from agent.nodes.memory_control_gate import run_memory_control_gate_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
-from agent.therapeutic.dispatcher import run_therapeutic_dispatch_node
+from agent.therapeutic.dispatch import run_therapeutic_dispatch_node
 from agent.therapeutic.graph import (
     TherapeuticSubgraphInput,
     TherapeuticSubgraphOutput,
@@ -41,7 +39,7 @@ from agent.therapeutic.graph import (
 )
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
 from agent.therapeutic.response import run_therapeutic_response_node
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeRuntime:
@@ -694,7 +692,11 @@ async def test_guided_exercise_completion_channel_contract() -> None:
 
 @pytest.mark.asyncio
 async def test_finalize_turn_channel_contract() -> None:
-    """Finalize should append transcript only."""
+    """Finalize should append the transcript and stamp a finalize-time
+    marker into diagnostics. The marker is the boundary signal
+    ``stamp_turn_total_ms`` reads to compute ``post_finalize_ms``; it
+    is stripped from the public diagnostics before the turn returns,
+    but it's a legitimate channel write at the node level."""
 
     state = _build_state("Hello")
     state["response_text"] = "Thanks for sharing that."
@@ -705,28 +707,5 @@ async def test_finalize_turn_channel_contract() -> None:
         cast(Any, _FakeRuntime()),
     )
 
-    _assert_exact_keys(delta, {"transcript"})
-
-
-@pytest.mark.asyncio
-async def test_extract_facts_channel_contract() -> None:
-    """Semantic extractor should only return diagnostics deltas."""
-
-    delta = await run_extract_semantic_facts_node(
-        _build_state("Hello there."),
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
-
-    _assert_exact_keys(delta, {"diagnostics"})
-
-
-@pytest.mark.asyncio
-async def test_extract_procedural_channel_contract() -> None:
-    """Procedural extractor should only return diagnostics deltas."""
-
-    delta = await run_extract_procedural_rules_node(
-        _build_state("Hello there."),
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
-
-    _assert_exact_keys(delta, {"diagnostics"})
+    _assert_exact_keys(delta, {"transcript", "diagnostics"})
+    assert set(delta["diagnostics"].keys()) == {"finalize_done_at_monotonic"}

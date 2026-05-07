@@ -20,7 +20,7 @@ from typing import Annotated, Any, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import Channel, CrisisAssessment, ResponseStyleType, ResponseCategory
-from agent.working_memory import WorkingMemoryEntry
+from agent.memory.entries import WorkingMemoryEntry
 
 
 def resolve_owner_id(state: Mapping[str, Any]) -> str:

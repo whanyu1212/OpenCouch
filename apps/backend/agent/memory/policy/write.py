@@ -5,7 +5,7 @@ memory. This module decides whether that candidate is safe and durable
 enough to commit immediately. The async helpers use an LLM-primary
 classifier with deterministic safety guards and fallback. Anything that
 is not ``commit_now`` is buffered or dropped by the caller; session-end
-promotion logic lives in ``agent.nodes.commit_session_memory``.
+promotion logic lives in ``agent.runtime.session_commit``.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from agent.memory.policy.semantic import (
     contains_negative_self_belief,
     looks_transient_context,
 )
-from services.llm.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

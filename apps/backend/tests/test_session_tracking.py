@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from agent.active_session_manager import PersistedActiveSessionState
+from agent.runtime.active_session import PersistedActiveSessionState
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.runtime.session_tracking import RuntimeSessionTracker
+from agent.runtime.session import RuntimeSessionTracker
 
 
 def test_tracker_starts_records_and_persists_session_state() -> None:

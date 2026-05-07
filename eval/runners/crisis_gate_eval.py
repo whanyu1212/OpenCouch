@@ -16,16 +16,16 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from agent.graph import build_initial_state
 from agent.models import AgentInput
-from agent.safety.crisis_rules import (
+from agent.gates.safety.crisis_rules import (
     assess_crisis_risk_deterministically,
     detect_crisis_override,
 )
-from agent.safety.service import (
+from agent.gates.safety.service import (
     assess_crisis_risk_with_llm,
     enforce_crisis_truth_table,
 )
-from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from config import create_configured_llm_client
+from llm.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "crisis_detection_v1.json"

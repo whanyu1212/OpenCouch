@@ -28,10 +28,10 @@ from agent.memory.episodic import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.nodes.commit_session_memory import run_commit_session_memory
+from agent.runtime.session import run_commit_session_memory
 from agent.persistence import PersistentAgentRuntime
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 def _semantic_write(
@@ -144,7 +144,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
         schema_name = response_schema.__name__
 
         if schema_name == "CrisisAssessmentSchema":
-            from agent.safety.service import CrisisAssessmentSchema
+            from agent.gates.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
@@ -597,6 +597,10 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_store=store,
         memory_mode=MemoryMode.LOCAL,
+        # Foreground so the post-turn buffer-length assertion observes
+        # both turns' extracted candidates without depending on the
+        # next-turn drain.
+        extract_in_foreground=True,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",

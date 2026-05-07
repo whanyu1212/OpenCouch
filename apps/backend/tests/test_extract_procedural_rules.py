@@ -30,6 +30,7 @@ from agent.memory.models import (
     ProceduralExtractionResult,
     ProceduralRuleDraft,
 )
+from agent.memory.extraction_service import extract_procedural_rules
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import (
     aget_procedural_profile,
@@ -37,12 +38,32 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from agent.nodes.extract_procedural_rules import (
-    run_extract_procedural_rules_node,
-)
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
+
+
+async def run_extract_procedural_rules_node(
+    state: AgentState,
+    runtime: "_MockRuntime",
+) -> dict[str, dict]:
+    """Test-only adapter mimicking the old node's delta shape.
+
+    See test_extract_semantic_facts.py for full rationale; same idea —
+    extraction is now a runtime-managed service, but the test bodies
+    here continue to assert on ``delta["diagnostics"][...]`` shape.
+    This adapter delegates to the service while preserving that shape.
+    """
+
+    ctx = runtime.context
+    outcome = await extract_procedural_rules(
+        state,
+        llm_client=ctx.llm_client,
+        memory_store=ctx.memory_store,
+        memory_mode=ctx.memory_mode,
+        session_buffer=ctx.session_memory_buffer,
+    )
+    return {"diagnostics": outcome.as_diagnostics()}
 
 
 # ─── Test fixtures ────────────────────────────────────────────────────────

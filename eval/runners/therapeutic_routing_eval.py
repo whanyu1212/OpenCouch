@@ -46,7 +46,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.dispatcher import (
+from agent.therapeutic.dispatch import (
     CLARIFYING_NODE,
     CLOSING_NODE,
     GUIDED_EXERCISE_NODE,
@@ -55,8 +55,8 @@ from agent.therapeutic.dispatcher import (
     SUPPORTIVE_NODE,
     run_therapeutic_dispatch_node,
 )
-from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from config import create_configured_llm_client
+from llm.base import BaseLLMClient
 
 DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "datasets" / "therapeutic_routing_v0.json"

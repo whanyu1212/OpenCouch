@@ -20,7 +20,7 @@ Those backends live in [agent/audit](../audit):
 
 Important distinction:
 - `agent.audit.models` owns audit-related record schemas
-- `agent.memory.types.audit` only keeps compatibility re-exports
+- Audit types live in `agent.audit.models` (no longer re-exported here)
 
 ## Mental Model
 

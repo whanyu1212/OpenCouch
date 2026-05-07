@@ -50,13 +50,13 @@ from agent.persistence import (
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
 )
-from core.config import (
+from config import (
     ResponseModelTier,
     create_configured_control_llm_client,
     create_configured_response_llm_clients,
     get_settings,
 )
-from services.llm.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

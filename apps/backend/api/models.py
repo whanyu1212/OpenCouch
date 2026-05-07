@@ -15,7 +15,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from agent.memory.models import FeedbackLabel
-from core.config import ResponseModelTier
+from config import ResponseModelTier
 
 
 # Request models

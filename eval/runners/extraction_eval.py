@@ -64,43 +64,17 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.extraction_service import extract_semantic_facts
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.store import OpenCouchMemoryStore
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from config import create_configured_llm_client
+from llm.base import BaseLLMClient
 
 DATASET_PATH = Path(__file__).resolve().parents[1] / "datasets" / "extraction_v1.json"
 
 EvalMode = Literal["auto", "hybrid"]
-
-
-class _MockRuntime:
-    """Minimal runtime stand-in for the extractor node.
-
-    The extraction node reads ``llm_client``, ``memory_store``, and
-    ``memory_mode`` from context. We provide a real in-memory store
-    per-case so the dedup path exercises real code — matching the
-    production data flow — without coupling the eval to disk.
-    """
-
-    def __init__(
-        self,
-        *,
-        llm_client: BaseLLMClient,
-        memory_store: OpenCouchMemoryStore,
-    ) -> None:
-        self.context = WorkflowContext(
-            llm_client=llm_client,
-            memory_store=memory_store,
-            crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=MemoryMode.LOCAL,
-            session_memory_buffer=SessionMemoryBuffer(session_id="eval-thread"),
-        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -235,15 +209,20 @@ async def _evaluate_case(
     # and this runner is focused on grading the LLM's extraction
     # decisions, not the dedup behavior.
     store = OpenCouchMemoryStore()
-    runtime = _MockRuntime(llm_client=llm_client, memory_store=store)
+    session_buffer = SessionMemoryBuffer(session_id="eval-thread")
     state = _build_state(case)
 
-    # Call the extraction node. Its delta is always {} (side effect
-    # only), so we can't read the extracted facts from the return
-    # value — we have to read the store afterward. This is a bit
-    # clunky but it exercises the full write path, which is what we
-    # want to grade.
-    await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+    # Call the extraction service. It returns telemetry only (writes go
+    # through the store and session buffer as side effects), so we read
+    # those afterward to grade what the LLM extracted.
+    await extract_semantic_facts(
+        state,
+        llm_client=llm_client,
+        memory_store=store,
+        memory_mode=MemoryMode.LOCAL,
+        embedding_provider=None,
+        session_buffer=session_buffer,
+    )
 
     # Reconstruct MemoryWrite-like objects from both immediate store writes and
     # session-held candidates. Trigger/loss facts are intentionally held by the
@@ -252,12 +231,7 @@ async def _evaluate_case(
     namespace = (state.get("user_id") or state["session_id"], "semantic")
     records = await store.asearch(namespace, query=None, limit=100)
 
-    buffer = runtime.context.session_memory_buffer
-    held_facts = (
-        [candidate.payload for candidate in buffer.semantic_candidates]
-        if buffer is not None
-        else []
-    )
+    held_facts = [candidate.payload for candidate in session_buffer.semantic_candidates]
     returned_facts = [_FactView(record.value) for record in records] + held_facts
 
     expected_outcome = case["expected_outcome"]

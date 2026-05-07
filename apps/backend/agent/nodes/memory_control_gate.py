@@ -12,7 +12,7 @@ from agent.graph_constants import (
     MEMORY_CONTROL_NODE,
     MemoryControlGateNextNode,
 )
-from agent.memory.user_controls import (
+from agent.gates.memory_control import (
     is_pending_cancellation,
     is_pending_confirmation,
     resolve_memory_control_action,

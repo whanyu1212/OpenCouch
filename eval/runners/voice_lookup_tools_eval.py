@@ -27,8 +27,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from voice.livekit.session_data import SessionData
-from voice.livekit.tools import (
+from agent.voice.session_data import SessionData
+from agent.voice.tools import (
     answer_grounded_factual_lookup,
     provide_crisis_resources,
 )

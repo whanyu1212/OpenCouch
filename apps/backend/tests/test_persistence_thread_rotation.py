@@ -94,7 +94,7 @@ async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> No
         finalize_active_sessions_on_close=False,
     ) as runtime:
         await runtime.run_turn(thread_id="thread-interrupted", message="hello")
-        await runtime._set_active_session_mutation(  # noqa: SLF001
+        await runtime._active_session_manager.set_active_session_mutation(  # noqa: SLF001
             "thread-interrupted",
             mutation_token="foreign-runtime:other-instance:999999",
             mutation_kind="turn",

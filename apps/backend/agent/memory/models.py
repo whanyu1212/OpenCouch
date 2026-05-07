@@ -6,23 +6,26 @@ This module remains as the stable import surface for existing callers.
 
 from __future__ import annotations
 
-from agent.memory.types import (
-    ACTContext,
-    CBTContext,
-    ConfidenceLevel,
+from agent.audit.models import (
     CrisisClassifierPath,
     CrisisLogAggregate,
     CrisisLogLevelCounts,
     CrisisLogPathCounts,
     CrisisLogRecord,
     CrisisOverrideOutcome,
+    FeedbackLabel,
+    FeedbackSource,
+    SessionFeedbackRecord,
+)
+from agent.memory.types import (
+    ACTContext,
+    CBTContext,
+    ConfidenceLevel,
     DBTContext,
     DispatchDecision,
     EntityRef,
     EntityType,
     ExtractionResult,
-    FeedbackLabel,
-    FeedbackSource,
     GriefContext,
     HotPathEdgeType,
     IPTContext,
@@ -39,7 +42,6 @@ from agent.memory.types import (
     SemanticCategory,
     SemanticFact,
     SessionArc,
-    SessionFeedbackRecord,
     StoredSessionArc,
     SummarizationResult,
     TherapeuticApproach,

@@ -57,41 +57,17 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "apps" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.memory.extraction_service import extract_procedural_rules
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from core.config import create_configured_llm_client
-from services.llm.base import BaseLLMClient
+from config import create_configured_llm_client
+from llm.base import BaseLLMClient
 
 DATASET_PATH = Path(__file__).resolve().parents[1] / "datasets" / "procedural_v1.json"
 
 EvalMode = Literal["auto", "hybrid"]
-
-
-class _MockRuntime:
-    """Minimal runtime stand-in for the procedural writer node.
-
-    The writer node reads ``llm_client``, ``memory_store``, and
-    ``memory_mode`` from context. We provide a real in-memory store
-    per-case so the full write path is exercised.
-    """
-
-    def __init__(
-        self,
-        *,
-        llm_client: BaseLLMClient,
-        memory_store: OpenCouchMemoryStore,
-    ) -> None:
-        self.context = WorkflowContext(
-            llm_client=llm_client,
-            memory_store=memory_store,
-            crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=MemoryMode.LOCAL,
-        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -237,12 +213,18 @@ async def _evaluate_case(
     # Each case gets a fresh in-memory store so prior cases' writes
     # don't pollute the profile for later cases.
     store = OpenCouchMemoryStore()
-    runtime = _MockRuntime(llm_client=llm_client, memory_store=store)
     state = _build_state(case)
 
-    # Call the writer node. Its delta is always {} (side effect only),
-    # so we read the profile afterward.
-    await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+    # Call the procedural extraction service. Its return value is
+    # telemetry only (writes go through the store as side effects), so
+    # we read the profile afterward to grade the LLM's output.
+    await extract_procedural_rules(
+        state,
+        llm_client=llm_client,
+        memory_store=store,
+        memory_mode=MemoryMode.LOCAL,
+        session_buffer=None,
+    )
 
     user_id = state.get("user_id") or state["session_id"]
     profile = await aget_procedural_profile(store, user_id=user_id)

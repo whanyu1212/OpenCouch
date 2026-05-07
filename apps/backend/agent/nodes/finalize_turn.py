@@ -27,10 +27,14 @@ contains exactly ``transcript`` - nothing else. It runs on both branches
 via the existing converge-before-END edges:
 
     crisis_resource_lookup_node → crisis_response_node → crisis_log_node
-      → finalize_turn_node → memory_extraction_node → END
-    memory_control_node → finalize_turn_node → memory_extraction_node → END
-    grounded_answer_node → finalize_turn_node → memory_extraction_node → END
-    therapeutic_subgraph → finalize_turn_node → memory_extraction_node → END
+      → finalize_turn_node → {extract_semantic_facts_node,
+                              extract_procedural_rules_node} → END
+    memory_control_node → finalize_turn_node → {extract_semantic_facts_node,
+                                                extract_procedural_rules_node} → END
+    grounded_answer_node → finalize_turn_node → {extract_semantic_facts_node,
+                                                 extract_procedural_rules_node} → END
+    therapeutic_subgraph → finalize_turn_node → {extract_semantic_facts_node,
+                                                 extract_procedural_rules_node} → END
 
 The guard against appending an empty response is important: if some
 response node short-circuits without setting ``response_text``, we'd
@@ -39,6 +43,7 @@ otherwise pollute the transcript with a blank assistant turn.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from langgraph.runtime import Runtime
@@ -74,10 +79,21 @@ async def run_finalize_turn_node(
     """
 
     response_text = str(state.get("response_text", "") or "").strip()
+
+    # Mark the moment the response is locked in so the runtime can later
+    # compute ``post_finalize_ms`` — the wall-clock between this point
+    # and graph termination. Used to measure the latency wedge that
+    # background extraction (#5) would close.
+    finalize_done_at_monotonic = time.monotonic()
+
     if not response_text:
         # Nothing to append. Better to leave the transcript alone than
         # to write a blank assistant turn that the CLI would render.
-        return {}
+        return {
+            "diagnostics": {
+                "finalize_done_at_monotonic": finalize_done_at_monotonic,
+            }
+        }
 
     # Stamp the routing mode onto the assistant turn so it round-trips through
     # the checkpoint and surfaces in the CLI's /history panel.
@@ -94,4 +110,7 @@ async def run_finalize_turn_node(
     # checkpoint automatically.
     return {
         "transcript": [assistant_turn],
+        "diagnostics": {
+            "finalize_done_at_monotonic": finalize_done_at_monotonic,
+        },
     }

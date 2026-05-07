@@ -20,7 +20,7 @@ from agent.memory.policy.write import (
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
 )
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakePolicyLLM(BaseLLMClient):

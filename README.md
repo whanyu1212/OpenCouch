@@ -213,6 +213,15 @@ uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id al
 uv run python -m opencouch_cli --voice
 ```
 
+For everyday persistent-mode dogfooding, [`scripts/cli_dogfood.sh`](scripts/cli_dogfood.sh) wraps the two prerequisites into one command: it ensures the Dockerized Postgres service is up (via `docker compose up -d postgres --wait`) and then launches the CLI from `apps/backend`. Any flags are forwarded to the CLI:
+
+```bash
+./scripts/cli_dogfood.sh
+./scripts/cli_dogfood.sh --memory-mode persistent --user-id alice --thread-id s1
+```
+
+This assumes `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and `OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch` are set in your `.env` (see [Environment](#environment)). Use the raw `uv run python -m opencouch_cli ...` invocations above when you want guest mode, deterministic mode, or the SQLite fallback without starting Postgres.
+
 ### Telegram Gateway
 Run the standalone Telegram gateway. It does not require the FastAPI server.
 
@@ -455,7 +464,9 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of **May 2026**:
 
-- **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose.
+- **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose. A `scripts/cli_dogfood.sh` helper ensures Postgres is up before launching the CLI, and `get_settings()` now fails fast with an actionable error when the Postgres backend is selected without `OPENCOUCH_MEMORY_DATABASE_URL`.
+- **May 2026 — Agent module restructure & service extraction** — large structural cleanup of the agent package (net **−1043 lines across 172 files**): voice and active-session modules pulled into `agent/`, memory store promoted to a backend-aware package, risk-gating subsystems grouped under `agent/gates/`, facade and wrapper modules dissolved, and standalone services extracted for memory control, session finalization, runtime streaming, and turn-extraction coordination. Routing decisions are now typed across the agent router, grounded-lookup router, and memory-control router.
+- **May 2026 — Off-turn memory extraction** — semantic and procedural memory extraction now runs after the user-visible reply has rendered, removing ~250–300ms median (and up to ~800ms p95) of post-turn latency from the perceived response time. Extractor edges and candidate-policy evaluation also run in parallel where safe.
 - **May 2026 — Full local product stack** — the one-command Compose setup runs Postgres, the FastAPI backend, production-mode Next.js web UI, and the LiveKit voice worker together for a closer-to-real local environment.
 - **Apr–May 2026 — Web and voice experience refresh** — chat, memory, state, and voice routes now have stronger session continuity, clearer setup/end-session flows, voice selection, mic warmup states, and route-persistent text streaming.
 - **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests, hybrid evals, and Opik tracing.

@@ -35,7 +35,7 @@ from agent.state import AgentState, resolve_owner_id
 if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
     from agent.memory.models import StoredSessionArc
-    from services.llm.base import BaseLLMClient
+    from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 

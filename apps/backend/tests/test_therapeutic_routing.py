@@ -27,7 +27,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.dispatcher import (
+from agent.therapeutic.dispatch import (
     CLARIFYING_NODE,
     CLOSING_NODE,
     EXERCISE_CONSENT_PATTERNS,
@@ -52,7 +52,7 @@ from agent.therapeutic.graph import (
     TherapeuticSubgraphOutput,
     build_therapeutic_subgraph,
 )
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ─── Fake LLM client for dispatcher integration tests ────────────────────
@@ -408,7 +408,9 @@ class TestDispatchNode:
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("I feel really sad today.")
 
-        with caplog.at_level(logging.WARNING, logger="agent.therapeutic.dispatcher"):
+        with caplog.at_level(
+            logging.WARNING, logger="agent.therapeutic.dispatch.router"
+        ):
             cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         # Regex fallback for "I feel really sad today." → supportive

@@ -9,7 +9,7 @@ The legacy import paths
 ``agent.memory.extraction_prompts``,
 ``agent.memory.procedural_prompts``,
 ``agent.memory.summarization_prompts``, and
-``agent.memory.user_controls.prompts``
+``agent.gates.memory_control.prompts``
 remain valid as compatibility shims that re-export from this package.
 """
 

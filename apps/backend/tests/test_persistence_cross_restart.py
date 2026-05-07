@@ -57,10 +57,10 @@ from agent.memory.models import (
     SummarizationResult,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
-from services.llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ─── Fake LLM client ───────────────────────────────────────────────────
@@ -135,7 +135,7 @@ class _FakeCrossRestartLLM(BaseLLMClient):
 
         if schema_name == "CrisisAssessmentSchema":
             self.crisis_calls += 1
-            from agent.safety.service import CrisisAssessmentSchema
+            from agent.gates.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
@@ -395,6 +395,9 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
         **paths,
         memory_mode=MemoryMode.LOCAL,
         finalize_active_sessions_on_close=False,
+        # Synchronous extraction so post-turn assertions see the fact in
+        # the store immediately, not after the next turn's drain.
+        extract_in_foreground=True,
     ) as runtime_a:
         result = await runtime_a.run_turn(
             thread_id="thread-a",
@@ -736,6 +739,7 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
+        extract_in_foreground=True,
     ) as runtime_a:
         await runtime_a.run_turn(
             thread_id="thread-old",
@@ -810,7 +814,11 @@ async def test_held_session_buffer_survives_restart_until_end_session(
             llm_client=llm_a,
         )
         assert await runtime_a.memory_store.arecord_count(("user-1", "semantic")) == 0
-        persisted = await runtime_a._load_persisted_active_session("thread-held")
+        persisted = (
+            await runtime_a._active_session_manager.load_persisted_active_session(
+                "thread-held"
+            )
+        )
         assert persisted is not None
         assert len(persisted.session_buffer.semantic_candidates) == 1
 
@@ -824,7 +832,11 @@ async def test_held_session_buffer_survives_restart_until_end_session(
         **paths,
         memory_mode=MemoryMode.LOCAL,
     ) as runtime_b:
-        persisted = await runtime_b._load_persisted_active_session("thread-held")
+        persisted = (
+            await runtime_b._active_session_manager.load_persisted_active_session(
+                "thread-held"
+            )
+        )
         assert persisted is not None
         assert len(persisted.session_buffer.semantic_candidates) == 1
 
@@ -833,7 +845,12 @@ async def test_held_session_buffer_survives_restart_until_end_session(
         assert stored_arc is not None
         assert await runtime_b.memory_store.arecord_count(("user-1", "episodic")) == 1
         assert await runtime_b.memory_store.arecord_count(("user-1", "semantic")) == 1
-        assert await runtime_b._load_persisted_active_session("thread-held") is None
+        assert (
+            await runtime_b._active_session_manager.load_persisted_active_session(
+                "thread-held"
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -879,7 +896,11 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             llm_client=llm_a,
         )
         assert await runtime_a.memory_store.arecord_count((user_id, "semantic")) == 0
-        persisted = await runtime_a._load_persisted_active_session(thread_id)
+        persisted = (
+            await runtime_a._active_session_manager.load_persisted_active_session(
+                thread_id
+            )
+        )
         assert persisted is not None
         assert len(persisted.session_buffer.semantic_candidates) == 1
 
@@ -897,7 +918,11 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
         thread_persistence_backend="postgres",
         thread_database_url=memory_database_url,
     ) as runtime_b:
-        persisted = await runtime_b._load_persisted_active_session(thread_id)
+        persisted = (
+            await runtime_b._active_session_manager.load_persisted_active_session(
+                thread_id
+            )
+        )
         assert persisted is not None
         assert len(persisted.session_buffer.semantic_candidates) == 1
 
@@ -906,7 +931,12 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
         assert stored_arc is not None
         assert await runtime_b.memory_store.arecord_count((user_id, "episodic")) == 1
         assert await runtime_b.memory_store.arecord_count((user_id, "semantic")) == 1
-        assert await runtime_b._load_persisted_active_session(thread_id) is None
+        assert (
+            await runtime_b._active_session_manager.load_persisted_active_session(
+                thread_id
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -1005,9 +1035,11 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
             as_node="finalize_turn_node",
         )
 
-        persisted = await runtime._load_persisted_active_session("thread-timeout")
+        persisted = await runtime._active_session_manager.load_persisted_active_session(
+            "thread-timeout"
+        )
         assert persisted is not None
-        await runtime._save_persisted_active_session(
+        await runtime._active_session_manager.save_persisted_active_session(
             PersistedActiveSessionState(
                 thread_id=persisted.thread_id,
                 started_at=persisted.started_at,
@@ -1017,7 +1049,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
                 session_buffer=persisted.session_buffer,
             )
         )
-        runtime._clear_runtime_session_tracking("thread-timeout")
+        runtime._clear_thread_state("thread-timeout")
 
         llm.extraction_result = _empty_extraction_result()
         result = await runtime.run_turn(
@@ -1037,7 +1069,9 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
             is None
         )
 
-        active = await runtime._load_persisted_active_session("thread-timeout")
+        active = await runtime._active_session_manager.load_persisted_active_session(
+            "thread-timeout"
+        )
         assert active is not None
         assert active.transcript_start_index == prior_transcript_len
         assert not active.session_buffer.semantic_candidates
@@ -1073,7 +1107,9 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
             == "dbt_skills"
         )
         assert (
-            await runtime._load_persisted_active_session("thread-incognito-exercise")
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-incognito-exercise"
+            )
             is None
         )
         assert await runtime.has_active_session("thread-incognito-exercise")
@@ -1146,7 +1182,12 @@ async def test_finalize_active_sessions_commits_pending_memory_on_shutdown(
 
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
         assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
-        assert await runtime._load_persisted_active_session("thread-shutdown") is None
+        assert (
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-shutdown"
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -1175,9 +1216,11 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
             user_id="user-1",
             llm_client=llm,
         )
-        persisted = await runtime._load_persisted_active_session("thread-sweeper")
+        persisted = await runtime._active_session_manager.load_persisted_active_session(
+            "thread-sweeper"
+        )
         assert persisted is not None
-        await runtime._save_persisted_active_session(
+        await runtime._active_session_manager.save_persisted_active_session(
             PersistedActiveSessionState(
                 thread_id=persisted.thread_id,
                 started_at=persisted.started_at,
@@ -1187,13 +1230,18 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
                 session_buffer=persisted.session_buffer,
             )
         )
-        runtime._clear_runtime_session_tracking("thread-sweeper")
+        runtime._clear_thread_state("thread-sweeper")
 
         await runtime._finalize_expired_sessions_once()
 
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
         assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
-        assert await runtime._load_persisted_active_session("thread-sweeper") is None
+        assert (
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-sweeper"
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio

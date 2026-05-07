@@ -17,7 +17,7 @@ from agent.graph_constants import (
 from agent.models import CrisisAssessment, ResponseStyleType, ResponseCategory
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
-from agent.safety.service import CrisisRiskService
+from agent.gates.safety.service import CrisisRiskService
 from agent.state import AgentState
 
 

@@ -30,8 +30,8 @@ from api.models import (
     StreamDoneMessage,
     StreamStatusMessage,
 )
-from core.config import ResponseModelTier
-from services.llm.base import BaseLLMClient
+from config import ResponseModelTier
+from llm.base import BaseLLMClient
 
 router = APIRouter(tags=["chat"])
 

@@ -17,15 +17,8 @@ api_router.include_router(memory.router)
 # API server starts without torch/livekit when only core deps are
 # installed.
 try:
-    from voice.api import router as voice_router
-
-    api_router.include_router(voice_router)
-except ImportError:
-    logger.info("voice.api routes not available (voice extras not installed)")
-
-try:
-    from voice.livekit.api import router as livekit_voice_router
+    from agent.voice.routes import router as livekit_voice_router
 
     api_router.include_router(livekit_voice_router)
 except ImportError:
-    logger.info("voice.livekit.api routes not available (voice extras not installed)")
+    logger.info("agent.voice.routes not available (voice extras not installed)")

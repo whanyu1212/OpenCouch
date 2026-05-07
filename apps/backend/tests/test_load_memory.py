@@ -39,7 +39,7 @@ from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.working_memory import format_working_memory_entry
+from agent.memory.entries import format_working_memory_entry
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────
@@ -504,6 +504,140 @@ class TestLoadMemoryNode:
 
         delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
 
+        assert len(delta["working_memory"]) == 1
+
+
+# ─── Speculative memory pre-fetch tests ───────────────────────────────
+#
+# When the runtime schedules ``load_memory_for_turn`` at turn start so it
+# overlaps with the crisis/control/grounded gates, ``run_load_memory_node``
+# must:
+#
+# 1. Prefer the pre-fetched task when present and successful, exposing a
+#    ``load_memory_speculation_used=True`` diagnostic so the dashboard can
+#    distinguish hits from misses.
+# 2. Fall back to a fresh ``load_memory_for_turn`` call when the pre-fetch
+#    raised — speculation must never fail the turn.
+# 3. Behave identically to the un-speculated path when no pre-fetch is
+#    attached (e.g., one-shot ``run_agent`` callers, or speculation
+#    disabled at the runtime).
+#
+# These tests use a ``_FailingFetch`` sentinel + ``asyncio.create_task`` to
+# materialize the pre-fetched task in the same shape that ``persistence.py``
+# would produce.
+
+
+class TestSpeculativeMemoryPrefetch:
+    """Tests for the load-memory speculation contract."""
+
+    @pytest.mark.asyncio
+    async def test_speculation_hit_uses_pre_fetched_result(self) -> None:
+        """When the pre-fetched task resolves before the node runs, the node
+        should consume its result and tag the diagnostics as a hit."""
+
+        import asyncio
+
+        from agent.memory.recall import load_memory_for_turn
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-spec", "semantic"),
+            "fact-1",
+            {"evidence_quote": "I love hiking on weekends"},
+        )
+
+        # Schedule the pre-fetch and let it complete before the node runs.
+        pre_fetched = asyncio.create_task(
+            load_memory_for_turn(
+                memory_store=store,
+                embedding_provider=None,
+                owner_id="thread-spec",
+                query="hiking",
+                is_first_turn=False,
+            )
+        )
+        await pre_fetched  # Force resolution before invoking the node.
+
+        runtime = _FakeRuntime(
+            {
+                "memory_store": store,
+                "memory_mode": MemoryMode.LOCAL,
+                "pre_fetched_memory": pre_fetched,
+            }
+        )
+        state = _make_state(message="hiking", session_id="thread-spec")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["load_memory_speculation_used"] is True
+        # Already resolved → wait time is essentially zero.
+        assert delta["diagnostics"]["load_memory_speculation_wait_ms"] >= 0.0
+        # And the result still contains the seeded fact.
+        assert len(delta["working_memory"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_speculation_failure_falls_back_to_fresh_call(self) -> None:
+        """If the pre-fetched task raises, the node must catch and fall back
+        to a fresh ``load_memory_for_turn`` call rather than failing the turn."""
+
+        import asyncio
+
+        async def _boom() -> Any:
+            raise RuntimeError("simulated speculation failure")
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-spec", "semantic"),
+            "fact-1",
+            {"evidence_quote": "I love hiking on weekends"},
+        )
+
+        failing_task = asyncio.create_task(_boom())
+
+        runtime = _FakeRuntime(
+            {
+                "memory_store": store,
+                "memory_mode": MemoryMode.LOCAL,
+                "pre_fetched_memory": failing_task,
+            }
+        )
+        state = _make_state(message="hiking", session_id="thread-spec")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        # Fallback path → speculation_used=False, but the turn still got memory.
+        assert delta["diagnostics"]["load_memory_speculation_used"] is False
+        assert delta["diagnostics"]["load_memory_speculation_wait_ms"] == 0.0
+        assert len(delta["working_memory"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_speculation_supplied_behaves_like_pre_speculation_path(
+        self,
+    ) -> None:
+        """When the runtime does not schedule a pre-fetch (e.g., the flag is
+        off, or for one-shot ``run_agent`` callers), the node must call
+        ``load_memory_for_turn`` inline and report a clean miss."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-spec", "semantic"),
+            "fact-1",
+            {"evidence_quote": "I love hiking on weekends"},
+        )
+
+        runtime = _FakeRuntime(
+            {
+                "memory_store": store,
+                "memory_mode": MemoryMode.LOCAL,
+                "pre_fetched_memory": None,
+            }
+        )
+        state = _make_state(message="hiking", session_id="thread-spec")
+
+        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["load_memory_speculation_used"] is False
+        assert delta["diagnostics"]["load_memory_speculation_wait_ms"] == 0.0
         assert len(delta["working_memory"]) == 1
 
 
@@ -1191,11 +1325,11 @@ class TestFinalizeTurnNode:
         }
 
     @pytest.mark.asyncio
-    async def test_empty_response_text_returns_empty_delta(self) -> None:
-        """If ``response_text`` is empty or missing, the node must return an
-        empty delta so the transcript stays clean. This guards against a
-        branch short-circuiting without producing a reply, which would
-        otherwise inject a blank assistant turn."""
+    async def test_empty_response_text_returns_no_transcript_delta(self) -> None:
+        """If ``response_text`` is empty or missing, the node must NOT append
+        an assistant turn. The diagnostics ``finalize_done_at_monotonic``
+        marker is still emitted because it tracks "finalize ran" rather
+        than "a transcript turn was written"."""
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -1206,10 +1340,11 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert "transcript" not in delta
+        assert "finalize_done_at_monotonic" in delta["diagnostics"]
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_response_returns_empty_delta(self) -> None:
+    async def test_whitespace_only_response_returns_no_transcript_delta(self) -> None:
         """Whitespace-only responses should be treated as empty and not
         pollute the transcript."""
 
@@ -1222,12 +1357,13 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert "transcript" not in delta
+        assert "finalize_done_at_monotonic" in delta["diagnostics"]
 
     @pytest.mark.asyncio
-    async def test_missing_response_slot_returns_empty_delta(self) -> None:
+    async def test_missing_response_slot_returns_no_transcript_delta(self) -> None:
         """If the response field is entirely absent (defensive case), the
-        node should return empty rather than crash."""
+        node should not crash and must not append a phantom assistant turn."""
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -1237,12 +1373,14 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta == {}
+        assert "transcript" not in delta
+        assert "finalize_done_at_monotonic" in delta["diagnostics"]
 
     @pytest.mark.asyncio
     async def test_does_not_touch_other_state_keys(self) -> None:
-        """The node's delta must contain only transcript.
-        This keeps it a focused single-responsibility node."""
+        """The node's delta must contain only transcript and the
+        finalize-timing diagnostic. The diagnostic is the boundary marker
+        ``stamp_turn_total_ms`` reads to compute ``post_finalize_ms``."""
 
         state: dict[str, Any] = {
             "transcript": [{"role": "user", "content": "Hi"}],
@@ -1255,4 +1393,5 @@ class TestFinalizeTurnNode:
 
         delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
 
-        assert set(delta.keys()) == {"transcript"}
+        assert set(delta.keys()) == {"transcript", "diagnostics"}
+        assert set(delta["diagnostics"].keys()) == {"finalize_done_at_monotonic"}

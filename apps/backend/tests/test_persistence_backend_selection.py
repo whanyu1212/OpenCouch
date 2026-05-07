@@ -24,8 +24,10 @@ from pathlib import Path
 
 import pytest
 
-from agent.active_session_store import PostgresActiveSessionStore
-from agent.legacy.active_session_store_sqlite import SqliteActiveSessionStore
+from agent.runtime.active_session import (
+    PostgresActiveSessionStore,
+    SqliteActiveSessionStore,
+)
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode
@@ -35,10 +37,10 @@ from agent.audit.session_feedback import (
 )
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
-from agent.audit.sqlite.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.sqlite.sqlite_session_feedback import SqliteSessionFeedbackBackend
-from agent.memory.postgres_store import PostgresMemoryStore
-from agent.memory.sqlite_store import SqliteMemoryStore
+from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
+from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.memory.store.postgres import PostgresMemoryStore
+from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.store import OpenCouchMemoryStore
 from agent.persistence import (
     DEFAULT_CRISIS_LOG_DB_PATH,
@@ -230,7 +232,7 @@ def test_postgres_thread_backend_requires_database_url() -> None:
     """Selecting the Postgres thread backend without a DSN should fail
     fast at runtime construction rather than later on first turn."""
 
-    with pytest.raises(ValueError, match="thread_database_url"):
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         PersistentAgentRuntime(
             memory_mode=MemoryMode.LOCAL,
             thread_persistence_backend="postgres",

@@ -7,7 +7,7 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.memory.user_controls import execute_memory_control_action
+from agent.gates.memory_control import execute_memory_control_action
 from agent.models import ResponseCategory, ResponseStyleType
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext

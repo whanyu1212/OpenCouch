@@ -128,6 +128,9 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
     edge_tuples = {(e.source, e.target) for e in graph_def.edges}
 
     # Expected nodes (parent-level view — subgraph internals are opaque).
+    # Memory extraction is no longer in the graph — it runs as a runtime-
+    # managed background task post-finalize, so finalize_turn_node is now
+    # the terminal graph node.
     expected_nodes = {
         "__start__",
         "__end__",
@@ -141,7 +144,6 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         "crisis_response_node",
         "crisis_log_node",
         "therapeutic_subgraph",
-        "memory_extraction_node",
         "finalize_turn_node",
     }
     assert node_ids == expected_nodes, (
@@ -150,9 +152,8 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         f"  Missing: {expected_nodes - node_ids}"
     )
 
-    # Expected edges (v0.9+ topology). Includes the two Command-based
-    # routing edges from crisis_gate_node and the terminal memory
-    # extraction node after finalize_turn_node.
+    # Expected edges. Includes the two Command-based routing edges from
+    # crisis_gate_node and finalize_turn_node terminating the graph.
     expected_edges = {
         ("__start__", "crisis_gate_node"),
         ("crisis_gate_node", "crisis_resource_lookup_node"),
@@ -168,8 +169,7 @@ def test_retry_policy_does_not_alter_graph_topology() -> None:
         ("grounded_answer_node", "finalize_turn_node"),
         ("load_memory_node", "therapeutic_subgraph"),
         ("therapeutic_subgraph", "finalize_turn_node"),
-        ("finalize_turn_node", "memory_extraction_node"),
-        ("memory_extraction_node", "__end__"),
+        ("finalize_turn_node", "__end__"),
     }
     assert edge_tuples == expected_edges, (
         f"Edge set mismatch.\n"
