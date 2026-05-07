@@ -55,7 +55,6 @@ from agent.models import (
     AgentOutput,
     CrisisAssessment,
     MessageRole,
-    ResponseStyleType,
     ResponseCategory,
 )
 from agent.memory.extraction_service import (
@@ -150,9 +149,6 @@ def build_initial_state(
         crisis=CrisisAssessment(),
         therapeutic_approach=None,
         response_style="pending",
-        response_style_source=None,
-        response_style_type=ResponseStyleType.THERAPEUTIC,
-        response_kind=ResponseCategory.THERAPEUTIC,
         response_text="",
         should_persist_memory=False,
         diagnostics={},
@@ -176,13 +172,15 @@ def state_to_output(state: Mapping[str, Any]) -> AgentOutput:
         An ``AgentOutput`` built from the relevant response and routing fields.
     """
 
+    crisis = state.get("crisis") or CrisisAssessment()
+    response_type = (
+        ResponseCategory.CRISIS if crisis.level >= 2 else ResponseCategory.THERAPEUTIC
+    )
     return AgentOutput(
         response_text=state.get("response_text", ""),
-        response_type=state.get("response_kind", ResponseCategory.THERAPEUTIC),
-        crisis=state.get("crisis", CrisisAssessment()),
+        response_type=response_type,
+        crisis=crisis,
         response_style=state.get("response_style"),
-        response_style_type=state.get("response_style_type"),
-        response_style_source=state.get("response_style_source"),
         therapeutic_approach=state.get("therapeutic_approach"),
         should_persist_memory=state.get("should_persist_memory", False),
         diagnostics=dict(state.get("diagnostics", {})),

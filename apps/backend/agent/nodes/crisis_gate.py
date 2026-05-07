@@ -14,7 +14,8 @@ from agent.graph_constants import (
     MEMORY_CONTROL_GATE_NODE,
     CrisisGateNextNode,
 )
-from agent.models import CrisisAssessment, ResponseStyleType, ResponseCategory
+from agent.models import CrisisAssessment
+from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.gates.safety.service import CrisisRiskService
@@ -28,6 +29,7 @@ def _build_crisis_delta(
     classifier_path: CrisisClassifierPath,
     llm_failure_occurred: bool,
     duration_ms: float,
+    prior_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the state delta for one crisis-gate decision.
 
@@ -37,6 +39,8 @@ def _build_crisis_delta(
         classifier_path (CrisisClassifierPath): Classifier path that produced the assessment.
         llm_failure_occurred (bool): Whether the LLM path was attempted and failed.
         duration_ms (float): Total wall-clock time spent in the crisis gate.
+        prior_diagnostics (dict[str, Any] | None): Existing diagnostics used
+            only to preserve earlier routing-trace entries.
 
     Returns:
         dict[str, Any]: Partial state update containing crisis, crisis-audit,
@@ -44,6 +48,31 @@ def _build_crisis_delta(
     """
 
     route = "crisis" if assessment.needs_crisis_response else "therapeutic"
+    if assessment.needs_crisis_response:
+        decision = "crisis"
+    elif assessment.needs_clarification:
+        decision = "check"
+    elif assessment.level >= 1:
+        decision = "distress"
+    else:
+        decision = "normal"
+
+    diagnostics = {
+        "crisis_gate_ms": round(duration_ms, 2),
+        "crisis_classifier_path": classifier_path,
+        "crisis_level": assessment.level,
+        **append_routing_trace(
+            prior_diagnostics,
+            {
+                "stage": "safety",
+                "decision": decision,
+                "source": classifier_path,
+                "reason": assessment.reason or "No crisis signal detected.",
+                "confidence": assessment.confidence,
+            },
+        ),
+    }
+
     delta: dict[str, Any] = {
         "crisis": assessment,
         "route": route,
@@ -52,17 +81,10 @@ def _build_crisis_delta(
             "crisis_classifier_path": classifier_path,
             "crisis_llm_failure_occurred": llm_failure_occurred,
         },
-        "diagnostics": {
-            "crisis_gate_ms": round(duration_ms, 2),
-            "crisis_classifier_path": classifier_path,
-            "crisis_level": assessment.level,
-        },
+        "diagnostics": diagnostics,
     }
     if route == "crisis":
         delta["response_style"] = "safety_check"
-        delta["response_style_source"] = "crisis_gate"
-        delta["response_style_type"] = ResponseStyleType.CRISIS
-        delta["response_kind"] = ResponseCategory.CRISIS
     return delta
 
 
@@ -94,6 +116,7 @@ async def run_crisis_gate_node(
         classifier_path=result.classifier_path,
         llm_failure_occurred=result.llm_failure_occurred,
         duration_ms=gate_duration_ms,
+        prior_diagnostics=state.get("diagnostics"),
     )
     assessment = result.assessment
     next_node: CrisisGateNextNode = (

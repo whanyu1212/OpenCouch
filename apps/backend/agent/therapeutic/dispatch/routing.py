@@ -21,6 +21,7 @@ from __future__ import annotations
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
+from agent.observability.routing_trace import append_routing_trace
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.dispatch.constants import (
@@ -69,10 +70,14 @@ def _clear_active_exercise_update(response_style: str, approach: str) -> dict:
     }
 
 
-def _command_from_plan(plan: DispatchPlan) -> Command[TherapeuticNodeName]:
+def _command_from_plan(
+    state: AgentState,
+    plan: DispatchPlan,
+) -> Command[TherapeuticNodeName]:
     """Convert a dispatch plan into the LangGraph command.
 
     Args:
+        state: Current graph state.
         plan: Internal routing plan.
 
     Returns:
@@ -84,6 +89,20 @@ def _command_from_plan(plan: DispatchPlan) -> Command[TherapeuticNodeName]:
         if plan.clear_exercise
         else _routing_update(plan.response_style, plan.therapeutic_approach)
     )
+    if "diagnostics" in state:
+        decision = plan.response_style
+        if plan.therapeutic_approach and plan.therapeutic_approach != "none":
+            decision = f"{decision}/{plan.therapeutic_approach}"
+        update["diagnostics"] = append_routing_trace(
+            state.get("diagnostics"),
+            {
+                "stage": "dispatch",
+                "decision": decision,
+                "source": plan.source,
+                "reason": plan.reason,
+                "confidence": plan.confidence,
+            },
+        )
     return Command(
         update=update,
         goto=_RESPONSE_STYLE_NODE_MAP[plan.response_style],
@@ -106,4 +125,4 @@ async def run_therapeutic_dispatch_node(
     """
 
     plan = await plan_therapeutic_route(state, runtime.context.llm_client)
-    return _command_from_plan(plan)
+    return _command_from_plan(state, plan)

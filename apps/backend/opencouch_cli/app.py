@@ -45,13 +45,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 import os
 import subprocess
 import sys
+import textwrap
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -86,11 +89,26 @@ from agent.models import (
 )
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entries
+from agent.observability.routing_trace import routing_trace_from_diagnostics
 from config import (
+    PersistenceBackend,
     ResponseModelTier,
     create_configured_control_llm_client,
     create_configured_response_llm_client,
     get_settings,
+)
+from opencouch_cli.commands import (
+    ALIASES,
+    all_command_names,
+    help_commands,
+    resolve_alias,
+)
+from opencouch_cli.input import (
+    PromptToolbarState,
+    available_prompt_themes,
+    read_user_input,
+    record_recent_command,
+    set_prompt_theme,
 )
 from rich import box
 from rich.console import Console, Group
@@ -120,6 +138,13 @@ CLI_THEME = Theme(
 )
 
 console = Console(theme=CLI_THEME)
+
+TraceMode = Literal["off", "on", "once"]
+UIMode = Literal["full", "compact"]
+PromptThemeName = Literal["mono", "contrast", "calm"]
+
+# Prompt-toolbar "last action" line (best-effort, display-only).
+_LAST_INFO_MESSAGE: str | None = None
 
 
 def _response_panel(
@@ -204,12 +229,17 @@ class RunnerSession:
     thread_id: str
     sqlite_path: str
     memory_mode: str
+    persistence_backend: PersistenceBackend = "postgres"
     # Optional stable owner for long-term memory. Falls back to thread_id.
     user_id: str | None = None
     history: list[Message] = field(default_factory=list)
     last_context: AgentState | None = None
     response_model_tier: ResponseModelTier = "fast"
     response_llm_client: BaseLLMClient | None = None
+    trace_mode: TraceMode = "off"
+    ui_mode: UIMode = "full"
+    prompt_theme: PromptThemeName = "mono"
+    show_onboarding: bool = True
 
     def owner_id(self) -> str:
         """Return the effective owner identifier for memory operations.
@@ -219,6 +249,69 @@ class RunnerSession:
         """
 
         return self.user_id or self.thread_id
+
+
+def _prompt_toolbar_state(
+    session: RunnerSession,
+    *,
+    pending_status: str | None,
+) -> PromptToolbarState:
+    """Build prompt metadata for the enhanced REPL toolbar.
+
+    Args:
+        session (RunnerSession): Current CLI session state.
+        pending_status (str | None): Short background-work status label.
+
+    Returns:
+        PromptToolbarState: Input-toolbar metadata.
+    """
+
+    return PromptToolbarState(
+        resolved_mode=session.resolved_mode,
+        memory_mode=session.memory_mode,
+        response_model_tier=session.response_model_tier,
+        thread_id=session.thread_id,
+        user_id=session.user_id,
+        pending_status=pending_status,
+        ui_mode=session.ui_mode,
+        last_action=_LAST_INFO_MESSAGE,
+    )
+
+
+def _pending_tail_status(session: RunnerSession) -> str:
+    """Return a mode-aware label for post-response background work.
+
+    Args:
+        session (RunnerSession): Current CLI session state.
+
+    Returns:
+        str: User-facing pending status label.
+    """
+
+    if session.memory_mode == "persistent":
+        return "saving memory"
+    return "finishing turn"
+
+
+def _pending_tail_message(session: RunnerSession) -> str:
+    """Return the mode-aware post-response background-work message.
+
+    Args:
+        session (RunnerSession): Current CLI session state.
+
+    Returns:
+        str: User-facing informational message.
+    """
+
+    if session.memory_mode == "persistent":
+        return (
+            "Saving memory in the background. "
+            "Press Enter when you're ready for the next turn."
+        )
+    return (
+        "Finishing turn in the background. "
+        "Press Enter when you're ready for the next turn."
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -376,11 +469,31 @@ def resolve_response_llm_client(
         return None
 
 
-def resolve_memory_mode(memory_mode: str) -> str:
+def _persistent_mode_hint(persistence_backend: PersistenceBackend) -> str:
+    """Return backend-aware copy for the persistent memory choice.
+
+    Args:
+        persistence_backend (PersistenceBackend): Configured persistence backend.
+
+    Returns:
+        str: Short user-facing persistent-mode description.
+    """
+
+    if persistence_backend == "postgres":
+        return "save memory using Postgres"
+    return "save memory using SQLite"
+
+
+def resolve_memory_mode(
+    memory_mode: str,
+    *,
+    persistence_backend: PersistenceBackend | None = None,
+) -> str:
     """Resolve memory mode from CLI arg, prompting when needed.
 
     Args:
         memory_mode: Raw CLI memory mode argument.
+        persistence_backend: Optional configured persistent storage backend.
 
     Returns:
         Resolved memory mode, either ``"guest"`` or ``"persistent"``.
@@ -389,6 +502,8 @@ def resolve_memory_mode(memory_mode: str) -> str:
     if memory_mode in {"guest", "persistent"}:
         return memory_mode
 
+    backend = persistence_backend or get_settings().persistence_backend
+    persistent_hint = _persistent_mode_hint(backend)
     console.print()
     console.print(Rule(style="panel", characters="─"))
     console.print("  [primary]Choose Memory Mode[/primary]", highlight=False)
@@ -397,7 +512,7 @@ def resolve_memory_mode(memory_mode: str) -> str:
         "  [accent]1[/accent]  [info]Guest Mode[/info]  [hint]— private, in-memory only[/hint]"
     )
     console.print(
-        "  [accent]2[/accent]  [info]Persistent Mode[/info]  [hint]— save local memory in SQLite[/hint]"
+        f"  [accent]2[/accent]  [info]Persistent Mode[/info]  [hint]— {persistent_hint}[/hint]"
     )
     console.print()
     console.print(Rule(style="panel", characters="─"))
@@ -500,15 +615,21 @@ def render_header(
     console.print(
         Text.from_markup(
             "   [muted]quick actions[/muted]  "
-            "[info]/help[/info]  [info]/status[/info]  [info]/history[/info]  "
-            "[info]/context[/info]  [info]/memory[/info]  [info]/threads[/info]"
+            "[info]/help[/info]  [info]/keys[/info]  [info]/status[/info]  "
+            "[info]/history[/info]  [info]/context[/info]  [info]/memory[/info]"
         )
     )
     console.print(
         Text.from_markup(
             "                  "
-            "[info]/resume[/info]  [info]/new[/info]  [info]/reset[/info]  "
-            "[info]/clear[/info]  [info]/mode[/info]  [info]/response-tier[/info]  "
+            "[info]/threads[/info]  [info]/resume[/info]  [info]/new[/info]  "
+            "[info]/ui[/info]  [info]/theme[/info]  [info]/mode[/info]"
+        )
+    )
+    console.print(
+        Text.from_markup(
+            "                  "
+            "[info]/response-tier[/info]  [info]/trace[/info]  "
             "[info]/debug[/info]  [info]/exit[/info]"
         )
     )
@@ -541,7 +662,6 @@ def render_response(
         ),
         crisis=CrisisAssessment(),
         response_style="crisis" if is_crisis else "support",
-        response_style_source="cli",
         diagnostics={},
     )
     console.print(_response_panel(output, thread_id=thread_id, turn_count=turn_count))
@@ -550,8 +670,6 @@ def render_response(
 def render_meta(
     *,
     response_style: str | None,
-    response_style_source: str | None,
-    response_style_type: str | None,
     response_type: str,
     level: int,
     needs_clarification: bool,
@@ -565,9 +683,6 @@ def render_meta(
 
     Args:
         response_style: Therapeutic response style selected for the turn.
-        response_style_source: Source of the response style decision.
-        response_style_type: Deprecated style-type label retained for
-            call-site compatibility.
         response_type: High-level response category.
         level: Crisis severity level.
         needs_clarification: Whether safety clarification is needed.
@@ -613,7 +728,7 @@ def render_meta(
     summary = Text.from_markup(
         "  [panel]·[/panel]  ".join(
             [
-                f"[primary]{response_style or '-'}[/primary][muted]/{response_style_source or '-'}[/muted]",
+                f"[primary]{response_style or '-'}[/primary]",
                 f"[info]{response_type}[/info]",
                 f"[warning]{safety_status}[/warning]",
                 f"[accent]{turn_total_label}[/accent]",
@@ -635,6 +750,195 @@ def render_meta(
     if verbose:
         _render_stage_timings(diag, deltas)
         console.print()
+
+
+def render_turn_route(
+    output: AgentOutput,
+    *,
+    pending_status: str | None = None,
+) -> None:
+    """Render a compact routing summary for one completed response.
+
+    Args:
+        output (AgentOutput): Agent output containing routing metadata.
+        pending_status (str | None): Optional background-work status label.
+
+    Returns:
+        None.
+    """
+
+    crisis = output.crisis
+    if crisis.needs_crisis_response:
+        safety_label = "crisis"
+        safety_style = "danger"
+    elif crisis.needs_clarification:
+        safety_label = "check"
+        safety_style = "warning"
+    elif crisis.level >= 1:
+        safety_label = "distress"
+        safety_style = "warning"
+    else:
+        safety_label = "normal"
+        safety_style = "success"
+
+    route_label = output.response_style or "unknown"
+    if output.therapeutic_approach and output.therapeutic_approach != "none":
+        route_label = f"{route_label} / {output.therapeutic_approach}"
+
+    diagnostics = output.diagnostics or {}
+    latency = diagnostics.get("turn_total_ms")
+    try:
+        latency_label = f"{float(latency):.0f}ms" if latency is not None else None
+    except (TypeError, ValueError):
+        latency_label = None
+
+    parts: list[tuple[str, str]] = [
+        ("   route ", "muted"),
+        (route_label, "primary"),
+        ("  ·  safety ", "panel"),
+        (safety_label, safety_style),
+    ]
+    if latency_label:
+        parts.extend(
+            [
+                ("  ·  ", "panel"),
+                (latency_label, "accent"),
+            ]
+        )
+    if pending_status:
+        parts.extend(
+            [
+                ("  ·  ", "panel"),
+                (pending_status, "warning"),
+            ]
+        )
+    console.print()
+    console.print(Text.assemble(*parts))
+    console.print()
+
+
+def render_turn_trace(
+    output: AgentOutput,
+    *,
+    status_stages: list[str] | None = None,
+    pending_status: str | None = None,
+) -> None:
+    """Render the optional routing trace diagram for one turn.
+
+    Args:
+        output (AgentOutput): Agent output containing routing diagnostics.
+        status_stages (list[str] | None): Streamed pipeline stages observed
+            before the response became available.
+        pending_status (str | None): Optional background-work status label.
+
+    Returns:
+        None.
+    """
+
+    entries: list[dict[str, str]] = [
+        {key: str(value) for key, value in entry.items()}
+        for entry in routing_trace_from_diagnostics(output.diagnostics)
+    ]
+    if not entries:
+        entries = _fallback_routing_trace_entries(output)
+
+    lines = [
+        "flow                                      reason",
+        "----                                      ------",
+    ]
+    for index, entry in enumerate(entries):
+        if index > 0:
+            lines.append("  |")
+        stage = _clip_trace_text(entry.get("stage", "-"), 11)
+        decision = _clip_trace_text(entry.get("decision", "-"), 22)
+        reason = entry.get("reason") or "-"
+        meta_parts = [
+            value for value in (entry.get("source"), entry.get("confidence")) if value
+        ]
+        if meta_parts:
+            reason = f"{reason} ({', '.join(meta_parts)})"
+        flow = f"  +-- {stage:<11} -> {decision:<22}"
+        wrapped_reason = textwrap.wrap(reason, width=28) or ["-"]
+        lines.append(f"{flow}  {wrapped_reason[0]}")
+        continuation_indent = " " * (len(flow) + 2)
+        for continuation in wrapped_reason[1:]:
+            lines.append(f"{continuation_indent}{continuation}")
+
+    if status_stages:
+        unique_stages = list(dict.fromkeys(status_stages))
+        stage_labels = " -> ".join(friendly_stage(stage) for stage in unique_stages)
+        lines.extend(["", f"stages: {stage_labels}"])
+    if pending_status:
+        lines.append(f"tail: {pending_status}")
+
+    console.print()
+    console.print(
+        Panel(
+            Text("\n".join(lines), style="info"),
+            title="[muted]routing trace[/muted]",
+            subtitle="[hint]/trace off hides this[/hint]",
+            border_style="panel",
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
+def _fallback_routing_trace_entries(output: AgentOutput) -> list[dict[str, str]]:
+    """Build trace entries when diagnostics have no structured trace yet.
+
+    Args:
+        output (AgentOutput): Agent output to summarize.
+
+    Returns:
+        list[dict[str, str]]: Minimal routing trace entries.
+    """
+
+    crisis = output.crisis
+    if crisis.needs_crisis_response:
+        safety_decision = "crisis"
+    elif crisis.needs_clarification:
+        safety_decision = "check"
+    elif crisis.level >= 1:
+        safety_decision = "distress"
+    else:
+        safety_decision = "normal"
+
+    route_decision = output.response_style or "unknown"
+    if output.therapeutic_approach and output.therapeutic_approach != "none":
+        route_decision = f"{route_decision}/{output.therapeutic_approach}"
+
+    return [
+        {
+            "stage": "safety",
+            "decision": safety_decision,
+            "source": "output",
+            "reason": crisis.reason or "No structured safety reason was emitted.",
+            "confidence": crisis.confidence,
+        },
+        {
+            "stage": "dispatch",
+            "decision": route_decision,
+            "reason": "Final response route from agent output.",
+        },
+    ]
+
+
+def _clip_trace_text(value: str, max_length: int) -> str:
+    """Clip a trace label for fixed-width diagram columns.
+
+    Args:
+        value (str): Raw label.
+        max_length (int): Maximum display length.
+
+    Returns:
+        str: Clipped label.
+    """
+
+    if len(value) <= max_length:
+        return value
+    return f"{value[: max_length - 1]}..."
 
 
 def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
@@ -2469,79 +2773,96 @@ def render_session_summary(stored_arc: StoredSessionArc) -> None:
 
 
 def render_help() -> None:
-    """Render the available slash commands.
+    """Render the available slash commands grouped by category.
+
+    Returns:
+        None.
+    """
+
+    category_titles = {
+        "session": "session",
+        "display": "display",
+        "memory": "memory",
+        "threads": "threads",
+        "runtime": "runtime",
+        "debug": "debug",
+    }
+    category_order = ("session", "display", "memory", "threads", "runtime", "debug")
+    grouped: dict[str, list[tuple[str, str]]] = {key: [] for key in category_order}
+    for command in help_commands():
+        grouped.setdefault(command.category, []).append(
+            (command.display, command.description)
+        )
+
+    for category in category_order:
+        rows = grouped.get(category, [])
+        if not rows:
+            continue
+        table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
+        table.add_column("command", style="accent", no_wrap=True)
+        table.add_column("description", style="info")
+        for display, description in rows:
+            table.add_row(display, description)
+        console.print(
+            Panel(
+                table,
+                title=f"[muted]commands · {category_titles.get(category, category)}[/muted]",
+                border_style="panel",
+                box=box.ROUNDED,
+            )
+        )
+    console.print()
+
+
+def render_keys() -> None:
+    """Render keyboard shortcuts and prompt usage hints.
 
     Returns:
         None.
     """
 
     table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("command", style="accent", no_wrap=True)
-    table.add_column("description", style="info")
-    table.add_row("/help", "Show available commands.")
-    table.add_row("/status", "Show current mode and session stats.")
-    table.add_row("/history [n]", "Show the last n transcript messages. Default: 6.")
-    table.add_row("/context", "Show the latest derived session context snapshot.")
-    table.add_row(
-        "/memory status",
-        "Show memory layer state (counts, mode, crisis log, recall toggle).",
-    )
-    table.add_row(
-        "/memory list [facts|sessions|rules]",
-        "List semantic facts, episodic arcs, and/or procedural rules. "
-        "Without a subcommand, shows semantic + episodic together.",
-    )
-    table.add_row(
-        "/memory recall on|off",
-        "Toggle whether the agent proactively references past memory "
-        "content in replies. Style rules are always applied regardless.",
-    )
-    table.add_row(
-        "/memory forget <fact|session|rule> <n>",
-        "Delete one record by its 1-indexed position from /memory list. "
-        "Shows a preview panel and asks for y/N confirmation.",
-    )
-    table.add_row(
-        "/memory clear <facts|sessions|rules|all>",
-        "Wipe an entire namespace for the active user. Unrecoverable. "
-        "Requires typing the word 'clear' to confirm (stronger than y/N).",
-    )
-    table.add_row(
-        "/memory purge-crisis [days]",
-        "Delete crisis log records older than the retention window. "
-        "Default 90 days. Requires typing 'purge' to confirm.",
-    )
-    table.add_row("/threads [n]", "List persisted thread ids. Default: 12.")
-    table.add_row("/resume <thread-id>", "Switch to an existing persisted thread.")
-    table.add_row(
-        "/new [thread-id]", "Start a fresh thread without restarting the CLI."
-    )
-    table.add_row("/reset", "Clear the conversation history.")
-    table.add_row("/clear", "Clear the terminal and redraw the header.")
-    table.add_row(
-        "/mode <deterministic|hybrid|auto>",
-        "Switch LLM resolution mode for future turns.",
-    )
-    table.add_row(
-        "/response-tier <fast|quality>",
-        "Switch the therapeutic response quality/latency tradeoff.",
-    )
-    table.add_row(
-        "/debug state",
-        "Dump the raw graph state for the active thread (verbose diagnostics).",
-    )
-    table.add_row(
-        "/end",
-        "End the session; summarize it and save the arc to episodic memory.",
-    )
-    table.add_row(
-        "/exit",
-        "End the session; prompt to save a summary before closing.",
-    )
+    table.add_column("shortcut", style="accent", no_wrap=True)
+    table.add_column("action", style="info")
+    table.add_row("/", "Open slash-command completions at prompt start.")
+    table.add_row("↑ / ↓", "Navigate input history.")
+    table.add_row("Tab", "Accept highlighted completion.")
+    table.add_row("Ctrl+L", "Clear prompt surface.")
+    table.add_row("Enter", "Submit current input.")
+
     console.print(
         Panel(
             table,
-            title="[muted]commands[/muted]",
+            title="[muted]keyboard shortcuts[/muted]",
+            subtitle="[hint]type /help for full command reference[/hint]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+def render_onboarding() -> None:
+    """Render a one-time quick-start guide for first prompt.
+
+    Returns:
+        None.
+    """
+
+    console.print(
+        Panel(
+            "[muted]Welcome to OpenCouch CLI.[/muted]\n\n"
+            "[info]Quick start[/info]\n"
+            "  • Type a message and press Enter.\n"
+            "  • Type [accent]/[/accent] at prompt start to open command completion.\n\n"
+            "[info]Most used commands[/info]\n"
+            "  • [accent]/help[/accent] — command reference\n"
+            "  • [accent]/status[/accent] — current session mode/state\n"
+            "  • [accent]/memory status[/accent] — memory health and counts\n"
+            "  • [accent]/threads[/accent] — list saved threads\n"
+            "  • [accent]/keys[/accent] — keyboard shortcuts\n\n"
+            "[hint]This tip is shown once per CLI run.[/hint]",
+            title="[muted]quick start[/muted]",
             border_style="panel",
             box=box.ROUNDED,
         )
@@ -2566,13 +2887,22 @@ def render_status(session: RunnerSession) -> None:
     table.add_column(style="hint", no_wrap=True)
     table.add_column(style="info")
     table.add_row("thread id", session.thread_id)
-    table.add_row("sqlite path", session.sqlite_path)
+    table.add_row("memory mode", session.memory_mode)
+    if session.memory_mode == "guest":
+        table.add_row("persistence", "ephemeral")
+    else:
+        table.add_row("persistence", session.persistence_backend)
+        if session.persistence_backend == "sqlite":
+            table.add_row("sqlite path", session.sqlite_path)
     table.add_row("requested mode", session.requested_mode)
     table.add_row("resolved mode", session.resolved_mode)
     table.add_row(
         "llm client", "enabled" if session.llm_client is not None else "disabled"
     )
     table.add_row("response tier", session.response_model_tier)
+    table.add_row("trace mode", session.trace_mode)
+    table.add_row("ui mode", session.ui_mode)
+    table.add_row("prompt theme", session.prompt_theme)
     table.add_row(
         "response llm",
         "enabled" if session.response_llm_client is not None else "disabled",
@@ -2650,6 +2980,9 @@ def render_info(message: str, *, style: str = "panel") -> None:
     Returns:
         None.
     """
+
+    global _LAST_INFO_MESSAGE
+    _LAST_INFO_MESSAGE = message
 
     style_color = {
         "success": "success",
@@ -2747,6 +3080,95 @@ def set_response_model_tier(
         if session.llm_client is not None
         else None
     )
+
+
+def set_trace_mode(session: RunnerSession, trace_mode: TraceMode) -> None:
+    """Update the optional routing trace display mode.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+        trace_mode (TraceMode): New trace mode.
+
+    Returns:
+        None.
+    """
+
+    session.trace_mode = trace_mode
+
+
+def set_ui_mode(session: RunnerSession, ui_mode: UIMode) -> None:
+    """Update prompt-toolbar density mode for subsequent prompts.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+        ui_mode (UIMode): New toolbar density mode.
+
+    Returns:
+        None.
+    """
+
+    session.ui_mode = ui_mode
+
+
+def set_session_prompt_theme(
+    session: RunnerSession,
+    theme_name: str,
+) -> bool:
+    """Update prompt theme preset for subsequent prompts.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+        theme_name (str): New prompt theme preset name.
+
+    Returns:
+        bool: True when the theme was applied.
+    """
+
+    if not set_prompt_theme(theme_name):
+        return False
+    session.prompt_theme = theme_name  # type: ignore[assignment]
+    return True
+
+
+def toggle_trace_mode(session: RunnerSession) -> str:
+    """Toggle trace display for command handling.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+
+    Returns:
+        str: The new trace mode.
+    """
+
+    session.trace_mode = "off" if session.trace_mode != "off" else "on"
+    return session.trace_mode
+
+
+def _trace_enabled(session: RunnerSession) -> bool:
+    """Return whether the trace overlay should render for the current turn.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+
+    Returns:
+        bool: True when trace mode is on or once.
+    """
+
+    return session.trace_mode in {"on", "once"}
+
+
+def _consume_trace_once(session: RunnerSession) -> None:
+    """Turn one-shot trace mode off after it renders.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+
+    Returns:
+        None.
+    """
+
+    if session.trace_mode == "once":
+        session.trace_mode = "off"
 
 
 def generate_thread_id() -> str:
@@ -2927,8 +3349,11 @@ async def handle_command(
         return True
 
     parts = raw.split()
-    command = parts[0].lower()
+    command = resolve_alias(parts[0].lower())
     args = parts[1:]
+
+    # Track for the recent-command quick picker.
+    record_recent_command(command)
 
     if command in {"/exit", "/quit"}:
         # Default toward saving a summary; users can delete it later if needed.
@@ -3060,6 +3485,29 @@ async def handle_command(
 
     if command == "/help":
         render_help()
+        return True
+
+    if command == "/keys":
+        render_keys()
+        return True
+
+    if command == "/ui":
+        if len(args) != 1 or args[0] not in {"compact", "full"}:
+            render_info("Usage: /ui <compact|full>", style="warning")
+            return True
+        set_ui_mode(session, args[0])  # type: ignore[arg-type]
+        render_info(f"UI mode updated. ui={session.ui_mode}", style="success")
+        return True
+
+    if command == "/theme":
+        theme_options = "|".join(available_prompt_themes())
+        if len(args) != 1:
+            render_info(f"Usage: /theme <{theme_options}>", style="warning")
+            return True
+        if not set_session_prompt_theme(session, args[0]):
+            render_info(f"Usage: /theme <{theme_options}>", style="warning")
+            return True
+        render_info(f"Theme updated. theme={session.prompt_theme}", style="success")
         return True
 
     if command == "/status":
@@ -3200,6 +3648,25 @@ async def handle_command(
         )
         return True
 
+    if command == "/trace":
+        if len(args) == 0:
+            render_info(
+                f"Routing trace is {session.trace_mode}. "
+                "Use /trace on, /trace off, or /trace once.",
+                style="info",
+            )
+            return True
+        if len(args) != 1 or args[0] not in {"on", "off", "once", "toggle"}:
+            render_info("Usage: /trace on|off|once", style="warning")
+            return True
+        if args[0] == "toggle":
+            new_mode = toggle_trace_mode(session)
+        else:
+            set_trace_mode(session, args[0])  # type: ignore[arg-type]
+            new_mode = session.trace_mode
+        render_info(f"Routing trace {new_mode}.", style="success")
+        return True
+
     if command == "/debug":
         if len(args) == 0 or args[0] != "state":
             render_info(
@@ -3210,7 +3677,19 @@ async def handle_command(
         await _render_debug_state(runtime, session)
         return True
 
-    render_info(f"Unknown command: {command}. Try /help.", style="warning")
+    # Fuzzy-match against known commands + aliases for helpful suggestions.
+    candidates = all_command_names() + list(ALIASES.keys())
+    close = difflib.get_close_matches(command, candidates, n=3, cutoff=0.5)
+    if close:
+        suggestions = ", ".join(close)
+        render_info(
+            f"Unknown command: {command}. Did you mean: {suggestions}?  Type /help for full list.",
+            style="warning",
+        )
+    else:
+        render_info(
+            f"Unknown command: {command}. Type /help for full list.", style="warning"
+        )
     return True
 
 
@@ -3275,6 +3754,7 @@ async def chat_loop(
         thread_id=thread_id,
         sqlite_path=":memory:" if is_guest_mode else sqlite_path,
         memory_mode=memory_mode,
+        persistence_backend=settings.persistence_backend,
         user_id=effective_user_id,
         response_model_tier=response_model_tier,
         response_llm_client=response_llm_client,
@@ -3325,6 +3805,7 @@ async def chat_loop(
             session.history = await runtime.get_history(session.thread_id)
 
         try:
+            set_prompt_theme(session.prompt_theme)
             render_header(
                 session.resolved_mode,
                 session.thread_id,
@@ -3332,6 +3813,9 @@ async def chat_loop(
                 user_id=session.user_id,
                 response_model_tier=session.response_model_tier,
             )
+            if session.show_onboarding:
+                render_onboarding()
+                session.show_onboarding = False
             render_info(
                 "Session ready. Models, graph, and memory are warm.", style="success"
             )
@@ -3346,10 +3830,14 @@ async def chat_loop(
                     await _finalize_pending_turn()
 
                 try:
-                    console.print(
-                        "\n  [primary]·[/primary] [accent]you[/accent] ", end=""
+                    user_text = await read_user_input(
+                        _prompt_toolbar_state(
+                            session,
+                            pending_status=_pending_tail_status(session)
+                            if pending_tail_task is not None
+                            else None,
+                        )
                     )
-                    user_text = (await asyncio.to_thread(Prompt.ask, "")).strip()
                 except (EOFError, KeyboardInterrupt):
                     await _finalize_pending_turn()
                     console.print("\n  [hint]session ended[/hint]")
@@ -3371,6 +3859,7 @@ async def chat_loop(
                 accumulated_text = ""
                 final_output: AgentOutput | None = None
                 response_ready_output: AgentOutput | None = None
+                status_stages: list[str] = []
 
                 stream = runtime.run_turn_stream(
                     thread_id=session.thread_id,
@@ -3406,6 +3895,7 @@ async def chat_loop(
                     live.update(_stream_group(Text("", style="muted")))
                     async for event in stream:
                         if isinstance(event, StatusEvent):
+                            status_stages.append(event.stage)
                             label = friendly_stage(event.stage)
                             detail = f" ({event.detail})" if event.detail else ""
                             status_renderable = Spinner(
@@ -3488,13 +3978,31 @@ async def chat_loop(
                             stream,
                         )
                     )
+                    if _trace_enabled(session):
+                        render_turn_trace(
+                            response_ready_output,
+                            status_stages=status_stages,
+                            pending_status=_pending_tail_status(session),
+                        )
+                        _consume_trace_once(session)
+                    render_turn_route(
+                        response_ready_output,
+                        pending_status=_pending_tail_status(session),
+                    )
                     render_info(
-                        "Saving memory in the background. Press Enter when you're ready for the next turn.",
+                        _pending_tail_message(session),
                         style="muted",
                     )
                     continue
 
                 if final_output is not None:
+                    if _trace_enabled(session):
+                        render_turn_trace(
+                            final_output,
+                            status_stages=status_stages,
+                        )
+                        _consume_trace_once(session)
+                    render_turn_route(final_output)
                     session.last_context = await runtime.get_state(session.thread_id)
                     session.history = await runtime.get_history(session.thread_id)
         finally:

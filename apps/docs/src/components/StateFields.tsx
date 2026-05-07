@@ -92,9 +92,6 @@ const GROUPS: GroupDef[] = [
     fields: [
       { name: 'response_text', type: 'str', setBy: 'reply node (response style / crisis_response / memory_control / grounded_answer)', lifecycle: 'turn', desc: 'Generated reply for the turn.' },
       { name: 'response_style', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'supportive · reflective · clarifying · psychoeducation · technique · guided_exercise · closing · safety_check · crisis_response · memory_control · grounded_lookup' },
-      { name: 'response_style_source', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'Which decision point picked it: crisis_gate, therapeutic_dispatch, memory_control_gate, grounded_lookup_gate.' },
-      { name: 'response_style_type', type: 'ResponseStyleType', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC · OPERATIONAL · CRISIS' },
-      { name: 'response_kind', type: 'ResponseCategory', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC or CRISIS — exposed publicly via AgentOutput.response_type.' },
       { name: 'therapeutic_approach', type: 'str | None', setBy: 'therapeutic_dispatch_node', lifecycle: 'turn', desc: 'motivational_interviewing · cbt · act · dbt_skills · grief_support · interpersonal_therapy · pfa · none' },
       { name: 'should_persist_memory', type: 'bool', setBy: 'guided_exercise_node', lifecycle: 'turn', desc: 'Set on exercise completion as a hint that the turn is worth summarizing.' },
     ],

@@ -509,7 +509,7 @@ async def test_stale_turn_scoped_keys_do_not_survive_next_turn() -> None:
             message="I had a hard day at work.",
         )
 
-    assert result2.state.get("therapeutic_approach") == "motivational_interviewing"
+    assert result2.state.get("therapeutic_approach") == "none"
     assert result2.state.get("inferred_location") == ""
     assert result2.state.get("found_resources") == []
     assert result2.state.get("resource_lookup_status") == "not_attempted"

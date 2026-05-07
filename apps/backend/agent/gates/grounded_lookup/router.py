@@ -41,6 +41,8 @@ class GroundedLookupRoute:
     action: GroundedLookupAction | None
     classifier_path: str
     llm_failure_occurred: bool
+    reason: str
+    confidence: str | None = None
 
 
 class GroundedLookupDecision(BaseModel):
@@ -116,7 +118,7 @@ async def _classify_grounded_lookup_action(
     state: AgentState,
     *,
     llm_client: BaseLLMClient,
-) -> GroundedLookupAction | None:
+) -> tuple[GroundedLookupAction | None, str, str]:
     """Classify an ambiguous message as grounded lookup or ordinary support.
 
     Args:
@@ -124,8 +126,8 @@ async def _classify_grounded_lookup_action(
         llm_client (BaseLLMClient): Configured control-plane LLM client.
 
     Returns:
-        GroundedLookupAction | None: Grounded lookup action, or ``None`` when
-            ordinary routing should handle the turn.
+        tuple[GroundedLookupAction | None, str, str]: Lookup action, classifier
+            reasoning, and confidence.
     """
 
     decision: GroundedLookupDecision = await llm_client.generate_structured(
@@ -135,12 +137,12 @@ async def _classify_grounded_lookup_action(
     )
 
     if not decision.should_lookup or decision.confidence == "low":
-        return None
+        return None, decision.reasoning, decision.confidence
 
     query = (decision.query or "").strip() or state.get("message", "").strip()
     if not query:
-        return None
-    return GroundedLookupAction(query=query)
+        return None, decision.reasoning, decision.confidence
+    return GroundedLookupAction(query=query), decision.reasoning, decision.confidence
 
 
 async def resolve_grounded_lookup_action(
@@ -166,6 +168,8 @@ async def resolve_grounded_lookup_action(
             action=hard_action,
             classifier_path="deterministic",
             llm_failure_occurred=False,
+            reason="Hard rule matched a factual lookup request.",
+            confidence="high",
         )
 
     if not _needs_lookup_classifier(message):
@@ -173,6 +177,8 @@ async def resolve_grounded_lookup_action(
             action=None,
             classifier_path="not_attempted",
             llm_failure_occurred=False,
+            reason="No external factual lookup request detected.",
+            confidence=None,
         )
 
     if llm_client is None:
@@ -180,10 +186,15 @@ async def resolve_grounded_lookup_action(
             action=None,
             classifier_path="deterministic",
             llm_failure_occurred=False,
+            reason="Grounded-lookup classifier unavailable; continuing normal route.",
+            confidence=None,
         )
 
     try:
-        action = await _classify_grounded_lookup_action(state, llm_client=llm_client)
+        action, reason, confidence = await _classify_grounded_lookup_action(
+            state,
+            llm_client=llm_client,
+        )
     except Exception:
         logger.warning(
             "Grounded lookup LLM classifier failed; using deterministic fallback.",
@@ -193,10 +204,14 @@ async def resolve_grounded_lookup_action(
             action=None,
             classifier_path="deterministic",
             llm_failure_occurred=True,
+            reason="Grounded-lookup classifier failed; continuing normal route.",
+            confidence=None,
         )
 
     return GroundedLookupRoute(
         action=action,
         classifier_path="llm_primary",
         llm_failure_occurred=False,
+        reason=reason,
+        confidence=confidence,
     )

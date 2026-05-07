@@ -13,6 +13,7 @@ from agent.graph_constants import (
     GroundedLookupGateNextNode,
 )
 from agent.gates.grounded_lookup.router import resolve_grounded_lookup_action
+from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -39,10 +40,21 @@ async def run_grounded_lookup_gate_node(
         state,
         llm_client=runtime.context.llm_client,
     )
+    decision = "lookup" if route.action is not None else "pass"
     diagnostics = {
         "grounded_lookup_gate_ms": elapsed_ms(start),
         "grounded_lookup_classifier_path": route.classifier_path,
         "grounded_lookup_llm_failure_occurred": route.llm_failure_occurred,
+        **append_routing_trace(
+            state.get("diagnostics"),
+            {
+                "stage": "lookup",
+                "decision": decision,
+                "source": route.classifier_path,
+                "reason": route.reason,
+                "confidence": route.confidence,
+            },
+        ),
     }
 
     if route.action is None:

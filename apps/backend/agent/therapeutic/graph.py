@@ -22,13 +22,13 @@ automatically.
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agent.models import CrisisAssessment, ResponseStyleType, ResponseCategory
+from agent.models import CrisisAssessment
 from agent.runtime_context import WorkflowContext
 from agent.state import (
     AgentState,
@@ -66,14 +66,11 @@ class TherapeuticSubgraphOutput(TypedDict):
     input state inside the subgraph itself.
     """
 
-    exercise_state: NotRequired[ExerciseState]
-    therapeutic_approach: NotRequired[str | None]
-    response_style: NotRequired[str]
-    response_style_source: NotRequired[str | None]
-    response_style_type: NotRequired[ResponseStyleType]
-    response_kind: NotRequired[ResponseCategory]
     response_text: NotRequired[str]
-    should_persist_memory: NotRequired[bool]
+    response_style: NotRequired[str]
+    therapeutic_approach: NotRequired[str | None]
+    exercise_state: NotRequired[ExerciseState]
+    diagnostics: NotRequired[dict[str, Any]]
 
 
 class TherapeuticSubgraphInput(TypedDict):
@@ -90,6 +87,7 @@ class TherapeuticSubgraphInput(TypedDict):
     session_progress: SessionProgressState
     exercise_state: ExerciseState
     therapeutic_approach: NotRequired[str | None]
+    diagnostics: NotRequired[dict[str, Any]]
 
 
 def build_therapeutic_subgraph() -> CompiledStateGraph[

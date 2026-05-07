@@ -50,7 +50,6 @@ def _output_to_chat_response(output: AgentOutput) -> ChatResponse:
         response_text=output.response_text,
         response_type=output.response_type.value,
         response_style=output.response_style,
-        response_style_source=output.response_style_source,
         therapeutic_approach=output.therapeutic_approach,
         crisis=CrisisInfo(
             level=output.crisis.level,

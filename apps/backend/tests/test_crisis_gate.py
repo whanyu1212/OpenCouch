@@ -252,7 +252,6 @@ async def test_run_crisis_gate_node_override_path_standalone() -> None:
     assert command.update["crisis_audit"]["crisis_override_kind"] == "imminent_risk"
     assert command.update["crisis_audit"]["crisis_classifier_path"] == "override"
     assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is False
-    assert command.update["response_kind"] == ResponseCategory.CRISIS
 
 
 @pytest.mark.asyncio
@@ -305,7 +304,11 @@ async def test_run_crisis_gate_node_llm_success_path_standalone() -> None:
     assert command.update["crisis_audit"]["crisis_override_kind"] == "none"
     assert command.update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
     assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is False
-    assert command.update["response_kind"] == ResponseCategory.CRISIS
+    trace = command.update["diagnostics"]["routing_trace"]
+    assert trace[-1]["stage"] == "safety"
+    assert trace[-1]["decision"] == "crisis"
+    assert trace[-1]["source"] == "llm_primary"
+    assert trace[-1]["reason"] == "LLM escalated the message to level 2"
 
 
 @pytest.mark.asyncio

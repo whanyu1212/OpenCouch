@@ -1,11 +1,10 @@
-"""Tests for the exercise expansion — new exercises, confirmation mode, selection logic.
+"""Tests for the exercise expansion — new exercises, confirmation mode, flows.
 
 Tests cover:
 1. ExerciseStep completion_mode field
 2. _classify_step_state with user_confirmation mode
-3. _select_exercise keyword-based selection
-4. End-to-end flows for box breathing and thought record
-5. Exit mid-exercise for confirmation-based exercises
+3. End-to-end flows for box breathing and thought record
+4. Exit mid-exercise for confirmation-based exercises
 """
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ from agent.therapeutic.exercises.registry import (
     EXERCISE_TINY_ACTION,
     EXERCISE_VALUES_COMPASS,
 )
-from agent.therapeutic.exercises.selection import _select_exercise
 from agent.therapeutic.exercises.step_classifier import _classify_step_state
 from agent.therapeutic.exercises.types import ExerciseStep
 from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
@@ -257,116 +255,6 @@ class TestItemCountModeBackwardCompat:
         assert _classify_step_state("done", step) == "hold"
 
 
-# ── Exercise selection tests ─────────────────────────────────────────
-
-
-class TestExerciseSelection:
-    """Tests for _select_exercise keyword matching."""
-
-    def test_breathing_keywords(self) -> None:
-        assert (
-            _select_exercise("can we do a breathing exercise") == EXERCISE_BOX_BREATHING
-        )
-        assert _select_exercise("I need to breathe") == EXERCISE_BOX_BREATHING
-        assert _select_exercise("box breathing please") == EXERCISE_BOX_BREATHING
-
-    def test_thought_record_keywords(self) -> None:
-        assert _select_exercise("let's do a thought record") == EXERCISE_THOUGHT_RECORD
-        assert _select_exercise("can we examine this belief") == EXERCISE_THOUGHT_RECORD
-
-    def test_tiny_action_keywords(self) -> None:
-        assert (
-            _select_exercise("I'm stuck, can't start anything") == EXERCISE_TINY_ACTION
-        )
-        assert _select_exercise("I feel depleted") == EXERCISE_TINY_ACTION
-
-    def test_defusion_keywords(self) -> None:
-        assert (
-            _select_exercise("I need to let go of this thought")
-            == EXERCISE_LEAVES_ON_STREAM
-        )
-        assert (
-            _select_exercise("can we try the leaves exercise")
-            == EXERCISE_LEAVES_ON_STREAM
-        )
-        assert (
-            _select_exercise("I want to stop fighting this feeling")
-            == EXERCISE_LEAVES_ON_STREAM
-        )
-
-    def test_stop_technique_keywords(self) -> None:
-        assert (
-            _select_exercise("let's try the stop technique") == EXERCISE_STOP_TECHNIQUE
-        )
-
-    def test_muscle_relaxation_keywords(self) -> None:
-        assert (
-            _select_exercise("I need to release some tension")
-            == EXERCISE_MUSCLE_RELAXATION
-        )
-        assert (
-            _select_exercise("can we do progressive muscle relaxation")
-            == EXERCISE_MUSCLE_RELAXATION
-        )
-        assert _select_exercise("relax my body") == EXERCISE_MUSCLE_RELAXATION
-
-    def test_behavioral_experiment_keywords(self) -> None:
-        assert (
-            _select_exercise("can we test this belief")
-            == EXERCISE_BEHAVIORAL_EXPERIMENT
-        )
-        assert (
-            _select_exercise("let's do a behavioral experiment")
-            == EXERCISE_BEHAVIORAL_EXPERIMENT
-        )
-
-    def test_self_compassion_keywords(self) -> None:
-        assert (
-            _select_exercise("I need some self-compassion") == EXERCISE_SELF_COMPASSION
-        )
-        assert _select_exercise("I'm so hard on myself") == EXERCISE_SELF_COMPASSION
-
-    def test_improve_keywords(self) -> None:
-        assert _select_exercise("help me get through this") == EXERCISE_IMPROVE
-        assert (
-            _select_exercise("I'm overwhelmed, everything is too much")
-            == EXERCISE_IMPROVE
-        )
-
-    def test_values_compass_keywords(self) -> None:
-        assert _select_exercise("what matters to me") == EXERCISE_VALUES_COMPASS
-        assert (
-            _select_exercise("I feel like I've lost my purpose")
-            == EXERCISE_VALUES_COMPASS
-        )
-
-    def test_gratitude_keywords(self) -> None:
-        assert _select_exercise("can we do a gratitude exercise") == EXERCISE_GRATITUDE
-        assert (
-            _select_exercise("I want to think about something positive")
-            == EXERCISE_GRATITUDE
-        )
-
-    def test_grounding_keywords_and_no_match(self) -> None:
-        assert _select_exercise("ground me") == EXERCISE_5_4_3_2_1
-        assert _select_exercise("5-4-3-2-1 please") == EXERCISE_5_4_3_2_1
-        assert _select_exercise("help me calm down") is None
-        assert _select_exercise("I need an exercise") is None
-
-    def test_work_through_that_uses_recent_cognitive_context(self) -> None:
-        history = [
-            {
-                "role": "user",
-                "content": "I always assume one mistake means everyone will see I'm incompetent.",
-            }
-        ]
-
-        assert (
-            _select_exercise("Yeah, can we work through that?", history=history)
-            == EXERCISE_THOUGHT_RECORD
-        )
-
-
 # ── End-to-end node tests ────────────────────────────────────────────
 
 
@@ -396,7 +284,8 @@ class TestBoxBreathingFlow:
         assert "five things" not in delta["response_text"].lower()
 
     @pytest.mark.asyncio
-    async def test_start_selects_box_breathing(self) -> None:
+    async def test_start_without_llm_offers_menu(self) -> None:
+        """Without LLM, selection falls back to offering exercise options."""
         runtime = _MockRuntime(llm_client=None)
         state = _make_state("can we do a breathing exercise")
 
@@ -405,9 +294,9 @@ class TestBoxBreathingFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["exercise_state"]["exercise_type"] == EXERCISE_BOX_BREATHING
-        assert delta["exercise_state"]["exercise_step"] == 0
-        assert "breathe in" in delta["response_text"].lower()
+        # Falls back to menu since no LLM to pick the exercise
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert "which would you like" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_confirmation_advances_box_breathing(self) -> None:
@@ -443,7 +332,8 @@ class TestThoughtRecordFlow:
     """End-to-end flow for simple thought record."""
 
     @pytest.mark.asyncio
-    async def test_start_selects_thought_record(self) -> None:
+    async def test_start_without_llm_offers_menu(self) -> None:
+        """Without LLM, selection falls back to offering exercise options."""
         runtime = _MockRuntime(llm_client=None)
         state = _make_state("let's do a thought record")
 
@@ -452,9 +342,8 @@ class TestThoughtRecordFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["exercise_state"]["exercise_type"] == EXERCISE_THOUGHT_RECORD
-        assert delta["exercise_state"]["exercise_step"] == 0
-        assert "situation" in delta["response_text"].lower()
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert "which would you like" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_thought_record_advances_on_description(self) -> None:
@@ -477,7 +366,8 @@ class TestMuscleRelaxationFlow:
     """End-to-end flow for progressive muscle relaxation."""
 
     @pytest.mark.asyncio
-    async def test_start_selects_pmr(self) -> None:
+    async def test_start_without_llm_offers_menu(self) -> None:
+        """Without LLM, selection falls back to offering exercise options."""
         runtime = _MockRuntime(llm_client=None)
         state = _make_state("I need to release some tension in my body")
 
@@ -486,12 +376,8 @@ class TestMuscleRelaxationFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["exercise_state"]["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
-        assert delta["exercise_state"]["exercise_step"] == 0
-        assert (
-            "hands" in delta["response_text"].lower()
-            or "fist" in delta["response_text"].lower()
-        )
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert "which would you like" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_pmr_advances_on_confirmation(self) -> None:
@@ -511,7 +397,8 @@ class TestSelfCompassionFlow:
     """End-to-end flow for self-compassion break."""
 
     @pytest.mark.asyncio
-    async def test_start_selects_self_compassion(self) -> None:
+    async def test_start_without_llm_offers_menu(self) -> None:
+        """Without LLM, selection falls back to offering exercise options."""
         runtime = _MockRuntime(llm_client=None)
         state = _make_state("I'm so hard on myself all the time")
 
@@ -520,8 +407,8 @@ class TestSelfCompassionFlow:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert delta["exercise_state"]["exercise_type"] == EXERCISE_SELF_COMPASSION
-        assert delta["exercise_state"]["exercise_step"] == 0
+        assert delta["exercise_state"]["exercise_type"] is None
+        assert "which would you like" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_llm_selection_starts_self_compassion_without_keyword(self) -> None:
@@ -746,17 +633,11 @@ class TestRegistryCompleteness:
     def test_catalog_contains_current_core_exercises(self) -> None:
         from agent.therapeutic.exercises.registry import (
             EXERCISE_5_4_3_2_1,
-            EXERCISE_BEHAVIORAL_EXPERIMENT,
             EXERCISE_BOX_BREATHING,
-            EXERCISE_GRATITUDE,
-            EXERCISE_IMPROVE,
             EXERCISE_LEAVES_ON_STREAM,
             EXERCISE_MUSCLE_RELAXATION,
             EXERCISE_SELF_COMPASSION,
-            EXERCISE_STOP_TECHNIQUE,
             EXERCISE_THOUGHT_RECORD,
-            EXERCISE_TINY_ACTION,
-            EXERCISE_VALUES_COMPASS,
             iter_exercise_definitions,
         )
 
@@ -967,8 +848,12 @@ class TestExerciseTherapeuticApproach:
 
     @pytest.mark.asyncio
     async def test_start_captures_routing_approach(self) -> None:
-        """Starting an exercise stores routing.therapeutic_approach in exercise_state."""
-        runtime = _MockRuntime(llm_client=None)
+        """Starting an exercise via LLM stores routing.therapeutic_approach in exercise_state."""
+        llm = _StepClassifierLLM(
+            selection_kind="selected",
+            exercise_type=EXERCISE_THOUGHT_RECORD,
+        )
+        runtime = _MockRuntime(llm_client=llm)
         state = _make_state("let's do a thought record")
         state["therapeutic_approach"] = "cbt"
 
@@ -983,7 +868,11 @@ class TestExerciseTherapeuticApproach:
     @pytest.mark.asyncio
     async def test_start_without_approach_stores_none(self) -> None:
         """Starting with no therapeutic approach stores None (approach-agnostic)."""
-        runtime = _MockRuntime(llm_client=None)
+        llm = _StepClassifierLLM(
+            selection_kind="selected",
+            exercise_type=EXERCISE_BOX_BREATHING,
+        )
+        runtime = _MockRuntime(llm_client=llm)
         state = _make_state("can we do a breathing exercise")
 
         delta = await run_guided_exercise_response_node(

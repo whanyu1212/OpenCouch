@@ -138,7 +138,6 @@ def _state_with_pre_existing_diagnostics(**extra: Any) -> Any:
         "route": "therapeutic",
         "response_style": "pending",
         "response_text": "",
-        "response_kind": "therapeutic",
         "session_progress": {"turn_count": 1},
         "diagnostics": {"pre_existing_key": 42, "another_key": "val"},
         **extra,

@@ -13,6 +13,7 @@ dependencies = [
   "langgraph-checkpoint-sqlite>=3.0,<4.0",
   "openai>=2.0",
   "opik>=2.0.15",
+  "prompt-toolkit>=3.0,<4.0",
   "psycopg-binary>=3.2,<4.0",
   "psycopg[pool]>=3.2,<4.0",
   "pydantic>=2.8,<3.0",

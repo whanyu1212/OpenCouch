@@ -149,6 +149,8 @@ class MemoryControlRoute:
     action: MemoryControlAction | None
     classifier_path: str
     llm_failure_occurred: bool
+    reason: str
+    confidence: str | None = None
 
 
 class MemoryControlDecision(BaseModel):
@@ -504,7 +506,7 @@ async def _classify_memory_control_action(
     state: AgentState,
     *,
     llm_client: BaseLLMClient,
-) -> MemoryControlAction | None:
+) -> tuple[MemoryControlAction | None, str, str]:
     """Classify an ambiguous message as memory management or ordinary routing.
 
     Args:
@@ -512,8 +514,8 @@ async def _classify_memory_control_action(
         llm_client (BaseLLMClient): Configured control-plane LLM client.
 
     Returns:
-        MemoryControlAction | None: Resolved memory-management action, or ``None``
-            when ordinary routing should handle the turn.
+        tuple[MemoryControlAction | None, str, str]: Resolved action, classifier
+            reasoning, and confidence.
     """
 
     decision: MemoryControlDecision = await llm_client.generate_structured(
@@ -521,7 +523,7 @@ async def _classify_memory_control_action(
         response_schema=MemoryControlDecision,
         system_instruction=_build_memory_control_system_prompt(),
     )
-    return _decision_to_action(decision)
+    return _decision_to_action(decision), decision.reasoning, decision.confidence
 
 
 async def resolve_memory_control_action(
@@ -547,6 +549,8 @@ async def resolve_memory_control_action(
             action=hard_action,
             classifier_path="deterministic",
             llm_failure_occurred=False,
+            reason="Hard rule matched a memory-management request.",
+            confidence="high",
         )
 
     if not _needs_memory_control_classifier(message):
@@ -554,6 +558,8 @@ async def resolve_memory_control_action(
             action=None,
             classifier_path="not_attempted",
             llm_failure_occurred=False,
+            reason="No memory-management request detected.",
+            confidence=None,
         )
 
     if llm_client is None:
@@ -561,10 +567,15 @@ async def resolve_memory_control_action(
             action=None,
             classifier_path="deterministic",
             llm_failure_occurred=False,
+            reason="Memory-control classifier unavailable; continuing normal route.",
+            confidence=None,
         )
 
     try:
-        action = await _classify_memory_control_action(state, llm_client=llm_client)
+        action, reason, confidence = await _classify_memory_control_action(
+            state,
+            llm_client=llm_client,
+        )
     except Exception:
         logger.warning(
             "Memory management LLM classifier failed; using deterministic fallback.",
@@ -574,10 +585,14 @@ async def resolve_memory_control_action(
             action=None,
             classifier_path="deterministic",
             llm_failure_occurred=True,
+            reason="Memory-control classifier failed; continuing normal route.",
+            confidence=None,
         )
 
     return MemoryControlRoute(
         action=action,
         classifier_path="llm_primary",
         llm_failure_occurred=False,
+        reason=reason,
+        confidence=confidence,
     )

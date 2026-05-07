@@ -4,8 +4,37 @@ from __future__ import annotations
 
 from agent.conversation import format_recent_history
 from agent.state import AgentState
-from agent.therapeutic.dispatch.regex_catalog import _TRIGGER_LIST_SENTENCE
 from agent.memory.entries import format_working_memory_entries
+
+
+# Canonical trigger phrases for the guided_exercise style, inlined into the
+# dispatcher prompt so the LLM knows which user requests warrant an exercise.
+_PROMPT_GUIDED_EXERCISE_TRIGGERS: tuple[str, ...] = (
+    "ground me",
+    "breathing exercise",
+    "guide me through a grounding exercise",
+    "let's do a thought record",
+    "can we figure out a way to test it",
+    "behavioral experiment",
+    "can we look at what actually matters to me",
+    "is there something we can do about that",
+    "values compass",
+    "leaves exercise",
+    "STOP technique",
+    "IMPROVE the moment",
+    "gratitude exercise",
+)
+
+
+def _format_prompt_trigger_phrases() -> str:
+    """Format the canonical trigger list as a quoted, comma-separated string."""
+    return ", ".join(f"'{t}'" for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS)
+
+
+_TRIGGER_LIST_SENTENCE = (
+    f"<!-- triggers:start -->Trigger phrases include: "
+    f"{_format_prompt_trigger_phrases()}.<!-- triggers:end -->"
+)
 
 
 _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (

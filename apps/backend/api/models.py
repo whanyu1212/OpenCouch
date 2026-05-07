@@ -89,10 +89,6 @@ class ChatResponse(BaseModel):
         "(supportive, reflective, technique, clarifying, psychoeducation, "
         "guided_exercise, closing, or None for crisis path).",
     )
-    response_style_source: str | None = Field(
-        default=None,
-        description="How the response style was selected: keyword, llm, default.",
-    )
     therapeutic_approach: str | None = Field(
         default=None,
         description="Which therapeutic approach informed the reply "

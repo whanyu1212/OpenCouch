@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.models import Channel, CrisisAssessment, ResponseStyleType, ResponseCategory
+from agent.models import Channel, CrisisAssessment
 from agent.memory.entries import WorkingMemoryEntry
 
 
@@ -221,9 +221,6 @@ class AgentGraphOutputState(AgentCrisisState, TypedDict):
 
     therapeutic_approach: NotRequired[str | None]
     response_style: NotRequired[str]
-    response_style_source: NotRequired[str | None]
-    response_style_type: NotRequired[ResponseStyleType]
-    response_kind: NotRequired[ResponseCategory]
     response_text: NotRequired[str]
     should_persist_memory: NotRequired[bool]
     diagnostics: NotRequired[Annotated[dict[str, Any], _merge_dicts]]

@@ -628,10 +628,6 @@ def _normalize_turn_record(
         "procedural_rules": list(memory_snapshot["procedural_rules"]),
         "episodic_arcs": list(memory_snapshot["episodic_arcs"]),
         "raw_observations": {
-            "response_style_type": str(output.response_style_type)
-            if output.response_style_type is not None
-            else None,
-            "response_style_source": output.response_style_source,
             "therapeutic_approach": output.therapeutic_approach,
             "diagnostics": output.diagnostics,
             "working_memory": working_memory,

@@ -406,6 +406,11 @@ async def test_memory_control_gate_llm_routes_ambiguous_preference() -> None:
         "type": "save_preference",
         "rule_text": "You prefer shorter replies when I am panicking.",
     }
+    trace = update["diagnostics"]["routing_trace"]
+    assert trace[-1]["stage"] == "memory"
+    assert trace[-1]["decision"] == "save_preference"
+    assert trace[-1]["source"] == "llm_primary"
+    assert trace[-1]["reason"] == "User asks to keep a response preference in mind."
 
 
 @pytest.mark.asyncio

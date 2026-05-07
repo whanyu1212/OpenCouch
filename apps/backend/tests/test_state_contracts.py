@@ -205,9 +205,6 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
             "crisis_audit",
             "diagnostics",
             "response_style",
-            "response_style_source",
-            "response_style_type",
-            "response_kind",
         },
     )
 
@@ -275,9 +272,6 @@ async def test_memory_control_node_channel_contract() -> None:
         {
             "route",
             "response_style",
-            "response_style_source",
-            "response_style_type",
-            "response_kind",
             "response_text",
             "diagnostics",
             "memory_control",
@@ -337,9 +331,6 @@ async def test_grounded_answer_node_channel_contract() -> None:
             "route",
             "grounded_lookup",
             "response_style",
-            "response_style_source",
-            "response_style_type",
-            "response_kind",
             "response_text",
             "diagnostics",
         },
@@ -393,9 +384,6 @@ async def test_crisis_response_channel_contract() -> None:
         {
             "route",
             "response_style",
-            "response_style_source",
-            "response_style_type",
-            "response_kind",
             "response_text",
         },
     )
@@ -449,7 +437,10 @@ async def test_dispatch_default_channel_contract() -> None:
         cast(Any, _FakeRuntime(llm_client=None)),
     )
 
-    _assert_exact_keys(command.update, {"response_style", "therapeutic_approach"})
+    _assert_allowed_keys(
+        command.update,
+        {"response_style", "therapeutic_approach", "diagnostics"},
+    )
 
 
 @pytest.mark.asyncio
@@ -469,9 +460,9 @@ async def test_dispatch_active_exercise_exit_channel_contract() -> None:
         cast(Any, _FakeRuntime(llm_client=None)),
     )
 
-    _assert_exact_keys(
+    _assert_allowed_keys(
         command.update,
-        {"response_style", "therapeutic_approach", "exercise_state"},
+        {"response_style", "therapeutic_approach", "exercise_state", "diagnostics"},
     )
 
 
@@ -501,7 +492,10 @@ async def test_dispatch_llm_mid_exercise_clarifying_channel_contract() -> None:
     )
 
     assert command.goto == "therapeutic_response_node"
-    _assert_exact_keys(command.update, {"response_style", "therapeutic_approach"})
+    _assert_allowed_keys(
+        command.update,
+        {"response_style", "therapeutic_approach", "diagnostics"},
+    )
 
 
 @pytest.mark.asyncio
@@ -543,11 +537,8 @@ async def test_fixed_shape_therapeutic_mode_channel_contract(
     _assert_exact_keys(
         delta,
         {
-            "response_kind",
             "response_text",
             "response_style",
-            "response_style_source",
-            "response_style_type",
         },
     )
 
@@ -565,11 +556,8 @@ async def test_guided_exercise_start_channel_contract() -> None:
         delta,
         {
             "exercise_state",
-            "response_kind",
             "response_text",
             "response_style",
-            "response_style_source",
-            "response_style_type",
         },
     )
 
@@ -593,11 +581,8 @@ async def test_guided_exercise_hold_channel_contract() -> None:
     _assert_exact_keys(
         delta,
         {
-            "response_kind",
             "response_text",
             "response_style",
-            "response_style_source",
-            "response_style_type",
         },
     )
 
@@ -622,11 +607,8 @@ async def test_guided_exercise_advance_channel_contract() -> None:
         delta,
         {
             "exercise_state",
-            "response_kind",
             "response_text",
             "response_style",
-            "response_style_source",
-            "response_style_type",
         },
     )
 
@@ -651,11 +633,8 @@ async def test_guided_exercise_exit_channel_contract() -> None:
         delta,
         {
             "exercise_state",
-            "response_kind",
             "response_text",
             "response_style",
-            "response_style_source",
-            "response_style_type",
         },
     )
 
@@ -680,12 +659,8 @@ async def test_guided_exercise_completion_channel_contract() -> None:
         delta,
         {
             "exercise_state",
-            "response_kind",
             "response_text",
-            "should_persist_memory",
             "response_style",
-            "response_style_source",
-            "response_style_type",
         },
     )
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -22,7 +21,6 @@ from agent.therapeutic.prompts import (
     build_technique_system_prompt,
 )
 from agent.therapeutic.response_styles import (
-    ResponsePostprocessor,
     SystemPromptBuilder,
     run_streamed_response_style,
 )
@@ -43,9 +41,7 @@ _DEFAULT_REFLECTIVE_REPLY = (
     "pattern here that's worth looking at together. "
     "What do you think connects these moments for you?"
 )
-_REFLECTIVE_FALLBACK_QUESTION = (
-    "What do you think keeps connecting these moments for you?"
-)
+
 _DEFAULT_CLARIFYING_REPLY = (
     "It sounds like something's on your mind. "
     "Can you help me understand a bit more about what brought this up today?"
@@ -60,7 +56,7 @@ _DEFAULT_PSYCHOEDUCATION_REPLY = (
     "does it feel like the right moment to sit with this, "
     "or would something steadier help more?"
 )
-_PSYCHOEDUCATION_FALLBACK_QUESTION = "Does that fit what you notice in your body?"
+
 _DEFAULT_CLOSING_REPLY = (
     "I'm glad you took the time to talk this through. "
     "Whenever you want to pick this back up, I'm here."
@@ -69,33 +65,6 @@ _DEFAULT_TECHNIQUE_REPLY = (
     "Let's stay with what you just described. "
     "What's the thought that shows up most in that moment?"
 )
-_ATTUNED_OPENING_TERMS = (
-    "hard",
-    "heavy",
-    "painful",
-    "sounds",
-    "makes sense",
-    "understandable",
-    "a lot",
-    "carrying",
-    "tough",
-)
-
-
-def _ensure_reflective_question(response_text: str) -> str:
-    """Normalize reflective replies without forcing a trailing question.
-
-    Args:
-        response_text: The generated reflective reply text.
-
-    Returns:
-        The original text when present, otherwise the default reflective reply.
-    """
-
-    stripped = response_text.strip()
-    if not stripped:
-        return _DEFAULT_REFLECTIVE_REPLY
-    return stripped
 
 
 def _needs_safety_clarification(state: AgentState) -> bool:
@@ -132,61 +101,6 @@ def _default_clarifying_reply(state: AgentState) -> str:
     return _DEFAULT_CLARIFYING_REPLY
 
 
-def _ensure_psychoeducation_question(response_text: str) -> str:
-    """Normalize psychoeducation replies without forcing a stock check-in.
-
-    Args:
-        response_text: The generated psychoeducation reply text.
-
-    Returns:
-        The original text when present, otherwise the default
-        psychoeducation reply.
-    """
-
-    stripped = response_text.strip()
-    if not stripped:
-        return _DEFAULT_PSYCHOEDUCATION_REPLY
-    return stripped
-
-
-def _first_sentence(response_text: str) -> str:
-    """Return the first sentence-like span from a generated response.
-
-    Args:
-        response_text: The generated technique reply text.
-
-    Returns:
-        The first sentence-like span, or the stripped text when no sentence
-        boundary is present.
-    """
-
-    match = re.search(r"(.+?[.!?])(?:\s|$)", response_text.strip())
-    if match:
-        return match.group(1).strip()
-    return response_text.strip()
-
-
-def _ensure_attuned_opening(response_text: str) -> str:
-    """Normalize technique replies while keeping an attuned opening.
-
-    Args:
-        response_text: The generated technique reply text.
-
-    Returns:
-        The original reply when its first sentence is already attuned, or a
-        lighter prefixed acknowledgment when the opening is too abrupt.
-    """
-
-    stripped = response_text.strip()
-    if not stripped:
-        return _DEFAULT_TECHNIQUE_REPLY
-
-    first_sentence = _first_sentence(stripped).lower()
-    if any(term in first_sentence for term in _ATTUNED_OPENING_TERMS):
-        return stripped
-    return f"Let's slow this down for a second. {stripped}"
-
-
 @dataclass(frozen=True)
 class TherapeuticResponseStyleConfig:
     """Configuration for a non-exercise therapeutic response style."""
@@ -194,7 +108,6 @@ class TherapeuticResponseStyleConfig:
     system_prompt_builder: SystemPromptBuilder
     fallback_builder: FallbackBuilder
     failure_message: str
-    postprocess: ResponsePostprocessor | None = None
 
 
 def _static_fallback(text: str) -> FallbackBuilder:
@@ -224,7 +137,6 @@ _RESPONSE_STYLE_CONFIGS: dict[str, TherapeuticResponseStyleConfig] = {
         failure_message=(
             "Reflective response LLM call failed; using deterministic fallback."
         ),
-        postprocess=_ensure_reflective_question,
     ),
     "clarifying": TherapeuticResponseStyleConfig(
         system_prompt_builder=build_clarifying_system_prompt,
@@ -239,7 +151,6 @@ _RESPONSE_STYLE_CONFIGS: dict[str, TherapeuticResponseStyleConfig] = {
         failure_message=(
             "Psychoeducation response LLM call failed; using deterministic fallback."
         ),
-        postprocess=_ensure_psychoeducation_question,
     ),
     "closing": TherapeuticResponseStyleConfig(
         system_prompt_builder=build_closing_system_prompt,
@@ -254,7 +165,6 @@ _RESPONSE_STYLE_CONFIGS: dict[str, TherapeuticResponseStyleConfig] = {
         failure_message=(
             "Technique response LLM call failed; using deterministic fallback."
         ),
-        postprocess=_ensure_attuned_opening,
     ),
 }
 
@@ -291,6 +201,5 @@ async def run_therapeutic_response_node(
         fallback_text=config.fallback_builder(state),
         logger=logger,
         failure_message=config.failure_message,
-        postprocess=config.postprocess,
         stream_writer_factory=get_stream_writer,
     )

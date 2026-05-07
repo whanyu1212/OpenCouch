@@ -9,14 +9,12 @@ from typing import Any
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
-from agent.models import ResponseStyleType, ResponseCategory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import build_therapeutic_response_prompt
 
 StreamWriterFactory = Callable[[], Callable[[dict[str, str]], None]]
 SystemPromptBuilder = Callable[[AgentState], str]
-ResponsePostprocessor = Callable[[str], str]
 
 
 def therapeutic_response_delta(
@@ -35,11 +33,8 @@ def therapeutic_response_delta(
     """
 
     return {
-        "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
         "response_style": response_style,
-        "response_style_source": "therapeutic_dispatch",
-        "response_style_type": ResponseStyleType.THERAPEUTIC,
     }
 
 
@@ -52,7 +47,6 @@ async def run_streamed_response_style(
     fallback_text: str,
     logger: logging.Logger,
     failure_message: str,
-    postprocess: ResponsePostprocessor | None = None,
     stream_writer_factory: StreamWriterFactory = get_stream_writer,
 ) -> dict[str, Any]:
     """Run a therapeutic response style with streaming and fallback.
@@ -66,7 +60,6 @@ async def run_streamed_response_style(
             or the LLM call fails.
         logger: Module logger for fallback warnings.
         failure_message: Warning message emitted when the LLM path fails.
-        postprocess: Optional response-text postprocessor.
         stream_writer_factory: Factory that returns the current LangGraph
             stream writer.
 
@@ -84,7 +77,6 @@ async def run_streamed_response_style(
         fallback_text=fallback_text,
         logger=logger,
         failure_message=failure_message,
-        postprocess=postprocess,
         stream_writer_factory=stream_writer_factory,
     )
     return therapeutic_response_delta(
@@ -103,7 +95,6 @@ async def generate_streamed_therapeutic_text(
     logger: logging.Logger,
     failure_message: str,
     step_directive: str | None = None,
-    postprocess: ResponsePostprocessor | None = None,
     stream_writer_factory: StreamWriterFactory = get_stream_writer,
 ) -> str:
     """Generate therapeutic response text with streaming and fallback.
@@ -119,7 +110,6 @@ async def generate_streamed_therapeutic_text(
         failure_message: Warning message emitted when the LLM path fails.
         step_directive: Optional guided-exercise directive to pass into the
             shared therapeutic response prompt.
-        postprocess: Optional response-text postprocessor.
         stream_writer_factory: Factory that returns the current LangGraph
             stream writer.
 
@@ -146,8 +136,5 @@ async def generate_streamed_therapeutic_text(
             response_text = "".join(chunks)
         except Exception:
             logger.warning(failure_message, exc_info=True)
-
-    if postprocess is not None:
-        response_text = postprocess(response_text)
 
     return response_text

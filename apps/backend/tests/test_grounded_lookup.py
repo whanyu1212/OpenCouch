@@ -11,7 +11,7 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.graph import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.models import AgentInput, ResponseStyleType, ResponseCategory
+from agent.models import AgentInput
 from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.gates.grounded_lookup.router import (
     GroundedLookupAction,
@@ -358,6 +358,11 @@ async def test_grounded_lookup_gate_routes_ambiguous_factual_request_with_llm() 
         command.update["diagnostics"]["grounded_lookup_classifier_path"]
         == "llm_primary"
     )
+    trace = command.update["diagnostics"]["routing_trace"]
+    assert trace[-1]["stage"] == "lookup"
+    assert trace[-1]["decision"] == "lookup"
+    assert trace[-1]["source"] == "llm_primary"
+    assert trace[-1]["reason"] == "fake lookup routing decision"
 
 
 @pytest.mark.asyncio
@@ -424,9 +429,6 @@ async def test_grounded_answer_node_returns_operational_response() -> None:
     assert delta["route"] == "grounded_lookup"
     assert delta["grounded_lookup"]["status"] == "answered"
     assert delta["response_style"] == "grounded_lookup"
-    assert delta["response_style_source"] == "grounded_lookup_gate"
-    assert delta["response_style_type"] == ResponseStyleType.OPERATIONAL
-    assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
     assert delta["response_text"] == "Official answer.\n\nSources:\n- Official source"
 
 

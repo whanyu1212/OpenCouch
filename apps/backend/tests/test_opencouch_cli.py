@@ -2,7 +2,6 @@
 
 import asyncio
 import re
-import time
 
 import pytest
 from rich.console import Group
@@ -215,7 +214,316 @@ def test_render_header_uses_prominent_title_panel_and_session_metadata(capsys) -
     assert "owner" in out
     assert "response" in out
     assert "quick actions" in out
+    assert "/keys" in out
+    assert "/ui" in out
+    assert "/theme" in out
     assert "[/bold primary]" not in out
+
+
+@pytest.mark.parametrize(
+    ("backend", "expected"),
+    [
+        ("postgres", "save memory using Postgres"),
+        ("sqlite", "save memory using SQLite"),
+    ],
+)
+def test_memory_mode_prompt_uses_configured_backend_copy(
+    backend,
+    expected,
+    monkeypatch,
+    capsys,
+) -> None:
+    """The startup prompt should not hardcode a SQLite persistence backend."""
+
+    from opencouch_cli.app import resolve_memory_mode
+
+    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "1")
+
+    assert resolve_memory_mode("ask", persistence_backend=backend) == "guest"
+    out = capsys.readouterr().out
+
+    assert expected in out
+    if backend == "postgres":
+        assert "save local memory in SQLite" not in out
+
+
+def test_render_status_guest_mode_hides_sqlite_path(capsys) -> None:
+    """Guest-mode status should not imply an active SQLite persistence path."""
+
+    from opencouch_cli.app import render_status
+
+    session = _session()
+    session.memory_mode = "guest"
+    session.sqlite_path = ":memory:"
+
+    render_status(session)
+    out = capsys.readouterr().out
+
+    assert "memory mode" in out
+    assert "guest" in out
+    assert "ephemeral" in out
+    assert "sqlite path" not in out
+
+
+def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
+    """SQLite path remains visible when SQLite is the active persistent backend."""
+
+    from opencouch_cli.app import render_status
+
+    session = _session()
+    session.memory_mode = "persistent"
+    session.persistence_backend = "sqlite"
+
+    render_status(session)
+    out = capsys.readouterr().out
+
+    assert "persistence" in out
+    assert "sqlite" in out
+    assert "sqlite path" in out
+
+
+def test_help_command_registry_contains_current_public_commands() -> None:
+    """The help registry should cover all public slash commands."""
+
+    from opencouch_cli.commands import help_commands
+
+    displays = [command.display for command in help_commands()]
+
+    assert "/help" in displays
+    assert "/memory list [facts|sessions|rules]" in displays
+    assert "/memory recall on|off" in displays
+    assert "/keys" in displays
+    assert "/ui <compact|full>" in displays
+    assert "/theme <mono|contrast|calm>" in displays
+    assert "/mode <deterministic|hybrid|auto>" in displays
+    assert "/response-tier <fast|quality>" in displays
+    assert "/trace on|off|once" in displays
+    assert "/debug state" in displays
+    assert "/exit" in displays
+    assert len(displays) == len(set(displays))
+
+
+def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
+    """Typing slash commands should surface command and argument completions."""
+
+    from prompt_toolkit.document import Document
+
+    from opencouch_cli.input import SlashCommandCompleter
+
+    completer = SlashCommandCompleter()
+
+    def completions(text: str) -> list[str]:
+        """Return completion text for a prompt value.
+
+        Args:
+            text (str): Current prompt text.
+
+        Returns:
+            list[str]: Completion insertions.
+        """
+
+        document = Document(text=text, cursor_position=len(text))
+        return [
+            completion.text for completion in completer.get_completions(document, None)
+        ]
+
+    assert "/memory" in completions("/")
+    assert "/mode" in completions("/m")
+    assert "list" in completions("/memory l")
+    assert {"facts", "sessions", "rules"}.issubset(completions("/memory list "))
+    assert {"on", "off"}.issubset(completions("/memory recall "))
+    assert {"compact", "full"}.issubset(completions("/ui "))
+    assert {"mono", "contrast", "calm"}.issubset(completions("/theme "))
+    assert {"fast", "quality"}.issubset(completions("/response-tier "))
+    assert {"on", "off", "once"}.issubset(completions("/trace "))
+
+
+def test_slash_key_opens_command_completion_menu() -> None:
+    """Typing `/` at prompt start should explicitly open completions."""
+
+    from prompt_toolkit.document import Document
+
+    from opencouch_cli.input import _insert_slash_and_maybe_complete
+
+    class _FakeBuffer:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.completion_started = False
+
+        @property
+        def document(self) -> Document:
+            return Document(text=self.text, cursor_position=len(self.text))
+
+        def insert_text(self, value: str) -> None:
+            self.text += value
+
+        def start_completion(self, *, select_first: bool = False) -> None:
+            assert select_first is False
+            self.completion_started = True
+
+    class _FakeEvent:
+        def __init__(self, text: str) -> None:
+            self.current_buffer = _FakeBuffer(text)
+
+    start_event = _FakeEvent("")
+    _insert_slash_and_maybe_complete(start_event)
+
+    assert start_event.current_buffer.text == "/"
+    assert start_event.current_buffer.completion_started is True
+
+    mid_text_event = _FakeEvent("http:")
+    _insert_slash_and_maybe_complete(mid_text_event)
+
+    assert mid_text_event.current_buffer.text == "http:/"
+    assert mid_text_event.current_buffer.completion_started is False
+
+
+def test_prompt_toolbar_shows_session_state_and_pending_memory() -> None:
+    """The input toolbar should expose compact session state."""
+
+    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+
+    toolbar = prompt_toolbar(
+        PromptToolbarState(
+            resolved_mode="hybrid",
+            memory_mode="persistent",
+            response_model_tier="quality",
+            thread_id="thread-a",
+            user_id="alice",
+            pending_status="saving memory",
+        )
+    )
+    text = "".join(fragment[1] for fragment in toolbar)
+
+    assert "hybrid" in text
+    assert "persistent" in text
+    assert "quality" in text
+    assert "alice" in text
+    assert "saving memory" in text
+    assert "/ commands" in text
+    assert "trace" not in text
+    assert "mode: hybrid" in text
+    assert "memory: persistent" in text
+    assert "response: quality" in text
+    assert "status: saving memory" in text
+    assert "  |  " not in text
+
+
+def test_prompt_toolbar_keeps_trace_toggle_out_of_status_bar() -> None:
+    """Trace mode should not occupy bottom-toolbar status space."""
+
+    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+
+    toolbar = prompt_toolbar(
+        PromptToolbarState(
+            resolved_mode="hybrid",
+            memory_mode="guest",
+            response_model_tier="fast",
+            thread_id="thread-a",
+            user_id=None,
+        )
+    )
+    text = "".join(fragment[1] for fragment in toolbar)
+
+    assert "trace" not in text
+
+
+def test_guest_pending_tail_status_avoids_memory_copy() -> None:
+    """Guest mode pending state should not claim memory is being saved."""
+
+    from opencouch_cli.app import (
+        _pending_tail_message,
+        _pending_tail_status,
+        _prompt_toolbar_state,
+    )
+    from opencouch_cli.input import prompt_toolbar
+
+    session = _session()
+    session.memory_mode = "guest"
+
+    assert _pending_tail_status(session) == "finishing turn"
+    assert "memory" not in _pending_tail_message(session).lower()
+
+    toolbar = prompt_toolbar(
+        _prompt_toolbar_state(
+            session,
+            pending_status=_pending_tail_status(session),
+        )
+    )
+    text = "".join(fragment[1] for fragment in toolbar)
+
+    assert "finishing turn" in text
+    assert "saving memory" not in text
+
+
+def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
+    """Route display should stay compact and source from AgentOutput metadata."""
+
+    from opencouch_cli.app import render_turn_route
+
+    render_turn_route(
+        AgentOutput(
+            response_text="done",
+            response_type=ResponseCategory.THERAPEUTIC,
+            crisis=CrisisAssessment(),
+            response_style="supportive",
+            therapeutic_approach="cbt",
+            diagnostics={"turn_total_ms": 42.0},
+        ),
+        pending_status="saving memory",
+    )
+    out = capsys.readouterr().out
+
+    assert "route" in out
+    assert "supportive / cbt" in out
+    assert "normal" in out
+    assert "42ms" in out
+    assert "saving memory" in out
+
+
+def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
+    """Trace overlay should show routing flow with reasons beside decisions."""
+
+    from opencouch_cli.app import render_turn_trace
+
+    render_turn_trace(
+        AgentOutput(
+            response_text="done",
+            response_type=ResponseCategory.THERAPEUTIC,
+            crisis=CrisisAssessment(),
+            response_style="supportive",
+            therapeutic_approach="cbt",
+            diagnostics={
+                "routing_trace": [
+                    {
+                        "stage": "safety",
+                        "decision": "normal",
+                        "source": "deterministic",
+                        "reason": "No crisis signal detected.",
+                        "confidence": "low",
+                    },
+                    {
+                        "stage": "dispatch",
+                        "decision": "supportive/cbt",
+                        "source": "llm_primary",
+                        "reason": "fake dispatch decision",
+                        "confidence": "high",
+                    },
+                ]
+            },
+        ),
+        status_stages=["crisis_gate", "memory_control_gate"],
+        pending_status="finishing turn",
+    )
+    out = capsys.readouterr().out
+
+    assert "routing trace" in out
+    assert "+-- safety" in out
+    assert "normal" in out
+    assert "No crisis signal detected." in out
+    assert "fake dispatch decision" in out
+    assert "stages:" in out
+    assert "tail: finishing turn" in out
 
 
 @pytest.mark.asyncio
@@ -248,7 +556,8 @@ async def test_chat_loop_shows_spinner_loading_state_before_stage_updates(
     runtime = _FakeSpinnerRuntime()
     prompts = iter(["hi", EOFError()])
 
-    def _prompt(*args, **kwargs):
+    async def _read_user_input(state):
+        _ = state
         value = next(prompts)
         if isinstance(value, BaseException):
             raise value
@@ -262,7 +571,7 @@ async def test_chat_loop_shows_spinner_loading_state_before_stage_updates(
         "opencouch_cli.app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
     monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
     monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
     monkeypatch.setattr("opencouch_cli.app.Live", _FakeLive)
@@ -647,7 +956,8 @@ async def test_chat_loop_waits_for_runtime_entry_before_first_prompt(
 
     runtime = _SlowEnterRuntime()
 
-    def _prompt(*args, **kwargs):
+    async def _read_user_input(state):
+        _ = state
         order.append("prompt")
         raise EOFError
 
@@ -659,7 +969,7 @@ async def test_chat_loop_waits_for_runtime_entry_before_first_prompt(
         "opencouch_cli.app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
     monkeypatch.setattr(
         "opencouch_cli.app.render_header",
         lambda *args, **kwargs: None,
@@ -705,8 +1015,8 @@ async def test_chat_loop_finalizes_active_sessions_on_eof(monkeypatch) -> None:
         lambda *args, **kwargs: runtime,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.Prompt.ask",
-        staticmethod(lambda *args, **kwargs: (_ for _ in ()).throw(EOFError)),
+        "opencouch_cli.app.read_user_input",
+        lambda state: (_ for _ in ()).throw(EOFError),
     )
     monkeypatch.setattr(
         "opencouch_cli.app.render_header",
@@ -736,13 +1046,14 @@ async def test_chat_loop_prompts_again_before_turn_tail_finishes(monkeypatch) ->
     runtime = _FakeResponseReadyRuntime(order)
     prompt_calls = 0
 
-    def _prompt(*args, **kwargs):
+    async def _read_user_input(state):
+        _ = state
         nonlocal prompt_calls
         prompt_calls += 1
         if prompt_calls == 1:
             return "hi"
         order.append("prompt2_started")
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
         raise EOFError
 
     monkeypatch.setattr(
@@ -753,7 +1064,7 @@ async def test_chat_loop_prompts_again_before_turn_tail_finishes(monkeypatch) ->
         "opencouch_cli.app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
     monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
     monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -781,7 +1092,8 @@ async def test_chat_loop_passes_response_tier_client_to_runtime(monkeypatch) -> 
     runtime = _FakeTieredChatLoopRuntime(expected_response_llm=response_client)
     prompts = iter(["hi", EOFError()])
 
-    def _prompt(*args, **kwargs):
+    async def _read_user_input(state):
+        _ = state
         value = next(prompts)
         if isinstance(value, BaseException):
             raise value
@@ -799,7 +1111,7 @@ async def test_chat_loop_passes_response_tier_client_to_runtime(monkeypatch) -> 
         "opencouch_cli.app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_prompt))
+    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
     monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
     monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
 
@@ -864,6 +1176,28 @@ async def test_response_tier_command_updates_session(monkeypatch) -> None:
     assert session.response_model_tier == "quality"
     assert session.response_llm_client is response_client
     assert messages == [("success", "Response tier updated. tier=quality")]
+
+
+@pytest.mark.asyncio
+async def test_trace_command_updates_session_mode(capsys) -> None:
+    """The /trace command should support persistent, one-shot, and off modes."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/trace on", session, runtime) is True
+    assert session.trace_mode == "on"
+
+    assert await handle_command("/trace once", session, runtime) is True
+    assert session.trace_mode == "once"
+
+    assert await handle_command("/trace off", session, runtime) is True
+    assert session.trace_mode == "off"
+
+    assert await handle_command("/trace nope", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "Usage: /trace on|off|once" in out
 
 
 @pytest.mark.asyncio
@@ -2250,8 +2584,6 @@ def test_render_meta_defaults_to_compact_summary(capsys) -> None:
 
     render_meta(
         response_style="support",
-        response_style_source="keyword",
-        response_style_type="therapeutic",
         response_type="support",
         level=0,
         needs_clarification=False,
@@ -2264,7 +2596,6 @@ def test_render_meta_defaults_to_compact_summary(capsys) -> None:
 
     assert "diagnostics" in out
     assert "support" in out
-    assert "keyword" in out
     assert "142ms" in out
     assert "s+1" in out
     assert "p+0" in out

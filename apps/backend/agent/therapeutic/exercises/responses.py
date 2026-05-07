@@ -346,7 +346,6 @@ async def _build_complete_delta(
     cleared = _clear_exercise_delta(state)
     return {
         **cleared,
-        "should_persist_memory": True,
         **therapeutic_response_delta(
             response_style="guided_exercise",
             response_text=response_text,

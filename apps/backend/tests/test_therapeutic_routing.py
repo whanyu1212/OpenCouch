@@ -1,10 +1,9 @@
 """Tests for therapeutic dispatch, response-style nodes, and subgraph wiring.
 
-Covers four concerns:
-    1. ``pick_therapeutic_response_style`` as a pure function (no LangGraph runtime)
-    2. ``run_therapeutic_dispatch_node`` with mocked runtime + fake LLM
-    3. ``build_therapeutic_subgraph`` compiles to the expected shape
-    4. End-to-end via ``run_agent`` — each response style reaches its terminal
+Covers three concerns:
+    1. ``run_therapeutic_dispatch_node`` with mocked runtime + fake LLM
+    2. ``build_therapeutic_subgraph`` compiles to the expected shape
+    3. End-to-end via ``run_agent`` — each response style reaches its terminal
        node with the right routing metadata and a non-empty response
 
 These are unit/integration tests that run in the default pytest suite.
@@ -13,7 +12,6 @@ Dataset-driven evals and live-API tests live in Stage G2.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -30,7 +28,6 @@ from agent.state import AgentState
 from agent.therapeutic.dispatch import (
     CLARIFYING_NODE,
     CLOSING_NODE,
-    EXERCISE_CONSENT_PATTERNS,
     GUIDED_EXERCISE_NODE,
     PSYCHOEDUCATION_NODE,
     REFLECTIVE_NODE,
@@ -38,12 +35,8 @@ from agent.therapeutic.dispatch import (
     TECHNIQUE_NODE,
     THERAPEUTIC_RESPONSE_NODE,
     _PROMPT_GUIDED_EXERCISE_TRIGGERS,
-    _is_advice_request_without_exercise_consent,
-    _matches_any,
     _format_prompt_trigger_phrases,
-    _is_bare_ack_to_open_question,
     build_therapeutic_dispatch_system_prompt,
-    pick_therapeutic_response_style,
     run_therapeutic_dispatch_node,
 )
 from agent.therapeutic.exercises.types import ExerciseStepDecision
@@ -228,61 +221,6 @@ def _build_state(
     return cast(AgentState, state)
 
 
-# ─── 1. pick_therapeutic_response_style pure-function tests ────────────────────────
-
-
-class TestPickTherapeuticResponseStyle:
-    """Unit tests for the regex-only dispatch helper."""
-
-    @pytest.mark.parametrize(
-        ("message", "expected"),
-        [
-            # Supportive — the default for complete self-reports
-            ("I feel overwhelmed today.", "supportive"),
-            ("I am so tired and lonely", "supportive"),
-            ("I feel sad", "supportive"),  # short but self-report
-            ("I do not know what I am feeling right now honestly", "supportive"),
-            ("My work is really stressful lately.", "supportive"),
-            # Reflective — only the narrowest self-referential patterns
-            # survive in the regex-only fallback. Broader patterns like
-            # "every time I", "is there a pattern" are demoted to LLM.
-            ("Why do I keep doing this to myself?", "reflective"),
-            ("Why does this keep happening", "reflective"),
-            ("Why does this always happen to me", "reflective"),
-            ("Why does it always happen to me", "reflective"),
-            ("This keeps happening every week.", "reflective"),
-            ("I always end up doing the same thing", "reflective"),
-            # Demoted to LLM — regex fallback returns supportive:
-            ("Every time I see her I feel this way", "supportive"),
-            ("Is there a pattern here you see?", "supportive"),
-            # Clarifying — only exact-message confusion cues survive
-            ("huh?", "clarifying"),
-            ("ok", "clarifying"),
-            ("sad", "clarifying"),
-            ("Thanks.", "clarifying"),
-            ("What do you mean?", "clarifying"),
-            # Demoted to LLM — regex fallback returns supportive:
-            ("I don't understand what you said", "supportive"),
-        ],
-    )
-    def test_pure_regex_dispatch(self, message: str, expected: str) -> None:
-        """Regex-only path returns the expected response style for each case."""
-
-        assert pick_therapeutic_response_style(message) == expected
-
-    def test_self_report_overrides_short_message_rule(self) -> None:
-        """Short messages that ARE self-reports should stay supportive."""
-
-        assert pick_therapeutic_response_style("I am sad") == "supportive"
-        assert pick_therapeutic_response_style("I feel tired") == "supportive"
-        assert pick_therapeutic_response_style("I'm anxious") == "supportive"
-
-    def test_reflective_beats_short_message_rule(self) -> None:
-        """A short pattern-recognition question routes to reflective, not clarifying."""
-
-        assert pick_therapeutic_response_style("Why do I keep?") == "reflective"
-
-
 # ─── 2. run_therapeutic_dispatch_node integration tests ──────────────────
 
 
@@ -328,6 +266,26 @@ class TestDispatchNode:
         assert fake.structured_calls == 1  # LLM was called
 
     @pytest.mark.asyncio
+    async def test_llm_primary_adds_dispatch_trace_reason(self) -> None:
+        """Dispatch diagnostics should preserve the LLM routing reason."""
+
+        fake = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="cbt",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state("I need help slowing down.")
+        state["diagnostics"] = {}
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+        trace = cmd.update["diagnostics"]["routing_trace"]
+
+        assert trace[-1]["stage"] == "dispatch"
+        assert trace[-1]["decision"] == "supportive/cbt"
+        assert trace[-1]["source"] == "llm_primary"
+        assert trace[-1]["reason"] == "fake dispatch decision"
+
+    @pytest.mark.asyncio
     async def test_regex_fallback_without_llm_routes_reflective(self) -> None:
         """Without LLM, regex fallback handles reflective patterns."""
 
@@ -365,10 +323,10 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
-    async def test_bare_ack_to_open_question_bypasses_llm(self) -> None:
-        """A bare "yes" after an open question needs clarification."""
+    async def test_bare_ack_to_open_question_routed_by_llm(self) -> None:
+        """A bare "yes" after an open question — LLM decides routing."""
 
-        fake = _FakeDispatchLLM(response_style="guided_exercise")
+        fake = _FakeDispatchLLM(response_style="clarifying")
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state(
             "yes",
@@ -384,7 +342,7 @@ class TestDispatchNode:
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == CLARIFYING_NODE
-        assert fake.structured_calls == 0
+        assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
     async def test_no_llm_client_uses_regex_fallback(self) -> None:
@@ -398,27 +356,17 @@ class TestDispatchNode:
         assert cmd.goto == SUPPORTIVE_NODE
 
     @pytest.mark.asyncio
-    async def test_llm_failure_falls_back_to_regex_with_warning(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """LLM exceptions should be logged loudly and fall back to regex."""
+    async def test_llm_failure_propagates_exception(self) -> None:
+        """LLM exceptions propagate — the retry policy handles transients."""
 
         fake = _FakeDispatchLLM(should_raise=True)
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("I feel really sad today.")
 
-        with caplog.at_level(
-            logging.WARNING, logger="agent.therapeutic.dispatch.router"
-        ):
-            cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+        with pytest.raises(RuntimeError, match="simulated LLM failure"):
+            await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
-        # Regex fallback for "I feel really sad today." → supportive
-        assert cmd.goto == SUPPORTIVE_NODE
         assert fake.structured_calls == 1
-        assert any(
-            "falling back to regex" in record.message for record in caplog.records
-        )
 
     @pytest.mark.asyncio
     async def test_llm_pick_psychoeducation_routes_to_psychoeducation_node(
@@ -542,10 +490,8 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
-    async def test_llm_guided_exercise_pick_for_coping_tips_is_guarded(
-        self,
-    ) -> None:
-        """Coping advice requests should not start an exercise automatically."""
+    async def test_llm_guided_exercise_pick_routes_directly(self) -> None:
+        """LLM guided_exercise picks now route directly without guards."""
 
         fake = _FakeDispatchLLM(
             response_style="guided_exercise",
@@ -553,28 +499,6 @@ class TestDispatchNode:
         )
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("What are some tips to cope at different severity levels?")
-
-        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
-
-        assert cmd.goto == PSYCHOEDUCATION_NODE
-        assert cmd.update["therapeutic_approach"] == "dbt_skills"
-        assert fake.structured_calls == 1
-
-    @pytest.mark.asyncio
-    async def test_llm_explicit_coping_exercise_request_is_not_guarded(
-        self,
-    ) -> None:
-        """Explicit consent to do something structured still starts an exercise."""
-
-        fake = _FakeDispatchLLM(
-            response_style="guided_exercise",
-            therapeutic_approach="dbt_skills",
-        )
-        runtime = _MockRuntime(llm_client=fake)
-        state = _build_state(
-            "Everything is overwhelming right now. "
-            "Can we do something to help me cope with this moment?"
-        )
 
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
@@ -617,10 +541,13 @@ class TestDispatchNode:
         assert fake.structured_calls == 1  # LLM was called
 
     @pytest.mark.asyncio
-    async def test_active_exercise_stop_request_bypasses_llm(self) -> None:
-        """An explicit mid-exercise stop request exits to supportive style."""
+    async def test_active_exercise_stop_request_clears_state(self) -> None:
+        """An explicit mid-exercise stop request — LLM routes away, state cleared."""
 
-        fake = _FakeDispatchLLM(response_style="closing")
+        fake = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="none",
+        )
         runtime = _MockRuntime(llm_client=fake)
 
         state: Any = {
@@ -639,7 +566,7 @@ class TestDispatchNode:
         )
 
         assert cmd.goto == SUPPORTIVE_NODE
-        assert fake.structured_calls == 0
+        assert fake.structured_calls == 1
         update = cast(dict[str, Any], cmd.update)
         assert update["exercise_state"]["exercise_type"] is None
         assert update["exercise_state"]["exercise_step"] is None
@@ -679,9 +606,13 @@ class TestDispatchNode:
 
     @pytest.mark.asyncio
     async def test_pending_exercise_selection_choice_routes_to_guided(self) -> None:
-        """A numbered reply to offered exercise options returns to the node."""
+        """A numbered reply to offered exercise options — LLM routes to guided."""
 
-        runtime = _MockRuntime(llm_client=None)
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="none",
+        )
+        runtime = _MockRuntime(llm_client=fake)
         state: Any = {
             "message": "2",
             "history": [],
@@ -705,9 +636,13 @@ class TestDispatchNode:
 
     @pytest.mark.asyncio
     async def test_pending_exercise_selection_alias_routes_to_guided(self) -> None:
-        """A named reply to offered exercise options returns to the node."""
+        """A named reply to offered exercise options — LLM routes to guided."""
 
-        runtime = _MockRuntime(llm_client=None)
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            therapeutic_approach="none",
+        )
+        runtime = _MockRuntime(llm_client=fake)
         state: Any = {
             "message": "self compassion",
             "history": [],
@@ -731,19 +666,17 @@ class TestDispatchNode:
 
     @pytest.mark.asyncio
     async def test_command_update_contains_therapeutic_approach(self) -> None:
-        """The dispatcher's Command carries top-level ``therapeutic_approach``.
+        """The dispatcher's Command carries top-level ``therapeutic_approach``."""
 
-        Response-style nodes own response-style metadata in their own deltas; the
-        dispatcher only writes ``therapeutic_approach`` so the response-style node can
-        load the correct knowledge overlay.
-        """
-
-        runtime = _MockRuntime(llm_client=None)
+        fake = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="motivational_interviewing",
+        )
+        runtime = _MockRuntime(llm_client=fake)
         state = _build_state("I had a rough day at work")
 
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
-        # Regex fallback for supportive defaults to MI
         assert "therapeutic_approach" in cmd.update
         assert cmd.update["therapeutic_approach"] == "motivational_interviewing"
 
@@ -800,8 +733,19 @@ class TestEndToEndRouting:
         )
 
     @pytest.mark.asyncio
-    async def test_reflective_happy_path(self) -> None:
-        """A pattern question routes through therapeutic → reflective."""
+    async def test_end_to_end_diagnostics_include_dispatch_trace(self) -> None:
+        """Dispatch trace should cross the therapeutic subgraph boundary."""
+
+        result = await run_agent(AgentInput(message="I had a really rough day."))
+        trace = result.diagnostics["routing_trace"]
+
+        assert any(entry["stage"] == "dispatch" for entry in trace)
+        assert trace[-1]["stage"] == "dispatch"
+        assert trace[-1]["decision"].startswith("supportive")
+
+    @pytest.mark.asyncio
+    async def test_no_llm_defaults_to_supportive(self) -> None:
+        """Without a real LLM, all routing defaults to supportive."""
 
         result = await run_agent(
             AgentInput(
@@ -810,9 +754,8 @@ class TestEndToEndRouting:
         )
 
         assert result.response_type == ResponseCategory.THERAPEUTIC
-        assert result.response_style == "reflective"
+        assert result.response_style == "supportive"
         assert result.response_text
-        assert "pattern" in result.response_text.lower()
 
     @pytest.mark.asyncio
     async def test_reflective_node_preserves_clean_reflection_when_llm_omits_question(
@@ -843,11 +786,11 @@ class TestEndToEndRouting:
         assert "?" not in delta["response_text"]
 
     @pytest.mark.asyncio
-    async def test_technique_node_adds_attuned_opening_when_llm_omits_it(
+    async def test_technique_node_passes_llm_response_directly(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Technique node should add an attuned opening before structure."""
+        """Technique node should pass through LLM response without post-processing."""
 
         from agent.therapeutic import response
         from agent.therapeutic.response import run_therapeutic_response_node
@@ -856,8 +799,8 @@ class TestEndToEndRouting:
 
         runtime = _MockRuntime(
             llm_client=_RecordingTextLLM(
-                "Absolutely. Let’s take it one piece at a time.\n\n"
-                "What’s the exact thought you want to examine, in your own words?"
+                "Absolutely. Let's take it one piece at a time.\n\n"
+                "What's the exact thought you want to examine, in your own words?"
             )
         )
         state: Any = {
@@ -876,19 +819,17 @@ class TestEndToEndRouting:
         )
 
         assert delta["response_style"] == "technique"
-        assert delta["response_text"].startswith("Let's slow this down for a second.")
+        assert delta["response_text"].startswith("Absolutely.")
 
     @pytest.mark.asyncio
-    async def test_clarifying_happy_path(self) -> None:
-        """A confusion marker routes through therapeutic → clarifying."""
+    async def test_no_llm_short_message_defaults_to_supportive(self) -> None:
+        """Without LLM, even short confusion markers default to supportive."""
 
         result = await run_agent(AgentInput(message="huh?"))
 
         assert result.response_type == ResponseCategory.THERAPEUTIC
-        assert result.response_style == "clarifying"
+        assert result.response_style == "supportive"
         assert result.response_text
-        # Clarifying fallback should end with a question (it asks for context)
-        assert "?" in result.response_text
 
     @pytest.mark.asyncio
     async def test_psychoeducation_deterministic_fallback_path(self) -> None:
@@ -923,10 +864,8 @@ class TestEndToEndRouting:
 
         delta = await run_therapeutic_response_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response_text"]  # non-empty
         assert delta["response_style"] == "psychoeducation"
-        assert delta["response_style_source"] == "therapeutic_dispatch"
         # Deterministic fallback is permission-first by design
         assert "?" in delta["response_text"]
 
@@ -985,10 +924,8 @@ class TestEndToEndRouting:
 
         delta = await run_therapeutic_response_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
         assert delta["response_text"]  # non-empty
         assert delta["response_style"] == "closing"
-        assert delta["response_style_source"] == "therapeutic_dispatch"
 
         text_lower = delta["response_text"].lower()
         # The single most common closing-style failure mode
@@ -1028,14 +965,11 @@ class TestEndToEndRouting:
             runtime,  # type: ignore[arg-type]
         )
 
-        # Response delta is populated with the start-step text
-        assert delta["response_kind"] == ResponseCategory.THERAPEUTIC
+        # Without an LLM client, selection falls back to offering options
         assert delta["response_text"]
-        assert "five things" in delta["response_text"].lower()
         assert delta["response_style"] == "guided_exercise"
-        # Progress delta starts the exercise at step 0
-        assert delta["exercise_state"]["exercise_type"] == "grounding_5_4_3_2_1"
-        assert delta["exercise_state"]["exercise_step"] == 0
+        # Fallback presents a numbered menu of exercise options
+        assert "which would you like" in delta["response_text"].lower()
 
     @pytest.mark.asyncio
     async def test_guided_exercise_advances_on_complete_response(self) -> None:
@@ -1427,13 +1361,13 @@ class TestMidExerciseTherapeuticApproachPreservation:
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
 
     @pytest.mark.asyncio
-    async def test_active_exercise_instruction_question_bypasses_llm(
+    async def test_active_exercise_clarification_preserves_approach(
         self,
     ) -> None:
-        """Instruction clarification should not let LLM routing clear exercise."""
+        """Clarification mid-exercise preserves exercise approach and doesn't clear state."""
 
         llm = _FakeDispatchLLM(
-            response_style="supportive",
+            response_style="clarifying",
             therapeutic_approach="none",
         )
         runtime = _MockRuntime(llm_client=llm)
@@ -1456,7 +1390,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert llm.structured_calls == 0
+        assert llm.structured_calls == 1
         assert cmd.update["therapeutic_approach"] == "dbt_skills"
         assert cmd.goto == CLARIFYING_NODE
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
@@ -1494,10 +1428,10 @@ class TestMidExerciseTherapeuticApproachPreservation:
         assert "exercise_type" not in cmd.update.get("exercise_state", {})
 
     @pytest.mark.asyncio
-    async def test_regex_active_exercise_uses_pinned_therapeutic_approach_when_routing_missing(
+    async def test_no_llm_active_exercise_defaults_to_supportive(
         self,
     ) -> None:
-        """Regex continuation falls back to exercise_state.exercise_therapeutic_approach."""
+        """Without LLM, active exercise state defaults to supportive."""
 
         runtime = _MockRuntime(llm_client=None)
         state: Any = {
@@ -1516,8 +1450,9 @@ class TestMidExerciseTherapeuticApproachPreservation:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert cmd.update["therapeutic_approach"] == "act"
-        assert cmd.goto == GUIDED_EXERCISE_NODE
+        # Without LLM, defaults to supportive
+        assert cmd.update["therapeutic_approach"] == "none"
+        assert cmd.goto == SUPPORTIVE_NODE
 
     @pytest.mark.asyncio
     async def test_deterministic_exit_clears_exercise_therapeutic_approach(
@@ -1581,408 +1516,8 @@ class TestMidExerciseTherapeuticApproachPreservation:
         assert cmd.update["exercise_state"]["exercise_therapeutic_approach"] is None
 
 
-# ─── Anaphoric/walkthrough guidance guard ────────────────────────────────────
-
-
-_OFFER_GROUNDING = "Would you like to try a grounding exercise?"
-
-
-def _state_with_offer(message: str) -> AgentState:
-    """Build a state where the prior assistant turn offered grounding."""
-
-    return _build_state(
-        message,
-        history=[
-            {"role": "user", "content": "I'm anxious."},
-            {"role": "assistant", "content": _OFFER_GROUNDING},
-        ],
-    )
-
-
-def _state_with_active_exercise(message: str) -> AgentState:
-    """Build a state with an active grounding exercise in progress."""
-
-    state: Any = {
-        "message": message,
-        "history": [],
-        "exercise_state": {
-            "exercise_type": "grounding",
-            "exercise_step": 2,
-            "exercise_therapeutic_approach": "dbt_skills",
-        },
-    }
-    return cast(AgentState, state)
-
-
-class TestAdviceRequestWithoutExerciseConsent:
-    """Pure-function tests for ``_is_advice_request_without_exercise_consent``.
-
-    Test matrix follows ``UNCONSENTED_EXERCISE_FIX_PLAN.md`` Step 5a. The cases
-    encode the regex-shape decisions made across 14 adversarial-review
-    iterations.
-    """
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            # Anaphoric — phrasal terminal pronouns (Branch 1).
-            "how to break out of it",
-            "how do I break out of this",
-            "how do I break out of this.",
-            "how do I break out of this?",
-            # Anaphoric — phrasal verb + pattern noun (Branch 2).
-            "how do I get out of this loop",
-            "how do I break out of this cycle",
-            "how do I snap out of this spiral",
-            "how do I get out of this pattern",
-            # Anaphoric — bare verb + pattern noun (Branch 3).
-            "how do I break this cycle",
-            "how do I break the pattern",
-            "how do I break this habit",
-            "how do I stop this pattern",
-            # Anaphoric — "stop doing this" (Branch 4) + softeners.
-            "how do I stop doing this",
-            "how can I stop doing that",
-            "how do I just stop doing this in general",
-            "how do I stop doing this for good",
-            # Anaphoric — Branches 5/6.
-            "what do I do about this",
-            "what now?",
-            # Informational walkthrough — wh form.
-            "walk me through why this happens",
-            "guide me through what just happened",
-            "walk me through how this works",
-            "walk me through what grounding actually does",
-            "walk me through how STOP works",
-            # Informational walkthrough — tool noun + non-completer trailing.
-            "walk me through grounding theory",
-            "walk me through breathing problems",
-            "walk me through breathing technique problems",
-            # Note: "walk me through grounding exercise theory" is documented
-            # as out of scope — the inherited bare-noun pattern in
-            # EXPLICIT_EXERCISE_REQUEST_PATTERNS matches "grounding exercise"
-            # as consent. See UNCONSENTED_EXERCISE_FIX_PLAN.md Risk section
-            # ("negated exercise mentions / pre-existing condition").
-        ],
-    )
-    def test_should_fire(self, message: str) -> None:
-        state = _build_state(message)
-        assert _is_advice_request_without_exercise_consent(state, message) is True
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            # Content references with bare pronouns — must not fire.
-            "how do I break it to my mom",
-            "how do I break it down for them",
-            "how do I fix it with my partner",
-            "how do I get out of this lease",
-            "how do I get out of this relationship",
-            "how do I tell my partner about this",
-            "how do I tell my partner that I love this",
-            # Bare "how do I stop this" — intentional gap.
-            "how do I stop this",
-            # Statements, not questions.
-            "I need to stop doing this",
-            "I want to stop",
-            # Explicit exercise request via canonical trigger.
-            "let's do a thought record",
-            "ground me",
-            # Walkthrough WITH exercise/tool noun as completed direct object.
-            "walk me through grounding",
-            "guide me through breathing",
-            "walk me through a thought record",
-            "walk me through grounding exercise",
-            "walk me through a grounding exercise",
-            "walk me through a short grounding practice",
-            "walk me through your favorite breathing technique",
-            "walk me through some grounding",
-            "walk me through how to do grounding",
-            "walk me through how to work through a thought record",
-            "walk me through how to fill out a thought record",
-            # Prompt-only consent triggers.
-            "can we figure out a way to test it",
-            "can we figure out a way to test the thought",
-            "can we look at what actually matters to me",
-            # Combined anaphoric + consent — consent wins.
-            "how do I break this cycle, can we figure out a way to test it?",
-            "how do I get out of this loop, can we look at what actually matters to me?",
-        ],
-    )
-    def test_should_not_fire(self, message: str) -> None:
-        state = _build_state(message)
-        assert _is_advice_request_without_exercise_consent(state, message) is False
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "yes",
-            "yeah",
-            "sure",
-            "ok",
-            "okay",
-            "yes please",
-            "sure, let's try it.",
-            "let's try it",
-            "let's do it",
-            "go ahead",
-            "sounds good",
-            "yes, please",
-            "okay we can try",
-            "yeah let's do that",
-            "okay, walk me through it",
-        ],
-    )
-    def test_clean_acceptance_after_offer_does_not_fire(self, message: str) -> None:
-        state = _state_with_offer(message)
-        assert _is_advice_request_without_exercise_consent(state, message) is False
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "how do I break this cycle",
-            "how do I stop doing this",
-            # Acknowledgment + new question is NOT an acceptance — guard fires.
-            "yes, that makes sense, how do I break this cycle?",
-            "yes, that makes sense, but how do I stop doing this?",
-        ],
-    )
-    def test_non_acceptance_after_offer_still_fires(self, message: str) -> None:
-        state = _state_with_offer(message)
-        assert _is_advice_request_without_exercise_consent(state, message) is True
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "how to break out of it",
-            "how do I break this cycle",
-            "walk me through why this happens",
-        ],
-    )
-    def test_active_exercise_suppresses_guard(self, message: str) -> None:
-        state = _state_with_active_exercise(message)
-        assert _is_advice_request_without_exercise_consent(state, message) is False
-
-
-class TestBareAcknowledgmentClarifyingOverride:
-    """Short-turn acknowledgment routing should distinguish bare acks from continuers."""
-
-    @pytest.mark.parametrize("message", ["yeah", "ok", "okay", "sure"])
-    def test_bare_ack_after_open_question_triggers_clarifying(
-        self, message: str
-    ) -> None:
-        state = _build_state(
-            message,
-            history=[
-                {"role": "user", "content": "Work has been rough."},
-                {
-                    "role": "assistant",
-                    "content": "What part of it has been hitting the hardest?",
-                },
-            ],
-        )
-
-        assert _is_bare_ack_to_open_question(state, message) is True
-
-    @pytest.mark.parametrize(
-        "message",
-        ["yeah that makes sense", "got it", "fair", "right", "okay yeah"],
-    )
-    def test_soft_continuer_after_open_question_does_not_trigger_clarifying(
-        self, message: str
-    ) -> None:
-        state = _build_state(
-            message,
-            history=[
-                {"role": "user", "content": "Work has been rough."},
-                {
-                    "role": "assistant",
-                    "content": "What part of it has been hitting the hardest?",
-                },
-            ],
-        )
-
-        assert _is_bare_ack_to_open_question(state, message) is False
-
-
-class TestAnaphoricGuardIntegration:
-    """Integration tests via ``run_therapeutic_dispatch_node`` (Step 5b).
-
-    Each test mocks the LLM to return ``guided_exercise`` + a therapeutic approach, then
-    asserts the guard rewrites (or correctly declines to rewrite) routing.
-    """
-
-    PANIC_HISTORY: list[dict[str, str]] = [
-        {
-            "role": "user",
-            "content": "I keep overworking and panicking when I try to slow down.",
-        },
-        {
-            "role": "assistant",
-            "content": "Yeah — control becomes the way you buy safety.",
-        },
-        {"role": "user", "content": "Yes you are right."},
-        {
-            "role": "assistant",
-            "content": "That fits with what you've been describing.",
-        },
-    ]
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "How to break out of it",
-            "How do I stop doing this",
-            "How do I break this cycle",
-            "How do I just stop doing this in general",
-            "walk me through why this happens",
-            "walk me through what grounding actually does",
-            "walk me through how STOP works",
-            "walk me through grounding theory",
-            "walk me through breathing problems",
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_guard_rewrites_to_psychoeducation_with_therapeutic_approach_preserved(
-        self, message: str
-    ) -> None:
-        fake = _FakeDispatchLLM(
-            response_style="guided_exercise",
-            therapeutic_approach="dbt_skills",
-        )
-        runtime = _MockRuntime(llm_client=fake)
-        state = _build_state(message, history=self.PANIC_HISTORY)
-
-        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
-
-        assert cmd.goto == PSYCHOEDUCATION_NODE
-        assert cmd.update["therapeutic_approach"] == "dbt_skills"
-        assert fake.structured_calls == 1
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "walk me through how to do grounding",
-            "walk me through a short grounding practice",
-            "walk me through your favorite breathing technique",
-            "walk me through how to fill out a thought record",
-            "can you walk me through a grounding exercise",
-            "ground me",
-            "can we figure out a way to test it",
-            "can we look at what actually matters to me",
-            "how do I break this cycle, can we figure out a way to test it?",
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_explicit_consent_routes_to_guided_exercise(
-        self, message: str
-    ) -> None:
-        fake = _FakeDispatchLLM(
-            response_style="guided_exercise",
-            therapeutic_approach="dbt_skills",
-        )
-        runtime = _MockRuntime(llm_client=fake)
-        state = _build_state(message, history=self.PANIC_HISTORY)
-
-        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
-
-        assert cmd.goto == GUIDED_EXERCISE_NODE
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "yes, please",
-            "yes",
-            "go ahead",
-            "okay we can try",
-            "yeah let's do that",
-            "okay, walk me through it",
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_clean_acceptance_after_offer_routes_to_guided_exercise(
-        self, message: str
-    ) -> None:
-        fake = _FakeDispatchLLM(
-            response_style="guided_exercise",
-            therapeutic_approach="dbt_skills",
-        )
-        runtime = _MockRuntime(llm_client=fake)
-        state = _build_state(
-            message,
-            history=[
-                {"role": "user", "content": "I'm anxious."},
-                {"role": "assistant", "content": _OFFER_GROUNDING},
-            ],
-        )
-
-        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
-
-        assert cmd.goto == GUIDED_EXERCISE_NODE
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "how do I stop doing this",
-            "yes, that makes sense, but how do I stop doing this?",
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_non_acceptance_after_offer_still_rewrites(
-        self, message: str
-    ) -> None:
-        fake = _FakeDispatchLLM(
-            response_style="guided_exercise",
-            therapeutic_approach="dbt_skills",
-        )
-        runtime = _MockRuntime(llm_client=fake)
-        state = _build_state(
-            message,
-            history=[
-                {"role": "user", "content": "I'm anxious."},
-                {"role": "assistant", "content": _OFFER_GROUNDING},
-            ],
-        )
-
-        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
-
-        assert cmd.goto == PSYCHOEDUCATION_NODE
-
-
-class TestCopingAdviceConsentNowBroader:
-    """Step 5c — the existing coping-advice guard now uses the broader
-    ``EXERCISE_CONSENT_PATTERNS`` superset, so combined utterances with a
-    consent clause keep the LLM's guided_exercise pick.
-    """
-
-    @pytest.mark.asyncio
-    async def test_combined_advice_plus_cbt_consent_keeps_guided_exercise(
-        self,
-    ) -> None:
-        fake = _FakeDispatchLLM(
-            response_style="guided_exercise",
-            therapeutic_approach="cbt",
-        )
-        runtime = _MockRuntime(llm_client=fake)
-        state = _build_state(
-            "what are some ways to cope, can we figure out a way to test it?"
-        )
-
-        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
-
-        assert cmd.goto == GUIDED_EXERCISE_NODE
-
-
 class TestPromptTriggerContract:
-    """Step 5d — bidirectional prompt-trigger contract.
-
-    Two tests pin the canonical-list-as-source-of-truth invariant:
-
-    1. The delimited trigger sentence is mechanically rendered AND no other
-       trigger-list anchor or canonical multi-word-imperative trigger appears
-       outside the delimited span.
-    2. Every canonical trigger matches ``EXERCISE_CONSENT_PATTERNS``.
-    """
+    """Prompt-trigger contract: the trigger sentence is mechanically rendered."""
 
     _TRIGGER_LIST_ANCHORS: tuple[str, ...] = (
         "Trigger phrases include:",
@@ -1993,8 +1528,6 @@ class TestPromptTriggerContract:
         "trigger phrases such as",
     )
 
-    # Triggers that are also generic therapeutic vocabulary and may legitimately
-    # appear in non-trigger prose elsewhere in the prompt.
     _GENERIC_VOCAB_EXEMPTIONS: frozenset[str] = frozenset(
         {
             "behavioral experiment",
@@ -2039,7 +1572,6 @@ class TestPromptTriggerContract:
                 "span. Add new triggers to _PROMPT_GUIDED_EXERCISE_TRIGGERS."
             )
 
-        # Strong guarantee for unambiguous consent triggers.
         strong_guarded = tuple(
             t
             for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS
@@ -2049,11 +1581,4 @@ class TestPromptTriggerContract:
             assert trigger.lower() not in prompt_outside_span.lower(), (
                 f"Canonical trigger {trigger!r} appears outside the delimited "
                 "span. Add it to _PROMPT_GUIDED_EXERCISE_TRIGGERS only."
-            )
-
-    def test_canonical_triggers_match_consent_patterns(self) -> None:
-        for trigger in _PROMPT_GUIDED_EXERCISE_TRIGGERS:
-            assert _matches_any(trigger, EXERCISE_CONSENT_PATTERNS), (
-                f"Canonical trigger {trigger!r} does not match "
-                "EXERCISE_CONSENT_PATTERNS"
             )

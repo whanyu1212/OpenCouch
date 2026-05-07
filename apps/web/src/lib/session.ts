@@ -34,7 +34,6 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   responseStyle?: string | null;
-  responseStyleSource?: string | null;
   therapeuticApproach?: string | null;
   responseType?: string | null;
   crisis?: {
@@ -568,7 +567,6 @@ export function startTextChatStream({
         useSessionStore.getState().updateLastMessage({
           content: resp.response_text,
           responseStyle: resp.response_style,
-          responseStyleSource: resp.response_style_source,
           therapeuticApproach: resp.therapeutic_approach,
           responseType: resp.response_type,
           crisis: resp.crisis,
@@ -579,7 +577,6 @@ export function startTextChatStream({
           role: "assistant",
           content: resp.response_text,
           responseStyle: resp.response_style,
-          responseStyleSource: resp.response_style_source,
           therapeuticApproach: resp.therapeutic_approach,
           responseType: resp.response_type,
           crisis: resp.crisis,

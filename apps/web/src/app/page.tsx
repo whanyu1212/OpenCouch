@@ -804,9 +804,6 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
         {msg.therapeuticApproach && msg.therapeuticApproach !== "none" && (
           <Pill variant="teal">{msg.therapeuticApproach}</Pill>
         )}
-        {msg.responseStyleSource && (
-          <Pill variant="muted">{msg.responseStyleSource}</Pill>
-        )}
         {msg.responseStyle === "grounded_lookup" ? (
           <Pill variant="muted">grounded</Pill>
         ) : null}

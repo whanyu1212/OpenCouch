@@ -172,8 +172,6 @@ def test_normalize_turn_record_sets_canonical_fields() -> None:
                 needs_clarification=False,
             ),
             therapeutic_approach="act",
-            response_style_type=None,
-            response_style_source="therapeutic",
             diagnostics={},
         ),
         state={

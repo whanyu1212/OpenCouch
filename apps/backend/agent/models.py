@@ -34,14 +34,6 @@ class ResponseCategory(str, Enum):
     CRISIS = "crisis"
 
 
-class ResponseStyleType(str, Enum):
-    """High-level response-style family used for observability."""
-
-    OPERATIONAL = "operational"
-    THERAPEUTIC = "therapeutic"
-    CRISIS = "crisis"
-
-
 class Message(BaseModel):
     """Validated, serializable conversation turn."""
 
@@ -81,8 +73,6 @@ class AgentOutput(BaseModel):
     response_type: ResponseCategory
     crisis: CrisisAssessment
     response_style: str | None = None
-    response_style_type: ResponseStyleType | None = None
-    response_style_source: str | None = None
     therapeutic_approach: str | None = None
     should_persist_memory: bool = False
     # Per-turn diagnostics for CLI/API observability. Nodes write timings

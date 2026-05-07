@@ -186,22 +186,65 @@ thread rotation and rendering details.
 
 Once inside the text CLI:
 
+### Session & Display
+
 | Command | What it does |
 |---|---|
 | `/help` | List all commands |
 | `/status` | Thread id, response tier, turn count, and active response LLM |
 | `/history [n]` | Recent messages with response-style metadata |
 | `/context` | Session context snapshot |
-| `/memory status` | Per-namespace counts, recall toggle |
-| `/memory list` | Semantic facts + episodic arcs |
-| `/memory list rules` | Procedural style rules |
-| `/memory recall on\|off` | Toggle proactive content recall |
-| `/memory forget fact\|session\|rule <n>` | Delete one record |
-| `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
-| `/memory purge-crisis [days]` | Retention-purge crisis log |
-| `/debug state` | Raw graph state as JSON |
+| `/keys` | Show keyboard shortcuts and prompt tips |
+| `/ui <compact\|full>` | Switch toolbar density |
+| `/theme <mono\|contrast\|calm>` | Switch prompt color theme |
+| `/clear` | Clear terminal and redraw header |
+| `/reset` | Clear the conversation history |
 | `/end` | Summarize session and save session-end memory |
 | `/exit` | End session with save prompt |
+
+### Memory
+
+| Command | What it does |
+|---|---|
+| `/memory status` | Per-namespace counts, recall toggle |
+| `/memory list [facts\|sessions\|rules]` | Semantic facts, episodic arcs, or procedural rules |
+| `/memory recall on\|off` | Toggle proactive content recall |
+| `/memory forget fact\|session\|rule <n>` | Delete one record by index |
+| `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
+| `/memory purge-crisis [days]` | Retention-purge crisis log |
+
+### Threads
+
+| Command | What it does |
+|---|---|
+| `/threads [n]` | List persisted thread ids (default: 12) |
+| `/resume <thread-id>` | Switch to an existing thread |
+| `/new [thread-id]` | Start a fresh thread |
+
+### Runtime
+
+| Command | What it does |
+|---|---|
+| `/mode <deterministic\|hybrid\|auto>` | Switch LLM resolution mode |
+| `/response-tier <fast\|quality>` | Switch response quality/latency tradeoff |
+| `/trace on\|off\|once` | Show or hide routing trace overlay |
+| `/debug state` | Raw graph state as JSON |
+
+### Aliases
+
+| Alias | Expands to |
+|---|---|
+| `/h` | `/help` |
+| `/s` | `/status` |
+| `/m` | `/memory` |
+| `/k` | `/keys` |
+| `/t` | `/theme` |
+| `/q` | `/quit` |
+| `/c` | `/clear` |
+
+:::tip
+The completion menu shows recently used commands at the top (marked with ↻) and suggests corrections for typos.
+:::
 
 ## Tests and Evals
 

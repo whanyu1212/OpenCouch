@@ -1,4 +1,10 @@
-"""Exercise selection for guided therapeutic exercises."""
+"""Exercise selection for guided therapeutic exercises.
+
+Simplified LLM-primary selection: the LLM classifier picks the exercise
+based on message + conversation context. The only deterministic logic is
+resolving a numbered/ordinal choice from pending exercise options (pure
+bookkeeping, not a trust issue).
+"""
 
 from __future__ import annotations
 
@@ -6,17 +12,14 @@ import logging
 import re
 from typing import Any
 
-from agent.conversation import format_recent_history, get_recent_history
+from agent.conversation import format_recent_history
 from agent.state import AgentState
 from agent.therapeutic.exercises.registry import (
-    EXERCISE_5_4_3_2_1,
-    EXERCISE_THOUGHT_RECORD,
     fallback_suggestion_options,
     get_exercise_definition,
     is_valid_exercise_type,
     iter_exercise_definitions,
     iter_exercise_selection_aliases,
-    iter_exercise_selectors,
 )
 from agent.therapeutic.exercises.types import (
     ExerciseOptionChoiceDecision,
@@ -27,101 +30,7 @@ from agent.therapeutic.exercises.types import (
 logger = logging.getLogger(__name__)
 
 
-# ── Exercise selection ─────────────────────────────────────────────────
-
-
-def _select_exercise(
-    message: str,
-    *,
-    history: list[dict[str, str]] | None = None,
-) -> str | None:
-    """Pick an exercise type based on the current message plus recent context.
-
-    The selector still prioritizes explicit keywords in the current message,
-    but short acceptance turns like "can we work through that?" need a small
-    amount of recent user-turn context to avoid falling back to generic
-    grounding when the prior turn clearly named a cognitive belief pattern.
-
-    Returns the exercise_type constant when there is deterministic evidence.
-    Returns ``None`` when no keyword or context marker matches; callers choose
-    their own fallback behavior.
-
-    Args:
-        message: Current user message.
-        history: Recent conversation history used for short acceptance turns.
-
-    Returns:
-        Selected exercise type, or ``None`` when no deterministic match exists.
-    """
-
-    lowered = message.lower()
-    for keywords, exercise_type in iter_exercise_selectors():
-        for kw in keywords:
-            if re.search(kw, lowered):
-                return exercise_type
-
-    if _matches_selection_alias(message, EXERCISE_5_4_3_2_1):
-        return EXERCISE_5_4_3_2_1
-
-    if re.search(r"\bwork through (?:that|this|it)\b", lowered):
-        recent_user_text = " ".join(
-            turn.get("content", "")
-            for turn in (history or [])[-6:]
-            if turn.get("role") == "user" and turn.get("content")
-        ).lower()
-        if any(
-            marker in recent_user_text
-            for marker in (
-                "i always assume",
-                "one mistake means",
-                "i'm incompetent",
-                "im incompetent",
-                "everyone will see",
-                "i'm about to fail",
-                "im about to fail",
-                "this belief",
-                "this thought",
-            )
-        ):
-            return EXERCISE_THOUGHT_RECORD
-
-    return None
-
-
-def _matches_selection_alias(message: str, exercise_type: str) -> bool:
-    """Return whether a message contains a catalog alias for an exercise.
-
-    Args:
-        message: Current user message.
-        exercise_type: Exercise identifier whose aliases should be checked.
-
-    Returns:
-        ``True`` when a normalized alias appears in the normalized message.
-    """
-
-    definition = get_exercise_definition(exercise_type)
-    if definition is None:
-        return False
-
-    normalized = f" {_normalize_selection_text(message)} "
-    for alias in definition.selection_aliases:
-        normalized_alias = _normalize_selection_text(alias)
-        if normalized_alias and f" {normalized_alias} " in normalized:
-            return True
-    return False
-
-
-def _normalize_selection_text(text: str) -> str:
-    """Normalize selection text for alias containment checks.
-
-    Args:
-        text: User text or catalog alias.
-
-    Returns:
-        Lowercase alphanumeric tokens separated by single spaces.
-    """
-
-    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+# ── Helpers ────────────────────────────────────────────────────────────
 
 
 def _valid_exercise_options(
@@ -178,35 +87,7 @@ def _selection_aliases_for_prompt() -> str:
     return ", ".join(aliases)
 
 
-def _build_exercise_selection_prompt(state: AgentState) -> str:
-    """Build the LLM prompt for choosing a guided exercise.
-
-    Args:
-        state: Current graph state.
-
-    Returns:
-        Prompt asking for a structured exercise-selection decision.
-    """
-
-    recent_history = format_recent_history(state, limit=6, empty="(none)")
-    alias_hint = _selection_aliases_for_prompt()
-    return (
-        "Choose the best guided exercise for the user's current need. "
-        "If the user explicitly names a supported exercise or technique family "
-        f"such as {alias_hint}, treat that as a clear selected exercise. "
-        "If one exercise is clearly best, return selection_kind='selected' "
-        "with that exercise_type. Return selection_kind='ambiguous' only when "
-        "multiple exercises are plausible or the user's need is too broad. "
-        "When ambiguous, include 2 or 3 option_types the user can choose from. "
-        "Choose ambiguous options based on the user's current need and recent "
-        "context, not a fixed menu. Do not default to grounding just because "
-        "the request is broad.\n\n"
-        "Available exercises:\n"
-        f"{_available_exercises_for_prompt()}\n\n"
-        "Recent conversation:\n"
-        f"{recent_history}\n\n"
-        f'Current user message: "{state.get("message", "")}"'
-    )
+# ── Pending option resolution ──────────────────────────────────────────
 
 
 def _resolve_pending_exercise_choice(
@@ -214,6 +95,9 @@ def _resolve_pending_exercise_choice(
     options: tuple[str, ...],
 ) -> str | None:
     """Resolve a user's follow-up choice from pending exercise options.
+
+    Handles numbered choices ("2", "option 1") and ordinal words
+    ("first", "second"). This is pure bookkeeping — not an LLM trust issue.
 
     Args:
         message: Current user message.
@@ -243,10 +127,41 @@ def _resolve_pending_exercise_choice(
         if re.search(rf"\b{word}\b", lowered) and 0 <= index < len(options):
             return options[index]
 
-    selected = _select_exercise(message)
-    if selected in options:
-        return selected
     return None
+
+
+# ── LLM selection prompts ──────────────────────────────────────────────
+
+
+def _build_exercise_selection_prompt(state: AgentState) -> str:
+    """Build the LLM prompt for choosing a guided exercise.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        Prompt asking for a structured exercise-selection decision.
+    """
+
+    recent_history = format_recent_history(state, limit=6, empty="(none)")
+    alias_hint = _selection_aliases_for_prompt()
+    return (
+        "Choose the best guided exercise for the user's current need. "
+        "If the user explicitly names a supported exercise or technique family "
+        f"such as {alias_hint}, treat that as a clear selected exercise. "
+        "If one exercise is clearly best, return selection_kind='selected' "
+        "with that exercise_type. Return selection_kind='ambiguous' only when "
+        "multiple exercises are plausible or the user's need is too broad. "
+        "When ambiguous, include 2 or 3 option_types the user can choose from. "
+        "Choose ambiguous options based on the user's current need and recent "
+        "context, not a fixed menu. Do not default to grounding just because "
+        "the request is broad.\n\n"
+        "Available exercises:\n"
+        f"{_available_exercises_for_prompt()}\n\n"
+        "Recent conversation:\n"
+        f"{recent_history}\n\n"
+        f'Current user message: "{state.get("message", "")}"'
+    )
 
 
 def _build_pending_exercise_choice_prompt(
@@ -281,6 +196,9 @@ def _build_pending_exercise_choice_prompt(
         f"{chr(10).join(option_rows)}\n\n"
         f'User reply: "{message}"'
     )
+
+
+# ── LLM-primary resolution ────────────────────────────────────────────
 
 
 async def _resolve_pending_exercise_choice_llm_primary(
@@ -335,7 +253,7 @@ async def _select_exercise_llm_primary(
     *,
     classifier_llm: Any,
 ) -> ExerciseSelectionResult:
-    """Select a guided exercise with deterministic guards and an LLM path.
+    """Select a guided exercise with LLM-primary classification.
 
     Args:
         state: Current graph state.
@@ -351,6 +269,8 @@ async def _select_exercise_llm_primary(
     pending_options = _valid_exercise_options(
         tuple(exercise_state.get("exercise_selection_options") or ())
     )
+
+    # Resolve pending options from a prior turn first.
     if pending_options:
         choice = _resolve_pending_exercise_choice(
             state.get("message", ""), pending_options
@@ -366,13 +286,7 @@ async def _select_exercise_llm_primary(
             return ExerciseSelectionResult(exercise_type=choice)
         return ExerciseSelectionResult(exercise_type=None, options=pending_options)
 
-    selected = _select_exercise(
-        state.get("message", ""),
-        history=get_recent_history(state, limit=6),
-    )
-    if selected is not None:
-        return ExerciseSelectionResult(exercise_type=selected)
-
+    # No pending options — ask the LLM to select.
     if classifier_llm is None:
         return ExerciseSelectionResult(
             exercise_type=None,

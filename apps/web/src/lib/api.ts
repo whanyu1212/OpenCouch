@@ -57,7 +57,6 @@ export interface ChatResponse {
   response_text: string;
   response_type: string;
   response_style: string | null;
-  response_style_source: string | null;
   therapeutic_approach: string | null;
   crisis: CrisisInfo;
   diagnostics: Record<string, unknown>;

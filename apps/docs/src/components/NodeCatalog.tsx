@@ -78,7 +78,7 @@ const NODES: NodeSpec[] = [
     category: 'SAFETY',
     order: 3,
     inputs: ['state.crisis', 'state.found_resources', 'state.history'],
-    outputs: ['state.response_text', 'state.response_style', 'state.response_kind'],
+    outputs: ['state.response_text', 'state.response_style'],
     retry: true,
     llm: true,
     parallel: false,
