@@ -30,10 +30,16 @@ class _FakeRuntime:
 
 
 class _FakeLookupLLM(BaseLLMClient):
-    """Fake text client for the two-call resource lookup chain."""
+    """Fake client for the structured location + text search lookup chain."""
 
-    def __init__(self, responses: list[str]) -> None:
-        self.responses = list(responses)
+    def __init__(
+        self,
+        *,
+        structured_responses: list[dict[str, Any]],
+        text_responses: list[str] | None = None,
+    ) -> None:
+        self.structured_responses = list(structured_responses)
+        self.text_responses = list(text_responses or [])
         self.calls: list[dict[str, Any]] = []
 
     async def generate_text(
@@ -50,9 +56,9 @@ class _FakeLookupLLM(BaseLLMClient):
                 "use_search": use_search,
             }
         )
-        if not self.responses:
-            raise AssertionError("No fake response configured.")
-        return self.responses.pop(0)
+        if not self.text_responses:
+            raise AssertionError("No fake text response configured.")
+        return self.text_responses.pop(0)
 
     async def generate_text_stream(
         self,
@@ -68,8 +74,19 @@ class _FakeLookupLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
-        raise AssertionError("Structured generation is not used by lookup node tests.")
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system_instruction": system_instruction,
+                "use_search": use_search,
+                "response_schema": response_schema.__name__,
+            }
+        )
+        if not self.structured_responses:
+            raise AssertionError("No fake structured response configured.")
+        return response_schema(**self.structured_responses.pop(0))
 
 
 def _state(
@@ -104,10 +121,16 @@ async def test_crisis_resource_lookup_node_skips_without_llm() -> None:
 @pytest.mark.asyncio
 async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() -> None:
     llm = _FakeLookupLLM(
-        [
-            "Singapore",
+        structured_responses=[
+            {
+                "status": "provided",
+                "location": "Singapore",
+                "reasoning": "User stated location.",
+            }
+        ],
+        text_responses=[
             "Samaritans of Singapore | 1767 | https://www.sos.org.sg",
-        ]
+        ],
     )
 
     delta = await run_crisis_resource_lookup_node(
@@ -131,6 +154,31 @@ async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() 
 
 
 @pytest.mark.asyncio
+async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            {
+                "status": "refused",
+                "location": "",
+                "reasoning": "User declined to share location.",
+            }
+        ]
+    )
+
+    delta = await run_crisis_resource_lookup_node(
+        _state("I might hurt myself, but I don't want to share where I am."),
+        cast(Any, _FakeRuntime(llm_client=llm)),
+    )
+
+    assert delta == {
+        "inferred_location": "",
+        "found_resources": [],
+        "resource_lookup_status": "location_refused",
+    }
+    assert [call["use_search"] for call in llm.calls] == [False]
+
+
+@pytest.mark.asyncio
 async def test_crisis_resource_lookup_node_converts_unexpected_failure_to_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,11 +187,11 @@ async def test_crisis_resource_lookup_node_converts_unexpected_failure_to_status
     ) -> tuple[str, list[dict[str, str]], str]:
         raise RuntimeError("lookup failed")
 
-    monkeypatch.setattr(lookup_node, "find_local_crisis_resources", _raise_lookup)
+    monkeypatch.setattr(lookup_node, "find_crisis_resources", _raise_lookup)
 
     delta = await run_crisis_resource_lookup_node(
         _state(),
-        cast(Any, _FakeRuntime(llm_client=_FakeLookupLLM([]))),
+        cast(Any, _FakeRuntime(llm_client=_FakeLookupLLM(structured_responses=[]))),
     )
 
     assert delta == {

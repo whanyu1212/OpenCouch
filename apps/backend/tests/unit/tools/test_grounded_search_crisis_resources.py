@@ -8,18 +8,24 @@ from typing import Any, cast
 import pytest
 
 from agent.state import AgentState
-from agent.tools.web_search import (
+from agent.tools.grounded_search import (
     _normalize_extracted_location,
-    find_local_crisis_resources,
+    find_crisis_resources,
 )
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeLookupLLM(BaseLLMClient):
-    """Fake text client for the two-call resource lookup chain."""
+    """Fake client for the structured location + text search lookup chain."""
 
-    def __init__(self, responses: list[str | Exception]) -> None:
-        self.responses = list(responses)
+    def __init__(
+        self,
+        *,
+        structured_responses: list[dict[str, Any] | Exception],
+        text_responses: list[str | Exception] | None = None,
+    ) -> None:
+        self.structured_responses = list(structured_responses)
+        self.text_responses = list(text_responses or [])
         self.calls: list[dict[str, Any]] = []
 
     async def generate_text(
@@ -36,9 +42,9 @@ class _FakeLookupLLM(BaseLLMClient):
                 "use_search": use_search,
             }
         )
-        if not self.responses:
-            raise AssertionError("No fake response configured.")
-        response = self.responses.pop(0)
+        if not self.text_responses:
+            raise AssertionError("No fake text response configured.")
+        response = self.text_responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return response
@@ -57,8 +63,22 @@ class _FakeLookupLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
-        raise AssertionError("Structured generation is not used by web search lookup.")
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system_instruction": system_instruction,
+                "use_search": use_search,
+                "response_schema": response_schema.__name__,
+            }
+        )
+        if not self.structured_responses:
+            raise AssertionError("No fake structured response configured.")
+        response = self.structured_responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response_schema(**response)
 
 
 def _state(message: str = "I'm scared and I'm in Singapore.") -> AgentState:
@@ -75,9 +95,17 @@ def _state(message: str = "I'm scared and I'm in Singapore.") -> AgentState:
 
 @pytest.mark.asyncio
 async def test_lookup_returns_no_location_without_search_call() -> None:
-    llm = _FakeLookupLLM([""])
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            {
+                "status": "not_provided",
+                "location": "",
+                "reasoning": "No location stated.",
+            }
+        ]
+    )
 
-    location, resources, status = await find_local_crisis_resources(
+    location, resources, status = await find_crisis_resources(
         _state("I don't feel safe right now."),
         llm_client=llm,
     )
@@ -86,18 +114,48 @@ async def test_lookup_returns_no_location_without_search_call() -> None:
     assert resources == []
     assert status == "no_location"
     assert [call["use_search"] for call in llm.calls] == [False]
+    assert [call["response_schema"] for call in llm.calls] == ["CrisisLocationDecision"]
+
+
+@pytest.mark.asyncio
+async def test_lookup_returns_location_refused_without_search_call() -> None:
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            {
+                "status": "refused",
+                "location": "",
+                "reasoning": "User declined to share location.",
+            }
+        ]
+    )
+
+    location, resources, status = await find_crisis_resources(
+        _state("I don't want to share where I am."),
+        llm_client=llm,
+    )
+
+    assert location == ""
+    assert resources == []
+    assert status == "location_refused"
+    assert [call["use_search"] for call in llm.calls] == [False]
 
 
 @pytest.mark.asyncio
 async def test_lookup_returns_found_for_verified_singapore_resource() -> None:
     llm = _FakeLookupLLM(
-        [
-            "Singapore",
+        structured_responses=[
+            {
+                "status": "provided",
+                "location": "Singapore",
+                "reasoning": "User stated location.",
+            }
+        ],
+        text_responses=[
             "Samaritans of Singapore | 1767 | https://www.sos.org.sg",
-        ]
+        ],
     )
 
-    location, resources, status = await find_local_crisis_resources(
+    location, resources, status = await find_crisis_resources(
         _state(),
         llm_client=llm,
     )
@@ -117,9 +175,18 @@ async def test_lookup_returns_found_for_verified_singapore_resource() -> None:
 
 @pytest.mark.asyncio
 async def test_lookup_returns_search_failed_when_search_call_raises() -> None:
-    llm = _FakeLookupLLM(["Singapore", RuntimeError("search unavailable")])
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            {
+                "status": "provided",
+                "location": "Singapore",
+                "reasoning": "User stated location.",
+            }
+        ],
+        text_responses=[RuntimeError("search unavailable")],
+    )
 
-    location, resources, status = await find_local_crisis_resources(
+    location, resources, status = await find_crisis_resources(
         _state(),
         llm_client=llm,
     )
@@ -132,13 +199,19 @@ async def test_lookup_returns_search_failed_when_search_call_raises() -> None:
 @pytest.mark.asyncio
 async def test_lookup_returns_no_verified_results_for_unusable_search_text() -> None:
     llm = _FakeLookupLLM(
-        [
-            "Singapore",
+        structured_responses=[
+            {
+                "status": "provided",
+                "location": "Singapore",
+                "reasoning": "User stated location.",
+            }
+        ],
+        text_responses=[
             "I could not verify an official crisis phone number from sources.",
-        ]
+        ],
     )
 
-    location, resources, status = await find_local_crisis_resources(
+    location, resources, status = await find_crisis_resources(
         _state(),
         llm_client=llm,
     )

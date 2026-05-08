@@ -214,6 +214,13 @@ class _FakeExtractionLLM(BaseLLMClient):
                 ),
             )
 
+        if response_schema.__name__ == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                reasoning="ordinary extraction test turn",
+                confidence="high",
+            )
+
         raise RuntimeError(
             f"_FakeExtractionLLM: unexpected schema {response_schema.__name__}"
         )

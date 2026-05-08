@@ -9,6 +9,7 @@ from eval.judges.exercise_trajectory import (
 )
 from eval.judges.rubric import (
     RubricDimension,
+    RubricDimensionScore,
     RubricJudgeArtifact,
     RubricJudgeVerdict,
     RubricLLMJudge,
@@ -23,6 +24,7 @@ __all__ = [
     "ExerciseTrajectoryTurnArtifact",
     "ExerciseTrajectoryVerdict",
     "RubricDimension",
+    "RubricDimensionScore",
     "RubricJudgeArtifact",
     "RubricJudgeVerdict",
     "RubricLLMJudge",

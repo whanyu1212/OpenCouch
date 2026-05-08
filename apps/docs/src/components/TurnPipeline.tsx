@@ -37,8 +37,8 @@ export default function TurnPipeline() {
             <span className={styles.branchDot} style={{ background: 'var(--safe-color)' }} />
             therapeutic path
           </div>
-          <Node num="2b" label="memory_control_gate_node" desc="Detects /forget, /recall on|off, save-preference commands" accent="var(--safe-color)" compact />
-          <Node num="3b" label="grounded_lookup_gate_node" desc="Detects explicit factual lookup intent — short-circuits to grounded_answer_node when matched" accent="var(--safe-color)" compact />
+          <Node num="2b" label="turn_dispatch_node" desc="LLM routes safe turns to memory control, grounded lookup, or therapeutic flow" accent="var(--safe-color)" compact />
+          <Node num="3b" label="grounded_answer_node" desc="Search-grounded answer for explicit factual lookup turns" accent="var(--safe-color)" compact />
           <Node num="4b" label="load_memory_node" desc="Hybrid RRF retrieval across 3 namespaces" accent="var(--safe-color)" compact />
           <Node num="5b" label="therapeutic_subgraph" desc="LLM dispatcher → 1 of 7 response styles × 7 approaches" accent="var(--safe-color)" compact />
         </div>

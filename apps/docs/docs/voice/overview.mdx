@@ -333,7 +333,7 @@ room behavior.
 | **Runtime** | LangGraph `StateGraph` per turn | LiveKit `AgentSession` per room |
 | **Routing** | crisis_gate → operational gates → therapeutic subgraph | Agent handoffs (`TherapeuticAgent` ↔ `CrisisAgent`) + bounded tasks (`GroundingTask`) |
 | **Prompt** | Full layered assembly per turn | One bounded base prompt at session start + per-handoff nudges + per-task instructions |
-| **Tools** | `find_local_crisis_resources`, `answer_grounded_lookup` (node-invoked) | `@function_tool` declarations on each agent — model decides when to call |
+| **Tools** | `find_crisis_resources`, `answer_factual_lookup` (node-invoked) | `@function_tool` declarations on each agent — model decides when to call |
 | **Crisis** | Graph-level `crisis_gate_node` first, before anything | `crisis_check()` tool + deterministic keyword safety net + `CrisisAgent` handoff |
 | **Memory** | Read + write through normal chat lifecycle | 3-phase: startup load → mid-session selective retrieval → shutdown transcript replay |
 | **Exercises** | All 13 in the registry | Voice allowlist of 10 (excludes visually-loaded ones) |

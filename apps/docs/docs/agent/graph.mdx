@@ -10,7 +10,7 @@ import GraphTopology from '@site/src/components/GraphTopology';
 # Agent Graph
 
 Every message follows the same pipeline: safety check first, then a
-sequence of routing gates (memory commands, factual lookups), then
+safe-turn dispatcher for memory commands or factual lookups, then
 memory retrieval, response generation, and post-response memory
 evaluation. Some memory commits happen immediately; others wait for
 the shared session-end seam.
@@ -22,14 +22,12 @@ Click any step below to see what it does.
 
 ## Topology
 
-The parent graph has **12 named nodes** plus the therapeutic subgraph
+The parent graph has **9 named nodes** plus the therapeutic subgraph
 (compiled as a single parent-level node) which hides 8 internal nodes
 (dispatcher + 7 response nodes). The crisis gate routes between branches
-via `Command(goto=...)`. Three additional gates branch downstream:
-`memory_control_gate_node`, `grounded_lookup_gate_node`, and the
-crisis-side `crisis_resource_lookup_node`. The two extractors fan out
-in parallel after `finalize_turn_node`, feeding deterministic write
-policy instead of blindly writing every candidate to long-term memory.
+via `Command(goto=...)`. `turn_dispatch_node` branches safe turns to
+memory control, grounded lookup, or the therapeutic flow. Post-response
+extractors run outside LangGraph as runtime-managed side effects.
 
 <GraphTopology />
 
@@ -41,16 +39,13 @@ START
   → crisis_gate_node  (Command routes to one of the branches)
      ├─ crisis_resource_lookup_node → crisis_response_node
      │  → crisis_log_node → finalize_turn_node
-     └─ memory_control_gate_node
+     └─ turn_dispatch_node
         ├─ memory_control_node → finalize_turn_node
-        └─ grounded_lookup_gate_node
-           ├─ grounded_answer_node → finalize_turn_node
-           └─ load_memory_node → therapeutic_subgraph
-              → finalize_turn_node
+        ├─ grounded_answer_node → finalize_turn_node
+        └─ load_memory_node → therapeutic_subgraph
+           → finalize_turn_node
 
-finalize_turn_node
-  → extract_semantic_facts_node → END
-  → extract_procedural_rules_node → END
+finalize_turn_node → END
 ```
 
 ## Node responsibilities
@@ -88,12 +83,11 @@ use a fresh top-level approach for the explanation.
 retrieval or response generation. There is no path through the graph
 that loads context without first passing the safety check.
 
-**Operational gates run before memory loading.** After the crisis
-gate, the therapeutic branch passes through `memory_control_gate_node`
-(intercepts `/list`, `/forget`, `/remember`, recall-toggle commands)
-and `grounded_lookup_gate_node` (intercepts explicit factual lookup
-requests). Both gates short-circuit to dedicated response nodes when
-they fire, skipping memory retrieval and the therapeutic subgraph.
+**Operational dispatch runs before memory loading.** After the crisis
+gate, `turn_dispatch_node` routes explicit saved-memory commands to
+`memory_control_node`, explicit factual lookup requests to
+`grounded_answer_node`, and ordinary support to memory loading plus the
+therapeutic subgraph.
 
 **Routing is LLM-primary, deterministic-bounded.** The dispatcher
 calls the LLM classifier first; deterministic regex only fires for
@@ -102,12 +96,10 @@ fallback. The crisis gate uses the same shape: deterministic override
 for imminent-risk and idiomatic-safe patterns, LLM as primary for
 everything else, regex ladder as fallback.
 
-**Parallel post-response memory evaluation.** The two extractor nodes
-fan out in parallel from `finalize_turn_node`. Each lane does LLM
-candidate extraction plus deterministic write policy. Some candidates
-commit immediately; others are buffered for session end or dropped.
-Both still write to the `diagnostics` dict via a `_merge_dicts`
-reducer — no manual dict spreading needed, no race conditions.
+**Post-response memory evaluation.** Semantic and procedural extractors
+run after graph finalization as runtime-managed side effects. Some
+candidates commit immediately; others are buffered for session end or
+dropped. Extractor diagnostics are merged into the final turn output.
 
 **Reducer-backed accumulation.** `history` and `transcript` use
 `operator.add` reducers. Each turn emits only the new entries
@@ -160,12 +152,9 @@ for the full breakdown.
 | `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup before crisis response |
 | `agent/nodes/crisis_response.py` | Crisis response generation |
 | `agent/nodes/crisis_log.py` | Always-on audit log writer |
-| `agent/nodes/memory_control_gate.py` | Detects explicit memory commands |
+| `agent/nodes/turn_dispatch.py` | Routes safe turns to memory control, grounded lookup, or therapeutic flow |
 | `agent/nodes/memory_control.py` | Executes memory commands (list, forget, recall toggle, save preference) |
-| `agent/nodes/grounded_lookup_gate.py` | Detects explicit factual lookup requests |
 | `agent/nodes/grounded_answer.py` | Search-grounded factual replies |
-| `agent/nodes/extract_facts.py` | Semantic fact extraction orchestration backed by write policy + `agent/memory/backstops.py` |
-| `agent/nodes/extract_procedural_rules.py` | Procedural rule extraction with policy |
 | `agent/nodes/commit_session_memory.py` | Session-end promotion node backed by `agent/memory/session_commit_service.py` |
 | `agent/nodes/summarize_session.py` | Session-end episodic summarization node backed by `agent/memory/episodic.py` |
 | `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |

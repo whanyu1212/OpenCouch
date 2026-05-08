@@ -11,8 +11,7 @@ stamps the outer ``turn_total_ms`` into diagnostics, and yields a
 These tests cover the new contract:
 
 1. **Per-node StatusEvents.** The stream emits one StatusEvent for
-   each node that runs (crisis_gate, memory_control_gate,
-   grounded_lookup_gate, load_memory, therapeutic, finalize,
+   each node that runs (crisis_gate, turn_dispatch, load_memory, therapeutic, finalize,
    extract_facts, extract_procedural) in execution order. v0.9:
    finalize runs BEFORE extractors. A ResponseReadyEvent is emitted
    after finalize so the user sees the response while extractors run.
@@ -106,6 +105,12 @@ class _StreamingResponseLLM(BaseLLMClient):
                     confidence="high",
                 ),
             )
+        if schema_name == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                reasoning="streaming test turn dispatch",
+                confidence="high",
+            )
         if schema_name == "ExtractionResult":
             from agent.memory.types.semantic import ExtractionResult
 
@@ -175,8 +180,7 @@ class TestRunTurnStreamStages:
 
         Expected stages (in two phases):
           - Linear (ordered):
-              crisis_gate → memory_control_gate → grounded_lookup_gate →
-              load_memory → therapeutic → finalize
+              crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
           - Parallel (set, order non-deterministic):
               {extract_semantic_facts, extract_procedural_rules}
 
@@ -209,8 +213,7 @@ class TestRunTurnStreamStages:
         # the terminal graph stage.
         assert stage_names == [
             "crisis_gate",
-            "memory_control_gate",
-            "grounded_lookup_gate",
+            "turn_dispatch",
             "load_memory",
             "therapeutic",
             "finalize",

@@ -47,12 +47,21 @@ Therapeutic evals are split by purpose:
 - `therapeutic_exercise_trajectory_eval.py`: multi-turn guided-exercise
   trajectory checks. It always applies hard state/progression checks and can
   add an LLM judge with `--judge-mode live`.
+- `tool_usage_eval.py`: parent-graph checks for turn-level dispatch and
+  grounded-search tool invocation. It verifies that factual lookup,
+  memory-control, therapeutic, and crisis-resource routes call only the
+  expected tools.
+- `grounded_tool_quality_eval.py`: output-quality checks for grounded factual
+  lookup and crisis-resource lookup. It applies hard source/actionability
+  checks and can add an LLM judge with `--judge-mode live`.
 
 ```bash
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_behavior_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_exercise_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.tool_usage_eval
+apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
 ```
 
 Useful flags:
@@ -63,7 +72,7 @@ Useful flags:
 - `--dataset eval/datasets/therapeutic/contract_v1.json`: override the dataset.
 - `--mode live`: run behavior or quality cases with configured provider-backed
   LLM clients.
-- `--judge-mode live`: run the exercise trajectory LLM judge.
+- `--judge-mode live`: run exercise trajectory or grounded-tool LLM judges.
 
 Current coverage:
 
@@ -81,3 +90,15 @@ Current coverage:
 - hard response-quality checks for concise, concrete, non-menu output
 - multi-turn exercise trajectories with optional LLM-as-judge scoring
 - narrowed subgraph output keys
+- parent-graph turn dispatch to therapeutic, grounded lookup, memory control,
+  and crisis branches
+- grounded factual lookup and crisis resource tools invoked exactly on their
+  intended routes
+- grounded factual lookup answers stay source-backed, concise, and scoped to
+  verifiable facts
+- mental-health-adjacent lookup cases for reading resources, psychoeducation,
+  and non-crisis support directories
+- crisis-resource outputs contain location-appropriate, actionable contact
+  details without guessed resources
+- crisis-resource lookup respects explicit location refusal without guessing
+  localized resources

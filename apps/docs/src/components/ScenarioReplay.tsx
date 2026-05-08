@@ -31,7 +31,7 @@ interface Scenario {
  * safety_check.
  *
  * Routing-trace conventions:
- *   - Level 0 (safe): crisis_gate(safe) → memory_control_gate → grounded_lookup_gate → load_memory → therapeutic_subgraph → <response style>
+ *   - Level 0 (safe): crisis_gate(safe) → turn_dispatch → load_memory → therapeutic_subgraph → <response style>
  *   - Level 1 (ambiguous, needs_clarification=true): SAME path as level 0; the dispatcher typically picks clarifying or supportive. The response_style "safety_check" is reserved for the crisis branch.
  *   - Level ≥ 2 (needs_crisis_response=true): crisis_gate(level=N) → crisis_resource_lookup_node → crisis_response_node → crisis_log_node
  *

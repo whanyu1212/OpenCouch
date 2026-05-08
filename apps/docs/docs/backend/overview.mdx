@@ -79,13 +79,13 @@ composition logic.
 | Package | Owns |
 |---|---|
 | `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
-| `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `memory_control_gate`, `grounded_lookup_gate`, `load_memory`, `extract_facts`, `summarize_session`, `commit_session_memory`, etc.) |
+| `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `turn_dispatch`, `memory_control`, `grounded_answer`, `load_memory`, etc.) |
 | `agent/therapeutic/` | Subgraph: dispatcher, 7 response-style nodes, exercise registry/state machine, and prompt builders |
 | `agent/memory/` | Store protocol, embeddings, retrieval, dedup, write policy, reconciliation, procedural profile, and service-backed memory logic (`load_memory_service`, `episodic_service`, `session_commit_service`, `orchestration`, `backstops`) |
 | `agent/audit/` | Always-on safety records — crisis log, session feedback (in-memory + SQLite backends, models) |
 | `agent/safety/` | Deterministic crisis override layer plus service-backed crisis classification/routing helpers |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
-| `agent/tools/` | `find_local_crisis_resources` (web search for hotlines), `answer_grounded_lookup` (factual search grounding) |
+| `agent/tools/` | `find_crisis_resources` (grounded search for hotlines), `answer_factual_lookup` (factual search grounding) |
 | `services/llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |
 | `channels/` | Standalone channel adapters, currently Telegram DM polling |

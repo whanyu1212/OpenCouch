@@ -16,7 +16,7 @@ from agent.gates.memory_control.operations import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import aget_procedural_profile
-from agent.gates.memory_control.router import (
+from agent.gates.memory_control.actions import (
     CancelPendingAction,
     ConfirmPendingAction,
     ForgetByIndexAction,

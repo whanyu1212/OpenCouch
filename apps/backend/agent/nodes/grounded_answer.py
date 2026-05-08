@@ -10,13 +10,13 @@ from langgraph.runtime import Runtime
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.tools.grounded_lookup import GroundedLookupStatus, answer_grounded_lookup
+from agent.tools.grounded_search import FactualLookupStatus, answer_factual_lookup
 
 
 def _base_delta(
     response_text: str,
     *,
-    status: GroundedLookupStatus,
+    status: FactualLookupStatus,
     started_at: float,
 ) -> dict[str, Any]:
     """Return the shared response delta for grounded lookup turns.
@@ -57,11 +57,9 @@ async def run_grounded_answer_node(
 
     started_at = time.monotonic()
     grounded_lookup = state.get("grounded_lookup", {}) or {}
-    query = (
-        grounded_lookup.get("query")
-        or state.get("grounded_lookup_query")
-        or state.get("message", "")
-    ).strip()
+    query = str(grounded_lookup.get("query") or "").strip()
+    if not query:
+        raise ValueError("grounded_answer_node requires grounded_lookup.query.")
     llm_client = runtime.context.llm_client
 
     if llm_client is None:
@@ -71,7 +69,7 @@ async def run_grounded_answer_node(
             started_at=started_at,
         )
 
-    answer, status = await answer_grounded_lookup(
+    answer, status = await answer_factual_lookup(
         state,
         llm_client=llm_client,
         query=query,

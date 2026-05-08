@@ -42,7 +42,7 @@ up routing.
 
 | Final level | Route | Pipeline |
 |---|---|---|
-| 0 / 1 | `therapeutic` | `memory_control_gate_node → grounded_lookup_gate_node → load_memory_node → therapeutic_subgraph` |
+| 0 / 1 | `therapeutic` | `turn_dispatch_node → load_memory_node → therapeutic_subgraph` |
 | 2 / 3 | `crisis` | `crisis_resource_lookup_node → crisis_response_node → crisis_log_node` |
 
 **Level 1 stays therapeutic.** `needs_clarification=true` is set in
@@ -109,4 +109,4 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
 | `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
-| `agent/tools/web_search.py` | `find_local_crisis_resources` (called by `crisis_resource_lookup_node`) |
+| `agent/tools/grounded_search.py` | `find_crisis_resources` (called by `crisis_resource_lookup_node`) |

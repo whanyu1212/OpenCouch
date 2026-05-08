@@ -11,7 +11,7 @@ from langgraph.types import Command
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.graph_constants import (
     CRISIS_RESOURCE_LOOKUP_NODE,
-    MEMORY_CONTROL_GATE_NODE,
+    TURN_DISPATCH_NODE,
     CrisisGateNextNode,
 )
 from agent.models import CrisisAssessment
@@ -122,6 +122,6 @@ async def run_crisis_gate_node(
     next_node: CrisisGateNextNode = (
         CRISIS_RESOURCE_LOOKUP_NODE
         if assessment.needs_crisis_response
-        else MEMORY_CONTROL_GATE_NODE
+        else TURN_DISPATCH_NODE
     )
     return Command(update=delta, goto=next_node)

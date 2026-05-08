@@ -269,7 +269,7 @@ async def test_run_crisis_gate_node_no_llm_path_standalone() -> None:
 
     command = await run_crisis_gate_node(state, _MockRuntime())  # type: ignore[arg-type]
 
-    assert command.goto == "memory_control_gate_node"
+    assert command.goto == "turn_dispatch_node"
     assert command.update["crisis"].level == 1
     assert command.update["crisis"].needs_crisis_response is False
     assert command.update["crisis"].needs_clarification is True
@@ -329,7 +329,7 @@ async def test_run_crisis_gate_node_llm_failure_fallback_standalone() -> None:
         _MockRuntime(llm_client=_FailingStructuredLLM()),
     )
 
-    assert command.goto == "memory_control_gate_node"
+    assert command.goto == "turn_dispatch_node"
     assert command.update["crisis"].level == 1
     assert command.update["crisis"].needs_crisis_response is False
     assert command.update["crisis"].needs_clarification is True
@@ -361,7 +361,7 @@ async def test_run_crisis_gate_node_enforces_truth_table_on_llm_output() -> None
         _MockRuntime(llm_client=llm),
     )
 
-    assert command.goto == "memory_control_gate_node"
+    assert command.goto == "turn_dispatch_node"
     assert command.update["crisis"].level == 0
     assert command.update["crisis"].needs_crisis_response is False
     assert command.update["crisis"].needs_clarification is False

@@ -26,7 +26,7 @@ const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }
   { key: "session_progress", label: "Session Progress", desc: "Turn count", icon: "▸" },
   { key: "exercise_state", label: "Exercise State", desc: "Guided exercise continuity", icon: "◎" },
   { key: "memory_control", label: "Memory Control", desc: "Pending memory action", icon: "⌁" },
-  { key: "grounded_lookup_status", label: "Grounded Lookup", desc: "Factual lookup status", icon: "⌕" },
+  { key: "grounded_lookup", label: "Grounded Lookup", desc: "Factual lookup query and status", icon: "⌕" },
   { key: "resource_lookup_status", label: "Crisis Resources", desc: "Crisis resource lookup status", icon: "✚" },
   { key: "inferred_location", label: "Inferred Location", desc: "User-stated crisis location", icon: "⌖" },
   { key: "found_resources", label: "Found Resources", desc: "Verified crisis resources", icon: "☑" },
@@ -392,10 +392,11 @@ function getSummary(key: string, value: unknown): string {
     case "route":
     case "response_style":
     case "therapeutic_approach":
-    case "grounded_lookup_status":
     case "resource_lookup_status":
     case "inferred_location":
       return String(value || "—");
+    case "grounded_lookup":
+      return `status=${String(obj.status ?? "—")}`;
     case "response_text":
       return String(value || "").slice(0, 80);
     case "crisis": {

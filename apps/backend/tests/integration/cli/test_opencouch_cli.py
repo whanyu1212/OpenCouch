@@ -512,7 +512,7 @@ def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
                 ]
             },
         ),
-        status_stages=["crisis_gate", "memory_control_gate"],
+        status_stages=["crisis_gate", "turn_dispatch"],
         pending_status="finishing turn",
     )
     out = capsys.readouterr().out

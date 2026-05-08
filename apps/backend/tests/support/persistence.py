@@ -112,17 +112,9 @@ class FakeCrossRestartLLM(BaseLLMClient):
                 confidence="high",
             )
 
-        if schema_name == "MemoryControlDecision":
+        if schema_name == "TurnDispatchDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
-                action_type="none",
-                reasoning="ordinary persistence test turn",
-                confidence="high",
-            )
-
-        if schema_name == "GroundedLookupDecision":
-            return response_schema(  # type: ignore[call-arg,return-value]
-                should_lookup=False,
-                query=None,
+                route="therapeutic",
                 reasoning="ordinary persistence test turn",
                 confidence="high",
             )

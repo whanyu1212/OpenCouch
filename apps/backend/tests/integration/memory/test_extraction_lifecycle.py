@@ -222,6 +222,13 @@ class _StallingExtractionLLM(BaseLLMClient):
                 ),
             )
 
+        if schema_name == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                reasoning="ordinary extraction lifecycle test turn",
+                confidence="high",
+            )
+
         if schema_name == "ProceduralExtractionResult":
             from agent.memory.models import ProceduralExtractionResult
 

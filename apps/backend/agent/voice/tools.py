@@ -35,8 +35,11 @@ from agent.gates.safety.crisis_rules import (
     IMMINENT_PATTERNS,
 )
 from agent.state import AgentState
-from agent.tools.grounded_lookup import answer_grounded_lookup
-from agent.tools.web_search import ResourceLookupStatus, find_local_crisis_resources
+from agent.tools.grounded_search import (
+    CrisisResourceLookupStatus,
+    answer_factual_lookup,
+    find_crisis_resources,
+)
 from agent.voice.activity import emit_voice_activity
 from agent.voice.session_data import SessionData
 
@@ -234,7 +237,7 @@ def _format_crisis_resources(
     return "\n".join(lines)
 
 
-def _crisis_resource_fallback(status: ResourceLookupStatus) -> str:
+def _crisis_resource_fallback(status: CrisisResourceLookupStatus) -> str:
     """Return safe fallback crisis-resource text.
 
     Args:
@@ -361,7 +364,7 @@ async def answer_grounded_factual_lookup(
         label="Lookup started",
         detail="Checking current information.",
     )
-    answer, status = await answer_grounded_lookup(
+    answer, status = await answer_factual_lookup(
         _lookup_state_from_context(context, message=query),
         llm_client=llm_client,
         query=query,
@@ -434,7 +437,7 @@ async def provide_crisis_resources(
         label="Crisis resources search started",
         detail="Checking verified local resources.",
     )
-    location, resources, status = await find_local_crisis_resources(
+    location, resources, status = await find_crisis_resources(
         _lookup_state_from_context(
             context,
             message=location_context.strip(),

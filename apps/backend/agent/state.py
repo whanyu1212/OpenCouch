@@ -120,9 +120,8 @@ class MemoryControlState(TypedDict):
     """User-directed memory-control continuity.
 
     ``memory_control_node`` writes pending destructive actions here so the next
-    turn can confirm or cancel them without relying on the LLM to infer which
-    record was meant. ``memory_control_gate_node`` writes the current turn's
-    explicit memory command into ``action``.
+    turn can confirm or cancel them. ``turn_dispatch_node`` writes the current
+    turn's explicit memory command into ``action``.
     """
 
     pending_action: NotRequired[dict[str, Any] | None]
@@ -132,9 +131,9 @@ class MemoryControlState(TypedDict):
 class GroundedLookupState(TypedDict):
     """Explicit factual lookup scratch state.
 
-    ``grounded_lookup_gate_node`` writes the current turn's search query and
-    initial status. ``grounded_answer_node`` updates the status after attempting
-    the grounded response.
+    ``turn_dispatch_node`` writes the current turn's search query and initial
+    status. ``grounded_answer_node`` updates the status after attempting the
+    grounded response.
     """
 
     query: NotRequired[str]

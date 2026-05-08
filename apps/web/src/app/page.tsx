@@ -821,9 +821,6 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
         >
           {safetyLabel}
         </Pill>
-        {diag.grounded_lookup_status != null ? (
-          <Pill variant="muted">lookup {String(diag.grounded_lookup_status)}</Pill>
-        ) : null}
         {diag.resource_lookup_status != null &&
         String(diag.resource_lookup_status) !== "not_attempted" ? (
           <Pill variant="muted">resources {String(diag.resource_lookup_status)}</Pill>
@@ -896,9 +893,8 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
             <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 flex-1 font-mono">
               <TimingRow label="load_memory" ms={diag.load_memory_ms} />
               <TimingRow label="crisis_gate" ms={diag.crisis_gate_ms} />
-              <TimingRow label="memory_gate" ms={diag.memory_control_gate_ms} />
+              <TimingRow label="turn_dispatch" ms={diag.turn_dispatch_ms} />
               <TimingRow label="memory_control" ms={diag.memory_control_ms} />
-              <TimingRow label="lookup_gate" ms={diag.grounded_lookup_gate_ms} />
               <TimingRow label="grounded_lookup" ms={diag.grounded_lookup_ms} />
               <TimingRow
                 label="crisis_resources"
@@ -953,14 +949,6 @@ function StateStrip({ msg }: { msg: ChatMessage }) {
                   {diag.proactive_recall ? "on" : "off"}
                 </span>
               </span>
-              {diag.grounded_lookup_status != null ? (
-                <span>
-                  lookup:{" "}
-                  <span className="text-oc-teal-300">
-                    {String(diag.grounded_lookup_status)}
-                  </span>
-                </span>
-              ) : null}
             </div>
           </div>
 

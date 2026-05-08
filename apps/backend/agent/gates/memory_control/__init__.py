@@ -1,14 +1,13 @@
-"""User-directed memory-management routing helpers.
+"""User-directed memory-management helpers.
 
-Public entry points for explicit memory commands ("show my memory",
-"forget X", "save preference Y", "turn proactive recall off"). External
-callers should import from this package — submodules (router, service,
-operations) are internal organization and may be reorganized.
+Public entry points for memory actions and memory-store operations. External
+callers should import from this package; submodules are internal organization
+and may be reorganized.
 
-Symbols defined in :mod:`router` and :mod:`service` are loaded lazily
-via :pep:`562` ``__getattr__`` so that lightweight callers (e.g. a tool
-that only needs ``MemoryControlTarget``) do not pay the import cost of
-the LLM-routing and workflow-context machinery.
+Symbols defined in :mod:`actions` and :mod:`service` are loaded lazily via
+:pep:`562` ``__getattr__`` so lightweight callers that only need
+``MemoryControlTarget`` do not pay the import cost of workflow-context
+machinery.
 """
 
 from __future__ import annotations
@@ -26,24 +25,19 @@ from agent.gates.memory_control.operations import (
 )
 
 if TYPE_CHECKING:
-    from agent.gates.memory_control.router import (
+    from agent.gates.memory_control.actions import (
         CancelPendingAction,
         ConfirmPendingAction,
         ForgetByIndexAction,
         ForgetByQueryAction,
         ListAction,
         MemoryControlAction,
-        MemoryControlDecision,
-        MemoryControlRoute,
         SavePreferenceAction,
         SetRecallAction,
         StatusAction,
         TypedMemoryAction,
-        detect_memory_control_action,
-        is_pending_cancellation,
-        is_pending_confirmation,
+        normalize_preference_rule,
         parse_memory_control_action,
-        resolve_memory_control_action,
     )
     from agent.gates.memory_control.service import (
         MemoryControlServiceResult,
@@ -51,7 +45,7 @@ if TYPE_CHECKING:
     )
 
 
-_LAZY_ROUTER_SYMBOLS = frozenset(
+_LAZY_ACTION_SYMBOLS = frozenset(
     {
         "CancelPendingAction",
         "ConfirmPendingAction",
@@ -59,17 +53,12 @@ _LAZY_ROUTER_SYMBOLS = frozenset(
         "ForgetByQueryAction",
         "ListAction",
         "MemoryControlAction",
-        "MemoryControlDecision",
-        "MemoryControlRoute",
         "SavePreferenceAction",
         "SetRecallAction",
         "StatusAction",
         "TypedMemoryAction",
-        "detect_memory_control_action",
-        "is_pending_cancellation",
-        "is_pending_confirmation",
+        "normalize_preference_rule",
         "parse_memory_control_action",
-        "resolve_memory_control_action",
     }
 )
 
@@ -82,12 +71,12 @@ _LAZY_SERVICE_SYMBOLS = frozenset(
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily resolve router/service symbols on first access (PEP 562)."""
+    """Lazily resolve action/service symbols on first access."""
 
-    if name in _LAZY_ROUTER_SYMBOLS:
-        from agent.gates.memory_control import router as _router
+    if name in _LAZY_ACTION_SYMBOLS:
+        from agent.gates.memory_control import actions as _actions
 
-        value = getattr(_router, name)
+        value = getattr(_actions, name)
         globals()[name] = value
         return value
 
@@ -104,7 +93,7 @@ def __getattr__(name: str) -> Any:
 def __dir__() -> list[str]:
     """Include lazy symbols in ``dir()`` so introspection still works."""
 
-    return sorted(set(globals()) | _LAZY_ROUTER_SYMBOLS | _LAZY_SERVICE_SYMBOLS)
+    return sorted(set(globals()) | _LAZY_ACTION_SYMBOLS | _LAZY_SERVICE_SYMBOLS)
 
 
 __all__ = [
@@ -114,8 +103,6 @@ __all__ = [
     "ForgetByQueryAction",
     "ListAction",
     "MemoryControlAction",
-    "MemoryControlDecision",
-    "MemoryControlRoute",
     "MemoryControlServiceResult",
     "MemoryControlTarget",
     "SavePreferenceAction",
@@ -123,15 +110,12 @@ __all__ = [
     "StatusAction",
     "TypedMemoryAction",
     "delete_memory_target",
-    "detect_memory_control_action",
     "execute_memory_control_action",
     "find_memory_target_by_index",
     "find_memory_targets",
-    "is_pending_cancellation",
-    "is_pending_confirmation",
     "list_memory_for_owner",
+    "normalize_preference_rule",
     "parse_memory_control_action",
-    "resolve_memory_control_action",
     "save_preference_rule",
     "set_memory_recall",
 ]

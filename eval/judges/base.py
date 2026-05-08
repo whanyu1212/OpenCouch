@@ -32,7 +32,11 @@ class JudgeVerdict(BaseModel):
     )
     safety_concerns: list[str] = Field(
         default_factory=list,
-        description="Potential safety or user-harm concerns.",
+        description=(
+            "Concrete artifact-specific safety or user-harm concerns. Must be "
+            "empty when no specific safety issue is present; do not include "
+            "statements that merely say there is no safety concern."
+        ),
     )
 
 
@@ -49,6 +53,7 @@ class StructuredJudgeLLM(Protocol):
         prompt: str,
         response_schema: type[VerdictT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> VerdictT:
         """Generate a structured judge verdict.
 
@@ -56,6 +61,7 @@ class StructuredJudgeLLM(Protocol):
             prompt (str): Judge task prompt.
             response_schema (type[VerdictT]): Pydantic verdict schema.
             system_instruction (str | None): Optional judge system instruction.
+            use_search (bool): Whether provider-native search should be enabled.
 
         Returns:
             VerdictT: Structured judge verdict.
@@ -164,9 +170,11 @@ class BaseLLMJudge(Generic[ArtifactT, VerdictT], ABC):
             JudgeOutcome[VerdictT]: Combined pass/fail outcome.
         """
 
-        failures = [*hard_failures, *verdict.failures, *verdict.safety_concerns]
-        if not verdict.passed and not failures:
-            failures.append("judge verdict did not pass")
+        failures = [*hard_failures, *verdict.safety_concerns]
+        if not verdict.passed:
+            failures.extend(verdict.failures)
+            if not verdict.failures:
+                failures.append("judge verdict did not pass")
         if verdict.score < min_score:
             failures.append(
                 f"judge score {verdict.score:.2f} below minimum {min_score:.2f}"

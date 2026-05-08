@@ -23,20 +23,17 @@ START
   -> crisis_gate_node
        -> crisis_resource_lookup_node -> crisis_response_node
           -> crisis_log_node -> finalize_turn_node
-       -> memory_control_gate_node
+       -> turn_dispatch_node
           -> memory_control_node -> finalize_turn_node
-          -> grounded_lookup_gate_node
-             -> grounded_answer_node -> finalize_turn_node
-             -> load_memory_node -> therapeutic_subgraph -> finalize_turn_node
+          -> grounded_answer_node -> finalize_turn_node
+          -> load_memory_node -> therapeutic_subgraph -> finalize_turn_node
 
-finalize_turn_node
-  -> extract_semantic_facts_node -> END
-  -> extract_procedural_rules_node -> END
+finalize_turn_node -> END
 ```
 
-`crisis_gate_node` returns a LangGraph `Command` with both a state update and
-the next node. There is no conditional edge for the crisis branch. This keeps
-the routing decision and the audit metadata in one place.
+`crisis_gate_node` and `turn_dispatch_node` return LangGraph `Command` values
+with both a state update and the next node. This keeps each lifecycle routing
+decision and its diagnostics in one place.
 
 `therapeutic_subgraph` is itself a compiled `StateGraph`, registered as one
 node in the parent graph. It handles therapeutic response-style routing and
@@ -72,7 +69,7 @@ The state schema lives in `agent.state`.
 | Persistent continuity | `session_memory`, `procedural_profile`, `session_progress`, `exercise_state`, `memory_control` | Memory load, turn counting, guided exercise, memory-control confirmation/action state, runtime session management. |
 | Crisis | `crisis` | `crisis_gate_node`. |
 | Output | `therapeutic_approach`, `response_style`, `response_text`, `should_persist_memory`, `diagnostics` | Routing and response nodes. |
-| Private | `route`, `crisis_audit`, `grounded_lookup_query`, `grounded_lookup_status`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
+| Private | `route`, `crisis_audit`, `grounded_lookup`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
 
 Reducer-backed channels:
 
@@ -115,9 +112,10 @@ When the branch is crisis:
 
 `load_memory_node` runs only on the non-crisis branch.
 
-`memory_control_gate_node` runs before memory load on non-crisis turns. Explicit
-memory-management requests route to `memory_control_node`; ordinary therapeutic
-turns continue to `grounded_lookup_gate_node`, then `load_memory_node`.
+`turn_dispatch_node` runs before memory load on non-crisis turns. It routes
+explicit memory-management requests to `memory_control_node`, explicit external
+factual lookup requests to `grounded_answer_node`, and ordinary therapeutic
+turns to `load_memory_node`.
 
 In incognito mode it returns empty working memory, a guest-session summary, and
 disabled procedural recall.
@@ -158,7 +156,7 @@ Recall behavior is intentionally selective:
   memory and does not disable style preferences.
 
 Users can manage memory conversationally. These explicit requests route through
-`memory_control_gate_node` to `memory_control_node` before memory loading:
+`turn_dispatch_node` to `memory_control_node` before memory loading:
 
 | User wording | Effect |
 | --- | --- |
@@ -204,8 +202,8 @@ Write timing:
 
 ## Grounded Factual Lookup
 
-`grounded_lookup_gate_node` runs after memory-control routing and before memory
-loading. It is a narrow guard for explicit factual/current-information requests,
+`turn_dispatch_node` sends explicit factual/current-information requests to
+`grounded_answer_node` before memory loading. This is a narrow operational path,
 not a general therapeutic tool.
 
 It routes to `grounded_answer_node` only when the user clearly asks the agent to
@@ -310,13 +308,10 @@ completion fact when persistence is enabled.
 `transcript`. It returns only the new assistant turn because both channels are
 reducer-backed.
 
-After finalization, two side-effect nodes run:
-
-- `extract_semantic_facts_node`
-- `extract_procedural_rules_node`
-
-These nodes write diagnostics into state, but their durable memory writes are
-side effects on `memory_store` or `session_memory_buffer`.
+After finalization, semantic and procedural extraction run outside the graph as
+runtime-managed side effects. They write diagnostics into the turn output, but
+their durable memory writes are side effects on `memory_store` or
+`session_memory_buffer`.
 
 They skip when:
 

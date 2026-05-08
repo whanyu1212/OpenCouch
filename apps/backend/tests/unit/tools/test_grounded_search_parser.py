@@ -1,9 +1,9 @@
-"""Unit tests for the pure-function helpers in ``agent/tools/web_search.py``.
+"""Unit tests for crisis-resource parser helpers in ``agent/tools/grounded_search.py``.
 
 These cover the parser (``_parse_resource_lines``) and its two field-
 cleaning helpers (``_clean_field``, ``_clean_url_field``). The LLM-
 calling paths (``_extract_location``, ``_lookup_resources``,
-``find_local_crisis_resources``) are not exercised here — they
+``find_crisis_resources``) are not exercised here — they
 require a real provider and live in the dogfood script. The parser
 tests are enough to pin the output shapes from both Gemini and
 OpenAI grounding.
@@ -25,7 +25,7 @@ mis-parsed crisis resources.
 
 from __future__ import annotations
 
-from agent.tools.web_search import (
+from agent.tools.grounded_search import (
     _clean_field,
     _clean_url_field,
     _parse_resource_lines,
@@ -115,7 +115,19 @@ class TestCleanUrlField:
 
     def test_trailing_bold_on_bare_url(self) -> None:
         """``samaritans.org**`` with nothing else should lose the bold."""
-        assert _clean_url_field("samaritans.org**") == "samaritans.org"
+        assert _clean_url_field("samaritans.org**") == "https://samaritans.org"
+
+    def test_bare_domain_gets_https_scheme(self) -> None:
+        """Search output sometimes returns a bare domain; normalize it
+        into a clickable URL for downstream rendering and quality checks."""
+        assert _clean_url_field("sos.org.sg") == "https://sos.org.sg"
+
+    def test_markdown_link_field_returns_inner_url(self) -> None:
+        """Some search outputs return only a markdown link in the URL
+        column. The parser should keep the real target URL, not prepend
+        ``https://`` to the whole markdown expression."""
+        raw = "([sos.org.sg](https://www.sos.org.sg/our-services/))"
+        assert _clean_url_field(raw) == "https://www.sos.org.sg/our-services/"
 
 
 # ─── _parse_resource_lines ────────────────────────────────────────────────
@@ -279,3 +291,10 @@ Let me know if you need more details.
         resources = _parse_resource_lines(raw, location="UK")
         assert len(resources) == 1
         assert resources[0]["url"] == ""
+
+    def test_bare_resource_domains_are_normalized(self) -> None:
+        """Rows with bare resource domains should still produce URLs."""
+        raw = "- Samaritans | 116 123 | samaritans.org"
+        resources = _parse_resource_lines(raw, location="UK")
+        assert len(resources) == 1
+        assert resources[0]["url"] == "https://samaritans.org"

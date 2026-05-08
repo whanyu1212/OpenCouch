@@ -46,6 +46,17 @@ def test_crisis_prompt_no_location_asks_once_without_pressure() -> None:
     assert "Do not invent phone numbers" in prompt
 
 
+def test_crisis_prompt_location_refused_does_not_ask_again() -> None:
+    prompt = build_crisis_response_prompt(
+        _crisis_state(resource_lookup_status="location_refused")
+    )
+
+    assert "declined to share their location" in prompt
+    assert "do not ask for location again" in prompt
+    assert "local emergency services" in prompt
+    assert "Do not invent phone numbers" in prompt
+
+
 def test_crisis_prompt_search_failed_uses_general_safety_guidance() -> None:
     prompt = build_crisis_response_prompt(
         _crisis_state(

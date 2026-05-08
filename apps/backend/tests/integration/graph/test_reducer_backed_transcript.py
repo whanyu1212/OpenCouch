@@ -280,6 +280,12 @@ class _GuidedExerciseLLM(BaseLLMClient):
                 reasoning="Self-critical language maps to self-compassion.",
                 confidence="high",
             )
+        if response_schema.__name__ == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                reasoning="safe guided-exercise test turn",
+                confidence="high",
+            )
         return typing.cast(
             StructuredResponseT,
             DispatchDecision(
@@ -348,16 +354,9 @@ class _SupportiveLLM(BaseLLMClient):
                 rules=[],
                 reason="no procedural rules in reducer transcript test",
             )
-        if schema_name == "MemoryControlDecision":
+        if schema_name == "TurnDispatchDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
-                action_type="none",
-                reasoning="ordinary supportive turn",
-                confidence="high",
-            )
-        if schema_name == "GroundedLookupDecision":
-            return response_schema(  # type: ignore[call-arg,return-value]
-                should_lookup=False,
-                query=None,
+                route="therapeutic",
                 reasoning="ordinary supportive turn",
                 confidence="high",
             )

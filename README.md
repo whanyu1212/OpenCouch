@@ -289,15 +289,13 @@ flowchart TD
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
-        MCG{"memory_control_gate<br/>LLM + deterministic fallback"}:::safeNode
+        TDISP{"turn_dispatch<br/>LLM route plan"}:::safeNode
         MC[["memory_control<br/>slash + natural language"]]:::safeNode
-        GLG{"grounded_lookup_gate<br/>LLM + hard-yes fallback"}:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
-        MCG ==>|memory control| MC
-        MCG ==>|ordinary turn| GLG
-        GLG ==>|lookup| GA
-        GLG ==>|support| LM
+        TDISP ==>|memory control| MC
+        TDISP ==>|lookup| GA
+        TDISP ==>|support| LM
     end
 
     subgraph THERAPY ["Therapeutic Subgraph"]
@@ -351,7 +349,7 @@ flowchart TD
     API ==> IN
     TG ==> IN
     IN ==> CG
-    CG ==>|Safe| MCG
+    CG ==>|Safe| TDISP
     CG -.->|Risk| RL
     MC ==> FT
     GA ==> FT
@@ -461,6 +459,7 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of **May 2026**:
 
+- **May 2026 — Turn dispatch & grounded tools cleanup** — safe-turn routing now uses one typed `turn_dispatch` node for memory control, grounded lookup, or therapeutic support instead of separate regex/pattern gate nodes. Grounded lookup and web search were consolidated into structured provider-native search helpers with explicit source lists, crisis-location classification, and `location_refused` handling. Scripted and live grounded-tool quality evals pass `11/11`.
 - **May 2026 — Therapeutic dispatch & state-surface cleanup** — the therapeutic router collapsed to an LLM-primary policy (~821 LOC removed across four deleted dispatch modules) with a small deterministic exercise-state bookkeeping layer. Three carrying-cost-only output channels (`response_style_type`, `response_style_source`, `response_kind`) were removed end-to-end across the agent, public API, frontend, and docs, with the public `AgentOutput.response_type` now derived once from the crisis assessment rather than written by five separate nodes. 1025/1025 backend tests pass.
 - **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose. A `scripts/cli_dogfood.sh` helper ensures Postgres is up before launching the CLI, and `get_settings()` now fails fast with an actionable error when the Postgres backend is selected without `OPENCOUCH_MEMORY_DATABASE_URL`.
 - **May 2026 — Agent module restructure & service extraction** — large structural cleanup of the agent package (net **−1043 lines across 172 files**): voice and active-session modules pulled into `agent/`, memory store promoted to a backend-aware package, risk-gating subsystems grouped under `agent/gates/`, facade and wrapper modules dissolved, and standalone services extracted for memory control, session finalization, runtime streaming, and turn-extraction coordination. Routing decisions are now typed across the agent router, grounded-lookup router, and memory-control router.

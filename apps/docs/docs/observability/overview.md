@@ -149,9 +149,8 @@ consistent text:
 | Internal stage | Friendly label |
 |---|---|
 | `crisis_gate` | safety check |
-| `memory_control_gate` | checking memory command |
+| `turn_dispatch` | routing turn |
 | `memory_control` | updating memory |
-| `grounded_lookup_gate` | checking factual lookup |
 | `grounded_lookup` | looking up factual answer |
 | `crisis_resource_lookup` | looking up crisis resources |
 | `crisis_response` | generating crisis reply |
@@ -182,10 +181,9 @@ render without a mapping update.
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
 | `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
 | `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `search_failed` / `no_verified_results` / `not_attempted` |
-| `memory_control_gate_ms` | memory_control_gate | Gate evaluation wall-clock time |
-| `memory_control.action` | memory_control_gate | Detected command kind (or empty when none) |
-| `grounded_lookup_gate_ms` | grounded_lookup_gate | Gate evaluation wall-clock time |
-| `grounded_lookup_status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
+| `turn_dispatch_ms` | turn_dispatch | Safe-turn routing wall-clock time |
+| `memory_control.action` | turn_dispatch | Detected command kind (or empty when none) |
+| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |

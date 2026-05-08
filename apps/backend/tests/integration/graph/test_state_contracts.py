@@ -25,10 +25,9 @@ from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.nodes.memory_control import run_memory_control_node
-from agent.nodes.memory_control_gate import run_memory_control_gate_node
+from agent.nodes.turn_dispatch import run_turn_dispatch_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from agent.therapeutic.dispatch import run_therapeutic_dispatch_node
@@ -94,10 +93,16 @@ class _FakeDispatchLLM(BaseLLMClient):
         *,
         response_style: str,
         therapeutic_approach: str,
+        turn_route: str = "therapeutic",
+        memory_action_type: str | None = None,
+        lookup_query: str | None = None,
         step_state: str = "hold",
     ) -> None:
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
+        self.turn_route = turn_route
+        self.memory_action_type = memory_action_type
+        self.lookup_query = lookup_query
         self.step_state = step_state
 
     async def generate_text(
@@ -141,6 +146,14 @@ class _FakeDispatchLLM(BaseLLMClient):
                     reasoning="contract test step state",
                     confidence="high",
                 ),
+            )
+        if response_schema.__name__ == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route=self.turn_route,
+                memory_action_type=self.memory_action_type,
+                query=self.lookup_query,
+                reasoning="contract test turn dispatch",
+                confidence="high",
             )
         return cast(
             StructuredResponseT,
@@ -261,7 +274,7 @@ async def test_crisis_gate_therapeutic_path_channel_contract() -> None:
         cast(Any, _FakeRuntime(llm_client=None)),
     )
 
-    assert command.goto == "memory_control_gate_node"
+    assert command.goto == "turn_dispatch_node"
     _assert_exact_keys(
         command.update,
         {"crisis", "route", "crisis_audit", "diagnostics"},
@@ -269,31 +282,52 @@ async def test_crisis_gate_therapeutic_path_channel_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_control_gate_passthrough_channel_contract() -> None:
-    """Memory-control gate should write only action/diagnostic channels normally."""
+async def test_turn_dispatch_therapeutic_channel_contract() -> None:
+    """Turn dispatch should route ordinary support to memory loading."""
 
-    command = await run_memory_control_gate_node(
+    command = await run_turn_dispatch_node(
         _build_state("I had a hard day at work."),
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                )
+            ),
+        ),
     )
 
-    assert command.goto == "grounded_lookup_gate_node"
-    _assert_exact_keys(command.update, {"memory_control", "diagnostics"})
+    assert command.goto == "load_memory_node"
+    _assert_exact_keys(
+        command.update,
+        {"route", "memory_control", "grounded_lookup", "diagnostics"},
+    )
 
 
 @pytest.mark.asyncio
-async def test_memory_control_gate_action_channel_contract() -> None:
-    """Memory-control gate should route explicit memory commands to the node."""
+async def test_turn_dispatch_memory_control_channel_contract() -> None:
+    """Turn dispatch should route explicit memory commands to the node."""
 
-    command = await run_memory_control_gate_node(
+    command = await run_turn_dispatch_node(
         _build_state("What do you remember about me?"),
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    turn_route="memory_control",
+                    memory_action_type="list",
+                )
+            ),
+        ),
     )
 
     assert command.goto == "memory_control_node"
     _assert_exact_keys(
         command.update,
-        {"route", "memory_control", "diagnostics"},
+        {"route", "memory_control", "grounded_lookup", "diagnostics"},
     )
 
 
@@ -324,34 +358,28 @@ async def test_memory_control_node_channel_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grounded_lookup_gate_passthrough_channel_contract() -> None:
-    """Grounded lookup gate should write only lookup scratch channels normally."""
+async def test_turn_dispatch_grounded_lookup_channel_contract() -> None:
+    """Turn dispatch should route factual lookup requests to the lookup node."""
 
-    command = await run_grounded_lookup_gate_node(
-        _build_state("I had a hard day at work."),
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
-
-    assert command.goto == "load_memory_node"
-    _assert_exact_keys(
-        command.update,
-        {"grounded_lookup", "diagnostics"},
-    )
-
-
-@pytest.mark.asyncio
-async def test_grounded_lookup_gate_action_channel_contract() -> None:
-    """Grounded lookup gate should route explicit lookup requests to the node."""
-
-    command = await run_grounded_lookup_gate_node(
+    command = await run_turn_dispatch_node(
         _build_state("Can you look up the current 988 rules?"),
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    turn_route="grounded_lookup",
+                    lookup_query="current 988 rules",
+                )
+            ),
+        ),
     )
 
     assert command.goto == "grounded_answer_node"
     _assert_exact_keys(
         command.update,
-        {"route", "grounded_lookup", "diagnostics"},
+        {"route", "memory_control", "grounded_lookup", "diagnostics"},
     )
 
 
@@ -430,6 +458,27 @@ async def test_crisis_response_channel_contract() -> None:
             "response_text",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_crisis_response_fallback_respects_location_refusal() -> None:
+    """Fallback crisis text should not ask again after location refusal."""
+
+    state = _build_state("I need help but I won't share where I am.")
+    state["crisis"] = CrisisAssessment(
+        level=3,
+        reason="imminent_risk",
+        needs_crisis_response=True,
+    )
+    state["resource_lookup_status"] = "location_refused"
+
+    delta = await run_crisis_response_node(
+        state,
+        cast(Any, _FakeRuntime(llm_client=None)),
+    )
+
+    assert "share your country or region" not in delta["response_text"]
+    assert "local emergency services" in delta["response_text"]
 
 
 @pytest.mark.asyncio

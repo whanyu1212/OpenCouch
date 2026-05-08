@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-05-08 — Turn Dispatch + Grounded Tool Simplification
+
+This entry continues the graph-slimming pass by collapsing safe-turn routing
+and grounded lookup into smaller LLM-primary services, with the graph kept to
+true lifecycle boundaries.
+
+### Turn-level routing
+- Replaced the separate `memory_control_gate` and `grounded_lookup_gate` graph
+  nodes with one `turn_dispatch` node that returns a typed route plan for
+  memory control, grounded lookup, or normal therapeutic support
+- Deleted the old grounded-lookup gate package and memory-control regex router,
+  moving memory-control action parsing into a plain service module instead of a
+  graph gate
+- Updated the agent graph, public state fields, voice tool wiring, docs, and
+  routing tests so tool invocation is handled at the turn-dispatch level rather
+  than through scattered regex/pattern gates
+
+### Grounded tools
+- Consolidated `grounded_lookup` and `web_search` into one
+  `grounded_search` execution module backed by provider-native search tools
+- Added structured factual lookup preflight and structured search-grounded
+  results with explicit source lists, avoiding text-marker parsing for success
+  or verification status
+- Added structured crisis-location classification, including a
+  `location_refused` status so crisis responses respect an explicit refusal to
+  share location instead of guessing or asking again
+
+### Evals and validation
+- Added turn-dispatch tool-usage eval coverage and grounded-tool quality evals
+  for factual lookup, non-crisis mental-health resources, crisis resources, and
+  explicit location refusal
+- Reusable LLM-as-judge helpers now support rubric-based quality checks for
+  grounded tool outputs
+- Focused backend checks passed (`52 passed`), grounded-tool quality passed in
+  scripted and live modes (`11/11` each), and pre-commit passed for the touched
+  files
+
 ## 2026-05-08 — Therapeutic Dispatch Simplification + Output-State Trim
 
 This entry covers a focused architectural pass on top of the 2026-05-07 restructure: collapsing the therapeutic dispatcher to LLM-primary policy and deleting three carrying-cost-only fields from the agent's output state. Same `refactor/agent-restructure` branch.

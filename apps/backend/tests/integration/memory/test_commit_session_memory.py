@@ -169,6 +169,13 @@ class _FakeSessionCommitLLM(BaseLLMClient):
                 ),
             )
 
+        if schema_name == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                reasoning="ordinary session commit test turn",
+                confidence="high",
+            )
+
         if schema_name == "ExtractionResult":
             return cast(StructuredResponseT, self.extraction_result)
 

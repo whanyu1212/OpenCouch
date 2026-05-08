@@ -151,6 +151,12 @@ class _FakeDispatchLLM(BaseLLMClient):
                     confidence="high",
                 ),
             )
+        if response_schema.__name__ == "TurnDispatchDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                reasoning="ordinary therapeutic routing test turn",
+                confidence="high",
+            )
         return cast(
             StructuredResponseT,
             DispatchDecision(

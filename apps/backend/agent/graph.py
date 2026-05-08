@@ -42,11 +42,10 @@ from agent.graph_constants import (
     CRISIS_RESPONSE_NODE,
     FINALIZE_TURN_NODE,
     GROUNDED_ANSWER_NODE,
-    GROUNDED_LOOKUP_GATE_NODE,
     LOAD_MEMORY_NODE,
-    MEMORY_CONTROL_GATE_NODE,
     MEMORY_CONTROL_NODE,
     THERAPEUTIC_SUBGRAPH_NODE,
+    TURN_DISPATCH_NODE,
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
@@ -67,10 +66,9 @@ from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
 from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.nodes.grounded_lookup_gate import run_grounded_lookup_gate_node
 from agent.nodes.load_memory import run_load_memory_node
 from agent.nodes.memory_control import run_memory_control_node
-from agent.nodes.memory_control_gate import run_memory_control_gate_node
+from agent.nodes.turn_dispatch import run_turn_dispatch_node
 from agent.observability.tracing import apply_graph_tracing
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
@@ -207,12 +205,11 @@ def build_agent_workflow(
           → crisis_gate_node  (Command routes to one of the branches)
              ├─ crisis_resource_lookup_node → crisis_response_node
              │  → crisis_log_node → finalize_turn_node
-             └─ memory_control_gate_node
+             └─ turn_dispatch_node
                 ├─ memory_control_node → finalize_turn_node
-                └─ grounded_lookup_gate_node
-                   ├─ grounded_answer_node → finalize_turn_node
-                   └─ load_memory_node → therapeutic_subgraph
-                      → finalize_turn_node
+                ├─ grounded_answer_node → finalize_turn_node
+                └─ load_memory_node → therapeutic_subgraph
+                   → finalize_turn_node
 
         finalize_turn_node → END
 
@@ -245,18 +242,11 @@ def build_agent_workflow(
     workflow.add_node(LOAD_MEMORY_NODE, run_load_memory_node, retry_policy=_io_retry)
     workflow.add_node(CRISIS_GATE_NODE, run_crisis_gate_node, retry_policy=_io_retry)
     workflow.add_node(
-        MEMORY_CONTROL_GATE_NODE,
-        run_memory_control_gate_node,
-        retry_policy=_io_retry,
+        TURN_DISPATCH_NODE, run_turn_dispatch_node, retry_policy=_io_retry
     )
     workflow.add_node(
         MEMORY_CONTROL_NODE,
         run_memory_control_node,
-        retry_policy=_io_retry,
-    )
-    workflow.add_node(
-        GROUNDED_LOOKUP_GATE_NODE,
-        run_grounded_lookup_gate_node,
         retry_policy=_io_retry,
     )
     workflow.add_node(
@@ -314,8 +304,8 @@ async def run_agent(
     Args:
         agent_input: The user message and conversation context for this turn.
         llm_client: Optional provider client used for LLM-backed gate and
-            response nodes. Therapeutic response generation requires a client;
-            some control-plane gates still have deterministic no-client paths.
+            response nodes. Non-crisis turn dispatch and therapeutic response
+            generation require a client.
         memory_store: Optional unified memory store. Defaults to a fresh
             in-memory :class:`OpenCouchMemoryStore`.
         crisis_log_backend: Optional crisis log backend. Defaults to

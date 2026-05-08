@@ -35,12 +35,18 @@ def _default_crisis_reply(state: AgentState) -> str:
         if level >= 3
         else "If you feel at risk of harming yourself, please contact your local emergency services right now or go to the nearest emergency department."
     )
+    location_prompt = ""
+    if state.get("resource_lookup_status") != "location_refused":
+        location_prompt = (
+            " If you're comfortable, you can share your country or region and "
+            "I can help look up the most relevant local crisis line."
+        )
     return (
         "Thank you for telling me this — I'm really glad you reached out. "
         "Your safety matters most right now. "
         f"{urgency} "
         "If possible, move away from anything you could use to hurt yourself and contact a trusted person who can stay with you. "
-        "If you're comfortable, you can share your country or region and I can help look up the most relevant local crisis line."
+        f"{location_prompt}"
     )
 
 

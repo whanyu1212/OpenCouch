@@ -131,6 +131,16 @@ def build_crisis_response_prompt(state: AgentState) -> str:
             "Include at least one of these specific resources in your response. "
             "Do not modify phone numbers.\n"
         )
+    elif resource_lookup_status == "location_refused":
+        resource_block = (
+            "\nThe user has explicitly declined to share their location. Respect "
+            "that boundary and do not ask for location again in this response. "
+            "Give immediate safety guidance that does not require location: "
+            "contact local emergency services if they might act soon, go to the "
+            "nearest emergency department if they can do so safely, move away "
+            "from means, and contact a trusted person nearby. Do not invent "
+            "phone numbers.\n"
+        )
     elif resource_lookup_status == "no_location":
         resource_block = (
             "\nThe user has not stated their location. Give immediate safety "

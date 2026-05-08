@@ -184,8 +184,7 @@ const TRACES: Trace[] = [
       overrideKind: 'none',
       llmFailureOccurred: false,
       responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline:
-        'memory_control_gate_node → grounded_lookup_gate_node → load_memory_node → therapeutic_subgraph',
+      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
     },
   },
   {
@@ -227,8 +226,7 @@ const TRACES: Trace[] = [
       overrideKind: 'idiomatic_safe',
       llmFailureOccurred: false,
       responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline:
-        'memory_control_gate_node → grounded_lookup_gate_node → load_memory_node → therapeutic_subgraph',
+      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
     },
   },
   {
@@ -271,8 +269,7 @@ const TRACES: Trace[] = [
       overrideKind: 'none',
       llmFailureOccurred: true,
       responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline:
-        'memory_control_gate_node → grounded_lookup_gate_node → load_memory_node → therapeutic_subgraph',
+      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
     },
   },
   {
@@ -313,8 +310,7 @@ const TRACES: Trace[] = [
       overrideKind: 'safety_denial',
       llmFailureOccurred: false,
       responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline:
-        'memory_control_gate_node → grounded_lookup_gate_node → load_memory_node → therapeutic_subgraph',
+      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
     },
   },
 ];

@@ -88,8 +88,8 @@ code. It's not an LLM-generated tool call that might be hallucinated,
 omitted, or sequenced incorrectly.
 
 ```python
-# Inside crisis_response_node — always runs on the crisis branch
-resources, entries = await find_local_crisis_resources(state, llm_client=llm_client)
+# Inside crisis_resource_lookup_node - always runs on the crisis branch
+location, resources, status = await find_crisis_resources(state, llm_client=llm_client)
 ```
 
 **In a ReAct loop**, the LLM generates
