@@ -18,8 +18,8 @@
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
 > OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
 
-> [!NOTE]
-> **Active Development:** OpenCouch is currently maintained by a solo developer. Expect occasional breaking changes while the architecture and features are still settling. Documentation may lag behind the code at times because the project moves quickly.
+> [!WARNING]
+> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
 
 ---
 
@@ -64,7 +64,7 @@ The project is still pre-beta; a closed beta is planned.
 - **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
 - **Voice Support:** Browser voice sessions via LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
 - **Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
-- **Evaluation & Tracing:** Local eval runners and Opik traces for regression tracking.
+- **Tracing & Regression Checks:** Backend tests, live-provider checks, and Opik traces for regression tracking.
 
 ## Screenshots
 
@@ -399,7 +399,6 @@ OpenCouch/
 │   │   └── tests/              # 1100+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
-└── eval/                       # Evaluation harnesses + curated datasets
 ```
 </details>
 
@@ -414,10 +413,6 @@ cd apps/backend && uv sync --group dev
 
 # Run the test suite before opening a PR.
 uv run pytest tests/
-
-# Run core deterministic evaluation checks.
-uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
-uv run python ../../eval/runners/therapeutic_routing_eval.py --mode deterministic
 ```
 
 Web:
@@ -436,7 +431,7 @@ uv run pre-commit run --all-files
 
 ### Observability
 
-For local development traces and eval review, add Opik credentials to `.env` before running the CLI or API:
+For local development trace review, add Opik credentials to `.env` before running the CLI or API:
 
 ```env
 OPIK_API_KEY=...
@@ -470,8 +465,8 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of
 - **May 2026 — Off-turn memory extraction** — semantic and procedural memory extraction now runs after the user-visible reply has rendered, removing ~250–300ms median (and up to ~800ms p95) of post-turn latency from the perceived response time. Extractor edges and candidate-policy evaluation also run in parallel where safe.
 - **May 2026 — Full local product stack** — the one-command Compose setup runs Postgres, the FastAPI backend, production-mode Next.js web UI, and the LiveKit voice worker together for a closer-to-real local environment.
 - **Apr–May 2026 — Web and voice experience refresh** — chat, memory, state, and voice routes now have stronger session continuity, clearer setup/end-session flows, voice selection, mic warmup states, and route-persistent text streaming.
-- **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests, hybrid evals, and Opik tracing.
-- **Recent — Guided support coverage** — OpenCouch includes 13 state-tracked coping exercises, including grounding, breathing, thought work, and values reflection, with evaluation coverage for selection, flow, and memory behavior.
+- **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests and Opik tracing.
+- **Recent — Guided support coverage** — OpenCouch includes 13 state-tracked coping exercises, including grounding, breathing, thought work, and values reflection, with tests covering selection, flow, and memory behavior.
 - **Recent — Channel expansion** — Telegram direct-message support now includes allow-listing, `/end`, markdown rendering, session rotation, startup recovery, and non-blocking maintenance sweeps.
 
 ---
