@@ -14,6 +14,7 @@ from agent.persistence import (
     SessionLeaseExpired,
     SessionStatus,
 )
+from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
 
 class _FailingGraph:
@@ -28,32 +29,16 @@ class _FailingGraph:
         yield
 
 
-def _runtime_paths(tmp_path: Path) -> dict[str, Path]:
-    """Return isolated SQLite paths for one runtime test.
-
-    Args:
-        tmp_path: Pytest temporary directory.
-
-    Returns:
-        Runtime SQLite path mapping.
-    """
-
-    return {
-        "sqlite_path": tmp_path / "threads.sqlite3",
-        "memory_sqlite_path": tmp_path / "memory.sqlite3",
-        "crisis_log_sqlite_path": tmp_path / "crisis.sqlite3",
-    }
-
-
 @pytest.mark.asyncio
 async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **_runtime_paths(tmp_path),
+        **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-rotation",
             message="hello",
+            llm_client=FakeCrossRestartLLM(),
             session_transcript_soft_limit=1,
         )
 
@@ -74,10 +59,14 @@ async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> Non
 @pytest.mark.asyncio
 async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **_runtime_paths(tmp_path),
+        **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
-        await runtime.run_turn(thread_id="thread-reset", message="hello")
+        await runtime.run_turn(
+            thread_id="thread-reset",
+            message="hello",
+            llm_client=FakeCrossRestartLLM(),
+        )
 
         with pytest.raises(ActiveSessionExists):
             await runtime.reset_thread("thread-reset")
@@ -90,10 +79,14 @@ async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **_runtime_paths(tmp_path),
+        **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
-        await runtime.run_turn(thread_id="thread-interrupted", message="hello")
+        await runtime.run_turn(
+            thread_id="thread-interrupted",
+            message="hello",
+            llm_client=FakeCrossRestartLLM(),
+        )
         await runtime._active_session_manager.set_active_session_mutation(  # noqa: SLF001
             "thread-interrupted",
             mutation_token="foreign-runtime:other-instance:999999",
@@ -126,7 +119,7 @@ async def test_failed_run_turn_leaves_interrupted_marker(
     )
 
     async with PersistentAgentRuntime(
-        **_runtime_paths(tmp_path),
+        **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         with pytest.raises(RuntimeError, match="graph failed"):

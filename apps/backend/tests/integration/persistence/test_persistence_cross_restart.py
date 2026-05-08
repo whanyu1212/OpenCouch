@@ -38,7 +38,6 @@ SQLite files are isolated per test and clean up automatically.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -60,146 +59,11 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
-from llm.base import BaseLLMClient, StructuredResponseT
+from llm.base import StructuredResponseT
+from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
 
-# ─── Fake LLM client ───────────────────────────────────────────────────
-
-
-class _FakeCrossRestartLLM(BaseLLMClient):
-    """Deterministic LLM client for cross-restart smoke tests.
-
-    Dispatches on ``response_schema.__name__`` and returns canned
-    values for every structured-output call the graph makes. The
-    class tracks call counts per schema type so tests can assert
-    things like "extraction was called exactly once on this turn."
-
-    Canned behaviors:
-    - CrisisAssessmentSchema → level 0, no crisis
-    - DispatchDecision → supportive mode
-    - ExerciseStepDecision → complete active guided-exercise steps
-    - ExtractionResult → configurable (defaults to a single
-      relationship fact about Sarah)
-    - SummarizationResult → configurable (defaults to an arc
-      summarizing the session as "user talked about Sarah")
-    - generate_text → fixed supportive reply
-    """
-
-    def __init__(
-        self,
-        *,
-        extraction_result: ExtractionResult | None = None,
-        procedural_result: ProceduralExtractionResult | None = None,
-        summarization_result: SummarizationResult | None = None,
-    ) -> None:
-        self.extraction_result = extraction_result or _default_extraction_result()
-        self.procedural_result = procedural_result or ProceduralExtractionResult(
-            rules=[],
-            reason="no procedural rules",
-        )
-        self.summarization_result = (
-            summarization_result or _default_summarization_result()
-        )
-        self.crisis_calls = 0
-        self.dispatch_calls = 0
-        self.extraction_calls = 0
-        self.procedural_calls = 0
-        self.summarization_calls = 0
-        self.text_calls = 0
-
-    async def generate_text(
-        self,
-        *,
-        prompt: str,
-        system_instruction: str | None = None,
-        use_search: bool = False,
-    ) -> str:
-        self.text_calls += 1
-        return "I hear you. Tell me more about what's on your mind."
-
-    async def generate_text_stream(
-        self,
-        *,
-        prompt: str,
-        system_instruction: str | None = None,
-    ) -> AsyncIterator[str]:
-        yield "fake stream chunk"
-
-    async def generate_structured(
-        self,
-        *,
-        prompt: str,
-        response_schema: type[StructuredResponseT],
-        system_instruction: str | None = None,
-    ) -> StructuredResponseT:
-        schema_name = response_schema.__name__
-
-        if schema_name == "CrisisAssessmentSchema":
-            self.crisis_calls += 1
-            from agent.gates.safety.service import CrisisAssessmentSchema
-
-            return cast(
-                StructuredResponseT,
-                CrisisAssessmentSchema(
-                    level=0,
-                    confidence="high",
-                    reason="safe — fake LLM for cross-restart smoke test",
-                    needs_crisis_response=False,
-                    needs_clarification=False,
-                ),
-            )
-
-        if schema_name == "DispatchDecision":
-            self.dispatch_calls += 1
-            from agent.memory.models import DispatchDecision
-
-            return cast(
-                StructuredResponseT,
-                DispatchDecision(
-                    response_style="supportive",
-                    reasoning="fake dispatcher for cross-restart smoke test",
-                    confidence="high",
-                ),
-            )
-
-        if schema_name == "ExerciseStepDecision":
-            return response_schema(  # type: ignore[call-arg,return-value]
-                step_state="complete",
-                reasoning="fake guided-exercise step classifier",
-                confidence="high",
-            )
-
-        if schema_name == "MemoryControlDecision":
-            return response_schema(  # type: ignore[call-arg,return-value]
-                action_type="none",
-                reasoning="ordinary cross-restart test turn",
-                confidence="high",
-            )
-
-        if schema_name == "GroundedLookupDecision":
-            return response_schema(  # type: ignore[call-arg,return-value]
-                should_lookup=False,
-                query=None,
-                reasoning="ordinary cross-restart test turn",
-                confidence="high",
-            )
-
-        if schema_name == "ExtractionResult":
-            self.extraction_calls += 1
-            return cast(StructuredResponseT, self.extraction_result)
-
-        if schema_name == "ProceduralExtractionResult":
-            self.procedural_calls += 1
-            return cast(StructuredResponseT, self.procedural_result)
-
-        if schema_name == "SummarizationResult":
-            self.summarization_calls += 1
-            return cast(StructuredResponseT, self.summarization_result)
-
-        raise RuntimeError(f"_FakeCrossRestartLLM: unexpected schema {schema_name}")
-
-
-class _FakeIncognitoExerciseContinuityLLM(_FakeCrossRestartLLM):
+class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
     """Drive a guided-exercise side-turn flow for incognito runtime tests."""
 
     async def generate_structured(
@@ -258,47 +122,6 @@ class _FakeIncognitoExerciseContinuityLLM(_FakeCrossRestartLLM):
             )
 
         return cast(StructuredResponseT, decision)
-
-
-def _default_extraction_result() -> ExtractionResult:
-    """Build a canned extraction result with one Sarah-relationship fact."""
-
-    return ExtractionResult(
-        facts=[
-            MemoryWrite(
-                category="relationship",
-                subject=EntityRef(type="User", identifier="test-user"),
-                predicate="KNOWS",
-                object=EntityRef(type="Person", identifier="Sarah"),
-                evidence_quote="I have a sister named Sarah",
-                confidence="high",
-                source_session_id="thread-a",
-                source_turn_index=0,
-            )
-        ],
-        reason="extracted 1 relationship fact about Sarah",
-    )
-
-
-def _default_summarization_result() -> SummarizationResult:
-    """Build a canned summarization result with a simple session arc."""
-
-    arc = SessionArc(
-        session_id="thread-a",
-        started_at="2026-04-11T09:00:00Z",
-        ended_at="2026-04-11T09:15:00Z",
-        duration_seconds=900,
-        turn_count=2,
-        primary_themes=["family"],
-        summary="User mentioned their sister Sarah in passing.",
-        mood_arc=MoodArc(opened="curious", closed="grounded"),
-        open_loops=[],
-        resolved_threads=[],
-    )
-    return SummarizationResult(
-        arc=arc,
-        reason="captured 2-turn family arc for cross-restart smoke test",
-    )
 
 
 def _empty_extraction_result() -> ExtractionResult:
@@ -361,24 +184,6 @@ def _trigger_supporting_summarization_result(
     )
 
 
-# ─── Helpers ───────────────────────────────────────────────────────────
-
-
-def _runtime_paths(tmp_path: Path) -> dict[str, Path]:
-    """Return a dict of the three SQLite paths for a smoke-test runtime.
-
-    Keeping them as a dict rather than positional args makes the test
-    callsites more readable and lets us pass them straight through
-    to ``PersistentAgentRuntime`` via ``**kwargs`` style unpacking.
-    """
-
-    return {
-        "sqlite_path": tmp_path / "threads.sqlite3",
-        "memory_sqlite_path": tmp_path / "memory.sqlite3",
-        "crisis_log_sqlite_path": tmp_path / "crisis.sqlite3",
-    }
-
-
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
 
 
@@ -408,10 +213,10 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
     persistence bug if it had existed. Now that SQLite backing is
     wired in Stage D, this should pass on the first run."""
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
 
     # ── Runtime A: write a fact, then close ───────────────────────────
-    llm_a = _FakeCrossRestartLLM()
+    llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
@@ -474,9 +279,9 @@ async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
             "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
         )
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
     thread_id = f"thread-a-{uuid4()}"
-    llm_a = _FakeCrossRestartLLM()
+    llm_a = FakeCrossRestartLLM()
 
     async with PersistentAgentRuntime(
         **paths,
@@ -527,10 +332,10 @@ async def test_episodic_arc_survives_runtime_close_and_reopen(
     An arc written by ``end_session`` in runtime A should be
     readable via ``asearch`` in runtime B."""
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
 
     # Runtime A: run a turn, end the session, close
-    llm_a = _FakeCrossRestartLLM()
+    llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
@@ -575,7 +380,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
     here is the SQLite persistence contract, not the crisis gate's
     dispatch logic (which is covered by test_crisis_log.py)."""
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
 
     # Runtime A: write a crisis record directly to the backend
     from agent.memory.models import CrisisLogRecord
@@ -638,10 +443,10 @@ async def test_all_three_layers_persist_across_full_lifecycle(
        full graph pipeline against the persisted data
     """
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
 
     # ── Runtime A: write everything ───────────────────────────────────
-    llm_a = _FakeCrossRestartLLM()
+    llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
@@ -682,7 +487,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
         assert episodic_count == 1
 
     # ── Runtime B: reopen everything and verify ───────────────────────
-    llm_b = _FakeCrossRestartLLM()
+    llm_b = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
@@ -737,10 +542,10 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     separate product-level gap documented in the ROADMAP.
     """
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
 
     # Runtime A: write a record under user-alice via thread-old
-    llm_a = _FakeCrossRestartLLM(
+    llm_a = FakeCrossRestartLLM(
         extraction_result=ExtractionResult(
             facts=[
                 MemoryWrite(
@@ -775,7 +580,7 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
         )
 
     # Runtime B: open, run on a FRESH thread_id but SAME user_id
-    llm_b = _FakeCrossRestartLLM(extraction_result=_empty_extraction_result())
+    llm_b = FakeCrossRestartLLM(extraction_result=_empty_extraction_result())
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
@@ -814,8 +619,8 @@ async def test_held_session_buffer_survives_restart_until_end_session(
 ) -> None:
     """Held candidates should survive runtime restart until session end resolves them."""
 
-    paths = _runtime_paths(tmp_path)
-    llm_a = _FakeCrossRestartLLM(
+    paths = runtime_paths(tmp_path)
+    llm_a = FakeCrossRestartLLM(
         extraction_result=_held_trigger_extraction_result(thread_id="thread-held"),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id="thread-held"
@@ -843,7 +648,7 @@ async def test_held_session_buffer_survives_restart_until_end_session(
         assert persisted is not None
         assert len(persisted.session_buffer.semantic_candidates) == 1
 
-    llm_b = _FakeCrossRestartLLM(
+    llm_b = FakeCrossRestartLLM(
         extraction_result=_empty_extraction_result(),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id="thread-held"
@@ -887,10 +692,10 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
         )
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
     thread_id = f"thread-held-{uuid4()}"
     user_id = f"user-1-{uuid4()}"
-    llm_a = _FakeCrossRestartLLM(
+    llm_a = FakeCrossRestartLLM(
         extraction_result=_held_trigger_extraction_result(
             thread_id=thread_id,
             user_id=user_id,
@@ -925,7 +730,7 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
         assert persisted is not None
         assert len(persisted.session_buffer.semantic_candidates) == 1
 
-    llm_b = _FakeCrossRestartLLM(
+    llm_b = FakeCrossRestartLLM(
         extraction_result=_empty_extraction_result(),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id=thread_id
@@ -966,8 +771,8 @@ async def test_end_session_clears_session_continuity_from_checkpoint(
 ) -> None:
     """Ending a session should clear exercise continuity in the checkpoint."""
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(
         extraction_result=_empty_extraction_result(),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id="thread-end"
@@ -1020,8 +825,8 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
 ) -> None:
     """A stale active session should end before the next turn starts."""
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(
         extraction_result=_held_trigger_extraction_result(thread_id="thread-timeout"),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id="thread-timeout"
@@ -1179,8 +984,8 @@ async def test_finalize_active_sessions_commits_pending_memory_on_shutdown(
 ) -> None:
     """The graceful-shutdown hook should route unresolved sessions through end_session."""
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(
         extraction_result=_held_trigger_extraction_result(thread_id="thread-shutdown"),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id="thread-shutdown"
@@ -1218,8 +1023,8 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
 ) -> None:
     """Expired sessions should close without waiting for the next user turn."""
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(
         extraction_result=_held_trigger_extraction_result(thread_id="thread-sweeper"),
         summarization_result=_trigger_supporting_summarization_result(
             thread_id="thread-sweeper"
@@ -1272,8 +1077,8 @@ async def test_end_transcript_session_writes_semantic_procedural_and_episodic_me
 ) -> None:
     """Voice-style transcript finalization should reuse the text memory pipeline."""
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(
         extraction_result=ExtractionResult(
             facts=[
                 MemoryWrite(
@@ -1356,9 +1161,9 @@ async def test_incognito_runtime_does_not_persist_to_disk(
     configured, incognito mode uses in-memory backings and the files
     should not exist after the runtime closes."""
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
 
-    llm = _FakeCrossRestartLLM()
+    llm = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.INCOGNITO,
@@ -1389,8 +1194,8 @@ async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
     the second, third, fourth runtimes pointing at the same file
     should all work without tripping constraint errors."""
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM()
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM()
 
     # Open and close the runtime 3 times in a row, writing a different
     # fact each time. Each reopen runs the schema DDL, which should

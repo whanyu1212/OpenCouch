@@ -256,7 +256,7 @@ Run backend tests from `apps/backend`:
 
 <TerminalWindow title="bash — backend tests">
 {`cd apps/backend
-uv run pytest tests/`}
+uv run pytest tests/unit tests/integration`}
 </TerminalWindow>
 
 Run frontend checks from the repo root:

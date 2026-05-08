@@ -934,23 +934,6 @@ class TestExtractFactsEndToEnd:
         assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
-    async def test_extraction_skipped_when_no_llm_client_end_to_end(self) -> None:
-        """No LLM client → all LLM-backed nodes skip, including extraction."""
-
-        store = OpenCouchMemoryStore()
-        crisis_log = InMemoryCrisisLogBackend()
-
-        await run_agent(
-            AgentInput(message="I had a rough day at work.", user_id="user-e2e"),
-            llm_client=None,
-            memory_store=store,
-            crisis_log_backend=crisis_log,
-            memory_mode=MemoryMode.LOCAL,
-        )
-
-        assert await store.arecord_count() == 0
-
-    @pytest.mark.asyncio
     async def test_extraction_on_crisis_path_does_not_run(self) -> None:
         """Crisis-branch turns should NOT run extraction.
 

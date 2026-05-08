@@ -416,14 +416,15 @@ Useful when you want to verify prompts, tool flow, and turn handling without Liv
 
 ### Behavior evals
 
-LiveKit-specific behavior evals live in `tests/test_voice_livekit_behavior.py`.
+LiveKit-specific behavior evals live in
+`tests/integration/voice/test_voice_livekit_behavior.py`.
 They use LiveKit's text-only `AgentSession.run(...)` testing path, not a real
 LiveKit room or audio pipeline.
 
 Run them from `apps/backend` with:
 
 ```bash
-uv run pytest tests/test_voice_livekit_behavior.py -q
+uv run pytest tests/integration/voice/test_voice_livekit_behavior.py -q
 ```
 
 Current coverage:

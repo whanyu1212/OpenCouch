@@ -35,11 +35,7 @@ from agent.models import Channel
 from agent.persistence import PersistentAgentRuntime
 from agent.runtime.turn_extraction import EXTRACTION_DRAIN_TIMEOUT_SECONDS
 from llm.base import BaseLLMClient, StructuredResponseT
-
-from tests.test_persistence_cross_restart import (
-    _FakeCrossRestartLLM,
-    _runtime_paths,
-)
+from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
 
 # Module-level reference so the import isn't optimized away on import-only
@@ -85,8 +81,8 @@ async def test_next_turn_drain_makes_prior_extraction_visible(
     the contract hold — this test pins it.
     """
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(extraction_result=_one_fact_extraction_result())
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(extraction_result=_one_fact_extraction_result())
 
     async with PersistentAgentRuntime(
         **paths,
@@ -124,8 +120,8 @@ async def test_aexit_drains_inflight_extraction(tmp_path: Path) -> None:
     and the extracted facts could be silently dropped.
     """
 
-    paths = _runtime_paths(tmp_path)
-    llm = _FakeCrossRestartLLM(extraction_result=_one_fact_extraction_result())
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(extraction_result=_one_fact_extraction_result())
 
     runtime = PersistentAgentRuntime(
         **paths,
@@ -262,7 +258,7 @@ async def test_drain_timeout_does_not_block_next_turn_forever(
         "agent.runtime.turn_extraction.EXTRACTION_DRAIN_TIMEOUT_SECONDS", 0.5
     )
 
-    paths = _runtime_paths(tmp_path)
+    paths = runtime_paths(tmp_path)
     stalling = _StallingExtractionLLM()
 
     async with PersistentAgentRuntime(
@@ -284,7 +280,7 @@ async def test_drain_timeout_does_not_block_next_turn_forever(
         # Switch to a non-stalling LLM for turn 2 so the rest of the
         # graph completes normally. Drain should bound to ~0.5s and
         # this turn should finish within a few seconds, not hang.
-        normal_llm = _FakeCrossRestartLLM(
+        normal_llm = FakeCrossRestartLLM(
             extraction_result=ExtractionResult(facts=[], reason="empty"),
         )
         await asyncio.wait_for(

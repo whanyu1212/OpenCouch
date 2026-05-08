@@ -28,11 +28,10 @@ jobs:
 
       - name: Run backend tests
         working-directory: apps/backend
-        run: uv run pytest -q tests
+        run: uv run pytest -q tests/unit tests/integration
 
-      - name: Run crisis eval runner
-        working-directory: apps/backend
-        run: uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
+      - name: Run therapeutic contract eval
+        run: apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval --plain
 
   web:
     runs-on: ubuntu-latest

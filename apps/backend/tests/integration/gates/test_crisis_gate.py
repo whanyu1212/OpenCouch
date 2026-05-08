@@ -25,6 +25,7 @@ from agent.gates.safety.crisis_rules import (
 from agent.gates.safety.service import CrisisAssessmentSchema
 from agent.runtime_context import WorkflowContext
 from llm.base import BaseLLMClient, StructuredResponseT
+from tests.support.persistence import FakeCrossRestartLLM
 
 
 class _MockRuntime:
@@ -131,7 +132,10 @@ async def test_routes_clear_ideation_to_crisis() -> None:
 async def test_does_not_overtrigger_common_idiom() -> None:
     """Common idioms should not overtrigger crisis routing."""
 
-    result = await run_agent(AgentInput(message="Work is killing me lately."))
+    result = await run_agent(
+        AgentInput(message="Work is killing me lately."),
+        llm_client=FakeCrossRestartLLM(),
+    )
 
     assert result.crisis.level == 0
     assert result.crisis.needs_crisis_response is False

@@ -3,7 +3,7 @@
 Covers three concerns:
     1. ``run_crisis_log_node`` writes a record when the turn is flagged
        as a crisis (and skips writes otherwise).
-    2. The session_id hash is stable, opaque, and not reversible.
+    2. The written record stores only an opaque session-id hash.
     3. End-to-end via ``run_agent`` — a crisis turn lands a record in
        the backend when an explicit backend is injected.
 
@@ -30,9 +30,10 @@ from agent.audit.models import (
     CrisisLogRecord,
 )
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
-from agent.nodes.crisis_log import _hash_session_id, run_crisis_log_node
+from agent.nodes.crisis_log import run_crisis_log_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from tests.support.persistence import FakeCrossRestartLLM
 
 
 # ─── Test helpers ────────────────────────────────────────────────────────
@@ -86,44 +87,7 @@ def _build_crisis_state(
     return cast(AgentState, state)
 
 
-# ─── 1. _hash_session_id tests ───────────────────────────────────────────
-
-
-class TestHashSessionId:
-    """Unit tests for the SHA-256 session-id hashing helper."""
-
-    def test_hash_is_stable(self) -> None:
-        """Same input → same hash every call."""
-
-        assert _hash_session_id("thread-123") == _hash_session_id("thread-123")
-
-    def test_hash_is_sha256_hex(self) -> None:
-        """The hash should be a 64-character hex digest matching SHA-256."""
-
-        result = _hash_session_id("thread-123")
-        assert len(result) == 64
-        assert all(c in "0123456789abcdef" for c in result)
-
-    def test_hash_matches_sha256_of_input(self) -> None:
-        """The hash should equal sha256(input) for a known input."""
-
-        expected = hashlib.sha256(b"thread-123").hexdigest()
-        assert _hash_session_id("thread-123") == expected
-
-    def test_hash_differs_for_different_inputs(self) -> None:
-        """Different inputs produce different hashes."""
-
-        assert _hash_session_id("a") != _hash_session_id("b")
-
-    def test_hash_handles_none_with_placeholder(self) -> None:
-        """Passing None should produce a stable hash from a placeholder."""
-
-        result = _hash_session_id(None)
-        expected = hashlib.sha256(b"__no_session_id__").hexdigest()
-        assert result == expected
-
-
-# ─── 2. run_crisis_log_node unit tests ───────────────────────────────────
+# ─── run_crisis_log_node unit tests ──────────────────────────────────────
 
 
 class TestCrisisLogNode:
@@ -314,6 +278,7 @@ class TestCrisisLogEndToEnd:
         result = await run_agent(
             AgentInput(message="I had a rough day at work today."),
             crisis_log_backend=backend,
+            llm_client=FakeCrossRestartLLM(),
         )
 
         assert result.response_type == ResponseCategory.THERAPEUTIC
@@ -564,6 +529,7 @@ class TestCrisisLogMetadata:
         await run_agent(
             AgentInput(message="Work is killing me this week."),
             crisis_log_backend=backend,
+            llm_client=FakeCrossRestartLLM(),
         )
 
         # No record should be written — idiomatic-safe is a safe
@@ -608,7 +574,7 @@ class TestInMemoryCrisisLogRetentionPurge:
     """Pin the v0.8.1 ``apurge_before`` behavior on the in-memory backend.
 
     Symmetric tests for the SQLite backend live in
-    ``tests/test_sqlite_crisis_log.py``. Both backends MUST behave
+    ``tests/integration/audit/test_sqlite_crisis_log.py``. Both backends MUST behave
     identically — the runtime picks between them based on memory mode
     and the operator-facing contract must not depend on which backend
     is wired.

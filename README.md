@@ -414,7 +414,7 @@ Backend:
 cd apps/backend && uv sync --group dev
 
 # Run the test suite before opening a PR.
-uv run pytest tests/
+uv run pytest tests/unit tests/integration
 ```
 
 Web:

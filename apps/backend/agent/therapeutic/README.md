@@ -315,11 +315,18 @@ Useful checks for this area:
 
 ```bash
 cd apps/backend
-.venv/bin/python -m pytest tests/test_exercise_expansion.py tests/test_therapeutic_routing.py tests/test_state_contracts.py tests/test_therapeutic_prompts.py
+.venv/bin/python -m pytest tests/integration/therapeutic tests/integration/graph/test_state_contracts.py tests/unit/therapeutic
 ```
 
-The repository eval harness is being rebuilt. Until the new harness lands, use
-the targeted backend tests above as the regression check for this package.
+For broader behavior and quality checks, run the therapeutic eval harness from
+the repository root:
+
+```bash
+apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval --plain
+apps/backend/.venv/bin/python -m eval.runners.therapeutic_behavior_eval --plain
+apps/backend/.venv/bin/python -m eval.runners.therapeutic_quality_eval --plain
+apps/backend/.venv/bin/python -m eval.runners.therapeutic_exercise_trajectory_eval --plain
+```
 
 For docs-only changes, run pre-commit on the changed file:
 

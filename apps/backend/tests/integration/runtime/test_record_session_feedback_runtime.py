@@ -32,6 +32,7 @@ from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.audit.session_feedback import SessionFeedbackBackend
 from agent.persistence import PersistentAgentRuntime
+from tests.support.persistence import FakeCrossRestartLLM
 
 
 # ─── Failing-backend fixture ─────────────────────────────────────────
@@ -151,6 +152,7 @@ async def test_incognito_scrubs_user_id_to_null() -> None:
             thread_id="incog",
             message="hi",
             user_id="alice",
+            llm_client=FakeCrossRestartLLM(),
         )
         record = await rt.record_session_feedback(
             "incog", label="positive", source="cli_end"
@@ -171,6 +173,7 @@ async def test_local_mode_reads_user_id_from_state() -> None:
             thread_id="t-alice",
             message="hi",
             user_id="alice",
+            llm_client=FakeCrossRestartLLM(),
         )
         record = await rt.record_session_feedback(
             "t-alice", label="positive", source="cli_end"

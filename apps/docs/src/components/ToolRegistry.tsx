@@ -91,7 +91,7 @@ const TOOLS: Tool[] = [
       'Any stage failure returns empty results with a status code (no_location / search_failed / no_verified_results). The crisis response proceeds without resources rather than blocking on a third-party outage.',
     file: 'agent/tools/web_search.py',
     fn: 'find_local_crisis_resources',
-    tests: 'tests/test_web_search_parser.py (parser tests)',
+    tests: 'tests/unit/tools/test_web_search_parser.py (parser tests)',
   },
   {
     id: 'grounded_lookup',

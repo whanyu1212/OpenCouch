@@ -32,6 +32,7 @@ from agent.models import AgentInput
 from agent.nodes.crisis_gate import _build_crisis_delta
 from agent.nodes.load_memory import run_load_memory_node
 from agent.models import CrisisAssessment
+from tests.support.persistence import FakeCrossRestartLLM
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, _merge_dicts
 
@@ -193,9 +194,9 @@ def test_no_diagnostics_spreading_in_codebase() -> None:
     This is a static grep-style check to catch regressions if someone
     adds a new node and copies the old spreading pattern.
     """
-    import pathlib
+    from tests.support.paths import BACKEND_ROOT
 
-    agent_dir = pathlib.Path(__file__).resolve().parents[1] / "agent"
+    agent_dir = BACKEND_ROOT / "agent"
     pattern = '**state.get("diagnostics"'
     violations = []
     for py_file in agent_dir.rglob("*.py"):
@@ -256,6 +257,7 @@ async def test_full_turn_diagnostics_merge_all_node_keys() -> None:
         memory_store=store,
         crisis_log_backend=crisis_log,
         memory_mode=MemoryMode.LOCAL,
+        llm_client=FakeCrossRestartLLM(),
     )
     diag = result.diagnostics
 
