@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from agent.therapeutic.exercises.types import (
     ExerciseDefinition,
-    ExerciseSelectorGroup,
     ExerciseStep,
 )
 
@@ -18,61 +17,68 @@ EXERCISE_LEAVES_ON_STREAM = "defusion_leaves_on_stream"
 
 _LEAVES_ON_STREAM_STEPS: tuple[ExerciseStep, ...] = (
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Let's try something different with the thought that keeps "
             "showing up. First — can you tell me the thought, in the "
             "exact words your mind uses? Not the story around it, just "
             "the sentence."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="name_thought",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names the sticky thought or sentence "
+            "their mind is repeating."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Now imagine a slow stream in front of you, with leaves "
             "floating on the surface. Take that thought and place it "
             "on one of the leaves. Watch it sit there for a moment. "
             "Let me know when you can picture it."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="user_confirmation",
+        id="place_on_leaf",
+        completion_mode="confirmation",
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Good. Now let the leaf drift downstream. You don't have "
             "to push it — just let the current take it. If your mind "
             "pulls you back to the thought, that's fine — just notice "
             "that, and gently put the new thought on another leaf. "
             "Tell me when you've watched it drift for a moment."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="user_confirmation",
+        id="watch_drift",
+        completion_mode="confirmation",
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "What do you notice right now? Not whether the thought is "
             "gone — it probably isn't — but what's the feeling in your "
             "body or the space in your mind like, compared to a few "
             "minutes ago?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="notice_shift",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user describes a body sensation, mental space, "
+            "emotional shift, or lack of change."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "The thought might float back. That's normal — thoughts do "
             "that. But now you know you can set it down without having "
             "to argue with it or fix it first. What's one small thing "
             "you could do next that matters to you, even with this "
             "thought still in the background?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="values_step",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names a values-aligned next step, even "
+            "if the thought is still present."
+        ),
     ),
 )
 
@@ -86,46 +92,57 @@ EXERCISE_VALUES_COMPASS = "defusion_values_compass"
 
 _VALUES_COMPASS_STEPS: tuple[ExerciseStep, ...] = (
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Let's check your values compass. Think about the big areas "
             "of your life — relationships, work, health, personal growth, "
             "fun. Which area feels most important to you right now, or "
             "most neglected?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="life_area",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names a life area, value area, or area "
+            "that feels important or neglected."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Why does that area matter to you? Not what you 'should' "
             "care about — what genuinely pulls at you when you're honest "
             "with yourself?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="why_matters",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user gives a reason, value, longing, or "
+            "personal meaning behind that area."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "On a scale of 1 to 10, how aligned do you feel your "
             "current actions are with what you just described? 1 is "
             "'completely off track,' 10 is 'living it fully.' Just a "
             "gut feeling — no wrong answer."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="alignment_rating",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user gives a number or approximate alignment rating."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "What's one small thing you could do this week — even "
             "today — that would move that number up by one? Not a "
             "big overhaul, just one step closer."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="one_step",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names a small action that would move "
+            "them closer to the value."
+        ),
     ),
 )
 
@@ -138,21 +155,10 @@ LEAVES_ON_STREAM_DEFINITION = ExerciseDefinition(
         "wants distance from them"
     ),
     steps=_LEAVES_ON_STREAM_STEPS,
-    selector_groups=(
-        ExerciseSelectorGroup(
-            keywords=(
-                "accept",
-                "let go",
-                "defusion",
-                "leaves",
-                "step back from",
-                "stop fighting",
-                "fused",
-                "fusion",
-            ),
-            priority=110,
-        ),
-    ),
+    category="act_values",
+    tags=("act", "defusion", "acceptance", "sticky_thoughts", "letting_go"),
+    duration_seconds=480,
+    intensity="medium",
     selection_aliases=("defusion", "leaves exercise", "let go"),
 )
 
@@ -161,20 +167,16 @@ VALUES_COMPASS_DEFINITION = ExerciseDefinition(
     display_name="a values compass exercise",
     selection_use_case="values, meaning, direction, purpose, or deciding what matters next",
     steps=_VALUES_COMPASS_STEPS,
-    selector_groups=(
-        ExerciseSelectorGroup(
-            keywords=(
-                "values",
-                "what matters",
-                "meaning",
-                "purpose",
-                "direction",
-                "compass",
-                "life direction",
-            ),
-            priority=100,
-        ),
-    ),
+    category="act_values",
+    tags=("act", "values", "meaning", "purpose", "direction"),
+    duration_seconds=420,
+    intensity="medium",
     selection_aliases=("values", "values compass", "what matters"),
     voice_supported=True,
+)
+
+
+DEFINITIONS: tuple[ExerciseDefinition, ...] = (
+    LEAVES_ON_STREAM_DEFINITION,
+    VALUES_COMPASS_DEFINITION,
 )

@@ -266,26 +266,8 @@ Run frontend checks from the repo root:
 pnpm --dir apps/web build`}
 </TerminalWindow>
 
-Run eval harnesses from `apps/backend`:
-
-<TerminalWindow title="bash — eval harnesses">
-{`cd apps/backend
-
-# No API key needed
-uv run python ../../eval/runners/retrieval_eval.py --mode token-only
-
-# LLM-backed examples
-uv run python ../../eval/runners/crisis_gate_eval.py --mode hybrid
-uv run python ../../eval/runners/therapeutic_routing_eval.py --mode hybrid
-uv run python ../../eval/runners/therapeutic_behavior_eval.py --mode hybrid
-uv run python ../../eval/runners/exercise_selection_eval.py --mode hybrid
-uv run python ../../eval/runners/grounded_lookup_routing_eval.py --mode hybrid
-uv run python ../../eval/runners/memory_control_routing_eval.py --mode hybrid
-uv run python ../../eval/runners/memory_write_policy_eval.py --mode hybrid`}
-</TerminalWindow>
-
-See [Routing & Classifiers](/docs/agent/routing-classifiers) for the
-current eval map.
+The eval harness is being rebuilt. Until the new harness lands, use backend
+tests and targeted live-provider tests as the regression checks.
 
 ## Eval-driven Observability
 
@@ -310,7 +292,6 @@ LANGCHAIN_API_KEY=...
 LANGCHAIN_PROJECT=opencouch-dev`}
 </TerminalWindow>
 
-The `eval/runners/*` scripts remain the source of truth for behavioral
-regression checks. Opik is the primary trace surface for graph execution,
-run filtering, and experiment review. LangSmith tracing remains supported
-as an optional secondary LangChain integration.
+Opik is the primary trace surface for graph execution, run filtering, and
+experiment review. LangSmith tracing remains supported as an optional secondary
+LangChain integration.

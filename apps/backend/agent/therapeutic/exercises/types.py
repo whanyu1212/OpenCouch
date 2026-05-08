@@ -11,20 +11,9 @@ from pydantic import BaseModel, Field
 StepState = Literal["complete", "hold", "stuck", "exit"]
 
 
-CompletionMode = Literal["item_count", "user_confirmation"]
+CompletionMode = Literal["items", "confirmation", "response", "llm_judged"]
 
-
-@dataclass(frozen=True)
-class ExerciseSelectorGroup:
-    """One ordered selector group for deterministic exercise fallback.
-
-    Args:
-        keywords: Regex or substring patterns used by the fallback selector.
-        priority: Lower values are evaluated earlier.
-    """
-
-    keywords: tuple[str, ...]
-    priority: int
+ExerciseIntensity = Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True)
@@ -33,30 +22,28 @@ class ExerciseStep:
 
     Each step has:
 
-    - ``prompt_fallback``: the deterministic response text used when
-      no LLM client is available. The LLM path uses the same prompt
-      but can vary wording turn-to-turn.
-    - ``expected_count``: for counting-based steps (e.g., "name 5
-      things you can see"), the number of items the user should name
-      to count as "complete." The state classifier uses this to
-      distinguish COMPLETE ("I see a lamp, a book, a plant, my
-      coffee, and the window") from HOLD ("I see... a lamp?").
-    - ``min_count_for_completion``: the minimum number of items that
-      still counts as complete. Leniency matters — a user naming 4
-      things on a "name 5" step should be allowed to advance rather
-      than being held back on a technicality.
-    - ``completion_mode``: how the classifier determines completion.
-      ``"item_count"`` (default) counts listed items; used for steps
-      that ask the user to name things. ``"user_confirmation"`` matches
-      confirmation phrases ("ok", "done", "yes"); used for steps where
-      the user performs an action (breathing, visualization) and
-      confirms they did it.
+    - ``instruction``: the canonical step instruction. The response LLM
+      can rephrase it for the user.
+    - ``id``: stable step identifier for durable exercise-state continuity.
+      The numeric step index remains in state for backward compatibility.
+    - ``completion_criteria``: optional natural-language guidance for what
+      counts as enough to advance.
+    - ``completion_mode``: how the LLM classifier should judge completion.
+      ``"items"`` expects listed items, ``"confirmation"`` expects a private
+      action confirmation, ``"response"`` treats a meaningful answer as
+      enough, and ``"llm_judged"`` asks the classifier to apply the criteria
+      more carefully.
+    - ``target_items`` / ``min_items``: optional counts for ``"items"``
+      steps. ``min_items`` is intentionally lenient so users can advance
+      without matching the requested count perfectly.
     """
 
-    prompt_fallback: str
-    expected_count: int
-    min_count_for_completion: int
-    completion_mode: CompletionMode = "item_count"
+    instruction: str
+    id: str = ""
+    completion_mode: CompletionMode = "response"
+    completion_criteria: str = ""
+    target_items: int | None = None
+    min_items: int | None = None
 
 
 @dataclass(frozen=True)
@@ -68,13 +55,20 @@ class ExerciseDefinition:
         display_name: Human-readable name used in user-facing responses.
         selection_use_case: Compact description shown to the selector LLM.
         steps: Ordered exercise steps.
-        selector_groups: Deterministic fallback selectors with priorities.
+        version: Definition version stored in active exercise state.
+        category: Broad exercise family used for candidate filtering and
+            reporting.
+        tags: Selection and filtering tags.
+        duration_seconds: Approximate expected duration, when known.
+        intensity: Expected user effort or emotional load.
         selection_aliases: Human-readable technique names and short phrases
-            shown in selection prompts and pending-choice detection.
-        fallback_suggestion_rank: Optional rank for deterministic fallback
-            suggestion menus when the LLM is unavailable or returns invalid
-            options. Lower ranks are offered first. ``None`` excludes the
-            exercise from broad fallback menus.
+            shown in selection prompts.
+        approaches: Therapeutic approaches the exercise is specifically tied
+            to. Empty means the exercise is generally available.
+        channels: Delivery channels supported by this exercise. Text covers web,
+            SMS, WhatsApp, Telegram, and test channels.
+        required_skill: Optional capability key required before this exercise
+            can be offered.
         voice_supported: Whether the exercise is suitable for voice mode.
     """
 
@@ -82,9 +76,15 @@ class ExerciseDefinition:
     display_name: str
     selection_use_case: str
     steps: tuple[ExerciseStep, ...]
-    selector_groups: tuple[ExerciseSelectorGroup, ...] = ()
+    version: int = 1
+    category: str = ""
+    tags: tuple[str, ...] = ()
+    duration_seconds: int | None = None
+    intensity: ExerciseIntensity = "medium"
     selection_aliases: tuple[str, ...] = ()
-    fallback_suggestion_rank: int | None = None
+    approaches: tuple[str, ...] = ()
+    channels: tuple[str, ...] = ("text",)
+    required_skill: str | None = None
     voice_supported: bool = False
 
 
@@ -96,28 +96,9 @@ class ExerciseStepDecision(BaseModel):
     confidence: Literal["low", "medium", "high"]
 
 
-@dataclass(frozen=True)
-class ExerciseSelectionResult:
-    """Internal result for guided-exercise selection."""
-
-    exercise_type: str | None
-    options: tuple[str, ...] = ()
-
-
 class ExerciseSelectionDecision(BaseModel):
     """Structured output for guided-exercise selection."""
 
-    selection_kind: Literal["selected", "ambiguous"]
-    exercise_type: str | None = None
-    option_types: list[str] = Field(default_factory=list)
-    reasoning: str = Field(min_length=1, max_length=240)
-    confidence: Literal["low", "medium", "high"]
-
-
-class ExerciseOptionChoiceDecision(BaseModel):
-    """Structured output for resolving pending exercise-option choices."""
-
-    choice_kind: Literal["selected", "unclear"]
-    exercise_type: str | None = None
+    exercise_type: str = Field(min_length=1)
     reasoning: str = Field(min_length=1, max_length=240)
     confidence: Literal["low", "medium", "high"]

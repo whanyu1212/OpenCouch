@@ -37,7 +37,10 @@ from agent.therapeutic.graph import (
     TherapeuticSubgraphOutput,
     build_therapeutic_subgraph,
 )
-from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+from agent.therapeutic.exercises.node import (
+    run_guided_exercise_response_node as _run_guided_exercise_response_node,
+)
+from agent.therapeutic.exercises.types import ExerciseStepDecision
 from agent.therapeutic.response import run_therapeutic_response_node
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -63,6 +66,26 @@ class _FakeRuntime:
         )
 
 
+async def run_guided_exercise_response_node(
+    state: AgentState,
+    runtime: Any,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Run the guided exercise node with a no-op test stream writer.
+
+    Args:
+        state (AgentState): Test graph state.
+        runtime (Any): Runtime stub.
+        **kwargs (Any): Optional node keyword overrides.
+
+    Returns:
+        dict[str, Any]: Node delta.
+    """
+
+    kwargs.setdefault("stream_writer_factory", lambda: lambda _: None)
+    return await _run_guided_exercise_response_node(state, runtime, **kwargs)
+
+
 class _FakeDispatchLLM(BaseLLMClient):
     """Structured-output fake for dispatcher contract tests."""
 
@@ -71,9 +94,11 @@ class _FakeDispatchLLM(BaseLLMClient):
         *,
         response_style: str,
         therapeutic_approach: str,
+        step_state: str = "hold",
     ) -> None:
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
+        self.step_state = step_state
 
     async def generate_text(
         self,
@@ -99,6 +124,24 @@ class _FakeDispatchLLM(BaseLLMClient):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
+        if response_schema.__name__ == "ExerciseSelectionDecision":
+            return cast(
+                StructuredResponseT,
+                response_schema(
+                    exercise_type="grounding_5_4_3_2_1",
+                    reasoning="contract test exercise selection",
+                    confidence="high",
+                ),
+            )
+        if response_schema.__name__ == "ExerciseStepDecision":
+            return cast(
+                StructuredResponseT,
+                ExerciseStepDecision(
+                    step_state=self.step_state,  # type: ignore[arg-type]
+                    reasoning="contract test step state",
+                    confidence="high",
+                ),
+            )
         return cast(
             StructuredResponseT,
             DispatchDecision(
@@ -434,7 +477,15 @@ async def test_dispatch_default_channel_contract() -> None:
 
     command = await run_therapeutic_dispatch_node(
         _build_state("I had a rough day at work."),
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                )
+            ),
+        ),
     )
 
     _assert_allowed_keys(
@@ -457,7 +508,15 @@ async def test_dispatch_active_exercise_exit_channel_contract() -> None:
 
     command = await run_therapeutic_dispatch_node(
         state,
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                )
+            ),
+        ),
     )
 
     _assert_allowed_keys(
@@ -522,8 +581,13 @@ async def test_fixed_shape_therapeutic_mode_channel_contract(
     response_style: str,
     message: str,
     extra_state: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fixed-shape therapeutic response node should only write response channels."""
+
+    from agent.therapeutic import response
+
+    monkeypatch.setattr(response, "get_stream_writer", lambda: lambda _: None)
 
     state = _build_state(message)
     state["response_style"] = response_style
@@ -531,7 +595,17 @@ async def test_fixed_shape_therapeutic_mode_channel_contract(
 
     delta = await run_therapeutic_response_node(
         state,
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style=response_style,
+                    therapeutic_approach=extra_state.get(
+                        "therapeutic_approach", "none"
+                    ),
+                )
+            ),
+        ),
     )
 
     _assert_exact_keys(
@@ -549,7 +623,16 @@ async def test_guided_exercise_start_channel_contract() -> None:
 
     delta = await run_guided_exercise_response_node(
         _build_state("Can you guide me through a grounding exercise?"),
-        cast(Any, _FakeRuntime(memory_mode=MemoryMode.INCOGNITO)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="guided_exercise",
+                    therapeutic_approach="none",
+                ),
+                memory_mode=MemoryMode.INCOGNITO,
+            ),
+        ),
     )
 
     _assert_exact_keys(
@@ -575,7 +658,17 @@ async def test_guided_exercise_hold_channel_contract() -> None:
 
     delta = await run_guided_exercise_response_node(
         state,
-        cast(Any, _FakeRuntime(memory_mode=MemoryMode.INCOGNITO)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="guided_exercise",
+                    therapeutic_approach="none",
+                    step_state="hold",
+                ),
+                memory_mode=MemoryMode.INCOGNITO,
+            ),
+        ),
     )
 
     _assert_exact_keys(
@@ -600,7 +693,17 @@ async def test_guided_exercise_advance_channel_contract() -> None:
 
     delta = await run_guided_exercise_response_node(
         state,
-        cast(Any, _FakeRuntime(memory_mode=MemoryMode.INCOGNITO)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="guided_exercise",
+                    therapeutic_approach="none",
+                    step_state="complete",
+                ),
+                memory_mode=MemoryMode.INCOGNITO,
+            ),
+        ),
     )
 
     _assert_exact_keys(
@@ -626,7 +729,17 @@ async def test_guided_exercise_exit_channel_contract() -> None:
 
     delta = await run_guided_exercise_response_node(
         state,
-        cast(Any, _FakeRuntime(memory_mode=MemoryMode.INCOGNITO)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="guided_exercise",
+                    therapeutic_approach="none",
+                    step_state="exit",
+                ),
+                memory_mode=MemoryMode.INCOGNITO,
+            ),
+        ),
     )
 
     _assert_exact_keys(
@@ -652,7 +765,17 @@ async def test_guided_exercise_completion_channel_contract() -> None:
 
     delta = await run_guided_exercise_response_node(
         state,
-        cast(Any, _FakeRuntime(memory_mode=MemoryMode.INCOGNITO)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="guided_exercise",
+                    therapeutic_approach="none",
+                    step_state="complete",
+                ),
+                memory_mode=MemoryMode.INCOGNITO,
+            ),
+        ),
     )
 
     _assert_exact_keys(

@@ -111,8 +111,9 @@ class ExerciseState(TypedDict):
 
     exercise_type: NotRequired[str | None]
     exercise_step: NotRequired[int | None]
+    exercise_step_id: NotRequired[str | None]
+    exercise_version: NotRequired[int | None]
     exercise_therapeutic_approach: NotRequired[str | None]
-    exercise_selection_options: NotRequired[list[str] | None]
 
 
 class MemoryControlState(TypedDict):

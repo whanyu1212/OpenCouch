@@ -1,0 +1,322 @@
+{
+  "name": "therapeutic_contract_v1",
+  "description": "CI-safe contract checks for the simplified therapeutic subgraph.",
+  "cases": [
+    {
+      "id": "supportive-basic",
+      "description": "A normal therapeutic turn routes to the shared response node.",
+      "message": "I had a hard day at work and feel pretty drained.",
+      "scripted": {
+        "dispatch": {
+          "response_style": "supportive",
+          "therapeutic_approach": "none"
+        },
+        "response_text": "That sounds like a heavy day. I can stay with you for a moment."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "therapeutic_approach": "none",
+        "response_text_contains": ["heavy day"],
+        "exercise_state": {},
+        "routing_decision": "supportive"
+      }
+    },
+    {
+      "id": "guided-start-grounding",
+      "description": "A guided-exercise route starts a selected exercise at step 0.",
+      "message": "Can you walk me through a grounding exercise?",
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "exercise_selection": "grounding_5_4_3_2_1",
+        "response_text": "Let's begin 5-4-3-2-1 grounding with what you can see."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["5-4-3-2-1"],
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_therapeutic_approach": "dbt_skills"
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "guided-advance-pinned-approach",
+      "description": "Continuing an active exercise advances the step and preserves the pinned approach.",
+      "message": "I can see my desk, the window, my laptop, a plant, and a cup.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "act"
+        },
+        "step_state": "complete",
+        "response_text": "Good. Now let's move to four things you can hear."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["hear"],
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_therapeutic_approach": "dbt_skills"
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "guided-hold-preserves-step",
+      "description": "A hold classification keeps the current exercise step active.",
+      "message": "I can maybe see the desk but I'm not sure what else.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "step_state": "hold",
+        "response_text": "That's a start. Stay with this same step and look for a few more things you can see."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["same step"],
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_therapeutic_approach": "dbt_skills"
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "guided-stuck-preserves-step",
+      "description": "A stuck classification keeps the current exercise step and simplifies the instruction.",
+      "message": "I can't think of anything. This feels hard.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "step_state": "stuck",
+        "response_text": "Let's make this smaller. Stay on hearing and name just one sound, even a quiet one."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["smaller"],
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_therapeutic_approach": "dbt_skills"
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "guided-exit-clears-state",
+      "description": "An exit classification clears active exercise continuity.",
+      "message": "Actually I want to stop this and just talk.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "step_state": "exit",
+        "response_text": "We can stop the exercise here. What would feel useful to talk through?"
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["stop the exercise"],
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "guided-complete-clears-state",
+      "description": "Completing the last exercise step clears active exercise continuity.",
+      "message": "I can taste mint from the tea I had earlier.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 4,
+          "exercise_step_id": "taste",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "step_state": "complete",
+        "response_text": "You completed the 5-4-3-2-1 grounding exercise. Notice how your body feels now."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["completed"],
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "clarifying-side-turn-preserves-exercise",
+      "description": "A clarifying side turn preserves active exercise state and pinned approach.",
+      "message": "Do you mean sounds in the room or outside too?",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "clarifying",
+          "therapeutic_approach": "act"
+        },
+        "response_text": "Either is fine. Sounds in the room, outside, or even your own breathing all count."
+      },
+      "expected": {
+        "response_style": "clarifying",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_contains": ["all count"],
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        },
+        "routing_decision": "clarifying/dbt_skills"
+      }
+    },
+    {
+      "id": "normal-route-clears-active-exercise",
+      "description": "A non-preserving normal response style clears active exercise state.",
+      "message": "Can we leave the exercise and talk about why I panicked?",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "supportive",
+          "therapeutic_approach": "cbt"
+        },
+        "response_text": "We can leave the exercise and focus on what happened in the panic."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "therapeutic_approach": "cbt",
+        "response_text_contains": ["leave the exercise"],
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "routing_decision": "supportive/cbt"
+      }
+    },
+    {
+      "id": "missing-control-llm-errors",
+      "description": "The subgraph surfaces a missing control LLM instead of silently falling back.",
+      "message": "I feel tense and need support.",
+      "scripted": null,
+      "expected": {
+        "error_contains": "requires a classifier LLM"
+      }
+    },
+    {
+      "id": "invalid-exercise-selection-errors",
+      "description": "Unavailable exercise selections fail loudly instead of using a deterministic fallback.",
+      "message": "Can you guide me through something grounding?",
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "exercise_selection": "not_registered",
+        "response_text": "This should not be used."
+      },
+      "expected": {
+        "error_contains": "unavailable exercise"
+      }
+    }
+  ]
+}

@@ -77,6 +77,7 @@ class _FakeCrossRestartLLM(BaseLLMClient):
     Canned behaviors:
     - CrisisAssessmentSchema → level 0, no crisis
     - DispatchDecision → supportive mode
+    - ExerciseStepDecision → complete active guided-exercise steps
     - ExtractionResult → configurable (defaults to a single
       relationship fact about Sarah)
     - SummarizationResult → configurable (defaults to an arc
@@ -161,6 +162,28 @@ class _FakeCrossRestartLLM(BaseLLMClient):
                 ),
             )
 
+        if schema_name == "ExerciseStepDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                step_state="complete",
+                reasoning="fake guided-exercise step classifier",
+                confidence="high",
+            )
+
+        if schema_name == "MemoryControlDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action_type="none",
+                reasoning="ordinary cross-restart test turn",
+                confidence="high",
+            )
+
+        if schema_name == "GroundedLookupDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                should_lookup=False,
+                query=None,
+                reasoning="ordinary cross-restart test turn",
+                confidence="high",
+            )
+
         if schema_name == "ExtractionResult":
             self.extraction_calls += 1
             return cast(StructuredResponseT, self.extraction_result)
@@ -188,9 +211,7 @@ class _FakeIncognitoExerciseContinuityLLM(_FakeCrossRestartLLM):
     ) -> StructuredResponseT:
         if response_schema.__name__ == "ExerciseSelectionDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
-                selection_kind="selected",
                 exercise_type="grounding_5_4_3_2_1",
-                option_types=[],
                 reasoning="user explicitly asked for grounding",
                 confidence="high",
             )
@@ -1057,6 +1078,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
             message="Something else is on my mind today.",
             channel=Channel.TEST,
             user_id="user-1",
+            llm_client=llm,
         )
 
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1

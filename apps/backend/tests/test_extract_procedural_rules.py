@@ -13,8 +13,7 @@ invocation of the node function with crafted state. Covers:
 7. Verification that the ``aadd_procedural_rule`` helper is used
    correctly by re-reading the profile after the node runs
 
-These are shape tests, not LLM-quality tests. The eval harness in
-Stage B's eval dataset handles prompt-quality grading separately.
+These are shape tests, not LLM-quality tests.
 """
 
 from __future__ import annotations

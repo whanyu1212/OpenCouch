@@ -1,11 +1,8 @@
 """Live-API tests for the Gemini-backed therapeutic dispatcher.
 
 These tests exercise the dispatcher's LLM path against the real Gemini
-provider. They use **ambiguous** messages that the regex fast paths
-cannot handle — if the regex alone could route them correctly, the
-LLM layer wouldn't be earning its keep. The expected-mode values come
-from the ``eval/datasets/therapeutic_routing_v0.json`` dataset's
-``dispatch_tier: llm`` cases.
+provider. They use messages that require semantic judgment rather than the
+minimal no-LLM dispatch fallback.
 
 Gated behind ``RUN_LIVE_GEMINI_TESTS=1`` + a Gemini API key. In normal
 pytest runs these tests are skipped.
@@ -42,8 +39,8 @@ async def test_live_gemini_picks_reflective_for_implicit_pattern() -> None:
     """Live Gemini should recognize implicit pattern language as reflective.
 
     The user describes a recurring dynamic without using any of the
-    regex keywords ('keep', 'always', 'every time'). The LLM dispatcher
-    should still pick reflective.
+    obvious keywords ('keep', 'always', 'every time'). The LLM dispatcher
+    should pick reflective from the described dynamic.
     """
 
     llm_client = create_llm_client(provider="gemini")

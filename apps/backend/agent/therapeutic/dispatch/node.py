@@ -1,12 +1,10 @@
 """Therapeutic dispatch node — the routing entry point for the subgraph.
 
-The dispatcher uses an LLM-primary classifier with narrow deterministic
-guards. Sibling modules in this package own the pieces: ``classifier`` for
-the LLM call, ``guards`` for the pre-LLM rule engine, ``router`` for plan
-composition, ``fallback`` for the deterministic fallback, ``prompt`` for
-prompt construction, and ``regex_catalog`` for the shared regex
-definitions. The public surface (the entry point and the constants
-callers route on) is re-exported by ``agent.therapeutic.dispatch``.
+The dispatcher is LLM-primary. Sibling modules own the pieces: ``planner``
+holds the framework-agnostic policy that returns a ``DispatchPlan``, this
+module turns that plan into a LangGraph ``Command``, ``prompt`` builds the
+classifier prompts, and ``constants`` holds the style → node-name map. The
+public surface is re-exported by ``agent.therapeutic.dispatch``.
 
 Boundary invariant:
 ``response_style`` is the routing axis and maps to the subgraph node.
@@ -26,13 +24,14 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.dispatch.constants import (
     TherapeuticNodeName,
-    _RESPONSE_STYLE_NODE_MAP,
+    node_for_response_style,
 )
-from agent.therapeutic.dispatch.router import DispatchPlan, plan_therapeutic_route
+from agent.therapeutic.dispatch.planner import DispatchPlan, plan_therapeutic_route
+from agent.therapeutic.exercises.state import clear_exercise_delta
 
 
-def _routing_update(response_style: str, approach: str) -> dict:
-    """Build the therapeutic routing state delta.
+def _style_update(response_style: str, approach: str) -> dict:
+    """Build the selected-style state delta.
 
     Args:
         response_style: Therapeutic response style selected for this turn.
@@ -48,29 +47,7 @@ def _routing_update(response_style: str, approach: str) -> dict:
     }
 
 
-def _clear_active_exercise_update(response_style: str, approach: str) -> dict:
-    """Build a state delta that clears active guided-exercise state.
-
-    Args:
-        response_style: Therapeutic response style selected for this turn.
-        approach: Therapeutic approach selected for this turn.
-
-    Returns:
-        State delta carrying routing metadata and a cleared exercise state.
-    """
-
-    return {
-        **_routing_update(response_style, approach),
-        "exercise_state": {
-            "exercise_type": None,
-            "exercise_step": None,
-            "exercise_therapeutic_approach": None,
-            "exercise_selection_options": None,
-        },
-    }
-
-
-def _command_from_plan(
+def _to_command(
     state: AgentState,
     plan: DispatchPlan,
 ) -> Command[TherapeuticNodeName]:
@@ -85,9 +62,12 @@ def _command_from_plan(
     """
 
     update = (
-        _clear_active_exercise_update(plan.response_style, plan.therapeutic_approach)
+        {
+            **_style_update(plan.response_style, plan.therapeutic_approach),
+            **clear_exercise_delta(state),
+        }
         if plan.clear_exercise
-        else _routing_update(plan.response_style, plan.therapeutic_approach)
+        else _style_update(plan.response_style, plan.therapeutic_approach)
     )
     if "diagnostics" in state:
         decision = plan.response_style
@@ -105,7 +85,7 @@ def _command_from_plan(
         )
     return Command(
         update=update,
-        goto=_RESPONSE_STYLE_NODE_MAP[plan.response_style],
+        goto=node_for_response_style(plan.response_style),
     )
 
 
@@ -125,4 +105,4 @@ async def run_therapeutic_dispatch_node(
     """
 
     plan = await plan_therapeutic_route(state, runtime.context.llm_client)
-    return _command_from_plan(state, plan)
+    return _to_command(state, plan)

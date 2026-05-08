@@ -92,7 +92,7 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | LLM is primary, not regex | Handles negation, context, sarcasm, quoted speech |
 | Normalization enforces the truth table | Prevents miscalibrated LLMs from wrong-flagging |
 | Audit log is always-on | Privacy asymmetry — incognito scrubs identity but still records |
-| 42-case eval dataset | Covers imminent risk, clear self-harm, idiomatic-safe, ambiguous, and safety-denial boundary cases |
+| Boundary-case tests | Cover imminent risk, clear self-harm, idiomatic-safe, ambiguous, and safety-denial cases |
 
 ---
 
@@ -110,4 +110,3 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
 | `agent/tools/web_search.py` | `find_local_crisis_resources` (called by `crisis_resource_lookup_node`) |
-| `eval/runners/crisis_gate_eval.py` | Deterministic eval runner |

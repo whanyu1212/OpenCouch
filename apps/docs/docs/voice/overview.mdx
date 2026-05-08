@@ -268,15 +268,12 @@ uv run python -m voice.livekit.agent console --text`}
 LiveKit-specific behavior evals use `AgentSession.run(...)` (text-only,
 no real LiveKit room or audio pipeline):
 
-<TerminalWindow title="bash — evals">
+<TerminalWindow title="bash — behavior tests">
 {`# From apps/backend
-uv run pytest tests/test_voice_livekit_behavior.py -q
-
-# Deterministic tool-contract evals for grounded lookup
-uv run python ../../eval/runners/voice_lookup_tools_eval.py`}
+uv run pytest tests/test_voice_livekit_behavior.py -q`}
 </TerminalWindow>
 
-Current eval coverage:
+Current behavior coverage:
 
 - memory-control tool calls and outputs
 - proactive-recall toggle persistence

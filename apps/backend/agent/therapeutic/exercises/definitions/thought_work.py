@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from agent.therapeutic.exercises.types import (
     ExerciseDefinition,
-    ExerciseSelectorGroup,
     ExerciseStep,
 )
 
@@ -18,44 +17,56 @@ EXERCISE_THOUGHT_RECORD = "thought_work_simple_record"
 
 _THOUGHT_RECORD_STEPS: tuple[ExerciseStep, ...] = (
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Let's slow down and look at one thought that's been "
             "pulling at you. Can you describe the situation — what was "
             "happening when this thought showed up?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="situation",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user describes a concrete situation, moment, "
+            "or context where the thought showed up."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Got it. Now, what's the specific thought or belief that "
             "came with that moment? Try to put it in one sentence if "
             "you can — the exact words your mind was saying."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="thought",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names a specific thought, belief, "
+            "prediction, assumption, or self-judgment."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Okay. Now let's look at that thought from the outside for "
             "a moment. What evidence do you have that it might not be "
             "the full picture? Even small things count."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="evidence_against",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user offers an exception, missing information, "
+            "alternative interpretation, or evidence that softens the thought."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Last step. Given what you just noticed, is there a more "
             "balanced way to hold that thought? Not a fake positive — "
             "just something that accounts for the full picture."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="balanced_thought",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user drafts a more balanced or less absolute "
+            "version of the thought, even if it is imperfect."
+        ),
     ),
 )
 
@@ -69,54 +80,66 @@ EXERCISE_BEHAVIORAL_EXPERIMENT = "thought_work_behavioral_experiment"
 
 _BEHAVIORAL_EXPERIMENT_STEPS: tuple[ExerciseStep, ...] = (
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Let's test a belief. What's a thought or prediction you "
             "keep making that causes you distress? Try to state it as "
             "clearly as you can — something like 'If I speak up in the "
             "meeting, people will think I'm stupid.'"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="belief",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user states a belief, fear, or prediction "
+            "that could be tested."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Got it. Now — what's a small, manageable way you could "
             "test whether that's actually true? Not a huge leap, just "
             "something that would give you real information. What could "
             "you try?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="experiment",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names a small real-world action or "
+            "experiment that could test the belief."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Before you try it, let's write down your prediction. What "
             "exactly do you think will happen? Be specific — what will "
             "people do, how will you feel, what's the worst-case scenario "
             "you're expecting?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="prediction",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user records a specific expected outcome, "
+            "reaction, feeling, or worst-case prediction."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Now — what actually happened? Or if you haven't tried it "
             "yet, come back when you have. How did the reality compare "
             "to what you predicted? What surprised you?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="outcome",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user compares what happened with what they "
+            "predicted, or clearly says they have not tried it yet."
+        ),
     ),
 )
 
 
 # ── Gratitude inventory ──────────────────────────────────────────────
 # A short positive-psychology exercise for building positive affect.
-# 3 steps, item_count mode. Good session closer.
+# Good for softening rigid self-labels.
 
 EXERCISE_CONTINUUM = "thought_work_continuum"
 
@@ -126,52 +149,64 @@ EXERCISE_CONTINUUM = "thought_work_continuum"
 # at zero — which is already a shift from the absolute framing.
 _CONTINUUM_STEPS: tuple[ExerciseStep, ...] = (
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Let's look at that belief more closely. Can you state it "
             "as an absolute — the all-or-nothing version? Something like "
             "'I'm a terrible [X]' or 'I always [Y].'"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="absolute_belief",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names an absolute, all-or-nothing belief or label."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Now let's turn that into a scale. If we put that quality on "
             "a 0-to-100 spectrum — what would a 0 look like? The absolute "
             "worst-case version, someone who truly has none of that quality?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="low_anchor",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user describes the low end of the continuum."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "And what would 100 look like? The impossibly perfect version "
             "— which nobody actually is?"
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="high_anchor",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user describes the high end of the continuum."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "Where would you honestly place yourself on that scale right "
             "now? Just a number — there's no wrong answer."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="self_rating",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user gives a number or approximate position "
+            "on the scale."
+        ),
     ),
     ExerciseStep(
-        prompt_fallback=(
+        instruction=(
             "That's not zero. What's one small thing that would move you "
             "about 5 points up from where you are? Something concrete and "
             "doable this week."
         ),
-        expected_count=1,
-        min_count_for_completion=1,
-        completion_mode="item_count",
+        id="small_shift",
+        completion_mode="llm_judged",
+        completion_criteria=(
+            "Complete when the user names a small concrete action that could "
+            "move them a little on the scale."
+        ),
     ),
 )
 
@@ -184,18 +219,10 @@ THOUGHT_RECORD_DEFINITION = ExerciseDefinition(
         "self-critical interpretation"
     ),
     steps=_THOUGHT_RECORD_STEPS,
-    selector_groups=(
-        ExerciseSelectorGroup(
-            keywords=(
-                "thought record",
-                "thought check",
-                "examine.*thought",
-                "look at.*thought",
-                "belief",
-            ),
-            priority=70,
-        ),
-    ),
+    category="thought_work",
+    tags=("cbt", "thought_record", "belief", "self_criticism", "reframe"),
+    duration_seconds=600,
+    intensity="high",
     selection_aliases=("thought record", "thought check", "belief"),
 )
 
@@ -206,18 +233,10 @@ BEHAVIORAL_EXPERIMENT_DEFINITION = ExerciseDefinition(
         "testing a fear, prediction, or belief with a small real-world experiment"
     ),
     steps=_BEHAVIORAL_EXPERIMENT_STEPS,
-    selector_groups=(
-        ExerciseSelectorGroup(
-            keywords=(
-                "behavioral experiment",
-                "test this belief",
-                "is this.*true",
-                "prove it",
-                "check if",
-            ),
-            priority=50,
-        ),
-    ),
+    category="thought_work",
+    tags=("cbt", "behavioral_experiment", "prediction", "fear", "testing_beliefs"),
+    duration_seconds=600,
+    intensity="high",
     selection_aliases=("behavioral experiment", "test this belief", "test a belief"),
 )
 
@@ -229,19 +248,17 @@ CONTINUUM_DEFINITION = ExerciseDefinition(
         "or 100 percent bad"
     ),
     steps=_CONTINUUM_STEPS,
-    selector_groups=(
-        ExerciseSelectorGroup(
-            keywords=(
-                "continuum",
-                "all.or.nothing",
-                "black.and.white",
-                r"i'?m (?:a )?(?:terrible|horrible|worst|complete|total)\b",
-                r"i (?:always|never) (?:fail|mess|ruin|screw|disappoint|let)",
-                r"100\s*%",
-            ),
-            priority=60,
-        ),
-    ),
+    category="thought_work",
+    tags=("cbt", "continuum", "all_or_nothing", "black_and_white", "labels"),
+    duration_seconds=480,
+    intensity="medium",
     selection_aliases=("continuum", "all-or-nothing", "black-and-white"),
     voice_supported=True,
+)
+
+
+DEFINITIONS: tuple[ExerciseDefinition, ...] = (
+    THOUGHT_RECORD_DEFINITION,
+    BEHAVIORAL_EXPERIMENT_DEFINITION,
+    CONTINUUM_DEFINITION,
 )

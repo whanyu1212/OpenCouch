@@ -26,9 +26,8 @@ Coverage split:
    rules or recall toggle. This is a safety decision (see
    ``agent/prompts/crisis.py`` docstring for rationale).
 
-These are shape tests, not quality tests. The eval harnesses handle
-prompt-quality grading separately; these tests pin the mechanical
-weaving of state into prompt text.
+These are shape tests, not quality tests. They pin the mechanical weaving of
+state into prompt text.
 """
 
 from __future__ import annotations

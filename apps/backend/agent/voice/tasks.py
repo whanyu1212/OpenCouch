@@ -1,46 +1,35 @@
 """LiveKit AgentTask for structured therapeutic exercises.
 
-GroundingTask wraps the exercise registry from
-``agent/therapeutic/guided_exercise.py`` into a LiveKit AgentTask
-that can be ``await``ed from a ``@function_tool`` on the
+GroundingTask wraps the shared therapeutic exercise registry into a LiveKit
+AgentTask that can be ``await``ed from a ``@function_tool`` on the
 TherapeuticAgent.
 
-The existing exercise engine uses a deterministic state-machine
-classifier (complete/hold/stuck/exit) to drive step transitions.
-In voice mode the RealtimeModel handles this more naturally: the
-LLM judges when the user has engaged with a step and calls
-``complete_step()`` to advance.  ``exit_exercise()`` lets the user
-bail out at any time.
+Voice mode keeps exercise choice LLM-owned: the parent realtime model passes a
+supported ``exercise_type`` id to the tool. The task only validates capability
+constraints, builds instructions from the definition, and exposes
+``complete_step()`` / ``exit_exercise()`` tools so the model can conduct the
+exercise naturally.
 
 Usage from TherapeuticAgent::
 
     @function_tool()
-    async def start_grounding_exercise(self, context: RunContext, technique: str):
-        result = await GroundingTask(technique=technique)
+    async def start_grounding_exercise(self, context: RunContext, exercise_type: str):
+        result = await GroundingTask(exercise_type=exercise_type)
         return f"Exercise finished: {result}"
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Literal
 
 from livekit.agents import AgentTask, RunContext, function_tool
 
 from agent.therapeutic.exercises.registry import (
-    EXERCISE_5_4_3_2_1,
-    EXERCISE_BOX_BREATHING,
-    EXERCISE_GRATITUDE,
-    EXERCISE_IMPROVE,
-    EXERCISE_MUSCLE_RELAXATION,
-    EXERCISE_SELF_COMPASSION,
-    EXERCISE_STOP_TECHNIQUE,
     get_exercise_display_name,
     get_exercise_steps,
     iter_exercise_definitions,
-    iter_exercise_selectors,
     voice_exercise_ids,
 )
 from agent.therapeutic.exercises.types import ExerciseStep
@@ -49,23 +38,9 @@ from agent.voice.session_data import SessionData
 logger = logging.getLogger(__name__)
 
 
-# Subset of exercises suitable for voice-guided delivery.
-# Sequential worksheet-like exercises (thought records and behavioral
-# experiments) work better in text mode where the user can re-read prompts.
-# Voice mode favors body-based, verbal, and low-visual-load exercises.
 VOICE_EXERCISES: set[str] = set(voice_exercise_ids())
 
 TEXT_EXERCISES: set[str] = {definition.id for definition in iter_exercise_definitions()}
-
-_GENERIC_VOICE_EXERCISE_ROTATION: tuple[str, ...] = (
-    EXERCISE_5_4_3_2_1,
-    EXERCISE_BOX_BREATHING,
-    EXERCISE_STOP_TECHNIQUE,
-    EXERCISE_MUSCLE_RELAXATION,
-    EXERCISE_SELF_COMPASSION,
-    EXERCISE_IMPROVE,
-    EXERCISE_GRATITUDE,
-)
 
 
 @dataclass
@@ -79,54 +54,49 @@ class ExerciseResult:
     outcome: Literal["completed", "exited"]
 
 
-def _match_requested_exercise(technique: str) -> str | None:
-    """Return the exercise directly implied by the technique text, if any."""
-    lowered = technique.lower()
-    for keywords, exercise_type in iter_exercise_selectors():
-        for kw in keywords:
-            if re.search(kw, lowered):
-                return exercise_type
-    return None
+def supported_exercise_ids(
+    input_modality: Literal["voice", "text"] = "voice",
+) -> tuple[str, ...]:
+    """Return exercise ids available for a voice task.
 
+    Args:
+        input_modality: Current user input modality.
 
-def _pick_diversified_generic_exercise(recent_exercise_types: tuple[str, ...]) -> str:
-    """Rotate generic grounding requests away from recently used exercises."""
-    recent = set(recent_exercise_types[-3:])
-    for exercise_type in _GENERIC_VOICE_EXERCISE_ROTATION:
-        if exercise_type not in recent:
-            return exercise_type
-    return _GENERIC_VOICE_EXERCISE_ROTATION[0]
+    Returns:
+        Sorted supported exercise ids for the modality.
+    """
+
+    allowed_exercises = TEXT_EXERCISES if input_modality == "text" else VOICE_EXERCISES
+    return tuple(sorted(allowed_exercises))
 
 
 def _resolve_exercise(
-    technique: str,
+    exercise_type: str,
     *,
-    recent_exercise_types: tuple[str, ...] = (),
     input_modality: Literal["voice", "text"] = "voice",
 ) -> tuple[str, tuple[ExerciseStep, ...]]:
-    """Map a free-text technique request to an exercise type and steps.
+    """Validate an LLM-selected exercise id and return its steps.
 
-    Uses the existing keyword selector from guided_exercise.py.
-    Falls back to a rotated voice-friendly exercise for underspecified
-    requests so the session does not keep repeating the same default.
+    Args:
+        exercise_type: Exact exercise id chosen by the voice model.
+        input_modality: Current user input modality.
+
+    Returns:
+        Exercise id and ordered steps.
     """
-    requested_exercise = _match_requested_exercise(technique)
-    if requested_exercise is None:
-        exercise_type = _pick_diversified_generic_exercise(recent_exercise_types)
-    else:
-        exercise_type = requested_exercise
 
-    allowed_exercises = TEXT_EXERCISES if input_modality == "text" else VOICE_EXERCISES
+    normalized_exercise_type = exercise_type.strip()
+    allowed_exercises = set(supported_exercise_ids(input_modality))
 
-    # Typed turns can use the full registry. Spoken turns stay on the
-    # voice-safe subset to avoid awkward read-aloud cognitive exercises.
-    if exercise_type not in allowed_exercises:
-        exercise_type = EXERCISE_5_4_3_2_1
+    if normalized_exercise_type not in allowed_exercises:
+        raise ValueError(
+            f"Unsupported {input_modality} exercise_type {normalized_exercise_type!r}."
+        )
 
-    steps = get_exercise_steps(exercise_type)
+    steps = get_exercise_steps(normalized_exercise_type)
     if steps is None:
-        raise KeyError(exercise_type)
-    return exercise_type, steps
+        raise KeyError(normalized_exercise_type)
+    return normalized_exercise_type, steps
 
 
 def _build_exercise_instructions(
@@ -143,12 +113,22 @@ def _build_exercise_instructions(
 
     step_plan = []
     for i, step in enumerate(steps):
-        mode_label = (
-            "Ask the user to tell you when they have done it, then wait for that confirmation."
-            if step.completion_mode == "user_confirmation"
-            else f"Wait for the user to name at least {step.min_count_for_completion} item(s)."
-        )
-        step_plan.append(f"Step {i + 1}: {step.prompt_fallback}\n  -> {mode_label}")
+        if step.completion_mode == "confirmation":
+            mode_label = (
+                "Ask the user to tell you when they have done it, then wait "
+                "for that confirmation."
+            )
+        elif step.completion_mode == "items":
+            mode_label = (
+                f"Wait for the user to name at least {step.min_items or 1} item(s)."
+            )
+        else:
+            mode_label = (
+                "Wait for a meaningful response that satisfies the step, then advance."
+            )
+            if step.completion_criteria:
+                mode_label = f"{mode_label} Criteria: {step.completion_criteria}"
+        step_plan.append(f"Step {i + 1}: {step.instruction}\n  -> {mode_label}")
 
     plan_text = "\n\n".join(step_plan)
 
@@ -157,7 +137,7 @@ def _build_exercise_instructions(
 RULES:
 - Deliver ONE step at a time. Do NOT skip ahead or combine steps.
 - After delivering a step, WAIT for the user to respond before moving on.
-- You cannot see whether the user has done a body, breathing, or imagery action. For user-confirmation steps, explicitly ask them to tell you when they have done it.
+- You cannot see whether the user has done a body, breathing, or imagery action. For confirmation steps, explicitly ask them to tell you when they have done it.
 - When the user has engaged with the current step (named items, confirmed, or responded meaningfully), call complete_step() to advance.
 - If the user says they want to stop, skip, or can't continue, call exit_exercise().
 - Keep your voice warm, patient, and unhurried. Brief encouragement between steps is good.
@@ -177,22 +157,18 @@ class GroundingTask(AgentTask[ExerciseResult]):
     """A bounded voice exercise that returns to the parent agent on completion.
 
     Args:
-        technique: Free-text description of what the user wants
-            (e.g. "breathing", "grounding", "body scan"). Mapped to
-            the closest exercise via keyword matching.
+        exercise_type: Exact exercise id chosen by the parent voice model.
         chat_ctx: Optional chat context to carry over from the parent.
     """
 
     def __init__(
         self,
-        technique: str = "grounding",
+        exercise_type: str,
         chat_ctx=None,
-        recent_exercise_types: tuple[str, ...] = (),
         input_modality: Literal["voice", "text"] = "voice",
     ) -> None:
         exercise_type, steps = _resolve_exercise(
-            technique,
-            recent_exercise_types=recent_exercise_types,
+            exercise_type,
             input_modality=input_modality,
         )
         self._exercise_type = exercise_type
@@ -253,16 +229,22 @@ class GroundingTask(AgentTask[ExerciseResult]):
             )
 
         next_step = self._steps[self._current_step]
-        completion_hint = (
-            "Because you cannot see the user, ask them to tell you when they "
-            "have done it."
-            if next_step.completion_mode == "user_confirmation"
-            else "Wait for the user to answer with the requested item or items."
-        )
+        if next_step.completion_mode == "confirmation":
+            completion_hint = (
+                "Because you cannot see the user, ask them to tell you when "
+                "they have done it."
+            )
+        elif next_step.completion_mode == "items":
+            completion_hint = "Wait for the user to answer with the requested items."
+        else:
+            completion_hint = (
+                "Wait for the user to answer with a meaningful response before "
+                "calling complete_step()."
+            )
         return (
             f"Step {self._current_step} is done. Moving to step "
             f"{self._current_step + 1} of {self._total_steps}. "
-            f"Next step instruction: {next_step.prompt_fallback} "
+            f"Next step instruction: {next_step.instruction} "
             f"Rephrase this naturally and deliver it to the user. {completion_hint}"
         )
 

@@ -12,7 +12,6 @@ EXERCISE_STATE_FIELDS = (
     "exercise_type",
     "exercise_step",
     "exercise_therapeutic_approach",
-    "exercise_selection_options",
 )
 
 
@@ -81,7 +80,6 @@ def session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
             "exercise_type": None,
             "exercise_step": None,
             "exercise_therapeutic_approach": None,
-            "exercise_selection_options": None,
         }
 
     if state.get("therapeutic_approach") is not None:

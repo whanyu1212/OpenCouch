@@ -277,9 +277,9 @@ def build_therapeutic_response_prompt(
             observability in the prompt.
         step_directive: For multi-turn styles (guided_exercise), an
             explicit instruction about what the LLM should generate.
-            This bridges the node's deterministic state transition
-            to the LLM's prose generation — the node knows *which*
-            step to produce, and tells the LLM via this directive.
+            This bridges the exercise runner's state transition to the LLM's
+            prose generation: the runner knows which step to produce, and tells
+            the LLM via this directive.
 
     Returns:
         User/task prompt for the therapeutic response LLM call.

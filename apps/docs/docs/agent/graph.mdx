@@ -187,8 +187,7 @@ for the full breakdown.
    (`subgraph.add_node(...)`)
 5. Update the LLM dispatcher prompt in
    `agent/therapeutic/dispatch/prompt.py` to teach the classifier when to
-   pick the new response style, and add a deterministic regex fallback
-   if the style has unambiguous trigger phrases
-6. Add cases to `eval/datasets/therapeutic_routing_v0.json`
+   pick the new response style
+6. Add or update backend tests for the route and state contract
 7. Add a `STAGE_LABELS` entry in `agent/models.py` if the
    node name differs from the stage label vocabulary

@@ -2,41 +2,35 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent.therapeutic.exercises.definitions.act_values import (
+    DEFINITIONS as ACT_VALUES_DEFINITIONS,
     EXERCISE_LEAVES_ON_STREAM,
     EXERCISE_VALUES_COMPASS,
-    LEAVES_ON_STREAM_DEFINITION,
-    VALUES_COMPASS_DEFINITION,
 )
 from agent.therapeutic.exercises.definitions.activation import (
+    DEFINITIONS as ACTIVATION_DEFINITIONS,
     EXERCISE_TINY_ACTION,
-    TINY_ACTION_DEFINITION,
 )
 from agent.therapeutic.exercises.definitions.emotion_regulation import (
+    DEFINITIONS as EMOTION_REGULATION_DEFINITIONS,
     EXERCISE_GRATITUDE,
     EXERCISE_IMPROVE,
     EXERCISE_SELF_COMPASSION,
-    GRATITUDE_DEFINITION,
-    IMPROVE_DEFINITION,
-    SELF_COMPASSION_DEFINITION,
 )
 from agent.therapeutic.exercises.definitions.grounding import (
-    BOX_BREATHING_DEFINITION,
+    DEFINITIONS as GROUNDING_DEFINITIONS,
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
     EXERCISE_MUSCLE_RELAXATION,
     EXERCISE_STOP_TECHNIQUE,
-    GROUNDING_5_4_3_2_1_DEFINITION,
-    MUSCLE_RELAXATION_DEFINITION,
-    STOP_TECHNIQUE_DEFINITION,
 )
 from agent.therapeutic.exercises.definitions.thought_work import (
-    BEHAVIORAL_EXPERIMENT_DEFINITION,
-    CONTINUUM_DEFINITION,
+    DEFINITIONS as THOUGHT_WORK_DEFINITIONS,
     EXERCISE_BEHAVIORAL_EXPERIMENT,
     EXERCISE_CONTINUUM,
     EXERCISE_THOUGHT_RECORD,
-    THOUGHT_RECORD_DEFINITION,
 )
 from agent.therapeutic.exercises.types import ExerciseDefinition, ExerciseStep
 
@@ -55,32 +49,22 @@ __all__ = [
     "EXERCISE_THOUGHT_RECORD",
     "EXERCISE_TINY_ACTION",
     "EXERCISE_VALUES_COMPASS",
-    "fallback_suggestion_options",
+    "available_exercise_definitions",
     "get_exercise_definition",
     "get_exercise_display_name",
     "get_exercise_steps",
-    "is_valid_exercise_type",
     "iter_exercise_definitions",
     "iter_exercise_selection_aliases",
-    "iter_exercise_selectors",
     "voice_exercise_ids",
 ]
 
 
 ALL_EXERCISE_DEFINITIONS: tuple[ExerciseDefinition, ...] = (
-    GROUNDING_5_4_3_2_1_DEFINITION,
-    BOX_BREATHING_DEFINITION,
-    STOP_TECHNIQUE_DEFINITION,
-    THOUGHT_RECORD_DEFINITION,
-    TINY_ACTION_DEFINITION,
-    LEAVES_ON_STREAM_DEFINITION,
-    MUSCLE_RELAXATION_DEFINITION,
-    BEHAVIORAL_EXPERIMENT_DEFINITION,
-    SELF_COMPASSION_DEFINITION,
-    IMPROVE_DEFINITION,
-    VALUES_COMPASS_DEFINITION,
-    GRATITUDE_DEFINITION,
-    CONTINUUM_DEFINITION,
+    *GROUNDING_DEFINITIONS,
+    *THOUGHT_WORK_DEFINITIONS,
+    *ACTIVATION_DEFINITIONS,
+    *ACT_VALUES_DEFINITIONS,
+    *EMOTION_REGULATION_DEFINITIONS,
 )
 
 
@@ -109,27 +93,62 @@ def _validate_catalog(definitions: tuple[ExerciseDefinition, ...]) -> None:
             raise ValueError(f"Exercise {definition.id} has no steps")
         if not definition.selection_aliases:
             raise ValueError(f"Exercise {definition.id} has no selection aliases")
+        if definition.version < 1:
+            raise ValueError(f"Exercise {definition.id} has invalid version")
+        if not definition.category.strip():
+            raise ValueError(f"Exercise {definition.id} has empty category")
+        if definition.duration_seconds is not None and definition.duration_seconds < 1:
+            raise ValueError(f"Exercise {definition.id} has invalid duration")
+        if not definition.channels:
+            raise ValueError(f"Exercise {definition.id} has no supported channels")
         if (
-            definition.fallback_suggestion_rank is not None
-            and definition.fallback_suggestion_rank < 0
+            definition.required_skill is not None
+            and not definition.required_skill.strip()
         ):
-            raise ValueError(
-                f"Exercise {definition.id} has a negative fallback suggestion rank"
-            )
+            raise ValueError(f"Exercise {definition.id} has an empty required skill")
         for alias in definition.selection_aliases:
             if not alias.strip():
                 raise ValueError(f"Exercise {definition.id} has an empty alias")
+        for tag in definition.tags:
+            if not tag.strip():
+                raise ValueError(f"Exercise {definition.id} has an empty tag")
+        for approach in definition.approaches:
+            if not approach.strip():
+                raise ValueError(f"Exercise {definition.id} has an empty approach")
+        for channel in definition.channels:
+            if channel not in {"text", "voice"}:
+                raise ValueError(
+                    f"Exercise {definition.id} has unsupported channel {channel!r}"
+                )
+        step_ids = [step.id for step in definition.steps]
+        if len(step_ids) != len(set(step_ids)):
+            raise ValueError(f"Exercise {definition.id} has duplicate step ids")
         for step in definition.steps:
-            if not step.prompt_fallback:
-                raise ValueError(f"Exercise {definition.id} has an empty step prompt")
-
-    fallback_options = [
-        definition.id
-        for definition in definitions
-        if definition.fallback_suggestion_rank is not None
-    ]
-    if len(fallback_options) < 2:
-        raise ValueError("At least two fallback suggestion exercises are required")
+            if not step.id.strip():
+                raise ValueError(f"Exercise {definition.id} has an empty step id")
+            if not step.instruction.strip():
+                raise ValueError(
+                    f"Exercise {definition.id} has an empty step instruction"
+                )
+            if step.completion_mode == "items":
+                if step.min_items is None or step.min_items < 1:
+                    raise ValueError(
+                        f"Exercise {definition.id} has an item step without min_items"
+                    )
+                if step.target_items is not None and step.target_items < step.min_items:
+                    raise ValueError(
+                        f"Exercise {definition.id} has target_items below min_items"
+                    )
+            elif step.min_items is not None or step.target_items is not None:
+                raise ValueError(
+                    f"Exercise {definition.id} has item counts on a "
+                    f"{step.completion_mode!r} step"
+                )
+            if step.completion_mode == "llm_judged" and not step.completion_criteria:
+                raise ValueError(
+                    f"Exercise {definition.id} has an LLM-judged step without "
+                    f"completion criteria"
+                )
 
 
 _validate_catalog(ALL_EXERCISE_DEFINITIONS)
@@ -138,34 +157,10 @@ _EXERCISE_DEFINITIONS_BY_ID: dict[str, ExerciseDefinition] = {
     definition.id: definition for definition in ALL_EXERCISE_DEFINITIONS
 }
 
-_EXERCISE_SELECTORS: tuple[tuple[tuple[str, ...], str], ...] = tuple(
-    (selector_group.keywords, definition.id)
-    for definition, selector_group in sorted(
-        (
-            (definition, selector_group)
-            for definition in ALL_EXERCISE_DEFINITIONS
-            for selector_group in definition.selector_groups
-        ),
-        key=lambda item: item[1].priority,
-    )
-)
-
 _VOICE_EXERCISE_IDS: tuple[str, ...] = tuple(
     definition.id
     for definition in ALL_EXERCISE_DEFINITIONS
     if definition.voice_supported
-)
-
-_FALLBACK_SUGGESTION_OPTIONS: tuple[str, ...] = tuple(
-    definition.id
-    for definition in sorted(
-        (
-            definition
-            for definition in ALL_EXERCISE_DEFINITIONS
-            if definition.fallback_suggestion_rank is not None
-        ),
-        key=lambda definition: definition.fallback_suggestion_rank or 0,
-    )
 )
 
 
@@ -230,54 +225,108 @@ def get_exercise_display_name(
     return definition.display_name
 
 
-def is_valid_exercise_type(exercise_type: str | None) -> bool:
-    """Return whether an exercise identifier is registered.
+def _normalize_channel(channel: Any) -> str:
+    """Normalize external channel values to exercise delivery modes.
 
     Args:
-        exercise_type: Exercise identifier to check.
+        channel: Raw channel value from graph state or a caller.
 
     Returns:
-        ``True`` when the identifier exists in the catalog.
+        ``"voice"`` for voice turns; ``"text"`` for all text-like channels.
     """
 
-    return exercise_type in _EXERCISE_DEFINITIONS_BY_ID
+    value = getattr(channel, "value", channel)
+    return "voice" if value == "voice" else "text"
 
 
-def fallback_suggestion_options(limit: int = 3) -> tuple[str, ...]:
-    """Return deterministic fallback options for broad exercise requests.
+def available_exercise_definitions(
+    *,
+    installed_skills: list[str] | tuple[str, ...] = (),
+    channel: Any = "text",
+    therapeutic_approach: str | None = None,
+    definitions: tuple[ExerciseDefinition, ...] = ALL_EXERCISE_DEFINITIONS,
+) -> tuple[ExerciseDefinition, ...]:
+    """Return exercise definitions available for the current capabilities.
 
     Args:
-        limit: Maximum number of fallback options to return.
+        installed_skills: Capability keys available to this user/session.
+        channel: Raw graph channel or exercise delivery mode.
+        therapeutic_approach: Current therapeutic approach selected by routing.
+        definitions: Catalog to filter. Defaults to the full registry.
 
     Returns:
-        Tuple of fallback exercise identifiers ordered by catalog rank.
+        Tuple of available exercise definitions in catalog order.
     """
 
-    if limit <= 0:
-        return ()
-    return _FALLBACK_SUGGESTION_OPTIONS[:limit]
+    skill_set = set(installed_skills)
+    delivery_mode = _normalize_channel(channel)
+    return tuple(
+        definition
+        for definition in definitions
+        if _is_definition_available(
+            definition,
+            installed_skills=skill_set,
+            delivery_mode=delivery_mode,
+            therapeutic_approach=therapeutic_approach,
+        )
+    )
 
 
-def iter_exercise_selectors() -> tuple[tuple[tuple[str, ...], str], ...]:
-    """Return deterministic exercise selectors in priority order.
+def _is_definition_available(
+    definition: ExerciseDefinition,
+    *,
+    installed_skills: set[str],
+    delivery_mode: str,
+    therapeutic_approach: str | None,
+) -> bool:
+    """Return whether one exercise definition is available.
+
+    Args:
+        definition: Exercise definition to evaluate.
+        installed_skills: Capability keys available to this user/session.
+        delivery_mode: Normalized exercise delivery mode.
+        therapeutic_approach: Current therapeutic approach selected by routing.
 
     Returns:
-        Tuple of ``(keyword_patterns, exercise_type)`` selector groups.
+        ``True`` when the definition can be offered.
     """
 
-    return _EXERCISE_SELECTORS
+    if (
+        definition.required_skill is not None
+        and definition.required_skill not in installed_skills
+    ):
+        return False
+
+    if delivery_mode == "voice":
+        if not (definition.voice_supported or "voice" in definition.channels):
+            return False
+    elif delivery_mode not in definition.channels:
+        return False
+
+    if definition.approaches and therapeutic_approach not in definition.approaches:
+        return False
+
+    return True
 
 
-def iter_exercise_selection_aliases() -> tuple[tuple[str, str], ...]:
+def iter_exercise_selection_aliases(
+    *,
+    definitions: tuple[ExerciseDefinition, ...] | None = None,
+) -> tuple[tuple[str, str], ...]:
     """Return exercise selection aliases in catalog order.
+
+    Args:
+        definitions: Optional catalog to read aliases from. Defaults to all
+            registered exercises.
 
     Returns:
         Tuple of ``(alias, exercise_type)`` pairs.
     """
 
+    catalog = ALL_EXERCISE_DEFINITIONS if definitions is None else definitions
     return tuple(
         (alias, definition.id)
-        for definition in ALL_EXERCISE_DEFINITIONS
+        for definition in catalog
         for alias in definition.selection_aliases
     )
 

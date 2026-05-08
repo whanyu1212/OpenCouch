@@ -426,13 +426,6 @@ Run them from `apps/backend` with:
 uv run pytest tests/test_voice_livekit_behavior.py -q
 ```
 
-Deterministic tool-contract evals for lookup behavior live in
-`eval/runners/voice_lookup_tools_eval.py` and can be run from `apps/backend`:
-
-```bash
-uv run python ../../eval/runners/voice_lookup_tools_eval.py
-```
-
 Current coverage:
 
 - memory-control tool calls and outputs

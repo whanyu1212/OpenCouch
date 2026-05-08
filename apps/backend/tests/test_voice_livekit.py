@@ -956,24 +956,17 @@ def test_resolve_livekit_session_metadata_ignores_blank_env_values(
     assert memory_mode == MemoryMode.LOCAL
 
 
-def test_resolve_exercise_rotates_generic_requests_away_from_recent_repeats() -> None:
-    """Generic requests should diversify instead of reusing the last default."""
+def test_resolve_exercise_rejects_free_text_requests() -> None:
+    """Voice exercise selection should require exact exercise ids."""
 
-    exercise_type, _ = _resolve_exercise(
-        "can you guide me through something grounding",
-        recent_exercise_types=(EXERCISE_5_4_3_2_1,),
-    )
-
-    assert exercise_type != EXERCISE_5_4_3_2_1
+    with pytest.raises(ValueError, match="Unsupported voice exercise_type"):
+        _resolve_exercise("can you guide me through something grounding")
 
 
 def test_resolve_exercise_keeps_explicit_user_request_even_if_recent() -> None:
     """Explicit requests like breathing should still select the named exercise."""
 
-    exercise_type, _ = _resolve_exercise(
-        "let's do box breathing again",
-        recent_exercise_types=(EXERCISE_BOX_BREATHING,),
-    )
+    exercise_type, _ = _resolve_exercise(EXERCISE_BOX_BREATHING)
 
     assert exercise_type == EXERCISE_BOX_BREATHING
 
@@ -982,7 +975,7 @@ def test_resolve_exercise_allows_text_turns_to_use_full_registry() -> None:
     """Typed turns should be able to reach non-voice exercises directly."""
 
     exercise_type, _ = _resolve_exercise(
-        "let's do a thought record",
+        EXERCISE_THOUGHT_RECORD,
         input_modality="text",
     )
 
@@ -992,20 +985,19 @@ def test_resolve_exercise_allows_text_turns_to_use_full_registry() -> None:
 def test_resolve_exercise_keeps_voice_turns_on_voice_safe_subset() -> None:
     """Spoken turns should still fall back away from non-voice exercises."""
 
-    exercise_type, _ = _resolve_exercise(
-        "let's do a thought record",
-        input_modality="voice",
-    )
-
-    assert exercise_type == EXERCISE_5_4_3_2_1
+    with pytest.raises(ValueError, match="Unsupported voice exercise_type"):
+        _resolve_exercise(
+            EXERCISE_THOUGHT_RECORD,
+            input_modality="voice",
+        )
 
 
 @pytest.mark.parametrize(
     ("exercise_request", "expected_exercise"),
     [
-        ("can we pick one tiny action I can take today?", EXERCISE_TINY_ACTION),
-        ("can we do a values compass exercise?", EXERCISE_VALUES_COMPASS),
-        ("can we use a continuum for this all-or-nothing thought?", EXERCISE_CONTINUUM),
+        (EXERCISE_TINY_ACTION, EXERCISE_TINY_ACTION),
+        (EXERCISE_VALUES_COMPASS, EXERCISE_VALUES_COMPASS),
+        (EXERCISE_CONTINUUM, EXERCISE_CONTINUUM),
     ],
 )
 def test_resolve_exercise_allows_low_visual_load_voice_exercises(
@@ -1022,20 +1014,18 @@ def test_resolve_exercise_allows_low_visual_load_voice_exercises(
 def test_resolve_exercise_keeps_visual_imagery_exercise_out_of_voice_mode() -> None:
     """Voice expansion should not add highly visual imagery by default."""
 
-    exercise_type, _ = _resolve_exercise(
-        "can we try the leaves on a stream exercise?",
-        input_modality="voice",
-    )
-
-    assert exercise_type == EXERCISE_5_4_3_2_1
-    assert exercise_type != EXERCISE_LEAVES_ON_STREAM
+    with pytest.raises(ValueError, match="Unsupported voice exercise_type"):
+        _resolve_exercise(
+            EXERCISE_LEAVES_ON_STREAM,
+            input_modality="voice",
+        )
 
 
 def test_voice_exercise_instructions_remind_user_to_confirm_body_actions() -> None:
     """Voice exercises should say the agent cannot observe completed actions."""
 
     exercise_type, steps = _resolve_exercise(
-        "can we do a muscle relaxation technique?",
+        EXERCISE_MUSCLE_RELAXATION,
         input_modality="voice",
     )
 
@@ -1506,7 +1496,10 @@ async def test_start_grounding_exercise_blocks_without_explicit_consent(
         session=_fake_voice_activity_session(participant),
     )
 
-    result = await agent.start_grounding_exercise(context, technique="grounding")
+    result = await agent.start_grounding_exercise(
+        context,
+        exercise_type=EXERCISE_5_4_3_2_1,
+    )
 
     assert "Do not start a structured exercise yet." in result
 
@@ -1552,7 +1545,10 @@ async def test_start_grounding_exercise_allows_explicit_yes_after_offer(
         session=_fake_voice_activity_session(participant),
     )
 
-    result = await agent.start_grounding_exercise(context, technique="breathing")
+    result = await agent.start_grounding_exercise(
+        context,
+        exercise_type=EXERCISE_BOX_BREATHING,
+    )
 
     assert "The user just finished Box breathing" in result
     assert carried_roles_and_text == [
@@ -1578,7 +1574,7 @@ async def test_start_grounding_exercise_allows_relaxation_choice_after_offer(
     """A relaxation-technique choice after an offer should not re-ask consent."""
 
     async def _fake_grounding_task(**kwargs):
-        assert kwargs["technique"] == "muscle relaxation"
+        assert kwargs["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
         return SimpleNamespace(
             exercise_type=EXERCISE_MUSCLE_RELAXATION,
             display_name="Muscle relaxation",
@@ -1607,7 +1603,7 @@ async def test_start_grounding_exercise_allows_relaxation_choice_after_offer(
 
     result = await agent.start_grounding_exercise(
         context,
-        technique="muscle relaxation",
+        exercise_type=EXERCISE_MUSCLE_RELAXATION,
     )
 
     assert "The user just finished Muscle relaxation" in result
@@ -1620,7 +1616,7 @@ async def test_start_grounding_exercise_allows_yes_after_muscle_relaxation_offer
     """A bare yes should count after a muscle relaxation technique offer."""
 
     async def _fake_grounding_task(**kwargs):
-        assert kwargs["technique"] == "muscle relaxation"
+        assert kwargs["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
         return SimpleNamespace(
             exercise_type=EXERCISE_MUSCLE_RELAXATION,
             display_name="Muscle relaxation",
@@ -1648,7 +1644,7 @@ async def test_start_grounding_exercise_allows_yes_after_muscle_relaxation_offer
 
     result = await agent.start_grounding_exercise(
         context,
-        technique="muscle relaxation",
+        exercise_type=EXERCISE_MUSCLE_RELAXATION,
     )
 
     assert "The user just finished Muscle relaxation" in result

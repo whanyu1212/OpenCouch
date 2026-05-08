@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -44,22 +43,15 @@ async def run_streamed_response_style(
     *,
     response_style: str,
     system_prompt_builder: SystemPromptBuilder,
-    fallback_text: str,
-    logger: logging.Logger,
-    failure_message: str,
     stream_writer_factory: StreamWriterFactory = get_stream_writer,
 ) -> dict[str, Any]:
-    """Run a therapeutic response style with streaming and fallback.
+    """Run a therapeutic response style with streaming.
 
     Args:
         state: Current graph state for the turn.
         runtime: LangGraph runtime carrying configured dependencies.
         response_style: Therapeutic response style name.
         system_prompt_builder: Function that builds the system prompt.
-        fallback_text: Deterministic response used when no LLM is available
-            or the LLM call fails.
-        logger: Module logger for fallback warnings.
-        failure_message: Warning message emitted when the LLM path fails.
         stream_writer_factory: Factory that returns the current LangGraph
             stream writer.
 
@@ -74,9 +66,6 @@ async def run_streamed_response_style(
         llm_client=llm_client,
         response_style=response_style,
         system_prompt_builder=system_prompt_builder,
-        fallback_text=fallback_text,
-        logger=logger,
-        failure_message=failure_message,
         stream_writer_factory=stream_writer_factory,
     )
     return therapeutic_response_delta(
@@ -91,50 +80,43 @@ async def generate_streamed_therapeutic_text(
     llm_client: Any,
     response_style: str,
     system_prompt_builder: SystemPromptBuilder,
-    fallback_text: str,
-    logger: logging.Logger,
-    failure_message: str,
     step_directive: str | None = None,
     stream_writer_factory: StreamWriterFactory = get_stream_writer,
 ) -> str:
-    """Generate therapeutic response text with streaming and fallback.
+    """Generate therapeutic response text with streaming.
 
     Args:
         state: Current graph state for the turn.
-        llm_client: Response LLM client, if configured.
+        llm_client: Response LLM client.
         response_style: Therapeutic response style name.
         system_prompt_builder: Function that builds the system prompt.
-        fallback_text: Deterministic text used when no LLM is available
-            or the LLM call fails.
-        logger: Module logger for fallback warnings.
-        failure_message: Warning message emitted when the LLM path fails.
         step_directive: Optional guided-exercise directive to pass into the
             shared therapeutic response prompt.
         stream_writer_factory: Factory that returns the current LangGraph
             stream writer.
 
     Returns:
-        Generated response text, or ``fallback_text`` when streaming is
-        unavailable or fails.
+        Generated response text.
+
+    Raises:
+        RuntimeError: If no LLM client is available.
     """
 
-    response_text = fallback_text
-    if llm_client is not None:
-        try:
-            writer = stream_writer_factory()
-            chunks: list[str] = []
-            async for chunk in llm_client.generate_text_stream(
-                prompt=build_therapeutic_response_prompt(
-                    state,
-                    response_style=response_style,
-                    step_directive=step_directive,
-                ),
-                system_instruction=system_prompt_builder(state),
-            ):
-                chunks.append(chunk)
-                writer({"type": "chunk", "text": chunk})
-            response_text = "".join(chunks)
-        except Exception:
-            logger.warning(failure_message, exc_info=True)
+    if llm_client is None:
+        raise RuntimeError(
+            f"No LLM client available for {response_style} response generation."
+        )
 
-    return response_text
+    writer = stream_writer_factory()
+    chunks: list[str] = []
+    async for chunk in llm_client.generate_text_stream(
+        prompt=build_therapeutic_response_prompt(
+            state,
+            response_style=response_style,
+            step_directive=step_directive,
+        ),
+        system_instruction=system_prompt_builder(state),
+    ):
+        chunks.append(chunk)
+        writer({"type": "chunk", "text": chunk})
+    return "".join(chunks)

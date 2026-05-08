@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from agent.state import AgentState
-from agent.therapeutic.exercises.registry import get_exercise_steps
+from agent.therapeutic.exercises.registry import (
+    get_exercise_definition,
+    get_exercise_steps,
+)
 from agent.therapeutic.exercises.types import ExerciseStep
 
 
@@ -33,12 +36,15 @@ def _start_exercise_delta(
     """
 
     approach = state.get("therapeutic_approach")
+    definition = get_exercise_definition(exercise_type)
+    steps = definition.steps if definition is not None else ()
     return {
         "exercise_state": {
             "exercise_type": exercise_type,
             "exercise_step": 0,
+            "exercise_step_id": steps[0].id if steps else None,
+            "exercise_version": definition.version if definition is not None else None,
             "exercise_therapeutic_approach": approach,
-            "exercise_selection_options": None,
         },
     }
 
@@ -55,33 +61,38 @@ def _advance_step_delta(state: AgentState) -> dict[str, Any]:
 
     exercise_state = state.get("exercise_state", {})
     current = exercise_state.get("exercise_step") or 0
+    exercise_type = exercise_state.get("exercise_type")
+    next_index = current + 1
+    next_step = _get_current_step(exercise_type, next_index)
     return {
         "exercise_state": {
-            "exercise_step": current + 1,
+            "exercise_step": next_index,
+            "exercise_step_id": next_step.id if next_step is not None else None,
         },
     }
 
 
-def _clear_exercise_delta(state: AgentState) -> dict[str, Any]:
+def clear_exercise_delta(state: AgentState) -> dict[str, Any]:
     """Return the exercise-state delta that clears exercise state.
 
-    Used on both exit and natural completion. Setting all three fields
+    Used on both exit and natural completion. Setting all continuity fields
     to ``None`` is the marker for "no exercise running" that the
     dispatcher checks for.
 
     Args:
-        state: Current graph state.
+        state (AgentState): Current graph state.
 
     Returns:
-        State delta that clears active exercise fields.
+        dict[str, Any]: State delta that clears active exercise fields.
     """
 
     return {
         "exercise_state": {
             "exercise_type": None,
             "exercise_step": None,
+            "exercise_step_id": None,
+            "exercise_version": None,
             "exercise_therapeutic_approach": None,
-            "exercise_selection_options": None,
         },
     }
 

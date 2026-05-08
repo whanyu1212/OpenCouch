@@ -5,19 +5,26 @@ in-memory runtime (no SQLite on disk, no API keys needed). Each test
 gets a clean runtime so there's no state bleed between tests.
 
 The tests focus on the HTTP contract (status codes, response shapes,
-error handling) rather than the agent's therapeutic quality — that's
-what the eval harnesses are for. The API layer is a thin wrapper;
-these tests verify the wrapping is correct.
+error handling) rather than the agent's therapeutic quality. The API layer is a
+thin wrapper; these tests verify the wrapping is correct.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent.memory.models import ProceduralProfile, ProceduralRule
+from agent.memory.models import (
+    DispatchDecision,
+    ExtractionResult,
+    ProceduralExtractionResult,
+    ProceduralProfile,
+    ProceduralRule,
+    SummarizationResult,
+)
 from agent.memory.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
@@ -59,15 +66,110 @@ class _FakeResponseTierLLM(BaseLLMClient):
         raise AssertionError("structured generation should not be used in this test")
 
 
+class _FakeAPILLM(BaseLLMClient):
+    """LLM-shaped test double for API contract tests."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "api fake reply"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "api fake reply"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        schema_name = response_schema.__name__
+
+        if schema_name == "CrisisAssessmentSchema":
+            from agent.gates.safety.service import CrisisAssessmentSchema
+
+            return cast(
+                StructuredResponseT,
+                CrisisAssessmentSchema(
+                    level=0,
+                    confidence="high",
+                    reason="safe API contract test turn",
+                    needs_crisis_response=False,
+                    needs_clarification=False,
+                ),
+            )
+
+        if schema_name == "DispatchDecision":
+            return cast(
+                StructuredResponseT,
+                DispatchDecision(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    reasoning="ordinary API contract test turn",
+                    confidence="high",
+                ),
+            )
+
+        if schema_name == "MemoryControlDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action_type="none",
+                reasoning="ordinary API contract test turn",
+                confidence="high",
+            )
+
+        if schema_name == "GroundedLookupDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                should_lookup=False,
+                query=None,
+                reasoning="ordinary API contract test turn",
+                confidence="high",
+            )
+
+        if schema_name == "ExtractionResult":
+            return cast(
+                StructuredResponseT,
+                ExtractionResult(facts=[], reason="no API contract test facts"),
+            )
+
+        if schema_name == "ProceduralExtractionResult":
+            return cast(
+                StructuredResponseT,
+                ProceduralExtractionResult(
+                    rules=[],
+                    reason="no API contract test rules",
+                ),
+            )
+
+        if schema_name == "SummarizationResult":
+            return cast(
+                StructuredResponseT,
+                SummarizationResult(arc=None, reason="API contract test session"),
+            )
+
+        raise RuntimeError(f"_FakeAPILLM: unexpected schema {schema_name}")
+
+
 @pytest.fixture
 async def runtime():
     """Yield a fresh in-memory runtime for each test."""
 
+    llm = _FakeAPILLM()
     rt = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
         feedback_sqlite_path=":memory:",
+        default_llm_client=llm,
     )
     async with rt:
         yield rt
@@ -92,8 +194,9 @@ async def client(runtime):
     app.include_router(api_router, prefix="/api")
 
     # Override dependencies with test instances
+    llm = _FakeAPILLM()
     app.dependency_overrides[get_runtime] = lambda: runtime
-    app.dependency_overrides[get_llm_client] = lambda: None  # deterministic mode
+    app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_response_llm_clients] = lambda: {}
 
     async with AsyncClient(
@@ -200,8 +303,9 @@ class TestChat:
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
+        llm = _FakeAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
-        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {
             "quality": _FakeResponseTierLLM("quality-tier reply"),
         }
@@ -237,8 +341,9 @@ class TestChat:
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
+        llm = _FakeAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
-        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {
             "fast": _FakeResponseTierLLM("fast-tier reply"),
         }

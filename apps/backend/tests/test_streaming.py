@@ -33,6 +33,9 @@ These tests cover the new contract:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import cast
+
 import pytest
 
 from agent.models import (
@@ -43,9 +46,84 @@ from agent.models import (
     StreamEvent,
 )
 from agent.persistence import PersistentAgentRuntime
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+
+
+class _StreamingResponseLLM(BaseLLMClient):
+    """Response-only fake used by streaming tests."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "streamed response"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "streamed "
+        yield "response"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        schema_name = response_schema.__name__
+        if schema_name == "CrisisAssessmentSchema":
+            from agent.gates.safety.service import CrisisAssessmentSchema
+
+            return cast(
+                StructuredResponseT,
+                CrisisAssessmentSchema(
+                    level=0,
+                    confidence="high",
+                    reason="safe streaming test turn",
+                    needs_crisis_response=False,
+                    needs_clarification=False,
+                ),
+            )
+        if schema_name == "DispatchDecision":
+            from agent.memory.models import DispatchDecision
+
+            return cast(
+                StructuredResponseT,
+                DispatchDecision(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    reasoning="streaming test dispatch",
+                    confidence="high",
+                ),
+            )
+        if schema_name == "ExtractionResult":
+            from agent.memory.types.semantic import ExtractionResult
+
+            return cast(
+                StructuredResponseT,
+                ExtractionResult(facts=[], reason="streaming test extraction"),
+            )
+        if schema_name == "ProceduralExtractionResult":
+            from agent.memory.types.procedural import ProceduralExtractionResult
+
+            return cast(
+                StructuredResponseT,
+                ProceduralExtractionResult(
+                    rules=[],
+                    reason="streaming test procedural extraction",
+                ),
+            )
+        raise RuntimeError(f"streaming tests unexpected schema {schema_name}")
 
 
 async def _collect_stream(
@@ -68,7 +146,12 @@ async def _collect_stream(
     chunks: list[ChunkEvent] = []
     ready: ResponseReadyEvent | None = None
     done: DoneEvent | None = None
-    async for event in runtime.run_turn_stream(thread_id=thread_id, message=message):
+    async for event in runtime.run_turn_stream(
+        thread_id=thread_id,
+        message=message,
+        llm_client=_StreamingResponseLLM(),
+        response_llm_client=_StreamingResponseLLM(),
+    ):
         if isinstance(event, StatusEvent):
             statuses.append(event)
         elif isinstance(event, ChunkEvent):
@@ -132,10 +215,8 @@ class TestRunTurnStreamStages:
             "therapeutic",
             "finalize",
         ]
-        # In deterministic mode (no LLM client), no chunks are emitted —
-        # the response comes from the fallback template via DoneEvent only.
-        # When an LLM client is present, chunks stream during the
-        # therapeutic subgraph node and concatenate to the full response.
+        # Response chunks stream during the therapeutic subgraph node and
+        # concatenate to the full response.
 
     @pytest.mark.asyncio
     async def test_done_event_comes_last(self) -> None:
@@ -148,7 +229,10 @@ class TestRunTurnStreamStages:
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(
-                thread_id="t-stream-2", message="hello"
+                thread_id="t-stream-2",
+                message="hello",
+                llm_client=_StreamingResponseLLM(),
+                response_llm_client=_StreamingResponseLLM(),
             ):
                 events.append(event)
 
@@ -170,7 +254,10 @@ class TestRunTurnStreamStages:
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(
-                thread_id="t-stream-2b", message="hello"
+                thread_id="t-stream-2b",
+                message="hello",
+                llm_client=_StreamingResponseLLM(),
+                response_llm_client=_StreamingResponseLLM(),
             ):
                 events.append(event)
 
@@ -382,7 +469,10 @@ class TestRunTurnStreamParity:
             crisis_log_sqlite_path=":memory:",
         ) as runtime:
             monolithic = await runtime.run_turn(
-                thread_id="t-parity-mono", message="hello"
+                thread_id="t-parity-mono",
+                message="hello",
+                llm_client=_StreamingResponseLLM(),
+                response_llm_client=_StreamingResponseLLM(),
             )
             _, _, _, streamed = await _collect_stream(
                 runtime, thread_id="t-parity-stream", message="hello"

@@ -359,14 +359,10 @@ When adding a new node:
    appending exactly those new items.
 5. Keep routing decisions inside `Command`-returning nodes when the route and
    state update must stay atomic.
-6. Add or update eval cases for behavior changes, especially crisis routing,
-   therapeutic dispatch, guided-exercise continuity, and memory writes.
+6. Add or update behavioral tests for graph and state-contract changes.
 
 Common verification commands:
 
 ```bash
 uv run pytest apps/backend/tests -q
-uv run python eval/runners/exercise_selection_eval.py --mode deterministic
-uv run python eval/runners/exercise_flow_eval.py
-uv run python eval/runners/session_trajectory_eval.py --mode deterministic
 ```

@@ -276,9 +276,7 @@ class _GuidedExerciseLLM(BaseLLMClient):
             )
         if response_schema.__name__ == "ExerciseSelectionDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
-                selection_kind="selected",
                 exercise_type="self_compassion_break",
-                option_types=[],
                 reasoning="Self-critical language maps to self-compassion.",
                 confidence="high",
             )
@@ -291,6 +289,79 @@ class _GuidedExerciseLLM(BaseLLMClient):
                 confidence="high",
             ),
         )
+
+
+class _SupportiveLLM(BaseLLMClient):
+    """Fake LLM that keeps normal turns on the supportive route."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "fake supportive text"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "fake "
+        yield "supportive text"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        schema_name = response_schema.__name__
+        if schema_name == "CrisisAssessmentSchema":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                level=0,
+                confidence="high",
+                reason="safe reducer transcript test turn",
+                needs_crisis_response=False,
+                needs_clarification=False,
+            )
+        if schema_name == "DispatchDecision":
+            return typing.cast(
+                StructuredResponseT,
+                DispatchDecision(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    reasoning="normal supportive test turn",
+                    confidence="high",
+                ),
+            )
+        if schema_name == "ExtractionResult":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                facts=[],
+                reason="no semantic facts in reducer transcript test",
+            )
+        if schema_name == "ProceduralExtractionResult":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                rules=[],
+                reason="no procedural rules in reducer transcript test",
+            )
+        if schema_name == "MemoryControlDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action_type="none",
+                reasoning="ordinary supportive turn",
+                confidence="high",
+            )
+        if schema_name == "GroundedLookupDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                should_lookup=False,
+                query=None,
+                reasoning="ordinary supportive turn",
+                confidence="high",
+            )
+        raise RuntimeError(f"_SupportiveLLM unexpected schema {schema_name}")
 
 
 @pytest.mark.asyncio
@@ -330,14 +401,19 @@ async def test_multi_turn_transcript_accumulates_via_checkpointer() -> None:
     and checkpointer — not by manual reconstruction.
     """
 
+    llm = _SupportiveLLM()
     async with PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
     ) as runtime:
-        await runtime.run_turn(thread_id="t-accum", message="Turn 1")
-        await runtime.run_turn(thread_id="t-accum", message="Turn 2")
-        result = await runtime.run_turn(thread_id="t-accum", message="Turn 3")
+        await runtime.run_turn(thread_id="t-accum", message="Turn 1", llm_client=llm)
+        await runtime.run_turn(thread_id="t-accum", message="Turn 2", llm_client=llm)
+        result = await runtime.run_turn(
+            thread_id="t-accum",
+            message="Turn 3",
+            llm_client=llm,
+        )
 
     transcript = result.state.get("transcript", [])
     user_turns = [t for t in transcript if t.get("role") == "user"]
@@ -374,13 +450,19 @@ async def test_exercise_state_persists_across_turns() -> None:
     rather than overwriting it.
     """
 
+    supportive_llm = _SupportiveLLM()
+    guided_llm = _GuidedExerciseLLM()
     async with PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
     ) as runtime:
         # Turn 1: run a normal turn to create a checkpoint.
-        await runtime.run_turn(thread_id="t-exercise", message="Hello")
+        await runtime.run_turn(
+            thread_id="t-exercise",
+            message="Hello",
+            llm_client=supportive_llm,
+        )
 
         # Inject exercise state into the checkpoint by reading the
         # current state and updating exercise_state directly. This simulates
@@ -402,7 +484,9 @@ async def test_exercise_state_persists_across_turns() -> None:
 
         # Turn 2: run another turn — exercise state must survive.
         result2 = await runtime.run_turn(
-            thread_id="t-exercise", message="Continue the exercise"
+            thread_id="t-exercise",
+            message="Continue the exercise",
+            llm_client=guided_llm,
         )
         state2 = result2.state
 
@@ -482,12 +566,13 @@ async def test_self_compassion_exercise_continues_across_turns() -> None:
 async def test_stale_turn_scoped_keys_do_not_survive_next_turn() -> None:
     """Checkpointed turn-scoped keys without carry-forward should be cleared."""
 
+    llm = _SupportiveLLM()
     async with PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
     ) as runtime:
-        await runtime.run_turn(thread_id="t-routing", message="Hello")
+        await runtime.run_turn(thread_id="t-routing", message="Hello", llm_client=llm)
 
         state1 = await runtime.get_state("t-routing")
         assert state1 is not None
@@ -507,6 +592,7 @@ async def test_stale_turn_scoped_keys_do_not_survive_next_turn() -> None:
         result2 = await runtime.run_turn(
             thread_id="t-routing",
             message="I had a hard day at work.",
+            llm_client=llm,
         )
 
     assert result2.state.get("therapeutic_approach") == "none"
@@ -523,18 +609,27 @@ async def test_run_turn_does_not_deserialize_full_history_for_turn_count(
     not by calling ``get_history()`` and rebuilding the transcript.
     """
 
+    llm = _SupportiveLLM()
     async with PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
     ) as runtime:
-        await runtime.run_turn(thread_id="t-no-history", message="First")
+        await runtime.run_turn(
+            thread_id="t-no-history",
+            message="First",
+            llm_client=llm,
+        )
 
         async def _fail_get_history(thread_id: str) -> list[Any]:
             raise AssertionError(f"get_history should not be called for {thread_id}")
 
         monkeypatch.setattr(runtime, "get_history", _fail_get_history)
-        result = await runtime.run_turn(thread_id="t-no-history", message="Second")
+        result = await runtime.run_turn(
+            thread_id="t-no-history",
+            message="Second",
+            llm_client=llm,
+        )
 
     assert result.state["session_progress"]["turn_count"] == 2
 
@@ -545,12 +640,17 @@ async def test_run_turn_stream_does_not_deserialize_full_history_for_turn_count(
 ) -> None:
     """Streaming turns should use the same turn-count path as ``run_turn``."""
 
+    llm = _SupportiveLLM()
     async with PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
     ) as runtime:
-        await runtime.run_turn(thread_id="t-no-history-stream", message="First")
+        await runtime.run_turn(
+            thread_id="t-no-history-stream",
+            message="First",
+            llm_client=llm,
+        )
 
         async def _fail_get_history(thread_id: str) -> list[Any]:
             raise AssertionError(f"get_history should not be called for {thread_id}")
@@ -561,6 +661,7 @@ async def test_run_turn_stream_does_not_deserialize_full_history_for_turn_count(
         async for event in runtime.run_turn_stream(
             thread_id="t-no-history-stream",
             message="Second",
+            llm_client=llm,
         ):
             if hasattr(event, "output"):
                 done_event = event

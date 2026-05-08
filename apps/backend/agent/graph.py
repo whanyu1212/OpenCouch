@@ -314,8 +314,8 @@ async def run_agent(
     Args:
         agent_input: The user message and conversation context for this turn.
         llm_client: Optional provider client used for LLM-backed gate and
-            response nodes. When ``None`` the graph falls back to deterministic
-            behavior.
+            response nodes. Therapeutic response generation requires a client;
+            some control-plane gates still have deterministic no-client paths.
         memory_store: Optional unified memory store. Defaults to a fresh
             in-memory :class:`OpenCouchMemoryStore`.
         crisis_log_backend: Optional crisis log backend. Defaults to

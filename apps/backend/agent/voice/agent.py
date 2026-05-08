@@ -71,7 +71,7 @@ from agent.voice.session_data import (
     parse_optional_voice_memory_mode,
     parse_voice_memory_mode,
 )
-from agent.voice.tasks import GroundingTask
+from agent.voice.tasks import GroundingTask, supported_exercise_ids
 from agent.voice.tools import (
     answer_grounded_factual_lookup,
     cancel_memory_deletion,
@@ -1400,7 +1400,7 @@ class TherapeuticAgent(Agent):
     async def start_grounding_exercise(
         self,
         context: RunContext[SessionData],
-        technique: str,
+        exercise_type: str,
     ) -> str:
         """Start a guided grounding, breathing, or relaxation exercise.
 
@@ -1420,17 +1420,22 @@ class TherapeuticAgent(Agent):
         reflect, validate, and ask permission before shifting into a
         structured exercise.
 
-        Prefer a specific technique label when the user names one.
-        If they are asking again in the same session without naming a
-        specific method, vary the exercise instead of repeating the
-        exact same default.
+        Pass the exact supported exercise id, not free text. Supported
+        voice exercise ids include:
+        ``grounding_5_4_3_2_1``, ``grounding_box_breathing``,
+        ``grounding_stop_technique``, ``grounding_muscle_relaxation``,
+        ``thought_work_continuum``, ``behavioral_activation_tiny_action``,
+        ``self_compassion_break``, ``emotion_regulation_improve``,
+        ``emotion_regulation_gratitude``, and ``defusion_values_compass``.
+
+        If they are asking again in the same session without naming a specific
+        method, choose a different supported exercise id yourself instead of
+        repeating the exact same default.
 
         Args:
             context (RunContext[SessionData]): LiveKit run context with
                 per-session state.
-            technique (str): The exercise the user explicitly asked for
-                or agreed to, for example "breathing", "grounding",
-                "body scan", or "muscle relaxation".
+            exercise_type (str): Exact supported exercise id to start.
 
         Returns:
             str: A short handoff summary telling the model to check in
@@ -1448,6 +1453,20 @@ class TherapeuticAgent(Agent):
                 "permission first."
             )
 
+        supported_ids = supported_exercise_ids(context.userdata.last_input_modality)
+        if exercise_type.strip() not in supported_ids:
+            supported = ", ".join(supported_ids)
+            logger.warning(
+                "TherapeuticAgent: unsupported exercise_type=%s modality=%s",
+                exercise_type,
+                context.userdata.last_input_modality,
+            )
+            return (
+                "Do not start a structured exercise yet. The exercise_type "
+                f"{exercise_type!r} is not supported for this modality. Choose one "
+                f"of these supported exercise_type ids and call the tool again "
+                f"only if the user has agreed: {supported}."
+            )
         await emit_voice_activity(
             context,
             activity="exercise",
@@ -1456,9 +1475,8 @@ class TherapeuticAgent(Agent):
             detail="A guided exercise is in progress.",
         )
         result = await GroundingTask(
-            technique=technique,
+            exercise_type=exercise_type,
             chat_ctx=_copy_handoff_chat_ctx(self.chat_ctx),
-            recent_exercise_types=tuple(context.userdata.recent_exercise_types),
             input_modality=context.userdata.last_input_modality,
         )
         await emit_voice_activity(

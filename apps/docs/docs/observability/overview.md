@@ -1,13 +1,13 @@
 ---
-title: Tracing & Evals
+title: Tracing
 sidebar_position: 1
 ---
 
-# Eval-driven development
+# Trace-driven development
 
-OpenCouch uses two complementary surfaces for eval-driven development:
+OpenCouch uses two complementary surfaces for trace-driven development:
 
-1. **Opik** for primary external trace-level observability, run search, and evaluation review.
+1. **Opik** for primary external trace-level observability and run search.
 2. **CLI inspection commands + live status** for local visibility into execution, state, and memory.
 
 LangSmith remains supported as an optional secondary LangChain tracing
@@ -67,14 +67,13 @@ OpenCouch, Opik is the primary external surface for:
 
 - inspecting graph execution paths
 - filtering runs by thread and runtime metadata
-- reviewing failures from local eval harnesses
+- reviewing failures from tests and manual trace runs
 - comparing behavior across prompt, model, or routing changes
 
 OpenCouch also attaches runtime metadata such as `thread_id`, `channel`, `memory_mode`, `streaming`, and `user_scope` to text runs to make traces easier to search.
 
-Opik complements the local CLI inspection surfaces below; it does not
-replace the project's deterministic eval runners or local debugging
-commands.
+Opik complements the local CLI inspection surfaces below; it does not replace
+backend tests or local debugging commands.
 
 Enable Opik by setting:
 

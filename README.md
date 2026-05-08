@@ -284,7 +284,7 @@ flowchart TD
     IN(["User message / transcript"]):::inputNode
 
     subgraph GATE ["Safety Gate"]
-        CG{"crisis_gate<br/>LLM + regex fallback"}:::gateNode
+        CG{"crisis_gate<br/>rules + LLM classifier"}:::gateNode
     end
 
     subgraph SAFE ["Therapeutic Branch"]
@@ -302,11 +302,13 @@ flowchart TD
 
     subgraph THERAPY ["Therapeutic Subgraph"]
         direction TB
-        TD{"therapeutic_dispatch<br/>style + exercise routing"}:::safeNode
-        TR[["therapeutic_response<br/>supportive response styles"]]:::safeNode
-        GE[["guided_exercise_response<br/>state-tracked exercises"]]:::safeNode
-        TD ==>|support| TR
-        TD ==>|exercise| GE
+        TD{"therapeutic_dispatch<br/>LLM route plan + continuity"}:::safeNode
+        TR[["therapeutic_response<br/>shared response node"]]:::safeNode
+        GE[["guided_exercise_response<br/>LangGraph adapter"]]:::safeNode
+        ER[["ExerciseRunner service<br/>selection • step state • deltas"]]:::safeNode
+        TD ==>|response style| TR
+        TD ==>|guided exercise| GE
+        GE -.-> ER
     end
 
     subgraph RISK ["Crisis Branch"]
@@ -319,11 +321,11 @@ flowchart TD
 
     FT{{"finalize_turn<br/>checkpoint reply • set route"}}:::sysNode
 
-    subgraph POST ["Post-response Memory Side Effects"]
+    subgraph POST ["Runtime Memory Side Effects (outside LangGraph)"]
         direction LR
-        MX["memory_extraction<br/>parallel terminal side effects"]:::sysNode
-        EF["extract_facts<br/>+ write_policy: commit • hold • drop"]:::sysNode
-        EP["extract_procedural<br/>+ write_policy: commit • hold • drop"]:::sysNode
+        MX["TurnExtractionCoordinator<br/>background after graph END"]:::sysNode
+        EF["extract_semantic_facts<br/>write policy: commit • hold • drop"]:::sysNode
+        EP["extract_procedural_rules<br/>write policy: commit • hold • drop"]:::sysNode
         SB[("session buffer<br/>held semantic • procedural")]:::sysNode
         MX -.-> EF
         MX -.-> EP
@@ -357,7 +359,7 @@ flowchart TD
     TR ==> FT
     GE ==> FT
     CL -.-> FT
-    FT -.-> MX
+    FT -.->|runtime schedules| MX
     EF -.->|immediate writes| DB
     EP -.->|immediate writes| DB
     SB -.->|held candidates| CM
@@ -391,7 +393,7 @@ OpenCouch/
 │   │   │   ├── nodes/          # Individual graph nodes
 │   │   │   ├── memory/         # Memory retrieval, deduplication, embeddings
 │   │   │   └── therapeutic/    # Therapeutic subgraph, modes, prompt logic
-│   │   ├── services/llm/       # LLM adapters (Gemini, OpenAI, etc.)
+│   │   ├── llm/                # LLM adapters (Gemini, OpenAI, etc.)
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── voice/              # LiveKit voice worker + direct Realtime harness
 │   │   ├── channels/           # Telegram gateway and channel adapters
