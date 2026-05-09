@@ -32,9 +32,9 @@ Evaluators should still run hard checks first for state machines, routing,
 schema contracts, and invariants. Use LLM judges for qualitative questions such
 as pacing, coherence, adaptation, and therapeutic usefulness.
 
-## Therapeutic subgraph
+## Evaluators
 
-Therapeutic evals are split by purpose:
+Evals are split by purpose:
 
 - `therapeutic_contract_eval.py`: small CI-safe checks for graph boundary,
   routing contract, state transitions, and expected hard failures.
@@ -47,6 +47,19 @@ Therapeutic evals are split by purpose:
 - `therapeutic_exercise_trajectory_eval.py`: multi-turn guided-exercise
   trajectory checks. It always applies hard state/progression checks and can
   add an LLM judge with `--judge-mode live`.
+- `crisis_topology_eval.py`: CI-safe parent-graph checks for the LLM-only
+  crisis gate, crisis/non-crisis branch isolation, and visible failure when the
+  classifier LLM is unavailable or fails.
+- `crisis_node_eval.py`: standalone crisis-node contract checks for crisis
+  gate routing, resource lookup state, response quality, and full crisis-log
+  payloads with mocked input state.
+- `crisis_classifier_quality_eval.py`: direct `CrisisRiskService` classifier
+  checks. Defaults to scripted mode; `--mode live` evaluates the configured
+  control model on level 0/1/2/3 and edge-case safety cases.
+- `crisis_branch_quality_eval.py`: full crisis-branch response-quality checks
+  with controlled classifier verdicts and controlled resource lookup results.
+  `--mode live` uses the configured model for crisis response text, and
+  `--judge-mode live` adds an LLM judge.
 - `tool_usage_eval.py`: parent-graph checks for turn-level dispatch and
   grounded-search tool invocation. It verifies that factual lookup,
   memory-control, therapeutic, and crisis-resource routes call only the
@@ -60,6 +73,11 @@ apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_behavior_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_exercise_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.crisis_node_eval
+apps/backend/.venv/bin/python -m eval.runners.crisis_topology_eval
+apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval
+apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval --dataset eval/datasets/crisis/classifier_ambiguity_v1.json
+apps/backend/.venv/bin/python -m eval.runners.crisis_branch_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.tool_usage_eval
 apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
 ```
@@ -72,7 +90,8 @@ Useful flags:
 - `--dataset eval/datasets/therapeutic/contract_v1.json`: override the dataset.
 - `--mode live`: run behavior or quality cases with configured provider-backed
   LLM clients.
-- `--judge-mode live`: run exercise trajectory or grounded-tool LLM judges.
+- `--judge-mode live`: run exercise trajectory, crisis node, crisis branch, or
+  grounded-tool LLM judges.
 
 Current coverage:
 
@@ -86,6 +105,19 @@ Current coverage:
 - active exercise clearing when dispatch leaves the exercise flow
 - expected hard failures when the control LLM is missing or returns an
   unavailable exercise
+- LLM-only crisis-gate topology, including no deterministic fallback on missing
+  or failing classifier LLM
+- crisis classifier quality for ordinary distress, ambiguous distress, explicit
+  ideation, imminent risk, third-party crisis text, post-safety denial,
+  history-dependent references, and prompt-injection attempts
+- crisis classifier ambiguity boundaries for false-positive idioms, passive
+  death wishes, intrusive thoughts, sarcasm, safety denial, and context-dependent
+  references
+- full crisis-branch response quality across found resources, missing location,
+  location refusal, no verified lookup results, imminent means, and ideation
+  without a stated plan
+- standalone crisis node contracts for crisis-gate routing, resource lookup
+  state, response quality, response-LLM selection, and audit-log payloads
 - broader scripted behavior cases for exercise selection and state changes
 - hard response-quality checks for concise, concrete, non-menu output
 - multi-turn exercise trajectories with optional LLM-as-judge scoring

@@ -176,7 +176,7 @@ def test_crisis_gate_build_delta_does_not_spread_diagnostics() -> None:
     delta = _build_crisis_delta(
         CrisisAssessment(),
         override_kind="none",
-        classifier_path="deterministic",
+        classifier_path="llm_primary",
         llm_failure_occurred=False,
         duration_ms=5.0,
     )

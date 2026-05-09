@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -97,6 +98,8 @@ class _FakeDispatchLLM(BaseLLMClient):
         memory_action_type: str | None = None,
         lookup_query: str | None = None,
         step_state: str = "hold",
+        crisis_level: int = 0,
+        stream_text: str = "unused",
     ) -> None:
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
@@ -104,6 +107,8 @@ class _FakeDispatchLLM(BaseLLMClient):
         self.memory_action_type = memory_action_type
         self.lookup_query = lookup_query
         self.step_state = step_state
+        self.crisis_level = crisis_level
+        self.stream_text = stream_text
 
     async def generate_text(
         self,
@@ -112,7 +117,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         system_instruction: str | None = None,
         use_search: bool = False,
     ) -> str:
-        return "unused"
+        return self.stream_text
 
     async def generate_text_stream(
         self,
@@ -120,7 +125,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         prompt: str,
         system_instruction: str | None = None,
     ) -> AsyncIterator[str]:
-        yield "unused"
+        yield self.stream_text
 
     async def generate_structured(
         self,
@@ -129,6 +134,14 @@ class _FakeDispatchLLM(BaseLLMClient):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
+        if response_schema.__name__ == "CrisisAssessmentSchema":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                level=self.crisis_level,
+                confidence="high",
+                reason="contract test crisis assessment",
+                needs_crisis_response=self.crisis_level >= 2,
+                needs_clarification=self.crisis_level == 1,
+            )
         if response_schema.__name__ == "ExerciseSelectionDecision":
             return cast(
                 StructuredResponseT,
@@ -249,7 +262,16 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
 
     command = await run_crisis_gate_node(
         _build_state("I want to kill myself tonight."),
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    crisis_level=2,
+                )
+            ),
+        ),
     )
 
     assert command.goto == "crisis_resource_lookup_node"
@@ -260,7 +282,6 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
             "route",
             "crisis_audit",
             "diagnostics",
-            "response_style",
         },
     )
 
@@ -271,7 +292,16 @@ async def test_crisis_gate_therapeutic_path_channel_contract() -> None:
 
     command = await run_crisis_gate_node(
         _build_state("I had a hard day at work."),
-        cast(Any, _FakeRuntime(llm_client=None)),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    crisis_level=0,
+                )
+            ),
+        ),
     )
 
     assert command.goto == "turn_dispatch_node"
@@ -419,10 +449,26 @@ async def test_crisis_resource_lookup_channel_contract() -> None:
         needs_crisis_response=True,
     )
 
-    delta = await run_crisis_resource_lookup_node(
-        state,
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
+    async def _lookup(
+        state: AgentState,
+        *,
+        llm_client: BaseLLMClient,
+    ) -> tuple[str, list[dict[str, str]], str]:
+        return "", [], "no_location"
+
+    with patch("agent.nodes.crisis_resource_lookup.find_crisis_resources", _lookup):
+        delta = await run_crisis_resource_lookup_node(
+            state,
+            cast(
+                Any,
+                _FakeRuntime(
+                    llm_client=_FakeDispatchLLM(
+                        response_style="supportive",
+                        therapeutic_approach="pfa",
+                    )
+                ),
+            ),
+        )
 
     _assert_exact_keys(
         delta,
@@ -445,10 +491,22 @@ async def test_crisis_response_channel_contract() -> None:
         needs_crisis_response=True,
     )
 
-    delta = await run_crisis_response_node(
-        state,
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
+    with patch(
+        "agent.nodes.crisis_response.get_stream_writer",
+        return_value=lambda _: None,
+    ):
+        delta = await run_crisis_response_node(
+            state,
+            cast(
+                Any,
+                _FakeRuntime(
+                    llm_client=_FakeDispatchLLM(
+                        response_style="supportive",
+                        therapeutic_approach="pfa",
+                    )
+                ),
+            ),
+        )
 
     _assert_exact_keys(
         delta,
@@ -461,8 +519,8 @@ async def test_crisis_response_channel_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_response_fallback_respects_location_refusal() -> None:
-    """Fallback crisis text should not ask again after location refusal."""
+async def test_crisis_response_requires_llm_client() -> None:
+    """Crisis response should fail loudly when no response LLM is configured."""
 
     state = _build_state("I need help but I won't share where I am.")
     state["crisis"] = CrisisAssessment(
@@ -472,13 +530,48 @@ async def test_crisis_response_fallback_respects_location_refusal() -> None:
     )
     state["resource_lookup_status"] = "location_refused"
 
-    delta = await run_crisis_response_node(
-        state,
-        cast(Any, _FakeRuntime(llm_client=None)),
+    with pytest.raises(RuntimeError, match="requires an LLM client"):
+        await run_crisis_response_node(
+            state,
+            cast(Any, _FakeRuntime(llm_client=None)),
+        )
+
+
+@pytest.mark.asyncio
+async def test_crisis_response_prefers_response_llm() -> None:
+    """Crisis response should use the response writer when one is configured."""
+
+    state = _build_state("I need help right now.")
+    state["crisis"] = CrisisAssessment(
+        level=3,
+        reason="imminent_risk",
+        needs_crisis_response=True,
     )
 
-    assert "share your country or region" not in delta["response_text"]
-    assert "local emergency services" in delta["response_text"]
+    with patch(
+        "agent.nodes.crisis_response.get_stream_writer",
+        return_value=lambda _: None,
+    ):
+        delta = await run_crisis_response_node(
+            state,
+            cast(
+                Any,
+                _FakeRuntime(
+                    llm_client=_FakeDispatchLLM(
+                        response_style="supportive",
+                        therapeutic_approach="pfa",
+                        stream_text="control response",
+                    ),
+                    response_llm=_FakeDispatchLLM(
+                        response_style="supportive",
+                        therapeutic_approach="pfa",
+                        stream_text="writer response",
+                    ),
+                ),
+            ),
+        )
+
+    assert delta["response_text"] == "writer response"
 
 
 @pytest.mark.asyncio
@@ -493,7 +586,7 @@ async def test_crisis_log_channel_contract() -> None:
     )
     state["crisis_audit"] = {
         "crisis_override_kind": "none",
-        "crisis_classifier_path": "deterministic",
+        "crisis_classifier_path": "llm_primary",
         "crisis_llm_failure_occurred": False,
     }
 

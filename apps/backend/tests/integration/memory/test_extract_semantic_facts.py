@@ -145,9 +145,11 @@ class _FakeExtractionLLM(BaseLLMClient):
         *,
         extraction_result: ExtractionResult,
         raise_on_extraction: bool = False,
+        crisis_level: int = 0,
     ) -> None:
         self.extraction_result = extraction_result
         self.raise_on_extraction = raise_on_extraction
+        self.crisis_level = crisis_level
         self.extraction_calls = 0
         self.crisis_calls = 0
         self.text_calls = 0
@@ -185,20 +187,25 @@ class _FakeExtractionLLM(BaseLLMClient):
             return cast(StructuredResponseT, self.extraction_result)
 
         if response_schema.__name__ == "CrisisAssessmentSchema":
-            # Return a safe (level 0) crisis assessment so non-crisis
-            # messages don't route to the crisis branch during these tests.
             self.crisis_calls += 1
             from agent.gates.safety.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
                 CrisisAssessmentSchema(
-                    level=0,
+                    level=self.crisis_level,
                     confidence="high",
-                    reason="safe — fake LLM for extraction tests",
-                    needs_crisis_response=False,
-                    needs_clarification=False,
+                    reason="fake crisis assessment for extraction tests",
+                    needs_crisis_response=self.crisis_level >= 2,
+                    needs_clarification=self.crisis_level == 1,
                 ),
+            )
+
+        if response_schema.__name__ == "CrisisLocationDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                status="not_provided",
+                location="",
+                reasoning="No user location in this test fixture.",
             )
 
         if response_schema.__name__ == "DispatchDecision":
@@ -944,14 +951,9 @@ class TestExtractFactsEndToEnd:
     async def test_extraction_on_crisis_path_does_not_run(self) -> None:
         """Crisis-branch turns should NOT run extraction.
 
-        The crisis branch has its own post-response nodes (crisis_log_node
-        + extract_semantic_facts_node per the Stage E topology), so the
-        extraction node DOES run after crisis_response. But with a fake
-        LLM whose extraction returns empty, nothing gets written. This
-        test documents the current topology — if the extraction node is
-        ever removed from the crisis branch, this test still passes
-        because it only asserts record_count == 0, not that the node
-        wasn't called.
+        The runtime still invokes the extractor services after graph
+        finalization, but they should short-circuit before calling the
+        extraction LLM when the graph route is crisis.
         """
 
         store = OpenCouchMemoryStore()
@@ -960,7 +962,8 @@ class TestExtractFactsEndToEnd:
             extraction_result=ExtractionResult(
                 facts=[],  # empty — no extraction on crisis turns in this test
                 reason="crisis turn — extraction returns empty",
-            )
+            ),
+            crisis_level=3,
         )
 
         await run_agent(
@@ -974,7 +977,8 @@ class TestExtractFactsEndToEnd:
             memory_mode=MemoryMode.LOCAL,
         )
 
-        # Extraction node ran but returned empty → no writes
+        # Extraction short-circuited before the extraction LLM call.
+        assert fake.extraction_calls == 0
         assert await store.arecord_count() == 0
         # Crisis log DID get written
         assert await crisis_log.arecord_count() == 1

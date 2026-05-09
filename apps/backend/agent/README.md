@@ -85,11 +85,9 @@ Reducer-backed channels:
 memory retrieval so a safety-critical turn is not delayed by optional memory
 work.
 
-Classification order:
-
-1. Deterministic hard overrides from `agent.gates.safety.crisis_rules`.
-2. LLM structured classifier when `llm_client` is available.
-3. Deterministic fallback when no LLM is available or the LLM call fails.
+Classification is LLM-only. `CrisisRiskService` requires an `llm_client`,
+calls the structured crisis classifier, and lets provider failures surface to
+LangGraph's node retry policy instead of falling back to local heuristics.
 
 The crisis truth table is enforced after classification:
 
@@ -247,12 +245,9 @@ The subgraph has explicit input and output schemas. This is intentional:
 
 ## Therapeutic Routing
 
-The dispatcher uses an LLM-primary strategy:
-
-1. If an exercise is active and the user gives an explicit deterministic exit
-   signal, clear `exercise_state` and route to supportive.
-2. Otherwise, call the structured LLM dispatcher when available.
-3. If the LLM is unavailable or fails, use narrow regex fallback heuristics.
+The dispatcher uses structured LLM routing. Active exercise continuity is passed
+into the routing prompt, and provider failures are allowed to surface to the
+graph retry policy instead of silently switching to regex heuristics.
 
 Response styles:
 

@@ -30,12 +30,12 @@ CrisisResourceLookupStatus = Literal[
     "found",
     "no_location",
     "location_refused",
-    "search_failed",
     "no_verified_results",
 ]
 LookupPreflightStatus = Literal["search", "no_verified_answer"]
 LookupSourceQuality = Literal["official", "reputable", "weak", "none"]
 CrisisLocationStatus = Literal["provided", "not_provided", "refused"]
+CrisisResourceSearchStatus = Literal["found", "no_verified_results"]
 
 
 class LookupPreflightDecision(BaseModel):
@@ -93,12 +93,39 @@ class CrisisLocationDecision(BaseModel):
     reasoning: str = Field(description="Brief explanation of the decision.")
 
 
+class CrisisResource(BaseModel):
+    """One verified crisis resource returned by search-grounded lookup."""
+
+    name: str = Field(description="Official or verified resource name.")
+    phone: str = Field(
+        description=(
+            "Specific phone, text, or contact detail. Do not use generic "
+            "phrases such as local emergency services."
+        )
+    )
+    url: str = Field(description="Official source URL for the resource.")
+    region: str = Field(description="Country, city, or region this resource serves.")
+
+
+class CrisisResourceLookupResult(BaseModel):
+    """Structured result from search-grounded crisis-resource lookup."""
+
+    status: CrisisResourceSearchStatus = Field(
+        description=(
+            "found when verified actionable crisis resources were found; "
+            "no_verified_results otherwise."
+        )
+    )
+    resources: list[CrisisResource] = Field(
+        default_factory=list,
+        description=("Verified actionable resources. Empty unless status is found."),
+    )
+    reasoning: str = Field(description="Brief explanation of the lookup result.")
+
+
 # Maximum number of resources we keep from a single search response. Caps both
 # prompt size for downstream nodes and the surface area of any noisy results.
 _MAX_RESOURCES = 5
-# Characters stripped from the start/end of each parsed line — covers common
-# bullet styles LLMs emit when listing items.
-_BULLET_CHARS = " -•*"
 _EMPTY_LOCATION_MARKERS = {
     "empty string",
     "n/a",
@@ -109,22 +136,6 @@ _EMPTY_LOCATION_MARKERS = {
     "not specified",
     "unknown",
 }
-_NON_ACTIONABLE_CONTACT_MARKERS = (
-    "call local emergency services",
-    "call your local emergency",
-    "emergency services only",
-    "local emergency services",
-    "n/a",
-    "no number",
-    "none",
-    "not available",
-    "not found",
-    "not listed",
-    "not provided",
-    "see website",
-    "unknown",
-    "varies by location",
-)
 _FACTUAL_PREFLIGHT_SYSTEM = (
     "You are a strict factual lookup preflight classifier for OpenCouch, a "
     "mental-health support agent. Return only the structured schema. Decide "
@@ -176,8 +187,9 @@ _LOCATION_EXTRACTION_SYSTEM = (
 _RESOURCE_LOOKUP_SYSTEM = (
     "You are a factual assistant helping to find official crisis support resources. "
     "Use your web search capability to look up verified hotlines and services. "
-    "Respond only with the search-grounded results — never invent phone numbers. "
-    "If you cannot find verified results, say so clearly."
+    "Return only the structured schema. Never invent phone numbers, names, URLs, "
+    "or coverage regions. If you cannot find verified actionable results, return "
+    "status='no_verified_results' with an empty resources list."
 )
 
 
@@ -261,8 +273,8 @@ async def find_crisis_resources(
 
     Returns:
         A ``(location, resources, status)`` tuple. ``status`` tells callers
-        whether lookup succeeded, lacked a user-stated location, failed during
-        search, or produced no verified actionable resources.
+        whether lookup succeeded, lacked a user-stated location, or produced no
+        verified actionable resources.
     """
     location, location_status = await _extract_location(state, llm_client=llm_client)
     if location_status == "refused":
@@ -423,18 +435,11 @@ async def _extract_location(
         f"Recent conversation:\n{history_text}\n\n"
         f"Current user message:\nuser: {message}"
     )
-    try:
-        decision = await llm_client.generate_structured(
-            prompt=prompt,
-            response_schema=CrisisLocationDecision,
-            system_instruction=_LOCATION_EXTRACTION_SYSTEM,
-        )
-    except Exception:
-        logger.warning(
-            "Location extraction failed; proceeding without location.",
-            exc_info=True,
-        )
-        return "", "not_provided"
+    decision = await llm_client.generate_structured(
+        prompt=prompt,
+        response_schema=CrisisLocationDecision,
+        system_instruction=_LOCATION_EXTRACTION_SYSTEM,
+    )
 
     if decision.status != "provided":
         return "", decision.status
@@ -457,26 +462,25 @@ async def _lookup_resources(
     """
 
     prompt = (
-        f"Find official, verified 24/7 mental health crisis hotlines and emergency "
-        f"services for someone in {location}. "
-        "List each resource as: Name | Phone | Website. "
-        "Only include resources you can verify from official government or recognised "
-        "charity sources. Do not invent or guess phone numbers."
+        "Find official, verified 24/7 mental health crisis hotlines and "
+        f"emergency mental-health support services for someone in {location}.\n\n"
+        "Return status='found' only if you can verify at least one actionable "
+        "resource from official government, health-system, or recognised charity "
+        "sources. Each resource must include a specific phone/text contact and "
+        "an official URL. Do not include generic local emergency services as a "
+        "resource row. Do not invent or guess phone numbers. Return "
+        "status='no_verified_results' with resources=[] if verified actionable "
+        "resources are unavailable."
     )
-    try:
-        raw = await llm_client.generate_text(
-            prompt=prompt,
-            system_instruction=_RESOURCE_LOOKUP_SYSTEM,
-            use_search=True,
-        )
-    except Exception:
-        logger.warning(
-            "Crisis resource search failed for location=%r; using empty fallback.",
-            location,
-            exc_info=True,
-        )
-        return [], "search_failed"
-    resources = _parse_resource_lines(raw, location=location)
+    result = await llm_client.generate_structured(
+        prompt=prompt,
+        response_schema=CrisisResourceLookupResult,
+        system_instruction=_RESOURCE_LOOKUP_SYSTEM,
+        use_search=True,
+    )
+    if result.status == "no_verified_results":
+        return [], "no_verified_results"
+    resources = _normalize_crisis_resources(result.resources, location=location)
     if not resources:
         return [], "no_verified_results"
     return resources, "found"
@@ -503,196 +507,37 @@ def _normalize_extracted_location(raw: str) -> str:
     return value
 
 
-def _clean_field(raw_field: str) -> str:
-    """Normalize one pipe-separated field from the LLM's resource output.
-
-    Handles the formatting variations we see in the wild across providers:
-
-    - Markdown bold (``**Samaritans**`` → ``Samaritans``). OpenAI's
-      web_search tool emits markdown-formatted bold around field
-      values. Phone fields sometimes contain multiple ``**``-wrapped
-      numbers (``**0120-A**; **050-B** for IP phones``), so we strip
-      ALL ``**`` sequences from the field rather than just the ends.
-      There is no legitimate reason to keep markdown bold in a
-      structured phone/name/url field.
-    - Leading/trailing whitespace.
-
-    Returns the cleaned field; empty string if the field was empty or
-    contained only formatting characters.
+def _normalize_crisis_resources(
+    resource_rows: list[CrisisResource],
+    *,
+    location: str,
+) -> list[dict[str, str]]:
+    """Normalize structured crisis-resource rows for graph state.
 
     Args:
-        raw_field: Raw pipe-separated field from the provider output.
+        resource_rows: Structured rows returned by the provider.
+        location: User-stated location attached when a row omits region.
 
     Returns:
-        Cleaned field text.
+        Graph-state resource rows capped at ``_MAX_RESOURCES``.
     """
 
-    # Strip markdown bold markers anywhere in the field, then collapse
-    # any whitespace runs created by the removal.
-    value = raw_field.replace("**", "")
-    return " ".join(value.split())
-
-
-def _clean_url_field(raw_field: str) -> str:
-    """Normalize the URL field, stripping OpenAI-style citation suffixes.
-
-    OpenAI's web_search tool appends a citation tag after the URL in
-    the form ``URL ([source.domain](url?utm_source=openai))``. The
-    extra syntax confuses downstream URL rendering without adding
-    information the CLI can use (the real URL is already the leading
-    value). Strip everything from the first space-then-paren onward.
-
-    Also handles markdown bold the same way as :func:`_clean_field`.
-
-    Ordering note: the citation tail is stripped FIRST, then the
-    markdown-bold cleanup runs. Reversing the order leaves inner
-    ``**`` sequences behind when the URL is wrapped in bold
-    (``**URL** ([citation]...)``), because the leading ``**`` gets
-    stripped but the trailing ``**`` is no longer at the end of the
-    string after the citation is cut.
-
-    Args:
-        raw_field: Raw URL field from the provider output.
-
-    Returns:
-        URL text with markdown and citation suffixes removed.
-    """
-
-    # Step 1: strip the citation tail. Look for " (" — a space then
-    # an open paren — which is the OpenAI citation-prefix boundary.
-    # Non-OpenAI output without this pattern is unaffected because
-    # ``find`` returns -1.
-    value = raw_field.strip()
-    citation_start = value.find(" (")
-    if citation_start >= 0:
-        value = value[:citation_start].rstrip()
-
-    markdown_url = _extract_markdown_link_url(value)
-    if markdown_url:
-        return markdown_url
-
-    # Step 2: strip markdown-bold markers from both ends of the
-    # now-citation-free value.
-    cleaned = _clean_field(value)
-    markdown_url = _extract_markdown_link_url(cleaned)
-    if markdown_url:
-        return markdown_url
-    if cleaned and not cleaned.startswith(("http://", "https://")):
-        if "." in cleaned and not any(char.isspace() for char in cleaned):
-            return f"https://{cleaned.lstrip('/')}"
-    return cleaned
-
-
-def _extract_markdown_link_url(value: str) -> str:
-    """Extract the URL from a markdown link-shaped field.
-
-    Args:
-        value: Candidate URL field, possibly ``[label](url)`` or wrapped in
-            parentheses.
-
-    Returns:
-        Extracted HTTP URL, or ``""`` when the field is not a markdown link.
-    """
-
-    candidate = value.strip()
-    if candidate.startswith("(") and candidate.endswith(")"):
-        candidate = candidate[1:-1].strip()
-    marker = "]("
-    marker_index = candidate.find(marker)
-    if marker_index < 0:
-        return ""
-    url_start = marker_index + len(marker)
-    url_end = candidate.find(")", url_start)
-    if url_end < 0:
-        return ""
-    url = candidate[url_start:url_end].strip()
-    if url.startswith(("http://", "https://")):
-        return url
-    return ""
-
-
-def _is_actionable_contact_field(phone: str) -> bool:
-    """Return whether a phone/text field is actionable enough to display.
-
-    Args:
-        phone: The normalized phone/contact field from a resource row.
-
-    Returns:
-        ``True`` when the field looks like a specific phone/text contact,
-        otherwise ``False`` for placeholders such as ``N/A`` or ``see website``.
-    """
-
-    phone_lower = phone.lower().strip()
-    if not phone_lower:
-        return False
-    if phone_lower in {"phone", "---", "number"}:
-        return False
-    if any(marker in phone_lower for marker in _NON_ACTIONABLE_CONTACT_MARKERS):
-        return False
-    if "not verified" in phone_lower or "no phone" in phone_lower:
-        return False
-    return any(char.isdigit() for char in phone_lower)
-
-
-def _parse_resource_lines(raw: str, *, location: str) -> list[dict[str, str]]:
-    """Parse ``Name | Phone | Website`` lines into structured resource dicts.
-
-    Lines that don't contain a ``|`` separator or have fewer than two
-    fields are silently dropped. Caps results at ``_MAX_RESOURCES``.
-
-    Handles two LLM output formats:
-    - Gemini's search-grounded output (plain pipe-separated lines)
-    - OpenAI's search-grounded output (markdown-bold fields with
-      citation suffixes, e.g., ``**Name** | **Phone** |
-      **URL** ([source.domain](url?utm_source=openai))``)
-
-    Both formats parse to the same normalized dict shape. See the
-    ``_clean_field`` and ``_clean_url_field`` helpers for the
-    formatting normalizations.
-
-    Args:
-        raw: Raw provider output containing resource rows.
-        location: User-stated location attached to each parsed row.
-
-    Returns:
-        Parsed crisis-resource rows capped at ``_MAX_RESOURCES``.
-    """
-    resources: list[dict[str, str]] = []
-    for raw_line in raw.splitlines():
-        line = raw_line.strip(_BULLET_CHARS)
-        if "|" not in line:
+    normalized: list[dict[str, str]] = []
+    for resource in resource_rows:
+        name = " ".join(resource.name.split())
+        phone = " ".join(resource.phone.split())
+        url = " ".join(resource.url.split())
+        region = " ".join((resource.region or location).split())
+        if not name or not phone:
             continue
-        # Markdown tables bracket each row with a leading and trailing
-        # pipe: ``| Name | Phone | Website |``. If we split that on
-        # ``|`` we get empty strings at both ends. Strip them so the
-        # real columns land at indexes 0/1/2 as the plain format
-        # expects. This is a no-op for non-table output.
-        line = line.strip("|").strip()
-        raw_parts = line.split("|")
-        if len(raw_parts) < 2:
-            continue
-        name = _clean_field(raw_parts[0])
-        phone = _clean_field(raw_parts[1])
-        url = _clean_url_field(raw_parts[2]) if len(raw_parts) > 2 else ""
-        # Skip header rows like ``Name | Phone | Website`` and
-        # markdown table separators like ``--- | --- | ---``. Check
-        # both the name and phone fields because either can give us
-        # away. Also reject "no phone" placeholders that the model
-        # sometimes emits when it couldn't find a number — those
-        # rows are informational noise, not actionable resources.
-        name_lower = name.lower()
-        if name_lower in ("name", "---"):
-            continue
-        if not _is_actionable_contact_field(phone):
-            continue
-        resources.append(
+        normalized.append(
             {
-                "name": name or "Crisis Line",
+                "name": name,
                 "phone": phone,
                 "url": url,
-                "region": location,
+                "region": region or location,
             }
         )
-        if len(resources) >= _MAX_RESOURCES:
+        if len(normalized) >= _MAX_RESOURCES:
             break
-    return resources
+    return normalized

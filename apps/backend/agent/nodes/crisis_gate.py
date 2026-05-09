@@ -1,4 +1,4 @@
-"""Hybrid crisis gate node for the OpenCouch graph."""
+"""LLM-only crisis gate node for the OpenCouch graph."""
 
 from __future__ import annotations
 
@@ -83,8 +83,6 @@ def _build_crisis_delta(
         },
         "diagnostics": diagnostics,
     }
-    if route == "crisis":
-        delta["response_style"] = "safety_check"
     return delta
 
 

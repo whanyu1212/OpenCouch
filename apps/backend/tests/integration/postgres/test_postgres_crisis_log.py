@@ -55,7 +55,7 @@ def _crisis_record(
         detected_at=detected_at,
         level=level,  # type: ignore[arg-type]
         override_kind="none",
-        classifier_path="deterministic",
+        classifier_path="llm_primary",
         reason="test",
         response_node_completed=True,
         llm_failure_occurred=False,

@@ -11,10 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-CrisisOverrideOutcome = Literal["imminent_risk", "idiomatic_safe", "none"]
-CrisisClassifierPath = Literal[
-    "deterministic", "llm_primary", "llm_fallback", "override"
-]
+CrisisOverrideOutcome = Literal["none"]
+CrisisClassifierPath = Literal["llm_primary"]
 
 
 class CrisisLogRecord(BaseModel):
@@ -46,10 +44,7 @@ class CrisisLogLevelCounts(BaseModel):
 class CrisisLogPathCounts(BaseModel):
     """Per-classifier-path event counts for a single day's aggregate."""
 
-    deterministic: int = Field(default=0, ge=0)
     llm_primary: int = Field(default=0, ge=0)
-    llm_fallback: int = Field(default=0, ge=0)
-    override: int = Field(default=0, ge=0)
 
 
 class CrisisLogAggregate(BaseModel):

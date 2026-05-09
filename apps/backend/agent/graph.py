@@ -303,9 +303,9 @@ async def run_agent(
 
     Args:
         agent_input: The user message and conversation context for this turn.
-        llm_client: Optional provider client used for LLM-backed gate and
-            response nodes. Non-crisis turn dispatch and therapeutic response
-            generation require a client.
+        llm_client: Provider client used for LLM-backed gate and response
+            nodes. Crisis classification, safe-turn dispatch, and therapeutic
+            response generation require a client.
         memory_store: Optional unified memory store. Defaults to a fresh
             in-memory :class:`OpenCouchMemoryStore`.
         crisis_log_backend: Optional crisis log backend. Defaults to

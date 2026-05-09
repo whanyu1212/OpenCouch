@@ -57,7 +57,7 @@ def _crisis_record(
         detected_at=detected_at,
         level=level,  # type: ignore[arg-type]
         override_kind="none",
-        classifier_path="deterministic",
+        classifier_path="llm_primary",
         reason="test",
         response_node_completed=True,
         llm_failure_occurred=False,
@@ -181,7 +181,7 @@ async def test_records_preserve_all_fields_round_trip() -> None:
     assert restored.user_id_or_null == "user-42"
     assert restored.session_id_opaque == "b" * 64
     assert restored.override_kind == "none"
-    assert restored.classifier_path == "deterministic"
+    assert restored.classifier_path == "llm_primary"
     assert restored.reason == "test"
     assert restored.response_node_completed is True
     assert restored.llm_failure_occurred is False

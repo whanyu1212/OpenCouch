@@ -16,16 +16,14 @@ from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _FakeLookupLLM(BaseLLMClient):
-    """Fake client for the structured location + text search lookup chain."""
+    """Fake client for the structured location + resource lookup chain."""
 
     def __init__(
         self,
         *,
         structured_responses: list[dict[str, Any] | Exception],
-        text_responses: list[str | Exception] | None = None,
     ) -> None:
         self.structured_responses = list(structured_responses)
-        self.text_responses = list(text_responses or [])
         self.calls: list[dict[str, Any]] = []
 
     async def generate_text(
@@ -42,12 +40,7 @@ class _FakeLookupLLM(BaseLLMClient):
                 "use_search": use_search,
             }
         )
-        if not self.text_responses:
-            raise AssertionError("No fake text response configured.")
-        response = self.text_responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
+        raise AssertionError("Crisis resource lookup should use structured output.")
 
     async def generate_text_stream(
         self,
@@ -148,10 +141,19 @@ async def test_lookup_returns_found_for_verified_singapore_resource() -> None:
                 "status": "provided",
                 "location": "Singapore",
                 "reasoning": "User stated location.",
-            }
-        ],
-        text_responses=[
-            "Samaritans of Singapore | 1767 | https://www.sos.org.sg",
+            },
+            {
+                "status": "found",
+                "resources": [
+                    {
+                        "name": "Samaritans of Singapore",
+                        "phone": "1767",
+                        "url": "https://www.sos.org.sg",
+                        "region": "Singapore",
+                    }
+                ],
+                "reasoning": "Verified official resource.",
+            },
         ],
     )
 
@@ -174,40 +176,39 @@ async def test_lookup_returns_found_for_verified_singapore_resource() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookup_returns_search_failed_when_search_call_raises() -> None:
+async def test_lookup_surfaces_resource_search_failure() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
                 "status": "provided",
                 "location": "Singapore",
                 "reasoning": "User stated location.",
-            }
+            },
+            RuntimeError("search unavailable"),
         ],
-        text_responses=[RuntimeError("search unavailable")],
     )
 
-    location, resources, status = await find_crisis_resources(
-        _state(),
-        llm_client=llm,
-    )
-
-    assert location == "Singapore"
-    assert resources == []
-    assert status == "search_failed"
+    with pytest.raises(RuntimeError, match="search unavailable"):
+        await find_crisis_resources(
+            _state(),
+            llm_client=llm,
+        )
 
 
 @pytest.mark.asyncio
-async def test_lookup_returns_no_verified_results_for_unusable_search_text() -> None:
+async def test_lookup_returns_no_verified_results_when_none_found() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
                 "status": "provided",
                 "location": "Singapore",
                 "reasoning": "User stated location.",
-            }
-        ],
-        text_responses=[
-            "I could not verify an official crisis phone number from sources.",
+            },
+            {
+                "status": "no_verified_results",
+                "resources": [],
+                "reasoning": "No verified actionable resource found.",
+            },
         ],
     )
 

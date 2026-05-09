@@ -428,7 +428,7 @@ async def provide_crisis_resources(
             label="Resource lookup unavailable",
             detail="Local crisis-resource search is not available.",
         )
-        return _crisis_resource_fallback("search_failed")
+        return _crisis_resource_fallback("no_verified_results")
 
     await emit_voice_activity(
         context,

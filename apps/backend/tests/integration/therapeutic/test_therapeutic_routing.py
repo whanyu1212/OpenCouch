@@ -83,11 +83,13 @@ class _FakeDispatchLLM(BaseLLMClient):
         therapeutic_approach: str = "none",
         should_raise: bool = False,
         text_should_raise: bool = False,
+        crisis_level: int | None = None,
     ) -> None:
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
         self.should_raise = should_raise
         self.text_should_raise = text_should_raise
+        self.crisis_level = crisis_level
         self.structured_calls = 0
         self.text_calls = 0
 
@@ -124,13 +126,17 @@ class _FakeDispatchLLM(BaseLLMClient):
         if response_schema.__name__ == "CrisisAssessmentSchema":
             prompt_lower = prompt.lower()
             level = (
-                1
-                if (
-                    "disappear" in prompt_lower
-                    or "hopeless" in prompt_lower
-                    or "how much longer" in prompt_lower
+                self.crisis_level
+                if self.crisis_level is not None
+                else (
+                    1
+                    if (
+                        "disappear" in prompt_lower
+                        or "hopeless" in prompt_lower
+                        or "how much longer" in prompt_lower
+                    )
+                    else 0
                 )
-                else 0
             )
             return cast(
                 StructuredResponseT,
@@ -138,9 +144,15 @@ class _FakeDispatchLLM(BaseLLMClient):
                     level=level,
                     confidence="high",
                     reason="fake crisis assessment",
-                    needs_crisis_response=False,
+                    needs_crisis_response=level >= 2,
                     needs_clarification=level == 1,
                 ),
+            )
+        if response_schema.__name__ == "CrisisLocationDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                status="not_provided",
+                location="",
+                reasoning="No user location in this test fixture.",
             )
         if response_schema.__name__ == "ExerciseSelectionDecision":
             return cast(
@@ -1066,7 +1078,8 @@ class TestEndToEndRouting:
         """Non-therapeutic regression guard: crisis messages bypass the subgraph."""
 
         result = await run_agent(
-            AgentInput(message="I have pills and I am going to kill myself tonight.")
+            AgentInput(message="I have pills and I am going to kill myself tonight."),
+            llm_client=_FakeDispatchLLM(crisis_level=3),
         )
 
         assert result.response_type == ResponseCategory.CRISIS

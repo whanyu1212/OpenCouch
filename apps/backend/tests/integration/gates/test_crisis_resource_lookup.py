@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import pytest
 
-import agent.nodes.crisis_resource_lookup as lookup_node
 from agent.graph import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.models import AgentInput, CrisisAssessment
@@ -30,16 +29,14 @@ class _FakeRuntime:
 
 
 class _FakeLookupLLM(BaseLLMClient):
-    """Fake client for the structured location + text search lookup chain."""
+    """Fake client for the structured location + resource lookup chain."""
 
     def __init__(
         self,
         *,
         structured_responses: list[dict[str, Any]],
-        text_responses: list[str] | None = None,
     ) -> None:
         self.structured_responses = list(structured_responses)
-        self.text_responses = list(text_responses or [])
         self.calls: list[dict[str, Any]] = []
 
     async def generate_text(
@@ -56,9 +53,7 @@ class _FakeLookupLLM(BaseLLMClient):
                 "use_search": use_search,
             }
         )
-        if not self.text_responses:
-            raise AssertionError("No fake text response configured.")
-        return self.text_responses.pop(0)
+        raise AssertionError("Crisis resource lookup should use structured output.")
 
     async def generate_text_stream(
         self,
@@ -105,17 +100,12 @@ def _state(
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_skips_without_llm() -> None:
-    delta = await run_crisis_resource_lookup_node(
-        _state(),
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
-
-    assert delta == {
-        "inferred_location": "",
-        "found_resources": [],
-        "resource_lookup_status": "not_attempted",
-    }
+async def test_crisis_resource_lookup_node_requires_llm() -> None:
+    with pytest.raises(RuntimeError, match="requires an LLM client"):
+        await run_crisis_resource_lookup_node(
+            _state(),
+            cast(Any, _FakeRuntime(llm_client=None)),
+        )
 
 
 @pytest.mark.asyncio
@@ -126,10 +116,19 @@ async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() 
                 "status": "provided",
                 "location": "Singapore",
                 "reasoning": "User stated location.",
-            }
-        ],
-        text_responses=[
-            "Samaritans of Singapore | 1767 | https://www.sos.org.sg",
+            },
+            {
+                "status": "found",
+                "resources": [
+                    {
+                        "name": "Samaritans of Singapore",
+                        "phone": "1767",
+                        "url": "https://www.sos.org.sg",
+                        "region": "Singapore",
+                    }
+                ],
+                "reasoning": "Verified official resource.",
+            },
         ],
     )
 
@@ -179,23 +178,11 @@ async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_converts_unexpected_failure_to_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _raise_lookup(
-        *args: Any, **kwargs: Any
-    ) -> tuple[str, list[dict[str, str]], str]:
-        raise RuntimeError("lookup failed")
+async def test_crisis_resource_lookup_node_surfaces_lookup_failure() -> None:
+    llm = _FakeLookupLLM(structured_responses=[])
 
-    monkeypatch.setattr(lookup_node, "find_crisis_resources", _raise_lookup)
-
-    delta = await run_crisis_resource_lookup_node(
-        _state(),
-        cast(Any, _FakeRuntime(llm_client=_FakeLookupLLM(structured_responses=[]))),
-    )
-
-    assert delta == {
-        "inferred_location": "",
-        "found_resources": [],
-        "resource_lookup_status": "search_failed",
-    }
+    with pytest.raises(AssertionError, match="No fake structured response configured"):
+        await run_crisis_resource_lookup_node(
+            _state(),
+            cast(Any, _FakeRuntime(llm_client=llm)),
+        )

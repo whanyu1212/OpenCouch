@@ -37,7 +37,14 @@ def _crisis_state(**overrides: Any) -> AgentState:
 
 def test_crisis_prompt_no_location_asks_once_without_pressure() -> None:
     prompt = build_crisis_response_prompt(
-        _crisis_state(resource_lookup_status="no_location")
+        _crisis_state(
+            crisis=CrisisAssessment(
+                level=2,
+                reason="clear ideation",
+                needs_crisis_response=True,
+            ),
+            resource_lookup_status="no_location",
+        )
     )
 
     assert "has not stated their location" in prompt
@@ -46,28 +53,24 @@ def test_crisis_prompt_no_location_asks_once_without_pressure() -> None:
     assert "Do not invent phone numbers" in prompt
 
 
+def test_crisis_prompt_no_location_imminent_risk_does_not_ask_for_location() -> None:
+    prompt = build_crisis_response_prompt(
+        _crisis_state(resource_lookup_status="no_location")
+    )
+
+    assert "Do not ask for location in this response" in prompt
+    assert "stay with you" in prompt
+    assert "Ask once, optionally" not in prompt
+
+
 def test_crisis_prompt_location_refused_does_not_ask_again() -> None:
     prompt = build_crisis_response_prompt(
         _crisis_state(resource_lookup_status="location_refused")
     )
 
-    assert "declined to share their location" in prompt
-    assert "do not ask for location again" in prompt
+    assert "declined location-based help" in prompt
+    assert "without mentioning location sharing again" in prompt
     assert "local emergency services" in prompt
-    assert "Do not invent phone numbers" in prompt
-
-
-def test_crisis_prompt_search_failed_uses_general_safety_guidance() -> None:
-    prompt = build_crisis_response_prompt(
-        _crisis_state(
-            inferred_location="Singapore",
-            resource_lookup_status="search_failed",
-        )
-    )
-
-    assert "could not be verified right now" in prompt
-    assert "cannot verify local lines right now" in prompt
-    assert "nearest emergency department" in prompt
     assert "Do not invent phone numbers" in prompt
 
 
@@ -81,6 +84,7 @@ def test_crisis_prompt_no_verified_results_names_location_without_numbers() -> N
 
     assert "The user gave this location: Singapore" in prompt
     assert "No verified, actionable local crisis line was found" in prompt
+    assert "could not verify a local crisis line" in prompt
     assert "Do not invent phone numbers" in prompt
 
 
@@ -103,3 +107,4 @@ def test_crisis_prompt_found_resources_includes_verified_resource_block() -> Non
     assert "Verified local crisis resources for Singapore" in prompt
     assert "Samaritans of Singapore: 1767" in prompt
     assert "Do not modify phone numbers" in prompt
+    assert "Only include phone numbers that appear" in prompt

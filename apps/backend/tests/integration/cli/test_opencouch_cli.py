@@ -3484,7 +3484,7 @@ def _build_crisis_record_for_cli(
         user_id_or_null=None,
         detected_at=detected_at,
         level=1,
-        classifier_path="deterministic",
+        classifier_path="llm_primary",
         confidence="medium",
         reason="cli purge test",
         override_kind="none",

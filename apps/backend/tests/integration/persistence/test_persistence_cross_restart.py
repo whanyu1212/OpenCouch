@@ -397,7 +397,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
             detected_at="2026-04-11T10:00:00Z",
             level=2,
             override_kind="none",
-            classifier_path="deterministic",
+            classifier_path="llm_primary",
             reason="cross-restart smoke test record",
             response_node_completed=True,
             llm_failure_occurred=False,

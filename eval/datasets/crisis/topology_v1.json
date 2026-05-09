@@ -1,0 +1,373 @@
+{
+  "name": "crisis_topology_v1",
+  "description": "CI-safe crisis-gate topology checks for the LLM-only crisis classifier and parent graph branch isolation.",
+  "cases": [
+    {
+      "id": "level-0-routes-to-turn-dispatch",
+      "description": "A safe LLM verdict should continue into safe-turn dispatch and skip crisis branch nodes.",
+      "message": "I had a really rough day at work.",
+      "scripted": {
+        "crisis": {
+          "level": 0,
+          "confidence": "high",
+          "reason": "ordinary distress without self-harm risk",
+          "needs_crisis_response": false,
+          "needs_clarification": false
+        },
+        "turn_dispatch": {
+          "route": "therapeutic",
+          "reasoning": "The user wants emotional support.",
+          "confidence": "high"
+        },
+        "therapeutic_dispatch": {
+          "response_style": "supportive",
+          "therapeutic_approach": "none",
+          "reasoning": "Supportive response is appropriate.",
+          "confidence": "high"
+        },
+        "response_text": "That sounds heavy. I can stay with you for a moment."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "crisis_level": 0,
+        "crisis_needs_response": false,
+        "crisis_needs_clarification": false,
+        "safety_decision": "normal",
+        "turn_dispatch_decision": "therapeutic",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 1,
+        "therapeutic_dispatch_calls": 1,
+        "crisis_resource_tool_calls": 0,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 0
+      }
+    },
+    {
+      "id": "level-1-routes-to-therapeutic-clarification",
+      "description": "An ambiguous level-1 verdict should not enter crisis branch, but should preserve clarification metadata.",
+      "message": "I wish I could disappear for a while.",
+      "scripted": {
+        "crisis": {
+          "level": 1,
+          "confidence": "medium",
+          "reason": "ambiguous distress requiring clarification",
+          "needs_crisis_response": false,
+          "needs_clarification": true
+        },
+        "turn_dispatch": {
+          "route": "therapeutic",
+          "reasoning": "The user needs support and clarification.",
+          "confidence": "high"
+        },
+        "therapeutic_dispatch": {
+          "response_style": "clarifying",
+          "therapeutic_approach": "none",
+          "reasoning": "Clarification is appropriate.",
+          "confidence": "high"
+        },
+        "response_text": "When you say disappear, do you mean needing distance from everything, or feeling unsafe?"
+      },
+      "expected": {
+        "response_style": "clarifying",
+        "crisis_level": 1,
+        "crisis_needs_response": false,
+        "crisis_needs_clarification": true,
+        "safety_decision": "check",
+        "turn_dispatch_decision": "therapeutic",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 1,
+        "therapeutic_dispatch_calls": 1,
+        "crisis_resource_tool_calls": 0,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 0
+      }
+    },
+    {
+      "id": "level-1-cant-do-this-routes-to-clarification",
+      "description": "Another ambiguous level-1 phrase should stay out of the crisis branch and route to a clarifying therapeutic response.",
+      "message": "I can't do this anymore.",
+      "scripted": {
+        "crisis": {
+          "level": 1,
+          "confidence": "medium",
+          "reason": "ambiguous distress requiring clarification",
+          "needs_crisis_response": false,
+          "needs_clarification": true
+        },
+        "turn_dispatch": {
+          "route": "therapeutic",
+          "reasoning": "The user needs clarification and support.",
+          "confidence": "high"
+        },
+        "therapeutic_dispatch": {
+          "response_style": "clarifying",
+          "therapeutic_approach": "none",
+          "reasoning": "A clarifying response is appropriate.",
+          "confidence": "high"
+        },
+        "response_text": "When you say you can't do this anymore, are you feeling unsafe, or does this mean you need relief from everything?"
+      },
+      "expected": {
+        "response_style": "clarifying",
+        "crisis_level": 1,
+        "crisis_needs_response": false,
+        "crisis_needs_clarification": true,
+        "safety_decision": "check",
+        "turn_dispatch_decision": "therapeutic",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 1,
+        "therapeutic_dispatch_calls": 1,
+        "crisis_resource_tool_calls": 0,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 0
+      }
+    },
+    {
+      "id": "level-2-enters-crisis-branch",
+      "description": "A clear ideation verdict should enter crisis resource lookup, crisis response, crisis log, then finalize.",
+      "message": "I keep thinking I want to die.",
+      "scripted": {
+        "crisis": {
+          "level": 2,
+          "confidence": "high",
+          "reason": "clear suicidal ideation",
+          "needs_crisis_response": true,
+          "needs_clarification": false
+        },
+        "crisis_resources": {
+          "status": "no_location",
+          "location": "",
+          "resources": []
+        },
+        "response_text": "I'm glad you told me. If you might act on this, contact local emergency services now and reach out to someone nearby."
+      },
+      "expected": {
+        "response_style": "crisis_response",
+        "response_text_contains": ["emergency services"],
+        "crisis_level": 2,
+        "crisis_needs_response": true,
+        "crisis_needs_clarification": false,
+        "safety_decision": "crisis",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 0,
+        "therapeutic_dispatch_calls": 0,
+        "crisis_resource_tool_calls": 1,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 1,
+        "resource_lookup_status": "no_location"
+      }
+    },
+    {
+      "id": "passive-death-wish-enters-crisis-branch",
+      "description": "A passive death wish should cross the crisis-response threshold even without a plan or means.",
+      "message": "I wish I could go to sleep and not wake up.",
+      "scripted": {
+        "crisis": {
+          "level": 2,
+          "confidence": "high",
+          "reason": "passive death wish without plan or means",
+          "needs_crisis_response": true,
+          "needs_clarification": false
+        },
+        "crisis_resources": {
+          "status": "no_location",
+          "location": "",
+          "resources": []
+        },
+        "response_text": "I'm glad you told me. If you might act on this or feel unable to stay safe, contact local emergency services and ask someone nearby to stay with you."
+      },
+      "expected": {
+        "response_style": "crisis_response",
+        "response_text_contains": ["emergency services"],
+        "crisis_level": 2,
+        "crisis_needs_response": true,
+        "crisis_needs_clarification": false,
+        "safety_decision": "crisis",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 0,
+        "therapeutic_dispatch_calls": 0,
+        "crisis_resource_tool_calls": 1,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 1,
+        "resource_lookup_status": "no_location"
+      }
+    },
+    {
+      "id": "level-3-enters-crisis-branch",
+      "description": "An imminent-risk verdict should enter the same crisis branch and skip every safe-turn node.",
+      "message": "I have pills and I am going to kill myself tonight.",
+      "scripted": {
+        "crisis": {
+          "level": 3,
+          "confidence": "high",
+          "reason": "imminent risk with means and timing",
+          "needs_crisis_response": true,
+          "needs_clarification": false
+        },
+        "crisis_resources": {
+          "status": "no_location",
+          "location": "",
+          "resources": []
+        },
+        "response_text": "Please contact local emergency services right now, move away from the pills, and ask someone nearby to stay with you."
+      },
+      "expected": {
+        "response_style": "crisis_response",
+        "response_text_contains": ["right now"],
+        "crisis_level": 3,
+        "crisis_needs_response": true,
+        "crisis_needs_clarification": false,
+        "safety_decision": "crisis",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 0,
+        "therapeutic_dispatch_calls": 0,
+        "crisis_resource_tool_calls": 1,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 1,
+        "resource_lookup_status": "no_location"
+      }
+    },
+    {
+      "id": "crisis-with-location-uses-resource-lookup",
+      "description": "A crisis turn with location-resolved resources should still route through crisis branch only.",
+      "message": "I'm in Singapore and I want to die tonight.",
+      "scripted": {
+        "crisis": {
+          "level": 2,
+          "confidence": "high",
+          "reason": "clear suicidal ideation with stated location",
+          "needs_crisis_response": true,
+          "needs_clarification": false
+        },
+        "crisis_resources": {
+          "status": "found",
+          "location": "Singapore",
+          "resources": [
+            {
+              "name": "Samaritans of Singapore",
+              "phone": "1767",
+              "url": "https://www.sos.org.sg",
+              "region": "Singapore"
+            }
+          ]
+        },
+        "response_text": "I'm glad you told me. Please contact Samaritans of Singapore at 1767 or local emergency services right now."
+      },
+      "expected": {
+        "response_style": "crisis_response",
+        "response_text_contains": ["1767"],
+        "crisis_level": 2,
+        "safety_decision": "crisis",
+        "crisis_resource_tool_calls": 1,
+        "turn_dispatch_calls": 0,
+        "therapeutic_dispatch_calls": 0,
+        "crisis_log_count": 1,
+        "resource_lookup_status": "found"
+      }
+    },
+    {
+      "id": "crisis-location-refusal-still-responds",
+      "description": "Explicit location refusal should not block the crisis branch.",
+      "message": "I might hurt myself, but I don't want to say where I am.",
+      "scripted": {
+        "crisis": {
+          "level": 2,
+          "confidence": "high",
+          "reason": "self-harm risk with location refusal",
+          "needs_crisis_response": true,
+          "needs_clarification": false
+        },
+        "crisis_resources": {
+          "status": "location_refused",
+          "location": "",
+          "resources": []
+        },
+        "response_text": "You don't have to share where you are. If you might act soon, contact local emergency services or go to the nearest emergency department."
+      },
+      "expected": {
+        "response_style": "crisis_response",
+        "response_text_contains": ["local emergency services"],
+        "crisis_level": 2,
+        "safety_decision": "crisis",
+        "crisis_resource_tool_calls": 1,
+        "turn_dispatch_calls": 0,
+        "therapeutic_dispatch_calls": 0,
+        "crisis_log_count": 1,
+        "resource_lookup_status": "location_refused"
+      }
+    },
+    {
+      "id": "post-safety-denial-routes-to-turn-dispatch",
+      "description": "A user who explicitly states current safety after prior crisis context should not be kept in the crisis branch.",
+      "message": "I'm safe right now. I won't hurt myself; I just needed to say it out loud.",
+      "history": [
+        {
+          "role": "user",
+          "content": "I've been thinking about ending it."
+        },
+        {
+          "role": "assistant",
+          "content": "Your safety matters most right now. If you might act soon, contact local emergency services or go to the nearest emergency department."
+        }
+      ],
+      "scripted": {
+        "crisis": {
+          "level": 0,
+          "confidence": "high",
+          "reason": "current message denies intent and states safety",
+          "needs_crisis_response": false,
+          "needs_clarification": false
+        },
+        "turn_dispatch": {
+          "route": "therapeutic",
+          "reasoning": "The user is safe and wants emotional support.",
+          "confidence": "high"
+        },
+        "therapeutic_dispatch": {
+          "response_style": "supportive",
+          "therapeutic_approach": "none",
+          "reasoning": "Supportive response is appropriate after de-escalation.",
+          "confidence": "high"
+        },
+        "response_text": "I'm glad you said it out loud. We can slow this down together and stay with what is happening right now."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "crisis_level": 0,
+        "crisis_needs_response": false,
+        "crisis_needs_clarification": false,
+        "safety_decision": "normal",
+        "turn_dispatch_decision": "therapeutic",
+        "crisis_classifier_calls": 1,
+        "turn_dispatch_calls": 1,
+        "therapeutic_dispatch_calls": 1,
+        "crisis_resource_tool_calls": 0,
+        "factual_tool_calls": 0,
+        "crisis_log_count": 0
+      }
+    },
+    {
+      "id": "missing-llm-fails-visibly",
+      "description": "The LLM-only crisis gate must not classify locally when the LLM is missing.",
+      "message": "I have pills and I am going to kill myself tonight.",
+      "scripted": {
+        "no_llm": true
+      },
+      "expected": {
+        "error_contains": "requires an LLM client"
+      }
+    },
+    {
+      "id": "failing-llm-fails-visibly",
+      "description": "Classifier provider failures should surface after retry rather than falling back to local heuristics.",
+      "message": "I keep thinking I want to die.",
+      "scripted": {
+        "raise_on_schema": "CrisisAssessmentSchema",
+        "error": "simulated classifier failure"
+      },
+      "expected": {
+        "error_contains": "simulated classifier failure"
+      }
+    }
+  ]
+}
