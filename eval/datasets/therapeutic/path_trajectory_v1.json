@@ -1,0 +1,208 @@
+{
+  "name": "therapeutic_path_trajectory_v1",
+  "description": "Parent-graph multi-turn trajectory checks for the normal therapeutic path through crisis gate, turn dispatch, load memory, therapeutic subgraph, and finalize.",
+  "cases": [
+    {
+      "id": "support-memory-exercise-exit",
+      "description": "A normal therapeutic conversation should load memory, start and continue a guided exercise, then clear exercise state when the user exits.",
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentation-anxiety",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentation",
+            "evidence_quote": "A presentation feels risky for me because I worry I will freeze."
+          }
+        ],
+        "procedural_rules": [
+          {
+            "rule": "You prefer direct, concise responses when you are anxious.",
+            "evidence": ["Please be direct when I am anxious."]
+          }
+        ],
+        "proactive_recall_enabled": false
+      },
+      "turns": [
+        {
+          "message": "My presentation feels risky tomorrow because I worry I will freeze.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "ordinary anxiety support request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user wants emotional support, not lookup or memory administration.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "therapeutic_approach": "cbt",
+              "reasoning": "Supportive CBT-framed help fits presentation anxiety.",
+              "confidence": "high"
+            },
+            "response_text": "That presentation anxiety sounds intense. I'll keep this direct: let's take it one step at a time."
+          },
+          "expected": {
+            "response_style": "supportive",
+            "therapeutic_approach": "cbt",
+            "response_text_contains": ["presentation anxiety", "direct"],
+            "safety_decision": "normal",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/cbt",
+            "diagnostics_contains": ["crisis_gate_ms", "turn_dispatch_ms", "load_memory_ms", "post_finalize_ms"],
+            "working_memory_count_min": 1,
+            "procedural_rules_contain": ["direct, concise"],
+            "session_summary_contains": ["Retrieved", "procedural rule"],
+            "prompt_contains": ["presentation feels risky", "You prefer direct, concise responses"],
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "Can we do a grounding exercise?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a therapeutic exercise.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "A grounding exercise should start the guided exercise node.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_5_4_3_2_1",
+            "response_text": "Let's start 5-4-3-2-1 grounding. Name five things you can see around you."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_contains": ["five things you can see"],
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
+            "diagnostics_contains": ["load_memory_ms", "post_finalize_ms"],
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see",
+              "exercise_therapeutic_approach": "dbt_skills"
+            },
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "last_assistant_response_style": "guided_exercise"
+          }
+        },
+        {
+          "message": "I can see my laptop, a notebook, the window, a mug, and my lamp.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise continuation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is continuing an active therapeutic exercise.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "therapeutic_approach": "none",
+              "reasoning": "The user is responding to the active exercise step.",
+              "confidence": "high"
+            },
+            "step_state": "complete",
+            "response_text": "Good. Now name four things you can hear."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_contains": ["four things you can hear"],
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 1,
+              "exercise_step_id": "hear",
+              "exercise_therapeutic_approach": "dbt_skills"
+            },
+            "transcript_length": 6,
+            "assistant_turn_count": 3,
+            "last_assistant_response_style": "guided_exercise"
+          }
+        },
+        {
+          "message": "Actually stop the exercise, I just want to talk.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe request to exit exercise",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user wants to leave the exercise and receive support.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "therapeutic_approach": "none",
+              "reasoning": "The user explicitly changed away from the exercise.",
+              "confidence": "high"
+            },
+            "response_text": "Of course. We can stop the exercise and just talk about what feels most present."
+          },
+          "expected": {
+            "response_style": "supportive",
+            "therapeutic_approach": "none",
+            "response_text_contains": ["stop the exercise", "just talk"],
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive",
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null,
+              "exercise_version": null,
+              "exercise_therapeutic_approach": null
+            },
+            "transcript_length": 8,
+            "assistant_turn_count": 4,
+            "last_assistant_response_style": "supportive"
+          }
+        }
+      ],
+      "expected": {
+        "factual_tool_calls": 0,
+        "crisis_resource_tool_calls": 0,
+        "crisis_log_count": 0,
+        "final_transcript_length": 8,
+        "final_exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        }
+      }
+    }
+  ]
+}

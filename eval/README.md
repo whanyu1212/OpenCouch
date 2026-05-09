@@ -47,6 +47,9 @@ Evals are split by purpose:
 - `therapeutic_exercise_trajectory_eval.py`: multi-turn guided-exercise
   trajectory checks. It always applies hard state/progression checks and can
   add an LLM judge with `--judge-mode live`.
+- `therapeutic_path_trajectory_eval.py`: parent-graph therapeutic trajectory
+  checks for the normal non-crisis path through turn dispatch, memory loading,
+  therapeutic subgraph execution, guided-exercise continuity, and finalization.
 - `crisis_topology_eval.py`: CI-safe parent-graph checks for the LLM-only
   crisis gate, crisis/non-crisis branch isolation, and visible failure when the
   classifier LLM is unavailable or fails.
@@ -84,6 +87,7 @@ apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_behavior_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_exercise_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.therapeutic_path_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.crisis_node_eval
 apps/backend/.venv/bin/python -m eval.runners.crisis_topology_eval
 apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval
@@ -148,6 +152,8 @@ Current coverage:
 - broader scripted behavior cases for exercise selection and state changes
 - hard response-quality checks for concise, concrete, non-menu output
 - multi-turn exercise trajectories with optional LLM-as-judge scoring
+- parent-graph therapeutic trajectories across memory-conditioned support,
+  guided exercise start/continue, exercise exit, and turn finalization
 - narrowed subgraph output keys
 - parent-graph turn dispatch to therapeutic, grounded lookup, memory control,
   and crisis branches
