@@ -60,6 +60,9 @@ Evals are split by purpose:
   with controlled classifier verdicts and controlled resource lookup results.
   `--mode live` uses the configured model for crisis response text, and
   `--judge-mode live` adds an LLM judge.
+- `turn_dispatch_eval.py`: standalone safe-turn dispatch checks for
+  therapeutic, grounded lookup, and memory-control routing. Defaults to
+  scripted mode; `--mode live` evaluates the configured control model.
 - `tool_usage_eval.py`: parent-graph checks for turn-level dispatch and
   grounded-search tool invocation. It verifies that factual lookup,
   memory-control, therapeutic, and crisis-resource routes call only the
@@ -78,6 +81,8 @@ apps/backend/.venv/bin/python -m eval.runners.crisis_topology_eval
 apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval --dataset eval/datasets/crisis/classifier_ambiguity_v1.json
 apps/backend/.venv/bin/python -m eval.runners.crisis_branch_quality_eval
+apps/backend/.venv/bin/python -m eval.runners.turn_dispatch_eval
+apps/backend/.venv/bin/python -m eval.runners.turn_dispatch_eval --dataset eval/datasets/turn_dispatch/routing_quality_v1.json
 apps/backend/.venv/bin/python -m eval.runners.tool_usage_eval
 apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
 ```
@@ -118,6 +123,11 @@ Current coverage:
   without a stated plan
 - standalone crisis node contracts for crisis-gate routing, resource lookup
   state, response quality, response-LLM selection, and audit-log payloads
+- standalone turn-dispatch contracts for therapeutic routing, grounded lookup
+  query creation, memory-control actions, pending-action clearing, and visible
+  invalid-output failures
+- turn-dispatch routing quality for memory-adjacent support, source-backed
+  lookup, non-crisis resources, mixed-intent turns, and pending-action ambiguity
 - broader scripted behavior cases for exercise selection and state changes
 - hard response-quality checks for concise, concrete, non-menu output
 - multi-turn exercise trajectories with optional LLM-as-judge scoring
