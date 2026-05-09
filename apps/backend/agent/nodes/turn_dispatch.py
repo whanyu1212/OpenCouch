@@ -16,8 +16,16 @@ from agent.graph_constants import (
 from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentState, cleared_exercise_state
 from agent.turn_dispatch import TurnDispatchPlan, plan_turn_route
+
+_EXERCISE_ENDING_MEMORY_ACTION_TYPES = {
+    "set_recall",
+    "save_preference",
+    "forget_by_index",
+    "forget_by_query",
+    "confirm_pending",
+}
 
 
 def _dispatch_update(
@@ -57,6 +65,13 @@ def _dispatch_update(
     memory_control: dict[str, object | None] = {"action": memory_action}
     if plan.clear_pending_action:
         memory_control["pending_action"] = None
+
+    memory_action_type = str(memory_action.get("type") or "")
+    if (
+        plan.route == "memory_control"
+        and memory_action_type in _EXERCISE_ENDING_MEMORY_ACTION_TYPES
+    ):
+        update["exercise_state"] = cleared_exercise_state()
 
     if plan.route == "grounded_lookup":
         update["grounded_lookup"] = {

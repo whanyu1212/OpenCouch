@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.state import AgentState
+from agent.state import AgentState, cleared_exercise_state
 from agent.therapeutic.exercises.registry import (
     get_exercise_definition,
     get_exercise_steps,
@@ -86,15 +86,7 @@ def clear_exercise_delta(state: AgentState) -> dict[str, Any]:
         dict[str, Any]: State delta that clears active exercise fields.
     """
 
-    return {
-        "exercise_state": {
-            "exercise_type": None,
-            "exercise_step": None,
-            "exercise_step_id": None,
-            "exercise_version": None,
-            "exercise_therapeutic_approach": None,
-        },
-    }
+    return {"exercise_state": cleared_exercise_state()}
 
 
 def _get_current_step(

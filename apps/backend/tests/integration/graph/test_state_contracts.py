@@ -282,8 +282,16 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
             "route",
             "crisis_audit",
             "diagnostics",
+            "exercise_state",
         },
     )
+    assert command.update["exercise_state"] == {
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_step_id": None,
+        "exercise_version": None,
+        "exercise_therapeutic_approach": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -359,6 +367,55 @@ async def test_turn_dispatch_memory_control_channel_contract() -> None:
         command.update,
         {"route", "memory_control", "grounded_lookup", "diagnostics"},
     )
+
+
+@pytest.mark.asyncio
+async def test_turn_dispatch_memory_mutation_clears_exercise_state() -> None:
+    """Destructive memory commands should explicitly end active exercises."""
+
+    state = _build_state("Forget what you saved about presentations.")
+    state["exercise_state"] = {
+        "exercise_type": "grounding_5_4_3_2_1",
+        "exercise_step": 0,
+        "exercise_step_id": "see",
+        "exercise_version": 1,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+
+    command = await run_turn_dispatch_node(
+        state,
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    turn_route="memory_control",
+                    memory_action_type="forget_by_query",
+                    lookup_query="presentations",
+                )
+            ),
+        ),
+    )
+
+    assert command.goto == "memory_control_node"
+    _assert_exact_keys(
+        command.update,
+        {
+            "route",
+            "memory_control",
+            "grounded_lookup",
+            "diagnostics",
+            "exercise_state",
+        },
+    )
+    assert command.update["exercise_state"] == {
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_step_id": None,
+        "exercise_version": None,
+        "exercise_therapeutic_approach": None,
+    }
 
 
 @pytest.mark.asyncio

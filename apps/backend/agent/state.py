@@ -116,6 +116,22 @@ class ExerciseState(TypedDict):
     exercise_therapeutic_approach: NotRequired[str | None]
 
 
+def cleared_exercise_state() -> ExerciseState:
+    """Return a graph delta that clears active guided-exercise continuity.
+
+    Returns:
+        ExerciseState: Exercise-state fields set to their inactive values.
+    """
+
+    return {
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_step_id": None,
+        "exercise_version": None,
+        "exercise_therapeutic_approach": None,
+    }
+
+
 class MemoryControlState(TypedDict):
     """User-directed memory-control continuity.
 

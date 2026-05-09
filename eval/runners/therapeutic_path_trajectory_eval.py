@@ -151,6 +151,17 @@ class ScriptedTherapeuticPathLLM:
                 rules=[],
                 reason="scripted therapeutic path eval extracts no rules",
             )
+        if schema_name == "PreferenceRuleDecision":
+            return response_schema(
+                rule_text=str(
+                    self.turn.scripted.get(
+                        "preference_rule_text",
+                        "You prefer concise responses.",
+                    )
+                ),
+                reasoning="scripted preference rule",
+                confidence="high",
+            )
         raise RuntimeError(f"Unexpected structured schema {schema_name!r}.")
 
     def prompt_texts(self) -> list[str]:
@@ -229,7 +240,7 @@ async def _run_trajectory(case: TherapeuticPathCase) -> dict[str, Any]:
         tool_calls["factual_lookup"].append(
             {"message": state.get("message"), "query": query}
         )
-        return "unexpected factual lookup", "answered"
+        return "Verified factual answer.\n\nSources:\n- Official source", "answered"
 
     async def fake_crisis_resources(
         state: dict[str, Any],
@@ -237,7 +248,11 @@ async def _run_trajectory(case: TherapeuticPathCase) -> dict[str, Any]:
         llm_client: Any,
     ) -> tuple[str, list[dict[str, str]], str]:
         tool_calls["crisis_resources"].append({"message": state.get("message")})
-        return "", [], "no_location"
+        return (
+            "Singapore",
+            [{"name": "SOS Singapore", "description": "24-hour crisis support"}],
+            "found",
+        )
 
     initial_store = await memory_snapshot(store, owner_id=owner_id)
     turns: list[dict[str, Any]] = []
@@ -264,6 +279,10 @@ async def _run_trajectory(case: TherapeuticPathCase) -> dict[str, Any]:
         ) as runtime:
             for index, turn in enumerate(case.turns):
                 llm = ScriptedTherapeuticPathLLM(turn)
+                before_tool_counts = {
+                    name: len(calls) for name, calls in tool_calls.items()
+                }
+                before_crisis_log_count = await crisis_log.arecord_count()
                 result = await runtime.run_turn(
                     thread_id=thread_id,
                     message=turn.message,
@@ -271,6 +290,7 @@ async def _run_trajectory(case: TherapeuticPathCase) -> dict[str, Any]:
                     llm_client=llm,
                     response_llm_client=llm,
                 )
+                after_crisis_log_count = await crisis_log.arecord_count()
                 state = dict(result.state)
                 turns.append(
                     {
@@ -297,9 +317,18 @@ async def _run_trajectory(case: TherapeuticPathCase) -> dict[str, Any]:
                             state.get("procedural_profile") or {}
                         ),
                         "exercise_state": jsonify(state.get("exercise_state") or {}),
+                        "memory_control": jsonify(state.get("memory_control") or {}),
+                        "grounded_lookup": jsonify(state.get("grounded_lookup") or {}),
                         "transcript": jsonify(state.get("transcript") or []),
                         "structured_calls": dict(llm.structured_calls),
                         "prompt_texts": llm.prompt_texts(),
+                        "tool_call_counts": {
+                            name: len(calls) - before_tool_counts.get(name, 0)
+                            for name, calls in tool_calls.items()
+                        },
+                        "crisis_log_count": (
+                            after_crisis_log_count - before_crisis_log_count
+                        ),
                     }
                 )
             final_state = await runtime.get_state(thread_id)
@@ -370,6 +399,18 @@ def _grade_trajectory(
             actual=final_state.get("exercise_state"),
             expected=expected.get("final_exercise_state"),
         )
+        _grade_expected_mapping(
+            failures,
+            label="final_memory_control",
+            actual=final_state.get("memory_control"),
+            expected=expected.get("final_memory_control"),
+        )
+        _grade_expected_mapping(
+            failures,
+            label="final_grounded_lookup",
+            actual=final_state.get("grounded_lookup"),
+            expected=expected.get("final_grounded_lookup"),
+        )
     return failures
 
 
@@ -419,6 +460,9 @@ def _grade_turn(
         for key in expected.get("diagnostics_contains", []):
             if key not in diagnostics:
                 failures.append(f"{label}.diagnostics missing {key!r}")
+        for key in expected.get("diagnostics_not_contains", []):
+            if key in diagnostics:
+                failures.append(f"{label}.diagnostics unexpectedly had {key!r}")
 
     _grade_minimum(
         failures,
@@ -463,6 +507,47 @@ def _grade_turn(
         label=f"{label}.exercise_state",
         actual=artifact.get("exercise_state"),
         expected=expected.get("exercise_state"),
+    )
+    _grade_expected_mapping(
+        failures,
+        label=f"{label}.memory_control",
+        actual=artifact.get("memory_control"),
+        expected=expected.get("memory_control"),
+    )
+    _grade_expected_mapping(
+        failures,
+        label=f"{label}.grounded_lookup",
+        actual=artifact.get("grounded_lookup"),
+        expected=expected.get("grounded_lookup"),
+    )
+    tool_counts = (
+        artifact.get("tool_call_counts")
+        if isinstance(artifact.get("tool_call_counts"), Mapping)
+        else {}
+    )
+    _expect_equal(
+        failures,
+        f"{label}.factual_tool_calls",
+        tool_counts.get("factual_lookup"),
+        expected,
+    )
+    _expect_equal(
+        failures,
+        f"{label}.crisis_resource_tool_calls",
+        tool_counts.get("crisis_resources"),
+        expected,
+    )
+    _expect_equal(
+        failures,
+        f"{label}.crisis_log_count",
+        artifact.get("crisis_log_count"),
+        expected,
+    )
+    _grade_expected_counts(
+        failures,
+        label=f"{label}.structured_calls",
+        actual=artifact.get("structured_calls"),
+        expected=expected.get("structured_calls"),
     )
     _grade_transcript(failures, label=label, artifact=artifact, expected=expected)
 
@@ -534,6 +619,31 @@ def _grade_expected_mapping(
     actual_mapping = actual if isinstance(actual, Mapping) else {}
     for key, expected_value in expected.items():
         actual_value = actual_mapping.get(key)
+        if isinstance(expected_value, Mapping):
+            _grade_expected_mapping(
+                failures,
+                label=f"{label}.{key}",
+                actual=actual_value,
+                expected=expected_value,
+            )
+        elif actual_value != expected_value:
+            failures.append(
+                f"{label}.{key}: expected {expected_value!r}, got {actual_value!r}"
+            )
+
+
+def _grade_expected_counts(
+    failures: list[str],
+    *,
+    label: str,
+    actual: Any,
+    expected: Any,
+) -> None:
+    if not isinstance(expected, Mapping):
+        return
+    actual_mapping = actual if isinstance(actual, Mapping) else {}
+    for key, expected_value in expected.items():
+        actual_value = actual_mapping.get(key, 0)
         if actual_value != expected_value:
             failures.append(
                 f"{label}.{key}: expected {expected_value!r}, got {actual_value!r}"

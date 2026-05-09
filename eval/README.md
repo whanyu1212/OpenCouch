@@ -49,7 +49,8 @@ Evals are split by purpose:
   add an LLM judge with `--judge-mode live`.
 - `therapeutic_path_trajectory_eval.py`: parent-graph therapeutic trajectory
   checks for the normal non-crisis path through turn dispatch, memory loading,
-  therapeutic subgraph execution, guided-exercise continuity, and finalization.
+  therapeutic subgraph execution, guided-exercise continuity, cross-branch
+  interruptions, and finalization.
 - `crisis_topology_eval.py`: CI-safe parent-graph checks for the LLM-only
   crisis gate, crisis/non-crisis branch isolation, and visible failure when the
   classifier LLM is unavailable or fails.
@@ -153,7 +154,8 @@ Current coverage:
 - hard response-quality checks for concise, concrete, non-menu output
 - multi-turn exercise trajectories with optional LLM-as-judge scoring
 - parent-graph therapeutic trajectories across memory-conditioned support,
-  guided exercise start/continue, exercise exit, and turn finalization
+  guided exercise start/continue, exercise exit, turn finalization, crisis
+  interruption, grounded lookup side-trips, and memory-control interruptions
 - narrowed subgraph output keys
 - parent-graph turn dispatch to therapeutic, grounded lookup, memory control,
   and crisis branches

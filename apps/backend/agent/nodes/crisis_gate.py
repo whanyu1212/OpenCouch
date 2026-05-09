@@ -19,7 +19,7 @@ from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.gates.safety.service import CrisisRiskService
-from agent.state import AgentState
+from agent.state import AgentState, cleared_exercise_state
 
 
 def _build_crisis_delta(
@@ -83,6 +83,8 @@ def _build_crisis_delta(
         },
         "diagnostics": diagnostics,
     }
+    if assessment.needs_crisis_response:
+        delta["exercise_state"] = cleared_exercise_state()
     return delta
 
 
