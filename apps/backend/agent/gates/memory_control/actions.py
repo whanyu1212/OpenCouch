@@ -34,7 +34,7 @@ class SetRecallAction(_ActionBase):
 
 class SavePreferenceAction(_ActionBase):
     type: Literal["save_preference"] = "save_preference"
-    rule_text: str = Field(min_length=1)
+    preference_text: str = Field(min_length=1)
 
 
 class ForgetByIndexAction(_ActionBase):
@@ -117,26 +117,6 @@ class MemoryControlAction:
         return parse_memory_control_action(self.payload)
 
 
-def normalize_preference_rule(rule_text: str) -> str:
-    """Normalize an LLM-proposed preference rule for persistence.
-
-    Args:
-        rule_text (str): Raw model-proposed procedural rule.
-
-    Returns:
-        str: A trimmed, sentence-like rule.
-    """
-
-    normalized = " ".join(rule_text.strip().split()).strip("\"'")
-    if not normalized:
-        return ""
-    if not normalized.endswith((".", "!", "?")):
-        normalized = f"{normalized}."
-    if normalized.lower().startswith(("you ", "your ", "when ", "if ")):
-        return normalized
-    return f"You prefer {normalized[0].lower()}{normalized[1:]}"
-
-
 __all__ = [
     "CancelPendingAction",
     "ConfirmPendingAction",
@@ -148,6 +128,5 @@ __all__ = [
     "SetRecallAction",
     "StatusAction",
     "TypedMemoryAction",
-    "normalize_preference_rule",
     "parse_memory_control_action",
 ]

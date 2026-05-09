@@ -63,6 +63,14 @@ Evals are split by purpose:
 - `turn_dispatch_eval.py`: standalone safe-turn dispatch checks for
   therapeutic, grounded lookup, and memory-control routing. Defaults to
   scripted mode; `--mode live` evaluates the configured control model.
+- `memory_control_node_eval.py`: standalone memory-control node contracts with
+  seeded semantic, episodic, and procedural memory fixtures. It verifies
+  listing, status, recall toggles, preference saves, deletion confirmation, and
+  durable store changes.
+- `memory_control_trajectory_eval.py`: multi-turn memory-control trajectories
+  that run through turn dispatch and memory-control/load-memory branches. It
+  checks memory-admin boundaries, pending deletion lifecycle, and whether saved
+  procedural settings are visible to later memory loads.
 - `tool_usage_eval.py`: parent-graph checks for turn-level dispatch and
   grounded-search tool invocation. It verifies that factual lookup,
   memory-control, therapeutic, and crisis-resource routes call only the
@@ -83,6 +91,8 @@ apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval --d
 apps/backend/.venv/bin/python -m eval.runners.crisis_branch_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.turn_dispatch_eval
 apps/backend/.venv/bin/python -m eval.runners.turn_dispatch_eval --dataset eval/datasets/turn_dispatch/routing_quality_v1.json
+apps/backend/.venv/bin/python -m eval.runners.memory_control_node_eval
+apps/backend/.venv/bin/python -m eval.runners.memory_control_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.tool_usage_eval
 apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
 ```
@@ -96,7 +106,8 @@ Useful flags:
 - `--mode live`: run behavior or quality cases with configured provider-backed
   LLM clients.
 - `--judge-mode live`: run exercise trajectory, crisis node, crisis branch, or
-  grounded-tool LLM judges.
+  grounded-tool LLM judges. Memory-control trajectory evals also support this
+  for response-quality judging.
 
 Current coverage:
 
@@ -128,6 +139,12 @@ Current coverage:
   invalid-output failures
 - turn-dispatch routing quality for memory-adjacent support, source-backed
   lookup, non-crisis resources, mixed-intent turns, and pending-action ambiguity
+- standalone memory-control node contracts using manually seeded realistic
+  semantic facts, session summaries, procedural rules, and proactive-recall
+  state
+- multi-turn memory-control trajectories for inspect-vs-support boundaries,
+  deletion confirmation, abandoned deletion, preference saves, recall toggles,
+  and ambiguous "remember" wording
 - broader scripted behavior cases for exercise selection and state changes
 - hard response-quality checks for concise, concrete, non-menu output
 - multi-turn exercise trajectories with optional LLM-as-judge scoring

@@ -251,12 +251,12 @@ async def test_turn_dispatch_clears_pending_when_user_moves_on() -> None:
 
 
 @pytest.mark.asyncio
-async def test_turn_dispatch_normalizes_save_preference_action() -> None:
+async def test_turn_dispatch_preserves_save_preference_text() -> None:
     llm = _FakeTurnDispatchLLM(
         {
             "route": "memory_control",
             "memory_action_type": "save_preference",
-            "rule_text": "shorter replies when I am panicking",
+            "preference_text": "shorter replies when I am panicking",
             "reasoning": "The user asked to save a response preference.",
             "confidence": "high",
         }
@@ -270,7 +270,7 @@ async def test_turn_dispatch_normalizes_save_preference_action() -> None:
     update = _command_update(command)
     assert update["memory_control"]["action"] == {
         "type": "save_preference",
-        "rule_text": "You prefer shorter replies when I am panicking.",
+        "preference_text": "shorter replies when I am panicking",
     }
 
 
@@ -383,13 +383,23 @@ async def test_memory_control_delete_by_query_requires_confirmation_then_deletes
 @pytest.mark.asyncio
 async def test_memory_control_node_saves_explicit_preference_rule() -> None:
     store = OpenCouchMemoryStore()
+    llm = _FakeTurnDispatchLLM(
+        {
+            "rule_text": "You prefer very short replies when you are panicking.",
+            "reasoning": "The user explicitly stated a response preference.",
+            "confidence": "high",
+        }
+    )
     state = _state("Remember that I prefer very short replies when I'm panicking.")
     state["memory_control"]["action"] = {
         "type": "save_preference",
-        "rule_text": "You prefer very short replies when I'm panicking.",
+        "preference_text": "very short replies when I'm panicking",
     }
 
-    delta = await run_memory_control_node(state, cast(Any, _Runtime(store=store)))
+    delta = await run_memory_control_node(
+        state,
+        cast(Any, _Runtime(store=store, llm_client=llm)),
+    )
     profile = await aget_procedural_profile(store, user_id="user-1")
 
     assert len(profile.rules) == 1

@@ -361,7 +361,7 @@ def grade_memory_control(
         actual_type = action.get("type") if isinstance(action, Mapping) else None
         expect_equal(failures, "memory_action_type", actual_type, expected)
 
-    for field_name in ("query", "rule_text"):
+    for field_name in ("query", "preference_text"):
         expected_key = f"memory_action_{field_name}_contains"
         if expected_key not in expected:
             continue

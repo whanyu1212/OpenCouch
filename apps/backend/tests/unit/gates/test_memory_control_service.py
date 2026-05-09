@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 import pytest
 
@@ -19,6 +20,44 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
 
+class _FakePreferenceRuleLLM:
+    def __init__(self, *, rule_text: str) -> None:
+        self.rule_text = rule_text
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        raise AssertionError("Text generation is not used by preference saving.")
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[Any],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> Any:
+        if response_schema.__name__ != "PreferenceRuleDecision":
+            raise AssertionError(f"Unexpected schema {response_schema.__name__!r}.")
+        return response_schema(
+            rule_text=self.rule_text,
+            reasoning="The user explicitly stated a response preference.",
+            confidence="high",
+        )
+
+
 def _state(message: str, *, user_id: str = "user-1") -> AgentState:
     state = build_initial_state(
         AgentInput(message=message, user_id=user_id, session_id="thread-1"),
@@ -31,9 +70,10 @@ def _context(
     *,
     store: OpenCouchMemoryStore | None = None,
     memory_mode: MemoryMode = MemoryMode.LOCAL,
+    llm_client: Any | None = None,
 ) -> WorkflowContext:
     return WorkflowContext(
-        llm_client=None,
+        llm_client=llm_client,
         memory_store=store or OpenCouchMemoryStore(),
         crisis_log_backend=InMemoryCrisisLogBackend(),
         memory_mode=memory_mode,
@@ -119,8 +159,8 @@ async def test_service_set_recall_without_enabled_returns_capability_reply() -> 
 
 
 @pytest.mark.asyncio
-async def test_service_save_preference_without_rule_returns_capability_reply() -> None:
-    """Malformed save_preference (missing ``rule_text``) must not save a blank rule."""
+async def test_service_save_preference_without_text_returns_capability_reply() -> None:
+    """Malformed save_preference must not save a blank rule."""
 
     store = OpenCouchMemoryStore()
     state = _state("remember preference")
@@ -129,6 +169,49 @@ async def test_service_save_preference_without_rule_returns_capability_reply() -
     result = await execute_memory_control_action(state, _context(store=store))
 
     assert "I can show saved memory" in result.response_text
+    profile = await aget_procedural_profile(store, user_id="user-1")
+    assert profile.rules == []
+
+
+@pytest.mark.asyncio
+async def test_service_save_preference_writes_rule_with_llm() -> None:
+    store = OpenCouchMemoryStore()
+    state = _state("Remember that I prefer direct answers when I am spiraling.")
+    state["memory_control"]["action"] = {
+        "type": "save_preference",
+        "preference_text": "direct answers when I am spiraling",
+    }
+
+    result = await execute_memory_control_action(
+        state,
+        _context(
+            store=store,
+            llm_client=_FakePreferenceRuleLLM(
+                rule_text="You prefer direct answers when you are spiraling.",
+            ),
+        ),
+    )
+
+    profile = await aget_procedural_profile(store, user_id="user-1")
+    assert len(profile.rules) == 1
+    assert profile.rules[0].rule == "You prefer direct answers when you are spiraling."
+    assert "Saved:" in result.response_text
+    assert "direct answers" in result.response_text
+    assert result.memory_control == {"pending_action": None}
+
+
+@pytest.mark.asyncio
+async def test_service_save_preference_requires_llm() -> None:
+    store = OpenCouchMemoryStore()
+    state = _state("Remember that I prefer direct answers when I am spiraling.")
+    state["memory_control"]["action"] = {
+        "type": "save_preference",
+        "preference_text": "direct answers when I am spiraling",
+    }
+
+    with pytest.raises(RuntimeError, match="save_preference requires an LLM client"):
+        await execute_memory_control_action(state, _context(store=store))
+
     profile = await aget_procedural_profile(store, user_id="user-1")
     assert profile.rules == []
 

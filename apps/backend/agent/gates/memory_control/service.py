@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from agent.gates.memory_control.operations import (
     MemoryControlTarget,
@@ -29,6 +31,18 @@ from agent.gates.memory_control.actions import (
 )
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, resolve_owner_id
+
+
+class PreferenceRuleDecision(BaseModel):
+    """Structured rule generated from an explicit user preference."""
+
+    rule_text: str = Field(
+        min_length=1,
+        max_length=280,
+        description="One grammatical second-person procedural rule to persist.",
+    )
+    reasoning: str = Field(min_length=1, max_length=240)
+    confidence: Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True)
@@ -194,6 +208,90 @@ def _capability_reply() -> MemoryControlServiceResult:
     )
 
 
+def _build_preference_rule_prompt(
+    *,
+    state: AgentState,
+    preference_text: str,
+) -> str:
+    """Build the focused rule-writing prompt for explicit preferences.
+
+    Args:
+        state (AgentState): Current graph state.
+        preference_text (str): Preference phrase selected by turn dispatch.
+
+    Returns:
+        str: Prompt requesting one durable procedural rule.
+    """
+
+    return (
+        "Convert the explicit user preference into one durable procedural rule "
+        "for how the assistant should respond or use memory.\n\n"
+        "Rules:\n"
+        "- Write exactly one grammatical second-person rule.\n"
+        "- The rule must start with 'You prefer', 'You do not want', 'Do not', "
+        "'When', or 'If'.\n"
+        "- Preserve the user's intent; do not add therapeutic advice or new facts.\n"
+        "- Use natural grammar. Do not write fragments such as 'You prefer give...'.\n"
+        "- Keep it under 24 words.\n\n"
+        "Examples:\n"
+        "preference_text: direct answers when I am spiraling\n"
+        "rule_text: You prefer direct answers when you are spiraling.\n\n"
+        "preference_text: don't suggest journaling\n"
+        "rule_text: Do not suggest journaling.\n\n"
+        "preference_text: ask fewer questions\n"
+        "rule_text: You prefer fewer questions.\n\n"
+        f'Current user message: "{state.get("message", "")}"\n'
+        f'preference_text: "{preference_text}"'
+    )
+
+
+def _build_preference_rule_system_prompt() -> str:
+    """Return the system instruction for preference-rule writing.
+
+    Returns:
+        str: System instruction.
+    """
+
+    return (
+        "You write concise, durable procedural memory rules for one user. "
+        "Return only the structured rule decision."
+    )
+
+
+async def _write_preference_rule(
+    *,
+    action: SavePreferenceAction,
+    context: WorkflowContext,
+    state: AgentState,
+) -> str:
+    """Generate the final procedural rule for an explicit preference.
+
+    Args:
+        action (SavePreferenceAction): Save-preference action payload.
+        context (WorkflowContext): Runtime context containing the control LLM.
+        state (AgentState): Current graph state for evidence.
+
+    Returns:
+        str: Final rule text to persist.
+
+    Raises:
+        RuntimeError: If no control LLM is configured.
+    """
+
+    if context.llm_client is None:
+        raise RuntimeError("save_preference requires an LLM client.")
+
+    decision = await context.llm_client.generate_structured(
+        prompt=_build_preference_rule_prompt(
+            state=state,
+            preference_text=action.preference_text,
+        ),
+        response_schema=PreferenceRuleDecision,
+        system_instruction=_build_preference_rule_system_prompt(),
+    )
+    return decision.rule_text
+
+
 async def _handle_set_recall(
     *, action: SetRecallAction, store: Any, owner_id: str
 ) -> MemoryControlServiceResult:
@@ -214,14 +312,19 @@ async def _handle_set_recall(
 async def _handle_save_preference(
     *,
     action: SavePreferenceAction,
-    store: Any,
+    context: WorkflowContext,
     owner_id: str,
     state: AgentState,
 ) -> MemoryControlServiceResult:
+    rule_text = await _write_preference_rule(
+        action=action,
+        context=context,
+        state=state,
+    )
     saved_rule = await save_preference_rule(
-        store,
+        context.memory_store,
         owner_id=owner_id,
-        rule_text=action.rule_text,
+        rule_text=rule_text,
         evidence=state.get("message", ""),
     )
     return MemoryControlServiceResult(
@@ -354,7 +457,7 @@ async def execute_memory_control_action(
             )
         case SavePreferenceAction():
             return await _handle_save_preference(
-                action=action, store=store, owner_id=owner_id, state=state
+                action=action, context=context, owner_id=owner_id, state=state
             )
         case ForgetByIndexAction():
             return await _handle_forget_by_index(

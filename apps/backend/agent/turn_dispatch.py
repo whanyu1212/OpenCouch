@@ -8,10 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agent.conversation import format_recent_history
-from agent.gates.memory_control.actions import (
-    MemoryControlAction,
-    normalize_preference_rule,
-)
+from agent.gates.memory_control.actions import MemoryControlAction
 from agent.state import AgentState
 from llm.base import BaseLLMClient
 
@@ -61,9 +58,9 @@ class TurnDispatchDecision(BaseModel):
         default=None,
         description="Saved-memory deletion query or grounded lookup query.",
     )
-    rule_text: str | None = Field(
+    preference_text: str | None = Field(
         default=None,
-        description="Second-person preference/style rule for save_preference.",
+        description="User preference phrase for save_preference.",
     )
 
 
@@ -137,6 +134,9 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
         "remember about ...?' or 'what is saved in memory about ...?' MUST be "
         "memory_control because the user is inspecting saved assistant memory, "
         "even when the topic is emotional or personal.\n"
+        "- For memory_control actions, use list when the user asks what content "
+        "is saved, remembered, or known about a topic. Use status only for "
+        "memory-system status, counts, or proactive recall settings.\n"
         "- Requests to find credible articles, reading lists, named external "
         "resources, official pages, or source-backed mental-health information "
         "MUST be grounded_lookup. General coaching or explanation without a "
@@ -153,7 +153,9 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
         "- set_recall: enabled=true or false.\n"
         "- forget_by_index: target_kind and target_index.\n"
         "- forget_by_query: query with the concrete memory target.\n"
-        "- save_preference: rule_text as a concise second-person style rule.\n\n"
+        "- save_preference: preference_text as the user's response or memory-use "
+        "preference, not a finalized rule. Examples: 'direct answers when I am "
+        "spiraling', 'do not suggest journaling', 'ask fewer questions'.\n\n"
         "When route=grounded_lookup, set query to a concise search query.\n\n"
         f"Pending memory action: {pending_summary}\n\n"
         "Recent conversation:\n"
@@ -219,14 +221,13 @@ def _memory_action_from_decision(
         return MemoryControlAction({"type": "forget_by_query", "query": query})
 
     if action_type == "save_preference":
-        rule_text = normalize_preference_rule(
-            _required_text(decision.rule_text, field_name="rule_text")
+        preference_text = _required_text(
+            decision.preference_text,
+            field_name="preference_text",
         )
-        if not rule_text:
-            raise ValueError(
-                "Turn dispatch selected save_preference without rule_text."
-            )
-        return MemoryControlAction({"type": "save_preference", "rule_text": rule_text})
+        return MemoryControlAction(
+            {"type": "save_preference", "preference_text": preference_text}
+        )
 
     raise ValueError(f"Unsupported memory action type: {action_type}")
 

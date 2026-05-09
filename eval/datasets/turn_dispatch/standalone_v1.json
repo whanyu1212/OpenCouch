@@ -457,7 +457,7 @@
         "decision": {
           "route": "memory_control",
           "memory_action_type": "save_preference",
-          "rule_text": "You prefer concise, direct responses.",
+          "preference_text": "concise, direct responses",
           "reasoning": "The user asks to save a response-style preference.",
           "confidence": "high"
         }
@@ -468,7 +468,7 @@
         "grounded_lookup_status": "not_attempted",
         "grounded_lookup_query": "",
         "memory_action_type": "save_preference",
-        "memory_action_rule_text_contains": ["concise", "direct"],
+        "memory_action_preference_text_contains": ["concise", "direct"],
         "turn_dispatch_decision": "save_preference",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",

@@ -36,7 +36,6 @@ if TYPE_CHECKING:
         SetRecallAction,
         StatusAction,
         TypedMemoryAction,
-        normalize_preference_rule,
         parse_memory_control_action,
     )
     from agent.gates.memory_control.service import (
@@ -57,7 +56,6 @@ _LAZY_ACTION_SYMBOLS = frozenset(
         "SetRecallAction",
         "StatusAction",
         "TypedMemoryAction",
-        "normalize_preference_rule",
         "parse_memory_control_action",
     }
 )
@@ -114,7 +112,6 @@ __all__ = [
     "find_memory_target_by_index",
     "find_memory_targets",
     "list_memory_for_owner",
-    "normalize_preference_rule",
     "parse_memory_control_action",
     "save_preference_rule",
     "set_memory_recall",
