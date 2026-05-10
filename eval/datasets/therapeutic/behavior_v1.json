@@ -9,6 +9,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none"
         },
         "response_text": "That sounds overwhelming. We can slow this down and focus on the next small moment."
@@ -28,6 +29,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "reflective",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "interpersonal_therapy"
         },
         "response_text": "It sounds like you are noticing a recurring relationship pattern and want to understand it more clearly."
@@ -46,6 +48,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "guided_exercise",
+          "exercise_start_basis": "explicit_user_request",
           "therapeutic_approach": "dbt_skills"
         },
         "exercise_selection": "grounding_box_breathing",
@@ -80,6 +83,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "guided_exercise",
+          "exercise_start_basis": "explicit_user_request",
           "therapeutic_approach": "act"
         },
         "step_state": "complete",
@@ -115,6 +119,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "reflective",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "cbt"
         },
         "response_text": "We can stop the exercise and look at what happened when your chest tightened."

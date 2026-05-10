@@ -213,7 +213,17 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
             "question like 'yes, that makes sense, but how do I stop doing "
             "this?' is NOT an acceptance. If neither holds — for example, the "
             "prior therapeutic_approach is dbt_skills and the user asks 'how do I stop "
-            "doing this' — route to psychoeducation, not guided_exercise.\n\n"
+            "doing this' — route to psychoeducation, not guided_exercise.\n"
+            "Set exercise_start_basis to explicit_user_request only when the "
+            "current user message asks to do a structured exercise now. Set it "
+            "to accepted_assistant_offer only when the previous assistant turn "
+            "offered a specific exercise and the current user cleanly accepts. "
+            "Broad requests like 'help me calm down', 'I can't calm down', "
+            "'what can I do?', or 'I need something practical' are "
+            "ambiguous_or_none unless they explicitly ask to do an exercise. "
+            "Set it to ambiguous_or_none for every other turn. If "
+            "exercise_start_basis is ambiguous_or_none, do not choose "
+            "guided_exercise.\n\n"
         ),
     ),
     (
@@ -257,6 +267,8 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
         "output_contract",
         (
             "Return your decision in the structured schema. "
+            "Always include exercise_start_basis. For non-exercise response "
+            "styles, exercise_start_basis should usually be ambiguous_or_none. "
             "Keep the reasoning to one short sentence — it's for debugging, "
             "not for the user."
         ),

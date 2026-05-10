@@ -217,6 +217,7 @@ class _StallingExtractionLLM(BaseLLMClient):
                 StructuredResponseT,
                 DispatchDecision(
                     response_style="supportive",
+                    exercise_start_basis="ambiguous_or_none",
                     reasoning="fake",
                     confidence="high",
                 ),

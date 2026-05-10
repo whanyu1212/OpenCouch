@@ -9,6 +9,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none"
         },
         "response_text": "That sounds exhausting. It makes sense that your system feels worn down after a day like that. What feels most needed for the next few minutes?"
@@ -32,6 +33,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "guided_exercise",
+          "exercise_start_basis": "explicit_user_request",
           "therapeutic_approach": "dbt_skills"
         },
         "exercise_selection": "grounding_5_4_3_2_1",
@@ -72,6 +74,7 @@
       "scripted": {
         "dispatch": {
           "response_style": "guided_exercise",
+          "exercise_start_basis": "explicit_user_request",
           "therapeutic_approach": "dbt_skills"
         },
         "step_state": "hold",

@@ -86,6 +86,7 @@ def _to_command(
                 "source": plan.source,
                 "reason": plan.reason,
                 "confidence": plan.confidence,
+                "exercise_start_basis": plan.exercise_start_basis,
             },
         )
     return Command(

@@ -94,6 +94,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         *,
         response_style: str,
         therapeutic_approach: str,
+        exercise_start_basis: str = "ambiguous_or_none",
         turn_route: str = "therapeutic",
         memory_action_type: str | None = None,
         lookup_query: str | None = None,
@@ -104,6 +105,7 @@ class _FakeDispatchLLM(BaseLLMClient):
     ) -> None:
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
+        self.exercise_start_basis = exercise_start_basis
         self.turn_route = turn_route
         self.memory_action_type = memory_action_type
         self.lookup_query = lookup_query
@@ -176,6 +178,7 @@ class _FakeDispatchLLM(BaseLLMClient):
             DispatchDecision(
                 response_style=self.response_style,  # type: ignore[arg-type]
                 therapeutic_approach=self.therapeutic_approach,  # type: ignore[arg-type]
+                exercise_start_basis=self.exercise_start_basis,  # type: ignore[arg-type]
                 reasoning="contract test",
                 confidence="high",
             ),

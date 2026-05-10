@@ -111,6 +111,7 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
             decision = DispatchDecision(
                 response_style="clarifying",
                 therapeutic_approach="none",
+                exercise_start_basis="ambiguous_or_none",
                 reasoning="user is clarifying the exercise instructions",
                 confidence="high",
             )
@@ -118,6 +119,7 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
             decision = DispatchDecision(
                 response_style="guided_exercise",
                 therapeutic_approach="dbt_skills",
+                exercise_start_basis="explicit_user_request",
                 reasoning="user is answering the active grounding step",
                 confidence="high",
             )
@@ -125,6 +127,7 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
             decision = DispatchDecision(
                 response_style="guided_exercise",
                 therapeutic_approach="dbt_skills",
+                exercise_start_basis="explicit_user_request",
                 reasoning="user explicitly asked for grounding",
                 confidence="high",
             )
@@ -132,6 +135,7 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
             decision = DispatchDecision(
                 response_style="supportive",
                 therapeutic_approach="motivational_interviewing",
+                exercise_start_basis="ambiguous_or_none",
                 reasoning="default supportive fallback for test harness",
                 confidence="high",
             )

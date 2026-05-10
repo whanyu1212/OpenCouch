@@ -115,6 +115,7 @@ class _FakeAPILLM(BaseLLMClient):
                 DispatchDecision(
                     response_style="supportive",
                     therapeutic_approach="none",
+                    exercise_start_basis="ambiguous_or_none",
                     reasoning="ordinary API contract test turn",
                     confidence="high",
                 ),

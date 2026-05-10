@@ -216,6 +216,7 @@ class _FakeExtractionLLM(BaseLLMClient):
                 StructuredResponseT,
                 DispatchDecision(
                     response_style="supportive",
+                    exercise_start_basis="ambiguous_or_none",
                     reasoning="fake dispatcher — supportive for extraction tests",
                     confidence="high",
                 ),

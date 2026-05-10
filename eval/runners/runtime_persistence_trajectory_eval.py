@@ -161,6 +161,7 @@ class ScriptedRuntimeLLM:
                     {
                         "response_style": "supportive",
                         "therapeutic_approach": "none",
+                        "exercise_start_basis": "ambiguous_or_none",
                         "reasoning": "scripted supportive response",
                         "confidence": "high",
                     },

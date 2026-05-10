@@ -42,6 +42,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "cbt",
               "reasoning": "Supportive CBT-framed help fits presentation anxiety.",
               "confidence": "high"
@@ -85,6 +86,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "A grounding exercise should start the guided exercise node.",
               "confidence": "high"
@@ -126,10 +128,12 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is continuing an active therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "none",
               "reasoning": "The user is responding to the active exercise step.",
               "confidence": "high"
@@ -170,10 +174,12 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants to leave the exercise and receive support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "clear"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "The user explicitly changed away from the exercise.",
               "confidence": "high"
@@ -237,6 +243,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding is appropriate.",
               "confidence": "high"
@@ -331,6 +338,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding is appropriate.",
               "confidence": "high"
@@ -365,6 +373,7 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for verified external factual information.",
               "confidence": "high",
+              "active_flow_action": "preserve",
               "query": "Does 988 work in Singapore?"
             }
           },
@@ -406,10 +415,12 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is returning to the active exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "none",
               "reasoning": "Continue the active exercise.",
               "confidence": "high"
@@ -488,6 +499,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding is appropriate.",
               "confidence": "high"
@@ -522,6 +534,7 @@
               "route": "memory_control",
               "reasoning": "The user asks to inspect saved assistant memory.",
               "confidence": "high",
+              "active_flow_action": "preserve",
               "memory_action_type": "list"
             }
           },
@@ -565,10 +578,12 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is returning to the active exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "none",
               "reasoning": "Continue the active exercise.",
               "confidence": "high"
@@ -643,6 +658,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding is appropriate.",
               "confidence": "high"
@@ -677,6 +693,7 @@
               "route": "memory_control",
               "reasoning": "The user asks to delete saved assistant memory.",
               "confidence": "high",
+              "active_flow_action": "clear",
               "memory_action_type": "forget_by_query",
               "query": "presentation"
             }
@@ -812,10 +829,12 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user moved away from the pending deletion and wants support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "clear"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "cbt",
               "reasoning": "A supportive response fits anxiety regulation.",
               "confidence": "high"

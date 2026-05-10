@@ -9,6 +9,7 @@ from agent.active_flow import current_turn_active_flow
 from agent.memory.models import (
     ConfidenceLevel,
     DispatchDecision,
+    ExerciseStartBasis,
     TherapeuticApproach,
     TherapeuticResponseStyle,
 )
@@ -24,6 +25,10 @@ from agent.therapeutic.dispatch.prompt import (
 _EXERCISE_PRESERVING_STYLES: frozenset[TherapeuticResponseStyle] = frozenset(
     {"clarifying", "guided_exercise"}
 )
+_AUTHORIZED_EXERCISE_START_BASES: frozenset[ExerciseStartBasis] = frozenset(
+    {"explicit_user_request", "accepted_assistant_offer"}
+)
+_CONSENT_GATE_RESPONSE_STYLE: TherapeuticResponseStyle = "supportive"
 
 
 @dataclass(frozen=True)
@@ -36,6 +41,7 @@ class DispatchPlan:
     source: str = "llm_primary"
     reason: str = "LLM classifier selected this response."
     confidence: ConfidenceLevel | None = None
+    exercise_start_basis: ExerciseStartBasis | None = None
 
 
 async def plan_therapeutic_route(
@@ -100,6 +106,20 @@ async def plan_therapeutic_route(
 
     response_style = decision.response_style
     approach = decision.therapeutic_approach
+    source = "llm_primary"
+    reason = decision.reasoning
+    exercise_start_basis = decision.exercise_start_basis
+
+    if (
+        response_style == "guided_exercise"
+        and exercise_start_basis not in _AUTHORIZED_EXERCISE_START_BASES
+    ):
+        response_style = _CONSENT_GATE_RESPONSE_STYLE
+        source = "exercise_consent_gate"
+        reason = (
+            "Guided exercise requires an explicit user request or acceptance "
+            "of a specific assistant offer."
+        )
 
     clear_exercise = (
         exercise_active
@@ -119,7 +139,8 @@ async def plan_therapeutic_route(
         response_style=response_style,
         therapeutic_approach=approach,
         clear_exercise=clear_exercise,
-        source="llm_primary",
-        reason=decision.reasoning,
+        source=source,
+        reason=reason,
         confidence=decision.confidence,
+        exercise_start_basis=exercise_start_basis,
     )

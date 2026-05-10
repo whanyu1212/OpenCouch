@@ -81,12 +81,14 @@ class _FakeDispatchLLM(BaseLLMClient):
         *,
         response_style: str = "supportive",
         therapeutic_approach: str = "none",
+        exercise_start_basis: str = "ambiguous_or_none",
         should_raise: bool = False,
         text_should_raise: bool = False,
         crisis_level: int | None = None,
     ) -> None:
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
+        self.exercise_start_basis = exercise_start_basis
         self.should_raise = should_raise
         self.text_should_raise = text_should_raise
         self.crisis_level = crisis_level
@@ -174,6 +176,7 @@ class _FakeDispatchLLM(BaseLLMClient):
             DispatchDecision(
                 response_style=self.response_style,  # type: ignore[arg-type]
                 therapeutic_approach=self.therapeutic_approach,  # type: ignore[arg-type]
+                exercise_start_basis=self.exercise_start_basis,  # type: ignore[arg-type]
                 reasoning="fake dispatch decision",
                 confidence="high",
             ),
@@ -451,7 +454,10 @@ class TestDispatchNode:
         route to the real node.
         """
 
-        fake = _FakeDispatchLLM(response_style="guided_exercise")
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            exercise_start_basis="explicit_user_request",
+        )
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("Can you walk me through a grounding exercise?")
 
@@ -508,6 +514,11 @@ class TestDispatchNode:
         fake = _FakeDispatchLLM(
             response_style=response_style,
             therapeutic_approach=therapeutic_approach,
+            exercise_start_basis=(
+                "explicit_user_request"
+                if response_style == "guided_exercise"
+                else "ambiguous_or_none"
+            ),
         )
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state(message)
@@ -525,19 +536,21 @@ class TestDispatchNode:
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
-    async def test_llm_guided_exercise_pick_routes_directly(self) -> None:
-        """LLM guided_exercise picks now route directly without guards."""
+    async def test_ambiguous_guided_exercise_pick_is_downgraded(self) -> None:
+        """Ambiguous exercise starts are kept in a normal response node."""
 
         fake = _FakeDispatchLLM(
             response_style="guided_exercise",
             therapeutic_approach="dbt_skills",
+            exercise_start_basis="ambiguous_or_none",
         )
         runtime = _MockRuntime(llm_client=fake)
         state = _build_state("What are some tips to cope at different severity levels?")
 
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
-        assert cmd.goto == GUIDED_EXERCISE_NODE
+        assert cmd.goto == THERAPEUTIC_RESPONSE_NODE
+        assert cmd.update["response_style"] == "supportive"
         assert cmd.update["therapeutic_approach"] == "dbt_skills"
         assert fake.structured_calls == 1
 
@@ -545,7 +558,10 @@ class TestDispatchNode:
     async def test_active_exercise_llm_pick_routes_guided_exercise(self) -> None:
         """An active exercise continues when the LLM keeps guided_exercise."""
 
-        fake = _FakeDispatchLLM(response_style="guided_exercise")
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            exercise_start_basis="explicit_user_request",
+        )
         runtime = _MockRuntime(llm_client=fake)
 
         state: Any = {

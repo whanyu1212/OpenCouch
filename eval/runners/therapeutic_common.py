@@ -27,6 +27,7 @@ class ScriptedDispatch:
     """Scripted dispatch decision returned by the fake control LLM."""
 
     response_style: str
+    exercise_start_basis: str
     therapeutic_approach: str = "none"
     reasoning: str = "scripted therapeutic eval decision"
     confidence: str = "high"
@@ -92,6 +93,7 @@ class ScriptedTherapeuticLLM:
             return response_schema(
                 response_style=dispatch.response_style,
                 therapeutic_approach=dispatch.therapeutic_approach,
+                exercise_start_basis=dispatch.exercise_start_basis,
                 reasoning=dispatch.reasoning,
                 confidence=dispatch.confidence,
             )
@@ -266,7 +268,12 @@ def grade_therapeutic_output(
                     f"{key}: expected {expected_value!r}, got {actual_value!r}"
                 )
 
-    actual_decision = last_routing_decision(output)
+    actual_entry = last_routing_entry(output)
+    actual_decision = (
+        str(actual_entry.get("decision"))
+        if isinstance(actual_entry, Mapping) and actual_entry.get("decision")
+        else None
+    )
     expected_routing_decision = expected.get("routing_decision")
     if (
         expected_routing_decision is not None
@@ -286,6 +293,23 @@ def grade_therapeutic_output(
                 f"{expected_routing_any_of!r}, got {actual_decision!r}"
             )
 
+    _expect_equal_or_any_of(
+        failures,
+        "routing_source",
+        actual_entry.get("source") if isinstance(actual_entry, Mapping) else None,
+        exact=expected.get("routing_source"),
+    )
+    _expect_equal_or_any_of(
+        failures,
+        "routing_exercise_start_basis",
+        (
+            actual_entry.get("exercise_start_basis")
+            if isinstance(actual_entry, Mapping)
+            else None
+        ),
+        exact=expected.get("routing_exercise_start_basis"),
+    )
+
     return failures
 
 
@@ -299,6 +323,23 @@ def last_routing_decision(output: Mapping[str, Any]) -> str | None:
         str | None: Last routing decision when present.
     """
 
+    entry = last_routing_entry(output)
+    if not isinstance(entry, Mapping):
+        return None
+    decision = entry.get("decision")
+    return str(decision) if decision is not None else None
+
+
+def last_routing_entry(output: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Return the last dispatch routing trace entry.
+
+    Args:
+        output (Mapping[str, Any]): Subgraph output.
+
+    Returns:
+        Mapping[str, Any] | None: Last routing entry when present.
+    """
+
     diagnostics = output.get("diagnostics") or {}
     if not isinstance(diagnostics, Mapping):
         return None
@@ -308,8 +349,7 @@ def last_routing_decision(output: Mapping[str, Any]) -> str | None:
     last = trace[-1]
     if not isinstance(last, Mapping):
         return None
-    decision = last.get("decision")
-    return str(decision) if decision is not None else None
+    return last
 
 
 def build_live_therapeutic_llms() -> tuple[Any, Any]:
@@ -358,6 +398,7 @@ def _parse_scripted(value: Any) -> ScriptedLLMConfig | None:
     return ScriptedLLMConfig(
         dispatch=ScriptedDispatch(
             response_style=str(dispatch["response_style"]),
+            exercise_start_basis=str(dispatch["exercise_start_basis"]),
             therapeutic_approach=str(dispatch.get("therapeutic_approach", "none")),
             reasoning=str(
                 dispatch.get("reasoning", "scripted therapeutic eval decision")

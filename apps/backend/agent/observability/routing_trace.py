@@ -18,6 +18,7 @@ class RoutingTraceEntry(TypedDict, total=False):
     confidence: str
     active_flow: str
     active_flow_action: str
+    exercise_start_basis: str
 
 
 def append_routing_trace(
@@ -105,6 +106,10 @@ def _normalize_trace_entry(value: Any) -> RoutingTraceEntry | None:
         value.get("active_flow_action"),
         max_length=24,
     )
+    exercise_start_basis = _clean_trace_value(
+        value.get("exercise_start_basis"),
+        max_length=32,
+    )
     if source:
         entry["source"] = source
     if reason:
@@ -115,6 +120,8 @@ def _normalize_trace_entry(value: Any) -> RoutingTraceEntry | None:
         entry["active_flow"] = active_flow
     if active_flow_action:
         entry["active_flow_action"] = active_flow_action
+    if exercise_start_basis:
+        entry["exercise_start_basis"] = exercise_start_basis
     return entry
 
 

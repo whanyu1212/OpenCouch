@@ -164,6 +164,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
                 StructuredResponseT,
                 DispatchDecision(
                     response_style="supportive",
+                    exercise_start_basis="ambiguous_or_none",
                     reasoning="supportive mode for session commit test",
                     confidence="high",
                 ),

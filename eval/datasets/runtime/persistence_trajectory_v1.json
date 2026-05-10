@@ -33,6 +33,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive reflection is appropriate.",
               "confidence": "high"
@@ -79,6 +80,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "reflective",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Reflective continuation fits the request.",
               "confidence": "high"
@@ -145,6 +147,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive response fits.",
               "confidence": "high"
@@ -227,6 +230,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive response fits.",
               "confidence": "high"
@@ -284,6 +288,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive recall fits.",
               "confidence": "high"
@@ -347,6 +352,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive response fits.",
               "confidence": "high"
@@ -404,6 +410,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive response fits.",
               "confidence": "high"
@@ -444,6 +451,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive response fits.",
               "confidence": "high"
@@ -510,6 +518,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive pacing fits.",
               "confidence": "high"
@@ -579,6 +588,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Sensory grounding is appropriate.",
               "confidence": "high"
@@ -696,6 +706,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Acknowledge briefly.",
               "confidence": "high"
@@ -818,6 +829,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "Supportive response fits.",
               "confidence": "high"

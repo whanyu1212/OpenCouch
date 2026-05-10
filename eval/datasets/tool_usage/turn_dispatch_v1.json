@@ -21,6 +21,7 @@
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none",
           "reasoning": "Supportive response is appropriate.",
           "confidence": "high"
@@ -56,6 +57,7 @@
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none",
           "reasoning": "Supportive response is appropriate.",
           "confidence": "high"
@@ -160,7 +162,8 @@
           "route": "memory_control",
           "memory_action_type": "confirm_pending",
           "reasoning": "The user confirmed the pending memory deletion.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "continue"
         }
       },
       "expected": {

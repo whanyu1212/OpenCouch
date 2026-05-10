@@ -21,6 +21,7 @@
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none",
           "reasoning": "Supportive response is appropriate.",
           "confidence": "high"
@@ -61,6 +62,7 @@
         },
         "therapeutic_dispatch": {
           "response_style": "clarifying",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none",
           "reasoning": "Clarification is appropriate.",
           "confidence": "high"
@@ -101,6 +103,7 @@
         },
         "therapeutic_dispatch": {
           "response_style": "clarifying",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none",
           "reasoning": "A clarifying response is appropriate.",
           "confidence": "high"
@@ -325,6 +328,7 @@
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
           "therapeutic_approach": "none",
           "reasoning": "Supportive response is appropriate after de-escalation.",
           "confidence": "high"

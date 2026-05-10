@@ -23,6 +23,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "The user requested sensory grounding.",
               "confidence": "high"
@@ -105,6 +106,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "none",
               "reasoning": "Continue the active exercise.",
               "confidence": "high"
@@ -154,6 +156,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "none",
               "reasoning": "The user explicitly stopped the exercise.",
               "confidence": "high"
@@ -221,6 +224,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding is appropriate.",
               "confidence": "high"
@@ -294,6 +298,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "pfa",
               "reasoning": "Post-crisis stabilization support fits.",
               "confidence": "high"
@@ -507,6 +512,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "cbt",
               "reasoning": "Supportive CBT-framed help fits spiraling anxiety.",
               "confidence": "high"
@@ -679,6 +685,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "cbt",
               "reasoning": "Supportive grounding fits anxiety.",
               "confidence": "high"
@@ -745,6 +752,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding exercise requested.",
               "confidence": "high"
@@ -830,6 +838,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "none",
               "reasoning": "Continue the active exercise.",
               "confidence": "high"
@@ -899,6 +908,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
               "therapeutic_approach": "dbt_skills",
               "reasoning": "Grounding exercise requested.",
               "confidence": "high"
@@ -940,6 +950,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "pfa",
               "reasoning": "The user needs reassurance before continuing.",
               "confidence": "high"
@@ -1094,6 +1105,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "pfa",
               "reasoning": "Practical support fits.",
               "confidence": "high"
@@ -1323,6 +1335,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "pfa",
               "reasoning": "Post-crisis stabilization support fits.",
               "confidence": "high"
@@ -1499,6 +1512,7 @@
             },
             "therapeutic_dispatch": {
               "response_style": "closing",
+              "exercise_start_basis": "ambiguous_or_none",
               "therapeutic_approach": "pfa",
               "reasoning": "Safe goodbye after crisis should close gently.",
               "confidence": "high"

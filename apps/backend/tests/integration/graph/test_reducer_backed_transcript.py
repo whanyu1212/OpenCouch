@@ -295,6 +295,7 @@ class _GuidedExerciseLLM(BaseLLMClient):
             DispatchDecision(
                 response_style="guided_exercise",
                 therapeutic_approach="act",
+                exercise_start_basis="explicit_user_request",
                 reasoning="guided exercise requested or active",
                 confidence="high",
             ),
@@ -344,6 +345,7 @@ class _SupportiveLLM(BaseLLMClient):
                 DispatchDecision(
                     response_style="supportive",
                     therapeutic_approach="none",
+                    exercise_start_basis="ambiguous_or_none",
                     reasoning="normal supportive test turn",
                     confidence="high",
                 ),
