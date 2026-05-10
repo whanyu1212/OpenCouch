@@ -80,6 +80,8 @@ The subgraph writes:
 
 - `response_text`: generated response for the current turn.
 - `response_style`: selected response style.
+- `session_action`: optional UI hint. `closing` sets
+  `suggest_end_session`; all other turns use the parent graph default `none`.
 - `therapeutic_approach`: selected or preserved therapeutic approach.
 - `exercise_state`: active guided exercise type, step index, step id, version,
   and pinned approach.
@@ -108,6 +110,11 @@ pinned exercise approach for continuity. Other non-exercise response styles
 clear the active exercise before the response node runs, which prevents
 explanatory or reflective side turns from accidentally keeping an exercise
 alive after the user switches away.
+
+When the planner selects `closing`, the dispatch node adds
+`session_action="suggest_end_session"`. This is only a client hint. The
+therapeutic subgraph never ends the persistent session or writes a session arc;
+explicit runtime finalization remains outside the graph node.
 
 ## Non-Exercise Responses
 

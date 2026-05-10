@@ -68,7 +68,7 @@ The state schema lives in `agent.state`.
 | Conversation | `history`, `transcript`, `working_memory` | `build_initial_state`, `load_memory_node`, `finalize_turn_node`. |
 | Persistent continuity | `session_memory`, `procedural_profile`, `session_progress`, `exercise_state`, `memory_control` | Memory load, turn counting, guided exercise, memory-control confirmation/action state, runtime session management. |
 | Crisis | `crisis` | `crisis_gate_node`. |
-| Output | `therapeutic_approach`, `response_style`, `response_text`, `should_persist_memory`, `diagnostics` | Routing and response nodes. |
+| Output | `therapeutic_approach`, `response_style`, `session_action`, `response_text`, `should_persist_memory`, `diagnostics` | Routing and response nodes. |
 | Private | `route`, `crisis_audit`, `grounded_lookup`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
 
 Reducer-backed channels:
@@ -271,7 +271,10 @@ Wrap-up takeaway requests stay inside the `closing` style. Examples include
 this?", or "Can you put the main thing in one sentence?" The closing node should
 give one concise synthesis and avoid reopening exploration. This is distinct
 from session-end summarization: it does not end the session, write episodic
-memory, or require a separate recap node.
+memory, or require a separate recap node. When the route is truly closing, the
+graph sets `session_action="suggest_end_session"` so clients can offer an
+explicit end-session control; only the runtime's existing end-session command
+finalizes the session.
 
 ## Guided Exercises
 

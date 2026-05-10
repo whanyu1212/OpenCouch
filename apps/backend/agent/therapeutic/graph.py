@@ -28,7 +28,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agent.models import Channel, CrisisAssessment
+from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.runtime_context import WorkflowContext
 from agent.state import (
     AgentState,
@@ -68,6 +68,7 @@ class TherapeuticSubgraphOutput(TypedDict):
 
     response_text: NotRequired[str]
     response_style: NotRequired[str]
+    session_action: NotRequired[SessionAction]
     therapeutic_approach: NotRequired[str | None]
     exercise_state: NotRequired[ExerciseState]
     diagnostics: NotRequired[dict[str, Any]]

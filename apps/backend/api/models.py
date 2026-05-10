@@ -12,6 +12,8 @@ evolves.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from agent.memory.models import FeedbackLabel
@@ -94,6 +96,12 @@ class ChatResponse(BaseModel):
         description="Which therapeutic approach informed the reply "
         "(motivational_interviewing, cbt, act, dbt_skills, "
         "grief_support, interpersonal_therapy, pfa, or none).",
+    )
+    session_action: Literal["none", "suggest_end_session"] = Field(
+        default="none",
+        description="Optional session-level UI hint. "
+        "'suggest_end_session' means the assistant has produced a closing "
+        "reply and the client may offer explicit session finalization.",
     )
     crisis: CrisisInfo
     diagnostics: dict[str, object] = Field(

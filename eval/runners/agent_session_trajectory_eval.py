@@ -477,6 +477,7 @@ class AgentSessionTrajectoryEvaluator(BaseEvaluator[AgentSessionCase]):
                             "therapeutic_approach": (
                                 result.output.therapeutic_approach
                             ),
+                            "session_action": result.output.session_action,
                             "routing": {
                                 "safety": _routing_decision(state, stage="safety"),
                                 "turn_dispatch": _routing_decision(
@@ -647,6 +648,12 @@ def _grade_trajectory(
             actual=final_state.get("crisis"),
             expected=expected.get("final_crisis"),
         )
+        _expect_equal(
+            failures,
+            "final_session_action",
+            final_state.get("session_action"),
+            expected,
+        )
     return failures
 
 
@@ -666,6 +673,12 @@ def _grade_turn(
         failures,
         f"{label}.therapeutic_approach",
         artifact.get("therapeutic_approach"),
+        expected,
+    )
+    _expect_equal(
+        failures,
+        f"{label}.session_action",
+        artifact.get("session_action"),
         expected,
     )
     _grade_text_contains(
@@ -887,6 +900,7 @@ def _judge_output(
                 "route": turn.get("route"),
                 "response_style": turn.get("response_style"),
                 "therapeutic_approach": turn.get("therapeutic_approach"),
+                "session_action": turn.get("session_action"),
                 "response_text": turn.get("response_text"),
                 "routing": turn.get("routing"),
                 "exercise_state": turn.get("exercise_state"),

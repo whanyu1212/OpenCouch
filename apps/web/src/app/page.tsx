@@ -192,7 +192,14 @@ export default function TextChatPage() {
   const lastEndedSession = useSessionStore((s) => s.lastEndedSession);
   const clearLastEndedSession = useSessionStore((s) => s.clearLastEndedSession);
   const responseModelTier = useSessionStore((s) => s.responseModelTier);
-  const { runAction, startNewSession, isBusy } = useCommandActions();
+  const {
+    runAction,
+    startNewSession,
+    endCurrentSession,
+    canEndSession,
+    endingSession,
+    isBusy,
+  } = useCommandActions();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -586,6 +593,15 @@ export default function TextChatPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="oc-bubble-body">{msg.content}</div>
                         {msg.responseStyle && <StateStrip msg={msg} />}
+                        {isPersistent &&
+                          lastEndedSession?.threadId !== threadId &&
+                          msg.sessionAction === "suggest_end_session" && (
+                            <SessionClosureAction
+                              disabled={!canEndSession || isBusy}
+                              ending={endingSession}
+                              onEndSession={() => void endCurrentSession()}
+                            />
+                          )}
                       </div>
                     </div>
                   )}
@@ -772,6 +788,30 @@ function SessionEndedCard({
           Review memory
         </button>
       </div>
+    </div>
+  );
+}
+
+function SessionClosureAction({
+  disabled,
+  ending,
+  onEndSession,
+}: {
+  disabled: boolean;
+  ending: boolean;
+  onEndSession: () => void;
+}) {
+  return (
+    <div className="mt-2 ml-0.5 flex flex-wrap items-center gap-2 text-[12px] text-oc-text-dim">
+      <span>Ready to close this session?</span>
+      <button
+        type="button"
+        onClick={onEndSession}
+        disabled={disabled}
+        className="rounded-lg border border-oc-teal-200 bg-oc-teal-50 px-2.5 py-1 text-[12px] font-medium text-oc-teal-800 transition-colors hover:bg-oc-teal-100 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {ending ? "Ending..." : "End session"}
+      </button>
     </div>
   );
 }

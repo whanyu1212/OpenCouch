@@ -34,6 +34,9 @@ class ResponseCategory(str, Enum):
     CRISIS = "crisis"
 
 
+SessionAction = Literal["none", "suggest_end_session"]
+
+
 class Message(BaseModel):
     """Validated, serializable conversation turn."""
 
@@ -74,6 +77,7 @@ class AgentOutput(BaseModel):
     crisis: CrisisAssessment
     response_style: str | None = None
     therapeutic_approach: str | None = None
+    session_action: SessionAction = "none"
     should_persist_memory: bool = False
     # Per-turn diagnostics for CLI/API observability. Nodes write timings
     # and write-counts into ``state["diagnostics"]``; ``state_to_output``

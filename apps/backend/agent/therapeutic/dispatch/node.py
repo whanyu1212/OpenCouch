@@ -29,6 +29,8 @@ from agent.therapeutic.dispatch.constants import (
 from agent.therapeutic.dispatch.planner import DispatchPlan, plan_therapeutic_route
 from agent.therapeutic.exercises.state import clear_exercise_delta
 
+_CLOSING_SESSION_ACTION = "suggest_end_session"
+
 
 def _style_update(response_style: str, approach: str) -> dict:
     """Build the selected-style state delta.
@@ -41,10 +43,13 @@ def _style_update(response_style: str, approach: str) -> dict:
         State delta carrying the selected response style and therapeutic approach.
     """
 
-    return {
+    update = {
         "response_style": response_style,
         "therapeutic_approach": approach,
     }
+    if response_style == "closing":
+        update["session_action"] = _CLOSING_SESSION_ACTION
+    return update
 
 
 def _to_command(

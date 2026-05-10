@@ -245,6 +245,7 @@ class TestChat:
         assert "response_text" in data
         assert len(data["response_text"]) > 0
         assert data["response_type"] in ("therapeutic", "crisis")
+        assert data["session_action"] == "none"
         assert "crisis" in data
         assert "diagnostics" in data
 

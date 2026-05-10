@@ -1348,6 +1348,523 @@
       }
     },
     {
+      "id": "closing-suggests-end-session-only",
+      "description": "A closing reply should suggest explicit session finalization without ending the persistent session automatically.",
+      "modes": ["scripted"],
+      "thread_id": "{run_id}-closing-signal",
+      "user_id": "{run_id}-user",
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "message": "I had a long day and just need a steady response.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe support request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for ordinary support.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "therapeutic_approach": "none",
+              "reasoning": "Supportive containment fits.",
+              "confidence": "high"
+            },
+            "response_text": "That sounds like a lot to carry. We can keep this simple and steady.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "session_action": "none",
+            "turn_dispatch_decision": "therapeutic",
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "message": "Thanks, I need to head out now.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe session wind-down",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is winding down the conversation.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "closing",
+              "therapeutic_approach": "none",
+              "reasoning": "Explicit goodbye should route to closing.",
+              "confidence": "high"
+            },
+            "response_text": "Take care. The main thing is to keep tonight simple and choose one small next step.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "closing",
+            "session_action": "suggest_end_session",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "closing",
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "end_session",
+          "scripted": {
+            "summarization": {
+              "arc": null,
+              "reason": "scripted closing signal case does not need an arc"
+            }
+          },
+          "expected": {
+            "status_after": "absent",
+            "stored_arc_exists": false
+          }
+        }
+      ],
+      "expected": {
+        "status": "absent",
+        "crisis_log_count": 0,
+        "final_transcript_length": 4,
+        "final_session_action": "suggest_end_session"
+      }
+    },
+    {
+      "id": "exercise-goodbye-clears-and-suggests-end",
+      "description": "A goodbye during a guided exercise should clear exercise continuity, suggest ending the session, and wait for explicit finalization.",
+      "modes": ["scripted"],
+      "thread_id": "{run_id}-exercise-goodbye",
+      "user_id": "{run_id}-user",
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "message": "Can we do a 5-4-3-2-1 grounding exercise?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a guided exercise.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Grounding exercise requested.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_5_4_3_2_1",
+            "response_text": "Let's start. Name five things you can see.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "session_action": "none",
+            "turn_dispatch_decision": "therapeutic",
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "message": "Actually I need to stop here and go.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise exit and session wind-down",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is ending the active exercise and leaving.",
+              "confidence": "high",
+              "active_flow_action": "clear"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "closing",
+              "therapeutic_approach": "none",
+              "reasoning": "Explicit leave request should route to closing.",
+              "confidence": "high"
+            },
+            "response_text": "We can stop here. Take one small steady step with you as you go.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "closing",
+            "session_action": "suggest_end_session",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "closing",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "clear"
+            },
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null,
+              "exercise_version": null,
+              "exercise_therapeutic_approach": null
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "end_session",
+          "scripted": {
+            "summarization": {
+              "arc": null,
+              "reason": "scripted exercise goodbye case does not need an arc"
+            }
+          },
+          "expected": {
+            "status_after": "absent",
+            "stored_arc_exists": false
+          }
+        }
+      ],
+      "expected": {
+        "status": "absent",
+        "crisis_log_count": 0,
+        "final_transcript_length": 4,
+        "final_session_action": "suggest_end_session",
+        "final_exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        }
+      }
+    },
+    {
+      "id": "pending-delete-goodbye-clears-and-suggests-end",
+      "description": "A goodbye while a delete confirmation is pending should clear the pending action, preserve memory, and suggest explicit session end.",
+      "modes": ["scripted"],
+      "thread_id": "{run_id}-pending-goodbye",
+      "user_id": "{run_id}-user",
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-sleep-trigger",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "sleep",
+            "evidence_quote": "I get anxious before sleep."
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "message": "Delete saved fact 1.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe memory deletion request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user asks to delete saved memory.",
+              "confidence": "high",
+              "memory_action_type": "forget_by_index",
+              "target_kind": "fact",
+              "target_index": 1
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "memory_control",
+            "response_style": "memory_control",
+            "session_action": "none",
+            "turn_dispatch_decision": "forget_by_index",
+            "memory_control": {
+              "pending_action": {
+                "type": "delete",
+                "target": {
+                  "kind": "fact"
+                }
+              }
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "message": "Never mind, goodbye for now.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe goodbye while memory action is pending",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user moves away from the pending action and closes.",
+              "confidence": "high",
+              "active_flow_action": "clear"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "closing",
+              "therapeutic_approach": "none",
+              "reasoning": "Explicit goodbye should route to closing.",
+              "confidence": "high"
+            },
+            "response_text": "Okay. I won't delete that memory. Take care for now.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "closing",
+            "session_action": "suggest_end_session",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "closing",
+            "turn_dispatch_active_flow": {
+              "active_flow": "pending_memory_action",
+              "action": "clear"
+            },
+            "memory_control": {
+              "pending_action": null
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        }
+      ],
+      "expected": {
+        "status": "active",
+        "crisis_log_count": 0,
+        "final_transcript_length": 4,
+        "final_session_action": "suggest_end_session",
+        "final_memory_control": {
+          "pending_action": null
+        },
+        "final_store": {
+          "semantic_count": 1,
+          "facts_contain": ["sleep"]
+        }
+      }
+    },
+    {
+      "id": "crisis-no-session-end-then-safe-goodbye-suggests",
+      "description": "Crisis responses should not suggest ending the session; a later safe goodbye may suggest explicit finalization.",
+      "modes": ["scripted"],
+      "thread_id": "{run_id}-crisis-then-goodbye",
+      "user_id": "{run_id}-user",
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "message": "I might hurt myself tonight in Singapore.",
+          "scripted": {
+            "crisis": {
+              "level": 2,
+              "confidence": "high",
+              "reason": "The user reports possible imminent self-harm.",
+              "needs_crisis_response": true,
+              "needs_clarification": false
+            },
+            "response_text": "I'm really glad you told me. If you might hurt yourself tonight, contact emergency services now or reach someone nearby who can stay with you."
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "crisis",
+            "response_style": "crisis_response",
+            "session_action": "none",
+            "safety_decision": "crisis",
+            "structured_calls": {
+              "CrisisAssessmentSchema": 1,
+              "TurnDispatchDecision": 0,
+              "DispatchDecision": 0
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 1,
+            "crisis_log_count": 1,
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "message": "I'm safe now. Thank you, I need to go.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "The user reports current safety and winds down.",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is safe and closing the conversation.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "closing",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Safe goodbye after crisis should close gently.",
+              "confidence": "high"
+            },
+            "response_text": "I'm glad you're safe now. Keep support close after you leave here.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "closing",
+            "therapeutic_approach": "pfa",
+            "session_action": "suggest_end_session",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "closing/pfa",
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        }
+      ],
+      "expected": {
+        "status": "active",
+        "crisis_log_count": 1,
+        "final_transcript_length": 4,
+        "final_session_action": "suggest_end_session"
+      }
+    },
+    {
       "id": "live-safe-support-lookup-followup",
       "description": "Live LLM smoke trajectory: safe support, grounded psychoeducation lookup, and ordinary follow-up over the persistent runtime.",
       "modes": ["live"],

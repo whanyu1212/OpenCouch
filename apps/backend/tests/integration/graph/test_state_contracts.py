@@ -721,6 +721,35 @@ async def test_dispatch_default_channel_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_closing_channel_contract() -> None:
+    """Closing dispatch may add the session-finalization suggestion signal."""
+
+    command = await run_therapeutic_dispatch_node(
+        _build_state("Thanks, I need to go."),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="closing",
+                    therapeutic_approach="none",
+                )
+            ),
+        ),
+    )
+
+    _assert_allowed_keys(
+        command.update,
+        {
+            "response_style",
+            "therapeutic_approach",
+            "session_action",
+            "diagnostics",
+        },
+    )
+    assert command.update["session_action"] == "suggest_end_session"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_active_exercise_exit_channel_contract() -> None:
     """Exercise opt-out should clear exercise continuity and write response routing."""
 

@@ -795,6 +795,8 @@ def _turn_artifact(
         or state.get("response_style"),
         "therapeutic_approach": getattr(output, "therapeutic_approach", None)
         or state.get("therapeutic_approach"),
+        "session_action": getattr(output, "session_action", None)
+        or state.get("session_action"),
         "routing": {
             "safety": _routing_decision(state, stage="safety"),
             "turn_dispatch": _routing_decision(state, stage="turn_dispatch"),
@@ -832,6 +834,7 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
         "exercise_state": _jsonify(state.get("exercise_state") or {}),
         "memory_control": _jsonify(state.get("memory_control") or {}),
         "grounded_lookup": _jsonify(state.get("grounded_lookup") or {}),
+        "session_action": state.get("session_action"),
         "turn_dispatch_active_flow": _jsonify(
             (state.get("diagnostics") or {}).get("turn_dispatch_active_flow") or {}
         ),
@@ -988,6 +991,7 @@ def _grade_step(
         "route",
         "response_style",
         "therapeutic_approach",
+        "session_action",
         "transcript_length",
         "assistant_turn_count",
         "turn_count",
@@ -1160,6 +1164,13 @@ def _grade_final(
         actual=state.get("grounded_lookup"),
         expected=expected.get("final_grounded_lookup"),
     )
+    _expect_equal(
+        failures,
+        "final",
+        "final_session_action",
+        state.get("session_action"),
+        expected,
+    )
     if mode == "scripted":
         grade_store_expectations(
             failures,
@@ -1316,6 +1327,7 @@ def _judge_output(
                 "route": step.get("route"),
                 "response_style": step.get("response_style"),
                 "therapeutic_approach": step.get("therapeutic_approach"),
+                "session_action": step.get("session_action"),
                 "response_text": step.get("response_text"),
                 "routing": step.get("routing"),
                 "exercise_state": step.get("exercise_state"),

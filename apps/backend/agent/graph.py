@@ -147,6 +147,7 @@ def build_initial_state(
         crisis=CrisisAssessment(),
         therapeutic_approach=None,
         response_style="pending",
+        session_action="none",
         response_text="",
         should_persist_memory=False,
         diagnostics={},
@@ -180,6 +181,7 @@ def state_to_output(state: Mapping[str, Any]) -> AgentOutput:
         crisis=crisis,
         response_style=state.get("response_style"),
         therapeutic_approach=state.get("therapeutic_approach"),
+        session_action=state.get("session_action", "none"),
         should_persist_memory=state.get("should_persist_memory", False),
         diagnostics=dict(state.get("diagnostics", {})),
     )

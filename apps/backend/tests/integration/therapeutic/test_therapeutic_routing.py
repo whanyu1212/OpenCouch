@@ -436,6 +436,7 @@ class TestDispatchNode:
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == THERAPEUTIC_RESPONSE_NODE
+        assert cmd.update["session_action"] == "suggest_end_session"
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
@@ -514,10 +515,13 @@ class TestDispatchNode:
         cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
 
         assert cmd.goto == expected_node
-        assert cmd.update == {
+        expected_update = {
             "response_style": response_style,
             "therapeutic_approach": therapeutic_approach,
         }
+        if response_style == "closing":
+            expected_update["session_action"] = "suggest_end_session"
+        assert cmd.update == expected_update
         assert fake.structured_calls == 1
 
     @pytest.mark.asyncio
