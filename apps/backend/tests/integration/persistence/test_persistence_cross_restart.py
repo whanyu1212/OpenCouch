@@ -665,7 +665,7 @@ async def test_held_session_buffer_survives_restart_until_end_session(
             )
         )
         assert persisted is not None
-        assert len(persisted.session_buffer.semantic_candidates) == 1
+        assert len(persisted.session_buffer.held_semantic_candidates) == 1
 
     llm_b = FakeCrossRestartLLM(
         extraction_result=_empty_extraction_result(),
@@ -683,7 +683,7 @@ async def test_held_session_buffer_survives_restart_until_end_session(
             )
         )
         assert persisted is not None
-        assert len(persisted.session_buffer.semantic_candidates) == 1
+        assert len(persisted.session_buffer.held_semantic_candidates) == 1
 
         stored_arc = await runtime_b.end_session("thread-held", llm_client=llm_b)
 
@@ -747,7 +747,7 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             )
         )
         assert persisted is not None
-        assert len(persisted.session_buffer.semantic_candidates) == 1
+        assert len(persisted.session_buffer.held_semantic_candidates) == 1
 
     llm_b = FakeCrossRestartLLM(
         extraction_result=_empty_extraction_result(),
@@ -769,7 +769,7 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             )
         )
         assert persisted is not None
-        assert len(persisted.session_buffer.semantic_candidates) == 1
+        assert len(persisted.session_buffer.held_semantic_candidates) == 1
 
         stored_arc = await runtime_b.end_session(thread_id, llm_client=llm_b)
 
@@ -920,7 +920,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
         )
         assert active is not None
         assert active.transcript_start_index == prior_transcript_len
-        assert not active.session_buffer.semantic_candidates
+        assert not active.session_buffer.held_semantic_candidates
 
 
 @pytest.mark.asyncio

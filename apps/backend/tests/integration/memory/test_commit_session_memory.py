@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
 from agent.memory.policy.candidates import (
+    PolicyDecision,
+    ProceduralCandidate,
+    SemanticCandidate,
     SessionMemoryBuffer,
     build_procedural_candidate,
     build_semantic_candidate,
@@ -98,6 +101,42 @@ def _stored_arc(
         ),
         owner_id="user-1",
     )
+
+
+def _held_semantic_buffer(
+    *candidates: SemanticCandidate,
+    hold_action: Literal[
+        "commit_at_session_end",
+        "require_repetition",
+    ] = "commit_at_session_end",
+) -> SessionMemoryBuffer:
+    buffer = SessionMemoryBuffer(session_id="thread-test")
+    for candidate in candidates:
+        buffer.hold_semantic(
+            candidate,
+            PolicyDecision(
+                action=hold_action,
+                reason=f"test policy held semantic candidate as {hold_action}",
+                policy_version="test_policy_v1",
+            ),
+        )
+    return buffer
+
+
+def _held_procedural_buffer(
+    *candidates: ProceduralCandidate,
+) -> SessionMemoryBuffer:
+    buffer = SessionMemoryBuffer(session_id="thread-test")
+    for candidate in candidates:
+        buffer.hold_procedural(
+            candidate,
+            PolicyDecision(
+                action="commit_at_session_end",
+                reason="test policy held procedural candidate for session end",
+                policy_version="test_policy_v1",
+            ),
+        )
+    return buffer
 
 
 class _FakeSessionCommitLLM(BaseLLMClient):
@@ -231,9 +270,7 @@ async def test_supported_held_candidate_writes_at_session_end() -> None:
         _semantic_write(),
         message="Family conflict is a big trigger for panic.",
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test", semantic_candidates=[candidate]
-    )
+    buffer = _held_semantic_buffer(candidate)
 
     result = await run_commit_session_memory(
         _partial_state(),
@@ -284,9 +321,7 @@ async def test_session_end_correction_supersedes_stale_fact() -> None:
         ),
         message="Actually, my sister moved back in this week.",
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test", semantic_candidates=[candidate]
-    )
+    buffer = _held_semantic_buffer(candidate)
 
     result = await run_commit_session_memory(
         _partial_state(
@@ -335,9 +370,7 @@ async def test_unsupported_held_candidate_stays_unwritten() -> None:
         ),
         message="Family conflict is a big trigger for panic.",
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test", semantic_candidates=[candidate]
-    )
+    buffer = _held_semantic_buffer(candidate)
 
     result = await run_commit_session_memory(
         _partial_state(),
@@ -373,9 +406,10 @@ async def test_repetition_candidate_commits_after_two_turns() -> None:
         ),
         message="Every week I tell myself one mistake means I'm incompetent.",
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test",
-        semantic_candidates=[candidate_a, candidate_b],
+    buffer = _held_semantic_buffer(
+        candidate_a,
+        candidate_b,
+        hold_action="require_repetition",
     )
 
     result = await run_commit_session_memory(
@@ -418,9 +452,7 @@ async def test_single_turn_negative_self_belief_does_not_promote_from_summary_al
         ),
         message="I always assume one mistake means I'm incompetent.",
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test", semantic_candidates=[candidate]
-    )
+    buffer = _held_semantic_buffer(candidate, hold_action="require_repetition")
 
     result = await run_commit_session_memory(
         _partial_state(
@@ -481,9 +513,7 @@ async def test_cross_session_repetition_promotes_negative_self_belief() -> None:
         ),
         message="I always assume one mistake means I'm incompetent.",
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test", semantic_candidates=[candidate]
-    )
+    buffer = _held_semantic_buffer(candidate, hold_action="require_repetition")
 
     result = await run_commit_session_memory(
         _partial_state(
@@ -530,10 +560,7 @@ async def test_repeated_implicit_procedural_preference_promotes_at_session_end()
         session_id="thread-test",
         turn_index=1,
     )
-    buffer = SessionMemoryBuffer(
-        session_id="thread-test",
-        procedural_candidates=[candidate_a, candidate_b],
-    )
+    buffer = _held_procedural_buffer(candidate_a, candidate_b)
 
     result = await run_commit_session_memory(
         _partial_state(
@@ -608,7 +635,7 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
             len(
                 runtime._session_tracker.session_memory_buffers[
                     "thread-test"
-                ].semantic_candidates
+                ].held_semantic_candidates
             )
             == 1
         )
@@ -673,7 +700,7 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
             len(
                 runtime._session_tracker.session_memory_buffers[
                     "thread-test"
-                ].procedural_candidates
+                ].held_procedural_candidates
             )
             == 2
         )

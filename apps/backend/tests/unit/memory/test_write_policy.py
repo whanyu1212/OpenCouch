@@ -9,6 +9,8 @@ import pytest
 
 from agent.memory.models import EntityRef, MemoryWrite, ProceduralRuleDraft
 from agent.memory.policy.candidates import (
+    PolicyDecision,
+    SessionMemoryBuffer,
     build_procedural_candidate,
     build_semantic_candidate,
 )
@@ -151,8 +153,14 @@ def test_negative_self_belief_requires_repetition() -> None:
 
     assert decision is not None
     assert decision.action == "require_repetition"
-    assert should_commit_pattern(candidate, evidence_count=1) is False
-    assert should_commit_pattern(candidate, evidence_count=2) is True
+    assert (
+        should_commit_pattern(hold_action="require_repetition", evidence_count=1)
+        is False
+    )
+    assert (
+        should_commit_pattern(hold_action="require_repetition", evidence_count=2)
+        is True
+    )
 
 
 def test_provenance_semantic_predicate_drops() -> None:
@@ -217,11 +225,19 @@ async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> Non
     assert decision.policy_version == "phase1_llm_v1"
     assert llm.structured_calls == 1
     assert (
-        should_commit_implicit_procedural_preference(candidate, evidence_count=1)
+        should_commit_implicit_procedural_preference(
+            hold_action="commit_at_session_end",
+            explicitness=candidate.explicitness,
+            evidence_count=1,
+        )
         is False
     )
     assert (
-        should_commit_implicit_procedural_preference(candidate, evidence_count=2)
+        should_commit_implicit_procedural_preference(
+            hold_action="commit_at_session_end",
+            explicitness=candidate.explicitness,
+            evidence_count=2,
+        )
         is True
     )
 
@@ -446,3 +462,109 @@ async def test_llm_procedural_policy_failure_surfaces() -> None:
     with pytest.raises(RuntimeError, match="policy LLM failed"):
         await decide_procedural_candidate_llm_primary(candidate, llm_client=llm)
     assert llm.structured_calls == 1
+
+
+def test_session_buffer_semantic_hold_round_trips_policy_decision() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="context",
+            predicate="EXPERIENCED",
+            object_type="Concern",
+            object_identifier="making mistakes at work",
+            evidence_quote="I always assume one mistake means I'm incompetent.",
+        ),
+        message="I always assume one mistake means I'm incompetent.",
+    )
+    buffer = SessionMemoryBuffer(session_id="session-1")
+
+    buffer.hold_semantic(
+        candidate,
+        PolicyDecision(
+            action="require_repetition",
+            reason="policy held for repeated evidence",
+            policy_version="test_policy_v1",
+        ),
+    )
+
+    reloaded = SessionMemoryBuffer.model_validate(buffer.model_dump(mode="json"))
+    held = reloaded.held_semantic_candidates[0]
+    assert held.hold_action == "require_repetition"
+    assert held.policy_reason == "policy held for repeated evidence"
+    assert held.policy_version == "test_policy_v1"
+    assert held.candidate.payload.object.identifier == "making mistakes at work"
+
+
+def test_session_buffer_procedural_hold_round_trips_policy_decision() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You've said meditation makes you more anxious.",
+            evidence=["Meditation makes me more anxious."],
+        ),
+        message="Meditation makes me more anxious.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    buffer = SessionMemoryBuffer(session_id="session-1")
+
+    buffer.hold_procedural(
+        candidate,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="policy held implicit preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+
+    reloaded = SessionMemoryBuffer.model_validate(buffer.model_dump(mode="json"))
+    held = reloaded.held_procedural_candidates[0]
+    assert held.hold_action == "commit_at_session_end"
+    assert held.policy_reason == "policy held implicit preference"
+    assert held.policy_version == "test_policy_v1"
+    assert held.candidate.payload.rule == (
+        "You've said meditation makes you more anxious."
+    )
+
+
+def test_session_buffer_rejects_invalid_semantic_hold_action() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="relationship",
+            predicate="KNOWS",
+            object_type="Person",
+            object_identifier="Sarah",
+            evidence_quote="My sister Sarah lives nearby.",
+        ),
+        message="My sister Sarah lives nearby.",
+    )
+    buffer = SessionMemoryBuffer(session_id="session-1")
+
+    with pytest.raises(ValueError, match="Invalid semantic hold action"):
+        buffer.hold_semantic(
+            candidate,
+            PolicyDecision(
+                action="commit_now",
+                reason="not a held candidate",
+            ),
+        )
+
+
+def test_session_buffer_rejects_invalid_procedural_hold_action() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses.",
+            evidence=["From now on, be more direct with me."],
+        ),
+        message="From now on, be more direct with me.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    buffer = SessionMemoryBuffer(session_id="session-1")
+
+    with pytest.raises(ValueError, match="Invalid procedural hold action"):
+        buffer.hold_procedural(
+            candidate,
+            PolicyDecision(
+                action="drop",
+                reason="not a held candidate",
+            ),
+        )

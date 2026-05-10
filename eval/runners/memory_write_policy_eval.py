@@ -34,10 +34,26 @@ class MemoryWritePolicyCase:
     layer: str
     message: str
     description: str = ""
+    modes: tuple[str, ...] = ("scripted", "live")
     semantic_write: dict[str, Any] = field(default_factory=dict)
     procedural_rule: dict[str, Any] = field(default_factory=dict)
     scripted: dict[str, Any] = field(default_factory=dict)
     expected: dict[str, Any] = field(default_factory=dict)
+    expected_by_mode: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def expected_for_mode(self, mode: str) -> dict[str, Any]:
+        """Return expected grading fields for one evaluator mode.
+
+        Args:
+            mode (str): Evaluator mode, such as ``"scripted"`` or ``"live"``.
+
+        Returns:
+            dict[str, Any]: Base expectations merged with mode-specific fields.
+        """
+
+        expected = dict(self.expected)
+        expected.update(self.expected_by_mode.get(mode, {}))
+        return expected
 
 
 class ScriptedPolicyLLM:
@@ -83,6 +99,67 @@ class ScriptedPolicyLLM:
         return response_schema(**decision)
 
 
+class CountingPolicyLLM:
+    """Live LLM wrapper that records structured call counts for eval grading."""
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+        self.structured_calls: dict[str, int] = {}
+
+    def reset_structured_calls(self) -> None:
+        """Clear per-case structured call counters.
+
+        Returns:
+            None: Mutates the wrapper's call counters.
+        """
+
+        self.structured_calls.clear()
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return await self.client.generate_text(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            use_search=use_search,
+        )
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        async for chunk in self.client.generate_text_stream(
+            prompt=prompt,
+            system_instruction=system_instruction,
+        ):
+            yield chunk
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[Any],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> Any:
+        schema_name = response_schema.__name__
+        self.structured_calls[schema_name] = (
+            self.structured_calls.get(schema_name, 0) + 1
+        )
+        return await self.client.generate_structured(
+            prompt=prompt,
+            response_schema=response_schema,
+            system_instruction=system_instruction,
+            use_search=use_search,
+        )
+
+
 class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
     """Run direct write-policy decision checks."""
 
@@ -102,18 +179,28 @@ class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
             layer=str(raw_case["layer"]),
             message=str(raw_case["message"]),
             description=str(raw_case.get("description", "")),
+            modes=tuple(
+                str(mode) for mode in raw_case.get("modes", ["scripted", "live"])
+            ),
             semantic_write=dict(_optional_mapping(raw_case, "semantic_write")),
             procedural_rule=dict(_optional_mapping(raw_case, "procedural_rule")),
             scripted=dict(_optional_mapping(raw_case, "scripted")),
             expected=dict(_optional_mapping(raw_case, "expected")),
+            expected_by_mode=_expected_by_mode(raw_case),
         )
 
     def case_id(self, case: MemoryWritePolicyCase, index: int) -> str:
         return case.id
 
+    def load_cases(self) -> list[MemoryWritePolicyCase]:
+        cases = super().load_cases()
+        return [case for case in cases if self.mode in case.modes]
+
     async def run_case(self, case: MemoryWritePolicyCase) -> EvalResult:
         artifact = await self._run_policy(case)
-        failures = _grade_case(case, artifact)
+        failures = _grade_case(
+            case, artifact, expected=case.expected_for_mode(self.mode)
+        )
         return EvalResult(
             case_id=case.id,
             passed=not failures,
@@ -138,6 +225,8 @@ class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
         )
 
         llm = self._llm_for_case(case)
+        if hasattr(llm, "reset_structured_calls"):
+            llm.reset_structured_calls()
         try:
             with _mute_expected_policy_failure_logs(case):
                 if case.layer == "semantic":
@@ -187,7 +276,9 @@ class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
             if self._live_llm is None:
                 from config import create_configured_control_llm_client
 
-                self._live_llm = create_configured_control_llm_client()
+                self._live_llm = CountingPolicyLLM(
+                    create_configured_control_llm_client()
+                )
             return self._live_llm
         return ScriptedPolicyLLM(case.scripted)
 
@@ -210,9 +301,10 @@ def _mute_expected_policy_failure_logs(case: MemoryWritePolicyCase) -> Any:
 def _grade_case(
     case: MemoryWritePolicyCase,
     artifact: Mapping[str, Any],
+    *,
+    expected: Mapping[str, Any],
 ) -> list[str]:
     failures: list[str] = []
-    expected = case.expected
     decision = artifact.get("decision")
 
     for key in ("exception_type",):
@@ -272,6 +364,16 @@ def _optional_mapping(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     if not isinstance(item, Mapping):
         raise TypeError(f"{key} must be a mapping.")
     return item
+
+
+def _expected_by_mode(value: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = _optional_mapping(value, "expected_by_mode")
+    expected_by_mode: dict[str, dict[str, Any]] = {}
+    for mode, expected in raw.items():
+        if not isinstance(expected, Mapping):
+            raise TypeError("expected_by_mode values must be mappings.")
+        expected_by_mode[str(mode)] = dict(expected)
+    return expected_by_mode
 
 
 def _build_evaluator(args: argparse.Namespace) -> MemoryWritePolicyEvaluator:

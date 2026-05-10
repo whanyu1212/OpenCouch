@@ -12,7 +12,7 @@ not a fallback write decision.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -72,12 +72,46 @@ class ProceduralCandidate(MemoryCandidate):
     payload: ProceduralRuleDraft
 
 
+class PolicyDecision(BaseModel):
+    """The final decision returned by the write policy."""
+
+    action: PolicyRecommendation
+    reason: str = Field(min_length=1, max_length=240)
+    policy_version: str = "phase1_v1"
+
+
+SemanticHoldAction = Literal["commit_at_session_end", "require_repetition"]
+ProceduralHoldAction = Literal["commit_at_session_end"]
+
+
+class BufferedSemanticCandidate(BaseModel):
+    """Semantic candidate held with the policy decision that held it."""
+
+    candidate: SemanticCandidate
+    hold_action: SemanticHoldAction
+    policy_reason: str = Field(min_length=1, max_length=240)
+    policy_version: str = Field(min_length=1, max_length=80)
+
+
+class BufferedProceduralCandidate(BaseModel):
+    """Procedural candidate held with the policy decision that held it."""
+
+    candidate: ProceduralCandidate
+    hold_action: ProceduralHoldAction
+    policy_reason: str = Field(min_length=1, max_length=240)
+    policy_version: str = Field(min_length=1, max_length=80)
+
+
 class SessionMemoryBuffer(BaseModel):
     """Runtime-managed per-session buffer for held memory candidates."""
 
     session_id: str
-    semantic_candidates: list[SemanticCandidate] = Field(default_factory=list)
-    procedural_candidates: list[ProceduralCandidate] = Field(default_factory=list)
+    held_semantic_candidates: list[BufferedSemanticCandidate] = Field(
+        default_factory=list
+    )
+    held_procedural_candidates: list[BufferedProceduralCandidate] = Field(
+        default_factory=list
+    )
 
     # Per-turn therapeutic-approach accumulator. The runtime increments the
     # count for the dispatched approach after each turn. At session end, the
@@ -110,13 +144,59 @@ class SessionMemoryBuffer(BaseModel):
             return None
         return max(self.approach_counts, key=self.approach_counts.get)  # type: ignore[arg-type]
 
+    def hold_semantic(
+        self,
+        candidate: SemanticCandidate,
+        decision: PolicyDecision,
+    ) -> None:
+        """Hold a semantic candidate for session-end review or promotion.
 
-class PolicyDecision(BaseModel):
-    """The final decision returned by the write policy."""
+        Args:
+            candidate (SemanticCandidate): Candidate to buffer.
+            decision (PolicyDecision): Policy decision that held the candidate.
 
-    action: PolicyRecommendation
-    reason: str = Field(min_length=1, max_length=240)
-    policy_version: str = "phase1_v1"
+        Returns:
+            None: Mutates the buffer in place.
+        """
+
+        if decision.action not in ("commit_at_session_end", "require_repetition"):
+            raise ValueError(f"Invalid semantic hold action: {decision.action!r}.")
+        hold_action = cast(SemanticHoldAction, decision.action)
+        self.held_semantic_candidates.append(
+            BufferedSemanticCandidate(
+                candidate=candidate,
+                hold_action=hold_action,
+                policy_reason=decision.reason,
+                policy_version=decision.policy_version,
+            )
+        )
+
+    def hold_procedural(
+        self,
+        candidate: ProceduralCandidate,
+        decision: PolicyDecision,
+    ) -> None:
+        """Hold a procedural candidate for session-end review.
+
+        Args:
+            candidate (ProceduralCandidate): Candidate to buffer.
+            decision (PolicyDecision): Policy decision that held the candidate.
+
+        Returns:
+            None: Mutates the buffer in place.
+        """
+
+        if decision.action != "commit_at_session_end":
+            raise ValueError(f"Invalid procedural hold action: {decision.action!r}.")
+        hold_action = cast(ProceduralHoldAction, decision.action)
+        self.held_procedural_candidates.append(
+            BufferedProceduralCandidate(
+                candidate=candidate,
+                hold_action=hold_action,
+                policy_reason=decision.reason,
+                policy_version=decision.policy_version,
+            )
+        )
 
 
 def build_semantic_candidate(

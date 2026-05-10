@@ -314,8 +314,8 @@ class TestSessionMemoryBufferApproach:
         """Old persisted buffers without approach_counts should load cleanly."""
         old = {
             "session_id": "old",
-            "semantic_candidates": [],
-            "procedural_candidates": [],
+            "held_semantic_candidates": [],
+            "held_procedural_candidates": [],
         }
         buf = SessionMemoryBuffer.model_validate(old)
         assert buf.approach_counts == {}

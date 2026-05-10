@@ -155,11 +155,11 @@ class TurnWriteService:
             elif decision.action == "commit_at_session_end":
                 session_end_holds += 1
                 if session_buffer is not None:
-                    session_buffer.semantic_candidates.append(candidate)
+                    session_buffer.hold_semantic(candidate, decision)
             elif decision.action == "require_repetition":
                 repeat_required += 1
                 if session_buffer is not None:
-                    session_buffer.semantic_candidates.append(candidate)
+                    session_buffer.hold_semantic(candidate, decision)
             else:
                 policy_drops += 1
 
@@ -324,7 +324,7 @@ class TurnWriteService:
             elif decision.action == "commit_at_session_end":
                 session_end_holds += 1
                 if session_buffer is not None:
-                    session_buffer.procedural_candidates.append(candidate)
+                    session_buffer.hold_procedural(candidate, decision)
             else:
                 policy_drops += 1
 

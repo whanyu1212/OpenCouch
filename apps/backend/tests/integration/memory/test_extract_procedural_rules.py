@@ -676,7 +676,7 @@ class TestFailureModes:
         assert delta["diagnostics"]["procedural_session_end_holds"] == 1
         profile = await aget_procedural_profile(store, user_id="alice")
         assert profile.rules == []
-        assert len(session_buffer.procedural_candidates) == 1
+        assert len(session_buffer.held_procedural_candidates) == 1
 
     @pytest.mark.asyncio
     async def test_turn_scoped_request_is_dropped(self) -> None:

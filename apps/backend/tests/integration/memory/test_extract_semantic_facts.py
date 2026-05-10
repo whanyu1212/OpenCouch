@@ -860,7 +860,7 @@ class TestExtractFactsNodeUnit:
         assert delta["diagnostics"]["semantic_candidates"] == 1
         assert delta["diagnostics"]["semantic_session_end_holds"] == 1
         assert await store.arecord_count(("user-1", "semantic")) == 0
-        assert len(session_buffer.semantic_candidates) == 1
+        assert len(session_buffer.held_semantic_candidates) == 1
 
     @pytest.mark.asyncio
     async def test_provenance_predicate_is_dropped_not_written(self) -> None:

@@ -68,9 +68,13 @@
       },
       "expected": {
         "action": "commit_at_session_end",
-        "policy_version": "phase1_v1",
         "structured_calls": {
           "SemanticWritePolicyDecision": 1
+        }
+      },
+      "expected_by_mode": {
+        "scripted": {
+          "policy_version": "phase1_v1"
         }
       }
     },
@@ -113,6 +117,7 @@
     {
       "id": "semantic-policy-llm-failure-surfaces",
       "description": "A policy LLM failure should raise instead of silently creating a local fallback write.",
+      "modes": ["scripted"],
       "layer": "semantic",
       "message": "My sister Sarah lives nearby.",
       "semantic_write": {
@@ -244,6 +249,7 @@
     {
       "id": "procedural-policy-llm-failure-surfaces",
       "description": "A procedural policy LLM failure should raise instead of silently creating a local fallback write.",
+      "modes": ["scripted"],
       "layer": "procedural",
       "message": "Please remember to be direct with me.",
       "procedural_rule": {

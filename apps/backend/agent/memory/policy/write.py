@@ -16,9 +16,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.policy.candidates import (
+    CandidateExplicitness,
     PolicyDecision,
     ProceduralCandidate,
+    ProceduralHoldAction,
     SemanticCandidate,
+    SemanticHoldAction,
 )
 from agent.memory.policy.constants import (
     classify_procedural_request,
@@ -81,39 +84,46 @@ def _lowered_texts(*values: str) -> str:
     return " ".join(v.lower() for v in values if v).strip()
 
 
-def should_commit_pattern(candidate: SemanticCandidate, evidence_count: int) -> bool:
+def should_commit_pattern(
+    *,
+    hold_action: SemanticHoldAction,
+    evidence_count: int,
+) -> bool:
     """Return whether a repetition-gated semantic candidate can promote.
 
     Args:
-        candidate (SemanticCandidate): Candidate being evaluated.
+        hold_action (SemanticHoldAction): Policy action that held the candidate.
         evidence_count (int): Number of reinforcing occurrences seen so far.
 
     Returns:
         bool: ``True`` when the candidate is repetition-gated and has enough evidence.
     """
 
-    if candidate.policy_recommendation != "require_repetition":
+    if hold_action != "require_repetition":
         return False
     return evidence_count >= 2
 
 
 def should_commit_implicit_procedural_preference(
-    candidate: ProceduralCandidate,
+    *,
+    hold_action: ProceduralHoldAction,
+    explicitness: CandidateExplicitness,
     evidence_count: int,
 ) -> bool:
     """Return whether a buffered implicit procedural preference can promote.
 
     Args:
-        candidate (ProceduralCandidate): Candidate being evaluated.
+        hold_action (ProceduralHoldAction): Policy action that held the candidate.
+        explicitness (CandidateExplicitness): Whether the preference was explicit.
         evidence_count (int): Number of reinforcing occurrences seen so far.
 
     Returns:
         bool: ``True`` when the implicit preference has enough evidence to promote.
     """
 
-    if candidate.policy_recommendation != "commit_at_session_end":
+    if hold_action != "commit_at_session_end":
         return False
-    if candidate.explicitness == "explicit":
+    if explicitness == "explicit":
         return False
     return evidence_count >= 2
 
@@ -184,12 +194,11 @@ def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:
         "- require_repetition: negative self-belief, fragile interpretation, "
         "or emerging pattern that should need repeated evidence.\n"
         "- drop: transient, turn-scoped, provenance-only, or not useful memory.\n\n"
+        "Use commit_at_session_end, not drop, for clearly stated sensitive "
+        "therapeutic context such as triggers or losses that may be useful "
+        "after full-session review.\n"
         "Never commit_now for negative self-beliefs, fresh therapeutic "
         "interpretations, crisis/safety material, or high-sensitivity triggers.\n\n"
-        f"Candidate metadata: durability={candidate.durability}, "
-        f"sensitivity={candidate.sensitivity}, scope={candidate.scope}, "
-        f"recommendation={candidate.policy_recommendation}, "
-        f"reason={candidate.reason!r}\n"
         f"Category: {payload.category}\n"
         f"Predicate: {payload.predicate}\n"
         f"Object: {payload.object.type}:{payload.object.identifier}\n"
@@ -218,12 +227,13 @@ def _procedural_policy_prompt(candidate: ProceduralCandidate) -> str:
         "evidence before becoming durable.\n"
         "- drop: only applies to this turn/session, is not assistant-facing, "
         "or conflicts with safety behavior.\n\n"
+        "Treat direct future-facing requests as explicit durable preferences "
+        "when they are assistant-facing and do not conflict with safety.\n\n"
+        "Use commit_at_session_end for inferred preferences from statements "
+        "about what is hard, helpful, or unpleasant unless the user directly "
+        "asks for an ongoing assistant behavior change.\n\n"
         "Never commit a request to suppress crisis checks, safety questions, "
         "or crisis resources.\n\n"
-        f"Candidate metadata: explicitness={candidate.explicitness}, "
-        f"durability={candidate.durability}, sensitivity={candidate.sensitivity}, "
-        f"scope={candidate.scope}, recommendation={candidate.policy_recommendation}, "
-        f"reason={candidate.reason!r}\n"
         f"Rule: {payload.rule!r}\n"
         f"Evidence: {payload.evidence!r}"
     )
