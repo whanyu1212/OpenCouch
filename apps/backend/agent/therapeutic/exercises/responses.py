@@ -123,6 +123,54 @@ async def _build_exit_delta(
     }
 
 
+async def _build_resume_delta(
+    state: AgentState,
+    *,
+    llm_client: BaseLLMClient | None,
+    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+) -> dict[str, Any]:
+    """Build the delta for resuming an active exercise after a side turn.
+
+    Args:
+        state: Current graph state.
+        llm_client: Response LLM client, if configured.
+        stream_writer_factory: Factory that returns the current LangGraph
+            stream writer.
+
+    Returns:
+        Response delta that preserves the current exercise step.
+    """
+
+    exercise_state = state.get("exercise_state", {})
+    step_index = exercise_state.get("exercise_step", 0)
+    exercise_type = exercise_state.get("exercise_type") or EXERCISE_5_4_3_2_1
+    current_step = _get_current_step(exercise_type, step_index)
+    step_ref = current_step.instruction if current_step else ""
+
+    directive = (
+        f"The user is asking to return to the active guided exercise after a "
+        f"side turn. Resume at step {step_index}; do not classify their message "
+        f"as an answer to the step and do not exit the exercise.\n"
+        f'Step {step_index} instruction: "{step_ref}"\n'
+        f"Briefly re-orient them, then restate this same step in short, "
+        f"concrete language."
+    )
+
+    response_text = await generate_streamed_therapeutic_text(
+        state=state,
+        llm_client=llm_client,
+        response_style="guided_exercise",
+        system_prompt_builder=build_guided_exercise_system_prompt,
+        step_directive=directive,
+        stream_writer_factory=stream_writer_factory,
+    )
+
+    return therapeutic_response_delta(
+        response_style="guided_exercise",
+        response_text=response_text,
+    )
+
+
 async def _build_stuck_delta(
     state: AgentState,
     *,

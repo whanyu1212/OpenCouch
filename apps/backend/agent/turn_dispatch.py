@@ -11,6 +11,7 @@ from agent.active_flow import (
     ActiveFlow,
     ActiveFlowAction,
     active_flow_summary,
+    detect_active_flow,
     resolve_active_flow_decision,
 )
 from agent.conversation import format_recent_history
@@ -102,7 +103,7 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
     """
 
     recent_history = format_recent_history(state, limit=8, empty="(none)")
-    flow_summary = active_flow_summary(state)
+    active_flow_block = _active_flow_prompt_block(state)
     return (
         "Choose the one graph destination for the current non-crisis user turn.\n\n"
         "Destinations:\n"
@@ -148,24 +149,7 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
         "preference, not a finalized rule. Examples: 'direct answers when I am "
         "spiraling', 'do not suggest journaling', 'ask fewer questions'.\n\n"
         "When route=grounded_lookup, set query to a concise search query.\n\n"
-        "Also set active_flow_action for the current active flow:\n"
-        "- none: no active flow exists.\n"
-        "- continue: user is participating in the current active flow.\n"
-        "- preserve: user asks a side request without ending the active flow.\n"
-        "- resume: user explicitly asks to return to a guided exercise.\n"
-        "- clear: user rejects, cancels, ends, or moves away from the active flow.\n"
-        "When Active flow is guided_exercise, every non-exercise side request "
-        "must still set active_flow_action. Use preserve for reassurance, "
-        "explanation, grounded_lookup, or saved-memory inspection side requests. "
-        "Use clear for stopping the exercise or starting a saved-memory deletion. "
-        "Use continue only when the user gives an exercise answer, and resume "
-        "only when the user explicitly asks to return to the exercise.\n"
-        "When Active flow is pending_memory_action, every route must still set "
-        "active_flow_action. Use continue only when memory_action_type is "
-        "confirm_pending or cancel_pending. Use clear for any unrelated "
-        "therapeutic or grounded_lookup route. Do not use preserve or resume "
-        "for pending memory actions.\n\n"
-        f"Active flow: {flow_summary}\n\n"
+        f"{active_flow_block}\n"
         "Recent conversation:\n"
         f"{recent_history}\n\n"
         f'Current user message: "{state.get("message", "")}"'
@@ -190,6 +174,50 @@ def _required_text(value: str | None, *, field_name: str) -> str:
     if not text:
         raise ValueError(f"Turn dispatch selected a route without {field_name}.")
     return text
+
+
+def _active_flow_prompt_block(state: AgentState) -> str:
+    active_flow = detect_active_flow(state)
+    flow_summary = active_flow_summary(state)
+    if active_flow == "none":
+        return (
+            "Active flow: none\n"
+            'Set active_flow_action to "none". There is no active flow to '
+            "continue, preserve, resume, or clear."
+        )
+
+    if active_flow == "guided_exercise":
+        return (
+            f"Active flow: {flow_summary}\n"
+            "Set active_flow_action for this guided exercise:\n"
+            "- continue: user gives an exercise answer.\n"
+            "- preserve: user asks a side request without ending the exercise, "
+            "including reassurance, explanation, grounded_lookup, or saved-memory "
+            "inspection.\n"
+            "- resume: user explicitly asks to return to the exercise.\n"
+            "- clear: user rejects, cancels, ends, or moves away from the "
+            "exercise, including starting a saved-memory deletion.\n"
+            'Do not use active_flow_action="none" while this exercise is active.'
+        )
+
+    return (
+        f"Active flow: {flow_summary}\n"
+        "Set active_flow_action for this pending memory action:\n"
+        "- continue: only when memory_action_type is confirm_pending or "
+        "cancel_pending.\n"
+        "- clear: any unrelated therapeutic or grounded_lookup route.\n"
+        'Do not use active_flow_action="none", "preserve", or "resume" while '
+        "this memory action is pending."
+    )
+
+
+def _effective_active_flow_action(
+    state: AgentState,
+    decision: TurnDispatchDecision,
+) -> ActiveFlowAction:
+    if detect_active_flow(state) == "none":
+        return "none"
+    return decision.active_flow_action
 
 
 def _memory_action_from_decision(
@@ -244,11 +272,12 @@ def _plan_from_decision(
     state: AgentState,
     decision: TurnDispatchDecision,
 ) -> TurnDispatchPlan:
+    active_flow_action = _effective_active_flow_action(state, decision)
     if decision.route == "memory_control":
         memory_action = _memory_action_from_decision(decision)
         active_flow = resolve_active_flow_decision(
             state,
-            action=decision.active_flow_action,
+            action=active_flow_action,
             route=decision.route,
             memory_action_type=decision.memory_action_type,
         )
@@ -264,7 +293,7 @@ def _plan_from_decision(
 
     active_flow = resolve_active_flow_decision(
         state,
-        action=decision.active_flow_action,
+        action=active_flow_action,
         route=decision.route,
     )
     if decision.route == "grounded_lookup":

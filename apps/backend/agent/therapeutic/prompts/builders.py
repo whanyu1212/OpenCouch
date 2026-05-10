@@ -102,26 +102,40 @@ def _compose_system_prompt_with_state(
 
 
 def _format_active_flow_response_block(state: AgentState) -> str:
-    """Return response guidance for preserved active flows.
+    """Return response guidance for active-flow lifecycle turns.
 
     Args:
         state: Current graph state.
 
     Returns:
-        str: Optional system-prompt block for side turns.
+        str: Optional system-prompt block for active-flow continuity.
     """
 
     active_flow = current_turn_active_flow(state)
-    if active_flow.active_flow != "guided_exercise" or active_flow.action != "preserve":
-        return ""
-    return (
-        "\n\nActive-flow continuity:\n"
-        "- A guided exercise is paused while you answer this side request.\n"
-        "- Answer the current request first. Do not advance, restart, or end "
-        "the exercise.\n"
-        "- If natural, close with a brief option to return to the exercise "
-        "when the user is ready."
-    )
+    if (
+        active_flow.active_flow == "guided_exercise"
+        and active_flow.action == "preserve"
+    ):
+        return (
+            "\n\nActive-flow continuity:\n"
+            "- A guided exercise is paused while you answer this side request.\n"
+            "- Answer the current request first. Do not advance, restart, or end "
+            "the exercise.\n"
+            "- If natural, close with a brief option to return to the exercise "
+            "when the user is ready."
+        )
+    if (
+        active_flow.active_flow == "pending_memory_action"
+        and active_flow.action == "clear"
+    ):
+        return (
+            "\n\nPending memory action cleared:\n"
+            "- The user moved away from a pending memory deletion. Briefly "
+            "acknowledge that you did not change memory.\n"
+            "- Then answer the current request normally. If this is a closing "
+            "turn, keep the whole reply short."
+        )
+    return ""
 
 
 def _read_approach(state: AgentState) -> str | None:

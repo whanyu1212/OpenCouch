@@ -22,6 +22,7 @@ from eval.runners.base import (
     build_base_arg_parser,
     run_evaluator_cli,
 )
+from eval.runners.grounded_lookup_fixtures import factual_lookup_fixture_answer
 from eval.runners.memory_control_common import (
     grade_store_expectations,
     memory_snapshot,
@@ -381,10 +382,7 @@ class RuntimePersistenceTrajectoryEvaluator(BaseEvaluator[RuntimePersistenceCase
                 llm_client: Any,  # noqa: ARG001 - tool protocol
                 query: str,
             ) -> tuple[str, str]:
-                return (
-                    f"Verified factual answer for: {query}.\n\nSources:\n- Official source",
-                    "answered",
-                )
+                return factual_lookup_fixture_answer(query)
 
             async def fake_crisis_resources(
                 state: dict[str, Any],

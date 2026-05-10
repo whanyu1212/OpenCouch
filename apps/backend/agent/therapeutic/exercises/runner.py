@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from agent.active_flow import current_turn_active_flow
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.state import AgentState
@@ -16,6 +17,7 @@ from agent.therapeutic.exercises.responses import (
     _build_complete_delta,
     _build_exit_delta,
     _build_hold_delta,
+    _build_resume_delta,
     _build_start_delta,
     _build_stuck_delta,
 )
@@ -107,6 +109,17 @@ class ExerciseRunner:
         current_step: ExerciseStep,
     ) -> dict[str, Any]:
         """Continue an exercise based on the user's current message."""
+
+        active_flow = current_turn_active_flow(state)
+        if (
+            active_flow.active_flow == "guided_exercise"
+            and active_flow.action == "resume"
+        ):
+            return await _build_resume_delta(
+                state,
+                llm_client=self.response_llm,
+                stream_writer_factory=self.stream_writer_factory,
+            )
 
         step_state = await classify_step_state(
             state=state,
