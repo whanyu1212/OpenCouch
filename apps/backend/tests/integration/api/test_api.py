@@ -151,6 +151,25 @@ class _FakeAPILLM(BaseLLMClient):
         raise RuntimeError(f"_FakeAPILLM: unexpected schema {schema_name}")
 
 
+class _FailingAPILLM(_FakeAPILLM):
+    """LLM-shaped test double that fails during crisis classification."""
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        if response_schema.__name__ == "CrisisAssessmentSchema":
+            raise RuntimeError("api scripted turn failure")
+        return await super().generate_structured(
+            prompt=prompt,
+            response_schema=response_schema,
+            system_instruction=system_instruction,
+        )
+
+
 @pytest.fixture
 async def runtime():
     """Yield a fresh in-memory runtime for each test."""
@@ -354,6 +373,49 @@ class TestChat:
 
         assert resp.status_code == 200
         assert resp.json()["response_text"] == "fast-tier reply"
+
+    @pytest.mark.asyncio
+    async def test_chat_runtime_failure_returns_stable_error_detail(
+        self, runtime
+    ) -> None:
+        """Runtime failures should surface without replacement assistant text."""
+
+        from fastapi import FastAPI
+
+        from api.dependencies import (
+            get_llm_client,
+            get_response_llm_clients,
+            get_runtime,
+        )
+        from api.router import api_router
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        llm = _FailingAPILLM()
+        app.dependency_overrides[get_runtime] = lambda: runtime
+        app.dependency_overrides[get_llm_client] = lambda: llm
+        app.dependency_overrides[get_response_llm_clients] = lambda: {"fast": llm}
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "message": "hello",
+                    "thread_id": "api-failure-contract",
+                },
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == {
+            "code": "agent_turn_failed",
+            "message": "api scripted turn failure",
+        }
+        assert (await runtime.session_status("api-failure-contract")).value == (
+            "interrupted"
+        )
 
 
 # ── Threads ─────────────────────────────────────────────────────────

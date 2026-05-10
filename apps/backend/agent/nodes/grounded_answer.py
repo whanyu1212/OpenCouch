@@ -63,23 +63,14 @@ async def run_grounded_answer_node(
     llm_client = runtime.context.llm_client
 
     if llm_client is None:
-        return _base_delta(
-            "I can't look that up from here right now, so I don't want to guess.",
-            status="search_unavailable",
-            started_at=started_at,
-        )
+        raise RuntimeError("grounded_answer_node requires an LLM client.")
 
     answer, status = await answer_factual_lookup(
         state,
         llm_client=llm_client,
         query=query,
     )
-    if status == "answered":
-        return _base_delta(answer, status=status, started_at=started_at)
     if answer:
         return _base_delta(answer, status=status, started_at=started_at)
-    if status == "search_failed":
-        text = "I couldn't complete the lookup right now, so I don't want to guess."
-    else:
-        text = "I couldn't verify that from reliable sources, so I don't want to guess."
-    return _base_delta(text, status=status, started_at=started_at)
+    text = "I couldn't verify that from reliable sources, so I don't want to guess."
+    return _base_delta(text, status="no_verified_answer", started_at=started_at)

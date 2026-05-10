@@ -7,7 +7,6 @@ selection, not this execution layer.
 
 from __future__ import annotations
 
-import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -16,13 +15,9 @@ from agent.conversation import format_recent_history
 from agent.state import AgentState
 from llm.base import BaseLLMClient
 
-logger = logging.getLogger(__name__)
-
 FactualLookupStatus = Literal[
     "not_attempted",
     "answered",
-    "search_unavailable",
-    "search_failed",
     "no_verified_answer",
 ]
 CrisisResourceLookupStatus = Literal[
@@ -212,15 +207,11 @@ async def answer_factual_lookup(
         non-empty.
     """
 
-    try:
-        preflight = await llm_client.generate_structured(
-            prompt=_build_lookup_preflight_prompt(state, query=query),
-            response_schema=LookupPreflightDecision,
-            system_instruction=_FACTUAL_PREFLIGHT_SYSTEM,
-        )
-    except Exception:
-        logger.warning("Grounded factual lookup preflight failed.", exc_info=True)
-        return "", "search_failed"
+    preflight = await llm_client.generate_structured(
+        prompt=_build_lookup_preflight_prompt(state, query=query),
+        response_schema=LookupPreflightDecision,
+        system_instruction=_FACTUAL_PREFLIGHT_SYSTEM,
+    )
 
     if preflight.status == "no_verified_answer":
         answer = _normalize_factual_answer(preflight.answer)
@@ -234,20 +225,16 @@ async def answer_factual_lookup(
     if not search_query:
         return "", "no_verified_answer"
 
-    try:
-        result = await llm_client.generate_structured(
-            prompt=_build_factual_lookup_prompt(
-                state,
-                query=query,
-                search_query=search_query,
-            ),
-            response_schema=GroundedLookupResult,
-            system_instruction=_FACTUAL_LOOKUP_SYSTEM,
-            use_search=True,
-        )
-    except Exception:
-        logger.warning("Grounded factual lookup failed.", exc_info=True)
-        return "", "search_failed"
+    result = await llm_client.generate_structured(
+        prompt=_build_factual_lookup_prompt(
+            state,
+            query=query,
+            search_query=search_query,
+        ),
+        response_schema=GroundedLookupResult,
+        system_instruction=_FACTUAL_LOOKUP_SYSTEM,
+        use_search=True,
+    )
 
     answer = _normalize_factual_answer(result.answer)
     if result.status == "answered":

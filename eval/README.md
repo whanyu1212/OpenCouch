@@ -82,6 +82,33 @@ Evals are split by purpose:
 - `grounded_tool_quality_eval.py`: output-quality checks for grounded factual
   lookup and crisis-resource lookup. It applies hard source/actionability
   checks and can add an LLM judge with `--judge-mode live`.
+- `agent_session_trajectory_eval.py`: full parent-graph multi-turn session
+  trajectories across therapeutic, grounded lookup, memory-control, and crisis
+  branches. Defaults to scripted mode and can add a live session judge.
+- `text_agent_harness_trajectory_eval.py`: full text-agent harness trajectories
+  over `PersistentAgentRuntime`, covering production runtime wiring, routing,
+  tools, memory writes, streaming, crisis interruption/logging, failure
+  surfacing, and lifecycle state. Defaults to Postgres; use `--backend sqlite`
+  for fallback compatibility coverage.
+- `runtime_persistence_trajectory_eval.py`: Postgres-first
+  `PersistentAgentRuntime` trajectory checks for checkpoint resume, memory
+  extraction durability, active-session liveness, streaming persistence, crisis
+  logs, feedback, and incognito isolation. Defaults to Postgres; use
+  `--backend sqlite` only for fallback compatibility coverage.
+- `runtime_recovery_trajectory_eval.py`: Postgres-first runtime recovery checks
+  for thread-lock serialization, cross-thread isolation, interrupted mutation
+  recovery, rotation-required leases, foreign mutation markers, and
+  auto-finalization exclusions.
+- `text_surface_runtime_eval.py`: text API, WebSocket, and CLI surface checks
+  against the real persistent runtime, covering `/api/chat`, `/api/chat/stream`,
+  history, end-session feedback, memory status, CLI `/end` finalization, and
+  explicit failure/recovery contracts.
+- `memory_write_policy_eval.py`: direct semantic/procedural write-policy checks
+  for LLM-primary decisions, hard safety guards, and visible failure when the
+  policy LLM is unavailable.
+- `runtime_stress_eval.py`: manual long-session stress checks over the
+  persistent runtime. This reports turn timing and verifies transcript/session
+  growth without making normal CI evals slow.
 
 ```bash
 apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval
@@ -100,6 +127,17 @@ apps/backend/.venv/bin/python -m eval.runners.memory_control_node_eval
 apps/backend/.venv/bin/python -m eval.runners.memory_control_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.tool_usage_eval
 apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
+apps/backend/.venv/bin/python -m eval.runners.agent_session_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --backend sqlite
+apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --mode live --judge-mode live
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --backend sqlite
+apps/backend/.venv/bin/python -m eval.runners.runtime_recovery_trajectory_eval
+apps/backend/.venv/bin/python -m eval.runners.text_surface_runtime_eval
+apps/backend/.venv/bin/python -m eval.runners.memory_write_policy_eval
+apps/backend/.venv/bin/python -m eval.runners.runtime_stress_eval
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
 ```
 
 Useful flags:
@@ -113,6 +151,12 @@ Useful flags:
 - `--judge-mode live`: run exercise trajectory, crisis node, crisis branch, or
   grounded-tool LLM judges. Memory-control trajectory evals also support this
   for response-quality judging.
+- `--backend postgres|sqlite`: select the persistence backend for runtime
+  trajectory evals. Postgres is the primary application backend and the
+  default.
+- `--dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live
+  --judge-mode live`: run the small live LLM session suite over the primary
+  runtime persistence backend.
 
 Current coverage:
 
@@ -169,3 +213,33 @@ Current coverage:
   details without guessed resources
 - crisis-resource lookup respects explicit location refusal without guessing
   localized resources
+- full parent-graph session trajectories across branch transitions, including
+  exercise interruption, lookup side-trips, memory-control pending actions,
+  crisis logging, and later safe follow-up turns
+- cross-branch interruption matrix coverage for exercise ↔ memory-control,
+  pending memory deletion → therapeutic/crisis, grounded lookup → crisis,
+  crisis → grounded lookup, and interrupted lookup recovery
+- full text-agent harness trajectories over `PersistentAgentRuntime`, including
+  support-memory recall, exercise/lookup/streaming continuity, crisis
+  interruption and per-session audit logging, preference saves, mental-health
+  resource lookup, ambiguous non-crisis distress, explicit tool failure
+  surfacing, and live smoke coverage with optional LLM-as-judge grading
+- Postgres-first runtime persistence trajectories for checkpoint resume,
+  background extraction drain, cross-thread/user memory scoping, streaming
+  single-write behavior, session finalization cleanup, crisis-log persistence,
+  feedback persistence, and incognito non-persistence
+- runtime recovery trajectories for same-thread concurrency serialization,
+  cross-thread isolation, failed-turn interruption, foreign mutation markers,
+  rotation-required session leases, explicit recovery, and auto-finalization
+  exclusions
+- text API, WebSocket, and CLI surface trajectories that verify production
+  wiring into the persistent runtime, including feedback writes, end-session
+  cleanup, explicit runtime failure surfacing, interrupted-session blocking,
+  and recovery after `/end`
+- direct memory write-policy decisions for semantic and procedural candidates,
+  including LLM-primary paths, local hard safety guards, and no silent fallback
+  on policy-LLM failure
+- manual runtime stress coverage for long scripted sessions over the persistent
+  backend
+- a small live LLM Postgres session dataset for support and guided-exercise
+  trajectories with optional LLM-as-judge grading

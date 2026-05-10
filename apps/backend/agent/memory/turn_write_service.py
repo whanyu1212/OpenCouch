@@ -107,9 +107,9 @@ class TurnWriteService:
         # Build candidates synchronously, then fan out the per-candidate
         # policy decisions in parallel. The decision functions are pure
         # async with no shared state and no ordering dependency, so
-        # ``gather`` is safe; LLM-failure fallbacks are handled inside the
-        # decision function and surface as deterministic decisions, not
-        # raised exceptions.
+        # ``gather`` is safe; policy-classifier failures are allowed to
+        # surface so transient provider failures do not silently become
+        # deterministic memory writes.
         candidates = [
             build_semantic_candidate(write, message=message) for write in writes
         ]

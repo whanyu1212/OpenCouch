@@ -11,6 +11,8 @@ from agent.state import AgentState
 EXERCISE_STATE_FIELDS = (
     "exercise_type",
     "exercise_step",
+    "exercise_step_id",
+    "exercise_version",
     "exercise_therapeutic_approach",
 )
 
@@ -79,6 +81,8 @@ def session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
         delta["exercise_state"] = {
             "exercise_type": None,
             "exercise_step": None,
+            "exercise_step_id": None,
+            "exercise_version": None,
             "exercise_therapeutic_approach": None,
         }
 

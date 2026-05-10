@@ -310,14 +310,46 @@ async def test_answer_factual_lookup_appends_structured_sources() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grounded_answer_node_does_not_guess_without_llm() -> None:
+async def test_grounded_answer_node_requires_llm() -> None:
     state = _state("Can you look up the current rule?")
     state["grounded_lookup"] = {"query": "Can you look up the current rule?"}
 
-    delta = await run_grounded_answer_node(state, cast(Any, _Runtime(None)))
+    with pytest.raises(RuntimeError, match="requires an LLM client"):
+        await run_grounded_answer_node(state, cast(Any, _Runtime(None)))
 
-    assert delta["grounded_lookup"]["status"] == "search_unavailable"
-    assert "don't want to guess" in delta["response_text"]
+
+@pytest.mark.asyncio
+async def test_answer_factual_lookup_surfaces_preflight_provider_failure() -> None:
+    llm = _FakeSearchLLM([RuntimeError("scripted preflight failure")])
+
+    with pytest.raises(RuntimeError, match="scripted preflight failure"):
+        await answer_factual_lookup(
+            _state("Can you verify whether this is current?"),
+            llm_client=llm,
+            query="Can you verify whether this is current?",
+        )
+
+
+@pytest.mark.asyncio
+async def test_answer_factual_lookup_surfaces_search_provider_failure() -> None:
+    llm = _FakeSearchLLM(
+        [
+            {
+                "status": "search",
+                "search_query": "current rule",
+                "answer": "",
+                "reasoning": "Specific factual lookup.",
+            },
+            RuntimeError("scripted search failure"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="scripted search failure"):
+        await answer_factual_lookup(
+            _state("Can you look up the current rule?"),
+            llm_client=llm,
+            query="Can you look up the current rule?",
+        )
 
 
 @pytest.mark.asyncio

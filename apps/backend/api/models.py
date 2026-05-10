@@ -206,3 +206,11 @@ class StreamDoneMessage(BaseModel):
 
     type: str = "done"
     response: ChatResponse
+
+
+class StreamErrorMessage(BaseModel):
+    """WebSocket message: terminal error event."""
+
+    type: str = "error"
+    code: str
+    message: str

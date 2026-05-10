@@ -85,6 +85,7 @@ def _build_crisis_delta(
     }
     if assessment.needs_crisis_response:
         delta["exercise_state"] = cleared_exercise_state()
+        delta["memory_control"] = {"action": {}, "pending_action": None}
     return delta
 
 

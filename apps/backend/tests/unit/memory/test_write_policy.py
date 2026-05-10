@@ -58,6 +58,20 @@ class _FakePolicyLLM(BaseLLMClient):
         return cast(StructuredResponseT, response_schema(**self.decision))
 
 
+class _FailingPolicyLLM(_FakePolicyLLM):
+    """Fake policy client that raises from structured generation."""
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls += 1
+        raise RuntimeError("policy LLM failed")
+
+
 def _semantic_write(
     *,
     category: str,
@@ -277,6 +291,42 @@ async def test_llm_semantic_policy_reason_is_capped_after_prefix() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_semantic_policy_requires_classifier_client() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="relationship",
+            predicate="KNOWS",
+            object_type="Person",
+            object_identifier="Sarah",
+            evidence_quote="My sister Sarah lives nearby.",
+        ),
+        message="My sister Sarah lives nearby.",
+    )
+
+    with pytest.raises(RuntimeError, match="requires an LLM"):
+        await decide_semantic_candidate_llm_primary(candidate, llm_client=None)
+
+
+@pytest.mark.asyncio
+async def test_llm_semantic_policy_failure_surfaces() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="relationship",
+            predicate="KNOWS",
+            object_type="Person",
+            object_identifier="Sarah",
+            evidence_quote="My sister Sarah lives nearby.",
+        ),
+        message="My sister Sarah lives nearby.",
+    )
+    llm = _FailingPolicyLLM({})
+
+    with pytest.raises(RuntimeError, match="policy LLM failed"):
+        await decide_semantic_candidate_llm_primary(candidate, llm_client=llm)
+    assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_llm_procedural_policy_can_commit_durable_natural_request() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
@@ -332,3 +382,37 @@ async def test_llm_procedural_policy_reason_is_capped_after_prefix() -> None:
     assert len(decision.reason) <= 240
     assert decision.reason.startswith("llm_policy: ")
     assert decision.reason.endswith("...")
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_policy_requires_classifier_client() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses.",
+            evidence=["From now on, be more direct with me."],
+        ),
+        message="From now on, be more direct with me.",
+        session_id="session-1",
+        turn_index=2,
+    )
+
+    with pytest.raises(RuntimeError, match="requires an LLM"):
+        await decide_procedural_candidate_llm_primary(candidate, llm_client=None)
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_policy_failure_surfaces() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses.",
+            evidence=["From now on, be more direct with me."],
+        ),
+        message="From now on, be more direct with me.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FailingPolicyLLM({})
+
+    with pytest.raises(RuntimeError, match="policy LLM failed"):
+        await decide_procedural_candidate_llm_primary(candidate, llm_client=llm)
+    assert llm.structured_calls == 1

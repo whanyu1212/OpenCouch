@@ -3,9 +3,9 @@
 The LLM extractors still decide whether something is *candidate*
 memory. This module decides whether that candidate is safe and durable
 enough to commit immediately. The async helpers use an LLM-primary
-classifier with deterministic safety guards and fallback. Anything that
-is not ``commit_now`` is buffered or dropped by the caller; session-end
-promotion logic lives in ``agent.runtime.session_commit``.
+classifier with deterministic safety guards. Anything that is not
+``commit_now`` is buffered or dropped by the caller; session-end promotion
+logic lives in ``agent.runtime.session_commit``.
 """
 
 from __future__ import annotations
@@ -306,14 +306,11 @@ def _clamp_semantic_policy_decision(
         PolicyDecision: Final policy decision.
     """
 
-    deterministic = decide_semantic_candidate(candidate)
-    if decision.confidence == "low":
-        return deterministic
-
     if decision.action == "commit_now" and (
         candidate.sensitivity == "high"
         or candidate.payload.category in SEMANTIC_SESSION_ONLY_CATEGORIES
     ):
+        deterministic = decide_semantic_candidate(candidate)
         return deterministic
 
     return PolicyDecision(
@@ -335,15 +332,14 @@ async def decide_semantic_candidate_llm_primary(
         llm_client (BaseLLMClient | None): Optional classifier client.
 
     Returns:
-        PolicyDecision: Final write policy, falling back to deterministic policy
-        when no classifier is available or the classifier is uncertain.
+        PolicyDecision: Final write policy.
     """
 
     hard_guard = _semantic_hard_guard(candidate)
     if hard_guard is not None:
         return hard_guard
     if llm_client is None:
-        return decide_semantic_candidate(candidate)
+        raise RuntimeError("Semantic write-policy classification requires an LLM.")
 
     try:
         decision: SemanticWritePolicyDecision = await llm_client.generate_structured(
@@ -353,10 +349,10 @@ async def decide_semantic_candidate_llm_primary(
         )
     except Exception:
         logger.warning(
-            "Semantic write-policy LLM classifier failed; using deterministic fallback.",
+            "Semantic write-policy LLM classifier failed.",
             exc_info=True,
         )
-        return decide_semantic_candidate(candidate)
+        raise
 
     return _clamp_semantic_policy_decision(candidate, decision)
 
@@ -436,15 +432,14 @@ async def decide_procedural_candidate_llm_primary(
         llm_client (BaseLLMClient | None): Optional classifier client.
 
     Returns:
-        PolicyDecision: Final write policy, falling back to deterministic policy
-        when no classifier is available or the classifier is uncertain.
+        PolicyDecision: Final write policy.
     """
 
     hard_guard = _procedural_hard_guard(candidate)
     if hard_guard is not None:
         return hard_guard
     if llm_client is None:
-        return decide_procedural_candidate(candidate)
+        raise RuntimeError("Procedural write-policy classification requires an LLM.")
 
     try:
         decision: ProceduralWritePolicyDecision = await llm_client.generate_structured(
@@ -454,13 +449,11 @@ async def decide_procedural_candidate_llm_primary(
         )
     except Exception:
         logger.warning(
-            "Procedural write-policy LLM classifier failed; using deterministic fallback.",
+            "Procedural write-policy LLM classifier failed.",
             exc_info=True,
         )
-        return decide_procedural_candidate(candidate)
+        raise
 
-    if decision.confidence == "low":
-        return decide_procedural_candidate(candidate)
     return PolicyDecision(
         action=decision.action,
         reason=_prefixed_policy_reason("llm_policy", decision.reason),
