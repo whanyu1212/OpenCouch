@@ -109,6 +109,7 @@ class _StreamingResponseLLM(BaseLLMClient):
         if schema_name == "TurnDispatchDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
                 route="therapeutic",
+                active_flow_action="none",
                 reasoning="streaming test turn dispatch",
                 confidence="high",
             )

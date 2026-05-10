@@ -45,7 +45,6 @@ class TurnDispatchDecision(BaseModel):
     reasoning: str = Field(min_length=1, max_length=360)
     confidence: Literal["low", "medium", "high"]
     active_flow_action: ActiveFlowAction = Field(
-        default="none",
         description=(
             "Required lifecycle label for the active flow named in the prompt. "
             "Use none only when the prompt says Active flow: none."
@@ -85,8 +84,8 @@ class TurnDispatchPlan:
     route: TurnRoute
     reason: str
     confidence: str
-    active_flow: ActiveFlow = "none"
-    active_flow_action: ActiveFlowAction = "none"
+    active_flow: ActiveFlow
+    active_flow_action: ActiveFlowAction
     active_flow_delta: dict[str, object] = field(default_factory=dict)
     memory_action: MemoryControlAction | None = None
     grounded_lookup_query: str | None = None

@@ -5,7 +5,10 @@
     {
       "id": "checkpoint-reopen-resume-thread",
       "description": "A thread checkpoint and active session should survive runtime close/reopen and continue the same transcript.",
-      "modes": ["scripted", "live"],
+      "modes": [
+        "scripted",
+        "live"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": true,
@@ -29,7 +32,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -76,7 +80,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is continuing the prior support thread.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "reflective",
@@ -119,7 +124,9 @@
     {
       "id": "shutdown-drains-background-extraction",
       "description": "A background extraction scheduled by the final turn should drain during runtime shutdown and survive reopen.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": false,
@@ -143,7 +150,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is sharing context while seeking support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -194,7 +202,9 @@
           {
             "owner_id": "{run_id}-user",
             "semantic_count": 1,
-            "facts_contain": ["Sarah"]
+            "facts_contain": [
+              "Sarah"
+            ]
           }
         ]
       }
@@ -202,7 +212,9 @@
     {
       "id": "next-turn-sees-prior-extraction",
       "description": "Turn N+1 should drain turn N's background extraction before load-memory runs.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": false,
@@ -226,7 +238,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is sharing context.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -284,7 +297,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for support context recall, not memory administration.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -307,7 +321,9 @@
             "route": "therapeutic",
             "transcript_length": 4,
             "turn_count": 2,
-            "working_memory_contains": ["Emma"]
+            "working_memory_contains": [
+              "Emma"
+            ]
           }
         }
       ],
@@ -316,7 +332,9 @@
           {
             "owner_id": "{run_id}-user",
             "semantic_count": 1,
-            "facts_contain": ["Emma"]
+            "facts_contain": [
+              "Emma"
+            ]
           }
         ]
       }
@@ -324,7 +342,9 @@
     {
       "id": "cross-user-isolation-and-same-user-fresh-thread",
       "description": "A user-scoped memory should be visible to the same user on a fresh thread, but not to another user.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": true,
@@ -348,7 +368,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is sharing support context.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -406,7 +427,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for ordinary support context.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -428,7 +450,9 @@
           "expected": {
             "route": "therapeutic",
             "working_memory_count": 0,
-            "working_memory_not_contains": ["Maya"]
+            "working_memory_not_contains": [
+              "Maya"
+            ]
           }
         },
         {
@@ -447,7 +471,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for ordinary support context.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -468,7 +493,9 @@
           },
           "expected": {
             "route": "therapeutic",
-            "working_memory_contains": ["Maya"]
+            "working_memory_contains": [
+              "Maya"
+            ]
           }
         }
       ],
@@ -477,12 +504,16 @@
           {
             "owner_id": "{run_id}-user-a",
             "semantic_count": 1,
-            "facts_contain": ["Maya"]
+            "facts_contain": [
+              "Maya"
+            ]
           },
           {
             "owner_id": "{run_id}-user-b",
             "semantic_count": 0,
-            "facts_absent": ["Maya"]
+            "facts_absent": [
+              "Maya"
+            ]
           }
         ]
       }
@@ -490,7 +521,10 @@
     {
       "id": "stream-turn-persists-once",
       "description": "Streaming should emit ordered runtime events and persist one assistant turn.",
-      "modes": ["scripted", "live"],
+      "modes": [
+        "scripted",
+        "live"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": true,
@@ -514,7 +548,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants grounding support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -523,7 +558,10 @@
               "reasoning": "Supportive pacing fits.",
               "confidence": "high"
             },
-            "response_chunks": ["A steady ", "reply."],
+            "response_chunks": [
+              "A steady ",
+              "reply."
+            ],
             "semantic_extraction": {
               "facts": [],
               "reason": "no durable fact"
@@ -535,7 +573,13 @@
           },
           "expected": {
             "route": "therapeutic",
-            "stream_stages": ["crisis_gate", "turn_dispatch", "load_memory", "therapeutic", "finalize"],
+            "stream_stages": [
+              "crisis_gate",
+              "turn_dispatch",
+              "load_memory",
+              "therapeutic",
+              "finalize"
+            ],
             "chunk_text_contains": "A steady reply.",
             "response_ready_count": 1,
             "done_count": 1,
@@ -560,7 +604,9 @@
     {
       "id": "end-session-finalizes-and-clears-continuity",
       "description": "Ending a guided-exercise session should write an episodic arc, clear active liveness, and clear exercise continuity.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": true,
@@ -584,7 +630,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -626,7 +673,9 @@
                 "ended_at": "2026-05-09T00:05:00Z",
                 "duration_seconds": 300,
                 "turn_count": 1,
-                "primary_themes": ["grounding"],
+                "primary_themes": [
+                  "grounding"
+                ],
                 "summary": "The user started a 5-4-3-2-1 grounding exercise.",
                 "mood_arc": {
                   "opened": "tense",
@@ -637,7 +686,9 @@
                 "approach_used": "dbt_skills",
                 "approach_context": {
                   "approach": "dbt_skills",
-                  "skills_used": ["5-4-3-2-1 grounding"],
+                  "skills_used": [
+                    "5-4-3-2-1 grounding"
+                  ],
                   "primary_domain": "distress_tolerance"
                 }
               },
@@ -655,7 +706,9 @@
           {
             "owner_id": "{run_id}-user",
             "episodic_count": 1,
-            "sessions_contain": ["grounding exercise"]
+            "sessions_contain": [
+              "grounding exercise"
+            ]
           }
         ],
         "thread_states": [
@@ -678,7 +731,9 @@
     {
       "id": "incognito-no-durable-state",
       "description": "Incognito mode should not persist checkpoint or memory state across a runtime reopen.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "incognito",
         "extract_in_foreground": true,
@@ -702,7 +757,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is sharing a communication preference in an incognito session.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -720,7 +776,9 @@
               "rules": [
                 {
                   "rule": "Use very brief replies.",
-                  "evidence": ["I prefer very brief replies."],
+                  "evidence": [
+                    "I prefer very brief replies."
+                  ],
                   "confidence": "high"
                 }
               ],
@@ -751,7 +809,9 @@
     {
       "id": "crisis-log-persists-across-reopen",
       "description": "A crisis turn should write an audit record that survives runtime reopen.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": true,
@@ -801,7 +861,9 @@
     {
       "id": "feedback-record-persists",
       "description": "Session feedback should persist with hashed session id and user privacy fields.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "runtime": {
         "memory_mode": "local",
         "extract_in_foreground": true,
@@ -825,7 +887,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",

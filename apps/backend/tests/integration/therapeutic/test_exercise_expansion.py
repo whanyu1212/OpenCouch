@@ -168,6 +168,7 @@ def _make_state(
         "history": [],
         "session_progress": {"turn_count": 1},
         "exercise_state": exercise_state,
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
     }
 
 
@@ -826,6 +827,7 @@ class TestExerciseTherapeuticApproach:
             "therapeutic_approach": "cbt",
             "working_memory": [],
             "procedural_profile": {},
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
         }
 
         prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
@@ -844,6 +846,7 @@ class TestExerciseTherapeuticApproach:
             "therapeutic_approach": "cbt",
             "working_memory": [],
             "procedural_profile": {},
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
         }
 
         prompt = build_guided_exercise_system_prompt(cast(AgentState, state))
@@ -863,6 +866,7 @@ class TestExerciseTherapeuticApproach:
             "therapeutic_approach": "cbt",
             "working_memory": [],
             "procedural_profile": {},
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
         }
 
         prompt = build_guided_exercise_system_prompt(cast(AgentState, state))

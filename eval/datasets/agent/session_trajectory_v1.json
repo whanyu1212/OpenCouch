@@ -19,7 +19,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -75,7 +76,7 @@
             "grounded_lookup": {
               "status": "answered"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -125,7 +126,7 @@
               "query": "",
               "status": "not_attempted"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "continue"
             },
@@ -169,7 +170,7 @@
             "therapeutic_approach": "none",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "clear"
             },
@@ -189,7 +190,12 @@
         }
       ],
       "expected": {
-        "route_sequence": ["therapeutic", "grounded_lookup", "therapeutic", "therapeutic"],
+        "route_sequence": [
+          "therapeutic",
+          "grounded_lookup",
+          "therapeutic",
+          "therapeutic"
+        ],
         "factual_tool_calls": 1,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
@@ -220,7 +226,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -294,7 +301,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants ordinary emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -328,7 +336,11 @@
         }
       ],
       "expected": {
-        "route_sequence": ["therapeutic", "crisis", "therapeutic"],
+        "route_sequence": [
+          "therapeutic",
+          "crisis",
+          "therapeutic"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 1,
         "crisis_log_count": 1,
@@ -375,7 +387,8 @@
               "confidence": "high",
               "memory_action_type": "forget_by_index",
               "target_kind": "fact",
-              "target_index": 1
+              "target_index": 1,
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -419,7 +432,7 @@
             "route": "grounded_lookup",
             "response_style": "grounded_lookup",
             "turn_dispatch_decision": "grounded_lookup",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "pending_memory_action",
               "action": "clear"
             },
@@ -438,7 +451,10 @@
         }
       ],
       "expected": {
-        "route_sequence": ["memory_control", "grounded_lookup"],
+        "route_sequence": [
+          "memory_control",
+          "grounded_lookup"
+        ],
         "factual_tool_calls": 1,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
@@ -451,7 +467,9 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["social plans"]
+          "facts_contain": [
+            "social plans"
+          ]
         }
       }
     },
@@ -474,7 +492,8 @@
               "reasoning": "The user asks to save a response-style preference.",
               "confidence": "high",
               "memory_action_type": "save_preference",
-              "preference_text": "direct answers when I am spiraling"
+              "preference_text": "direct answers when I am spiraling",
+              "active_flow_action": "none"
             },
             "preference_rule_text": "You prefer direct answers when you are spiraling."
           },
@@ -508,7 +527,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -523,8 +543,12 @@
             "route": "therapeutic",
             "response_style": "supportive",
             "turn_dispatch_decision": "therapeutic",
-            "procedural_rules_contain": ["direct answers"],
-            "prompt_contains": ["direct answers"],
+            "procedural_rules_contain": [
+              "direct answers"
+            ],
+            "prompt_contains": [
+              "direct answers"
+            ],
             "factual_tool_calls": 0,
             "crisis_resource_tool_calls": 0,
             "crisis_log_count": 0,
@@ -534,14 +558,19 @@
         }
       ],
       "expected": {
-        "route_sequence": ["memory_control", "therapeutic"],
+        "route_sequence": [
+          "memory_control",
+          "therapeutic"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
         "final_transcript_length": 4,
         "final_store": {
           "rule_count": 1,
-          "rules_contain": ["direct answers"]
+          "rules_contain": [
+            "direct answers"
+          ]
         }
       }
     },
@@ -599,7 +628,8 @@
               "route": "memory_control",
               "reasoning": "The user asks what saved assistant memory contains.",
               "confidence": "high",
-              "memory_action_type": "list"
+              "memory_action_type": "list",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -622,14 +652,19 @@
         }
       ],
       "expected": {
-        "route_sequence": ["crisis", "memory_control"],
+        "route_sequence": [
+          "crisis",
+          "memory_control"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 1,
         "crisis_log_count": 1,
         "final_transcript_length": 4,
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["presentation"]
+          "facts_contain": [
+            "presentation"
+          ]
         }
       }
     },
@@ -651,7 +686,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for external source-backed resources.",
               "confidence": "high",
-              "query": "official psychological resources readings panic attacks"
+              "query": "official psychological resources readings panic attacks",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -681,7 +717,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants support, not another lookup.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -707,7 +744,10 @@
         }
       ],
       "expected": {
-        "route_sequence": ["grounded_lookup", "therapeutic"],
+        "route_sequence": [
+          "grounded_lookup",
+          "therapeutic"
+        ],
         "factual_tool_calls": 1,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
@@ -748,7 +788,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -798,7 +839,7 @@
             "route": "memory_control",
             "response_style": "memory_control",
             "turn_dispatch_decision": "list",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -850,7 +891,7 @@
             "route": "therapeutic",
             "response_style": "guided_exercise",
             "turn_dispatch_decision": "therapeutic",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "continue"
             },
@@ -871,7 +912,11 @@
         }
       ],
       "expected": {
-        "route_sequence": ["therapeutic", "memory_control", "therapeutic"],
+        "route_sequence": [
+          "therapeutic",
+          "memory_control",
+          "therapeutic"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
@@ -883,7 +928,9 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["presentations"]
+          "facts_contain": [
+            "presentations"
+          ]
         }
       }
     },
@@ -904,7 +951,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -962,7 +1010,7 @@
             "response_style": "supportive",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive/pfa",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -1002,7 +1050,7 @@
             "response_style": "guided_exercise",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "continue"
             },
@@ -1020,7 +1068,11 @@
         }
       ],
       "expected": {
-        "route_sequence": ["therapeutic", "therapeutic", "therapeutic"],
+        "route_sequence": [
+          "therapeutic",
+          "therapeutic",
+          "therapeutic"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
@@ -1065,7 +1117,8 @@
               "confidence": "high",
               "memory_action_type": "forget_by_index",
               "target_kind": "fact",
-              "target_index": 1
+              "target_index": 1,
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1116,7 +1169,7 @@
             "route": "therapeutic",
             "response_style": "supportive",
             "turn_dispatch_decision": "therapeutic",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "pending_memory_action",
               "action": "clear"
             },
@@ -1132,7 +1185,10 @@
         }
       ],
       "expected": {
-        "route_sequence": ["memory_control", "therapeutic"],
+        "route_sequence": [
+          "memory_control",
+          "therapeutic"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
@@ -1142,7 +1198,9 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["not sleeping"]
+          "facts_contain": [
+            "not sleeping"
+          ]
         }
       }
     },
@@ -1179,7 +1237,8 @@
               "confidence": "high",
               "memory_action_type": "forget_by_index",
               "target_kind": "fact",
-              "target_index": 1
+              "target_index": 1,
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1238,7 +1297,10 @@
         }
       ],
       "expected": {
-        "route_sequence": ["memory_control", "crisis"],
+        "route_sequence": [
+          "memory_control",
+          "crisis"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 1,
         "crisis_log_count": 1,
@@ -1248,7 +1310,9 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["family conflict"]
+          "facts_contain": [
+            "family conflict"
+          ]
         }
       }
     },
@@ -1270,7 +1334,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for source-backed resources.",
               "confidence": "high",
-              "query": "official psychological resources about panic attacks"
+              "query": "official psychological resources about panic attacks",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1331,7 +1396,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for ordinary support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -1364,7 +1430,11 @@
         }
       ],
       "expected": {
-        "route_sequence": ["grounded_lookup", "crisis", "therapeutic"],
+        "route_sequence": [
+          "grounded_lookup",
+          "crisis",
+          "therapeutic"
+        ],
         "factual_tool_calls": 1,
         "crisis_resource_tool_calls": 1,
         "crisis_log_count": 1,
@@ -1424,7 +1494,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for verified factual information.",
               "confidence": "high",
-              "query": "what is 988 used for"
+              "query": "what is 988 used for",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1448,7 +1519,10 @@
         }
       ],
       "expected": {
-        "route_sequence": ["crisis", "grounded_lookup"],
+        "route_sequence": [
+          "crisis",
+          "grounded_lookup"
+        ],
         "factual_tool_calls": 1,
         "crisis_resource_tool_calls": 1,
         "crisis_log_count": 1,
@@ -1508,7 +1582,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is safe and closing the conversation.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "closing",
@@ -1536,7 +1611,10 @@
         }
       ],
       "expected": {
-        "route_sequence": ["crisis", "therapeutic"],
+        "route_sequence": [
+          "crisis",
+          "therapeutic"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 1,
         "crisis_log_count": 1,
@@ -1547,7 +1625,9 @@
     {
       "id": "live-exercise-side-requests-resume",
       "description": "Live LLM trajectory for an active guided exercise interrupted by support and lookup side turns, then resumed.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "turns": [
         {
           "message": "Can we do a 5-4-3-2-1 grounding exercise?",
@@ -1572,7 +1652,7 @@
           "expected": {
             "route": "therapeutic",
             "turn_dispatch_decision": "therapeutic",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -1596,7 +1676,7 @@
             "grounded_lookup": {
               "status": "answered"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -1617,7 +1697,7 @@
             "route": "therapeutic",
             "response_style": "guided_exercise",
             "turn_dispatch_decision": "therapeutic",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "continue"
             },
@@ -1639,7 +1719,12 @@
         }
       ],
       "expected": {
-        "route_sequence": ["therapeutic", "therapeutic", "grounded_lookup", "therapeutic"],
+        "route_sequence": [
+          "therapeutic",
+          "therapeutic",
+          "grounded_lookup",
+          "therapeutic"
+        ],
         "factual_tool_calls": 1,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,

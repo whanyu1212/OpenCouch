@@ -90,6 +90,7 @@ def _make_state(
         "working_memory": working_memory or [],
         "session_memory": session_memory,
         "procedural_profile": procedural_profile,
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
     }
     if crisis is not None:
         state["crisis"] = crisis

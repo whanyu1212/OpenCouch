@@ -173,6 +173,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
         if schema_name == "TurnDispatchDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
                 route="therapeutic",
+                active_flow_action="none",
                 reasoning="ordinary session commit test turn",
                 confidence="high",
             )
@@ -185,6 +186,20 @@ class _FakeSessionCommitLLM(BaseLLMClient):
 
         if schema_name == "SummarizationResult":
             return cast(StructuredResponseT, self.summarization_result)
+
+        if schema_name == "SemanticWritePolicyDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="commit_now",
+                reason="test semantic candidate can follow policy clamp",
+                confidence="high",
+            )
+
+        if schema_name == "ProceduralWritePolicyDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="commit_at_session_end",
+                reason="test implicit procedural preference should wait",
+                confidence="high",
+            )
 
         raise RuntimeError(f"_FakeSessionCommitLLM: unexpected schema {schema_name}")
 

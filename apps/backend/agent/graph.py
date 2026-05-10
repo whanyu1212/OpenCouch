@@ -152,6 +152,7 @@ def build_initial_state(
         should_persist_memory=False,
         diagnostics={},
         route="",
+        turn_lifecycle={"active_flow": "none", "action": "none"},
         crisis_audit={},
         grounded_lookup={"query": "", "status": "not_attempted"},
         inferred_location="",

@@ -73,23 +73,25 @@ TypedMemoryAction = Annotated[
 _TYPED_ACTION_ADAPTER: TypeAdapter[TypedMemoryAction] = TypeAdapter(TypedMemoryAction)
 
 
-def parse_memory_control_action(payload: dict[str, Any]) -> TypedMemoryAction | None:
+def parse_memory_control_action(payload: dict[str, Any]) -> TypedMemoryAction:
     """Parse a graph-state action dict into a typed memory-control action.
 
     Args:
         payload (dict[str, Any]): Action dict carried on graph state.
 
     Returns:
-        TypedMemoryAction | None: Parsed action, or ``None`` when the payload is
-            missing a known discriminator or fails validation.
+        TypedMemoryAction: Parsed action.
+
+    Raises:
+        ValueError: If the payload is missing a discriminator or fails validation.
     """
 
     if not payload or "type" not in payload:
-        return None
+        raise ValueError("memory_control.action requires a type.")
     try:
         return _TYPED_ACTION_ADAPTER.validate_python(payload)
-    except ValidationError:
-        return None
+    except ValidationError as exc:
+        raise ValueError("Invalid memory_control.action payload.") from exc
 
 
 @dataclass(frozen=True)
@@ -107,11 +109,11 @@ class MemoryControlAction:
 
         return dict(self.payload)
 
-    def parsed(self) -> TypedMemoryAction | None:
+    def parsed(self) -> TypedMemoryAction:
         """Return the typed action model.
 
         Returns:
-            TypedMemoryAction | None: Parsed action, or ``None`` when invalid.
+            TypedMemoryAction: Parsed action.
         """
 
         return parse_memory_control_action(self.payload)

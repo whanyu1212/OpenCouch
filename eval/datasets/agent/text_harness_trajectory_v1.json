@@ -5,7 +5,9 @@
     {
       "id": "support-memory-recall-finalize",
       "description": "A support turn should write a durable semantic memory, a later support turn should recall it, and end_session should clear active liveness.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-support-memory",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -29,7 +31,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is sharing support context and may benefit from reflection.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -92,7 +95,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for support using prior context.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -116,7 +120,9 @@
             "route": "therapeutic",
             "response_style": "supportive",
             "therapeutic_approach": "pfa",
-            "response_text_contains": ["Sarah"],
+            "response_text_contains": [
+              "Sarah"
+            ],
             "working_memory_count_min": 1,
             "turn_dispatch_decision": "therapeutic",
             "factual_tool_calls": 0,
@@ -147,14 +153,18 @@
         "final_transcript_length": 4,
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["Sarah"]
+          "facts_contain": [
+            "Sarah"
+          ]
         }
       }
     },
     {
       "id": "exercise-lookup-stream-resume",
       "description": "A guided grounding exercise should survive a factual lookup side trip and resume through the streaming runtime path.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-exercise-stream",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -178,7 +188,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -248,11 +259,13 @@
             "route": "grounded_lookup",
             "response_style": "grounded_lookup",
             "turn_dispatch_decision": "grounded_lookup",
-            "response_text_contains": ["Sources"],
+            "response_text_contains": [
+              "Sources"
+            ],
             "grounded_lookup": {
               "status": "answered"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -294,7 +307,10 @@
               "confidence": "high"
             },
             "step_state": "complete",
-            "response_chunks": ["Good. ", "Now name four things you can hear."],
+            "response_chunks": [
+              "Good. ",
+              "Now name four things you can hear."
+            ],
             "semantic_extraction": {
               "facts": [],
               "reason": "no durable fact"
@@ -317,7 +333,7 @@
             "grounded_lookup": {
               "status": "not_attempted"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "continue"
             },
@@ -350,7 +366,9 @@
     {
       "id": "exercise-support-lookup-stream-resume",
       "description": "A guided exercise should survive both a therapeutic side turn and a grounded lookup side turn, then resume through streaming.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-exercise-multi-interrupt",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -374,7 +392,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -452,14 +471,18 @@
             "response_style": "supportive",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive/pfa",
-            "response_text_contains": ["not failing"],
-            "response_text_not_contains": ["four things you can hear"],
+            "response_text_contains": [
+              "not failing"
+            ],
+            "response_text_not_contains": [
+              "four things you can hear"
+            ],
             "exercise_state": {
               "exercise_type": "grounding_5_4_3_2_1",
               "exercise_step": 0,
               "exercise_step_id": "see"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -503,7 +526,9 @@
             "route": "grounded_lookup",
             "response_style": "grounded_lookup",
             "turn_dispatch_decision": "grounded_lookup",
-            "response_text_contains": ["Sources"],
+            "response_text_contains": [
+              "Sources"
+            ],
             "grounded_lookup": {
               "status": "answered"
             },
@@ -512,7 +537,7 @@
               "exercise_step": 0,
               "exercise_step_id": "see"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "preserve"
             },
@@ -549,7 +574,10 @@
               "confidence": "high"
             },
             "step_state": "complete",
-            "response_chunks": ["Good. ", "Now name four things you can hear."],
+            "response_chunks": [
+              "Good. ",
+              "Now name four things you can hear."
+            ],
             "semantic_extraction": {
               "facts": [],
               "reason": "no durable fact"
@@ -572,7 +600,7 @@
             "grounded_lookup": {
               "status": "not_attempted"
             },
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "continue"
             },
@@ -605,7 +633,9 @@
     {
       "id": "exercise-crisis-clears-and-logs",
       "description": "A crisis disclosure should interrupt an active exercise, log the crisis turn, clear exercise state, and allow later ordinary support.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-exercise-crisis",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -629,7 +659,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a grounding exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -718,7 +749,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants ordinary emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -776,7 +808,9 @@
     {
       "id": "preference-save-affects-later-support",
       "description": "A memory-control preference save should persist a procedural rule that is visible to a later therapeutic response.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-preference",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -802,7 +836,8 @@
               "reasoning": "The user asks to save a response preference.",
               "confidence": "high",
               "memory_action_type": "save_preference",
-              "preference_text": "direct answers when I am spiraling"
+              "preference_text": "direct answers when I am spiraling",
+              "active_flow_action": "none"
             },
             "preference_rule_text": "You prefer direct answers when you are spiraling."
           },
@@ -839,7 +874,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -863,8 +899,12 @@
             "route": "therapeutic",
             "response_style": "supportive",
             "therapeutic_approach": "cbt",
-            "response_text_contains": ["direct"],
-            "prompt_contains": ["direct answers"],
+            "response_text_contains": [
+              "direct"
+            ],
+            "prompt_contains": [
+              "direct answers"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "factual_tool_calls": 0,
             "crisis_resource_tool_calls": 0,
@@ -881,14 +921,18 @@
         "final_transcript_length": 4,
         "final_store": {
           "rule_count": 1,
-          "rules_contain": ["direct answers"]
+          "rules_contain": [
+            "direct answers"
+          ]
         }
       }
     },
     {
       "id": "grounded-resource-then-support-clears-lookup",
       "description": "A mental-health resource lookup should use grounded lookup, then a later support turn should clear stale lookup state.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-resource",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -913,7 +957,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for externally verifiable resources.",
               "confidence": "high",
-              "query": "official psychological resources and readings about panic attacks"
+              "query": "official psychological resources and readings about panic attacks",
+              "active_flow_action": "none"
             },
             "semantic_extraction": {
               "facts": [],
@@ -929,7 +974,9 @@
             "route": "grounded_lookup",
             "response_style": "grounded_lookup",
             "turn_dispatch_decision": "grounded_lookup",
-            "response_text_contains": ["Sources"],
+            "response_text_contains": [
+              "Sources"
+            ],
             "grounded_lookup": {
               "status": "answered"
             },
@@ -955,7 +1002,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants ordinary support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -1003,7 +1051,9 @@
     {
       "id": "ambiguous-distress-stays-non-crisis",
       "description": "Ambiguous distress with an explicit safety denial should stay on the therapeutic path and avoid crisis logging.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-ambiguous",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1027,7 +1077,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants ordinary support for workload distress.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "reflective",
@@ -1070,7 +1121,9 @@
     {
       "id": "tool-failure-surfaces-and-recovers",
       "description": "A grounded lookup tool failure should surface through the runtime, mark the session interrupted, and recover through explicit end_session.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-tool-failure",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1095,7 +1148,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for a lookup.",
               "confidence": "high",
-              "query": "force lookup failure"
+              "query": "force lookup failure",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1128,7 +1182,9 @@
     {
       "id": "pending-delete-crisis-runtime",
       "description": "A pending memory deletion should be cleared by a crisis turn in the persistent text runtime; the memory store should remain unchanged.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-pending-delete-crisis",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1168,7 +1224,8 @@
               "confidence": "high",
               "memory_action_type": "forget_by_index",
               "target_kind": "fact",
-              "target_index": 1
+              "target_index": 1,
+              "active_flow_action": "none"
             },
             "semantic_extraction": {
               "facts": [],
@@ -1243,14 +1300,18 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["family conflict"]
+          "facts_contain": [
+            "family conflict"
+          ]
         }
       }
     },
     {
       "id": "lookup-failure-end-session-new-support",
       "description": "A grounded lookup failure should mark the runtime interrupted; explicit end_session should clear liveness and allow a fresh support turn on the same thread.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-lookup-failure-recovery",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1275,7 +1336,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for a lookup.",
               "confidence": "high",
-              "query": "force lookup failure"
+              "query": "force lookup failure",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1313,7 +1375,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -1363,7 +1426,9 @@
     {
       "id": "closing-suggests-end-session-only",
       "description": "A closing reply should suggest explicit session finalization without ending the persistent session automatically.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-closing-signal",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1387,7 +1452,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for ordinary support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -1434,7 +1500,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is winding down the conversation.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "closing",
@@ -1492,7 +1559,9 @@
     {
       "id": "exercise-goodbye-clears-and-suggests-end",
       "description": "A goodbye during a guided exercise should clear exercise continuity, suggest ending the session, and wait for explicit finalization.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-exercise-goodbye",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1516,7 +1585,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a guided exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -1596,7 +1666,7 @@
             "session_action": "suggest_end_session",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "closing",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "clear"
             },
@@ -1646,7 +1716,9 @@
     {
       "id": "pending-delete-goodbye-clears-and-suggests-end",
       "description": "A goodbye while a delete confirmation is pending should clear the pending action, preserve memory, and suggest explicit session end.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-pending-goodbye",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1685,7 +1757,8 @@
               "confidence": "high",
               "memory_action_type": "forget_by_index",
               "target_kind": "fact",
-              "target_index": 1
+              "target_index": 1,
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -1751,7 +1824,7 @@
             "session_action": "suggest_end_session",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "closing",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "pending_memory_action",
               "action": "clear"
             },
@@ -1777,14 +1850,18 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["sleep"]
+          "facts_contain": [
+            "sleep"
+          ]
         }
       }
     },
     {
       "id": "crisis-no-session-end-then-safe-goodbye-suggests",
       "description": "Crisis responses should not suggest ending the session; a later safe goodbye may suggest explicit finalization.",
-      "modes": ["scripted"],
+      "modes": [
+        "scripted"
+      ],
       "thread_id": "{run_id}-crisis-then-goodbye",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1840,7 +1917,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is safe and closing the conversation.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "closing",
@@ -1886,7 +1964,9 @@
     {
       "id": "live-closing-suggests-end-session-only",
       "description": "Live LLM: ordinary closing should suggest explicit session finalization without ending the persistent session automatically.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "thread_id": "{run_id}-live-closing-signal",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1953,7 +2033,9 @@
     {
       "id": "live-exercise-goodbye-clears-and-suggests-end",
       "description": "Live LLM: a goodbye during a guided exercise should clear exercise continuity and suggest explicit session end.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "thread_id": "{run_id}-live-exercise-goodbye",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -1992,7 +2074,7 @@
             "route": "therapeutic",
             "response_style": "closing",
             "session_action": "suggest_end_session",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "guided_exercise",
               "action": "clear"
             },
@@ -2044,7 +2126,9 @@
     {
       "id": "live-pending-delete-goodbye-clears-and-suggests-end",
       "description": "Live LLM: a goodbye while deletion confirmation is pending should clear the pending action and suggest explicit session end.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "thread_id": "{run_id}-live-pending-goodbye",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -2098,7 +2182,7 @@
             "route": "therapeutic",
             "response_style": "closing",
             "session_action": "suggest_end_session",
-            "turn_dispatch_active_flow": {
+            "turn_lifecycle": {
               "active_flow": "pending_memory_action",
               "action": "clear"
             },
@@ -2124,7 +2208,9 @@
         },
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["sleep"]
+          "facts_contain": [
+            "sleep"
+          ]
         }
       },
       "rubric": {
@@ -2146,7 +2232,9 @@
     {
       "id": "live-crisis-no-session-end-then-safe-goodbye-suggests",
       "description": "Live LLM: a crisis response should not suggest ending the session, while a later safe goodbye may.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "thread_id": "{run_id}-live-crisis-goodbye",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -2214,7 +2302,9 @@
     {
       "id": "live-ambiguous-calm-down-does-not-start-exercise",
       "description": "Live LLM: broad distress and a request for help calming down should not enter guided exercise without explicit consent.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "thread_id": "{run_id}-live-exercise-consent",
       "user_id": "{run_id}-user",
       "runtime": {
@@ -2279,7 +2369,9 @@
     {
       "id": "live-safe-support-lookup-followup",
       "description": "Live LLM smoke trajectory: safe support, grounded psychoeducation lookup, and ordinary follow-up over the persistent runtime.",
-      "modes": ["live"],
+      "modes": [
+        "live"
+      ],
       "thread_id": "{run_id}-live-text",
       "user_id": "{run_id}-user",
       "runtime": {

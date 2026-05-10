@@ -196,18 +196,6 @@ async def _handle_status(
     )
 
 
-def _capability_reply() -> MemoryControlServiceResult:
-    """Return the fallback reply when the action type is unknown or invalid."""
-
-    return MemoryControlServiceResult(
-        response_text=(
-            "I can show saved memory, turn proactive recall on or off, save a style "
-            "preference, or help delete a specific saved memory."
-        ),
-        memory_control={"pending_action": None},
-    )
-
-
 def _build_preference_rule_prompt(
     *,
     state: AgentState,
@@ -433,9 +421,9 @@ async def execute_memory_control_action(
         )
 
     raw_action = (state.get("memory_control", {}) or {}).get("action", {}) or {}
+    if not isinstance(raw_action, dict):
+        raise ValueError("memory_control.action must be a mapping.")
     action = parse_memory_control_action(raw_action)
-    if action is None:
-        return _capability_reply()
 
     store = context.memory_store
 
@@ -477,4 +465,4 @@ async def execute_memory_control_action(
                 memory_control={"pending_action": None},
             )
 
-    return _capability_reply()
+    raise RuntimeError(f"Unhandled memory-control action: {action!r}")

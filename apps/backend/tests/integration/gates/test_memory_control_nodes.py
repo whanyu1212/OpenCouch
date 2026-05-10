@@ -139,6 +139,7 @@ async def test_turn_dispatch_routes_therapeutic_turns_to_memory_load() -> None:
             "route": "therapeutic",
             "reasoning": "The user is asking for ordinary support.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 
@@ -164,6 +165,7 @@ async def test_turn_dispatch_routes_memory_control_action() -> None:
             "memory_action_type": "list",
             "reasoning": "The user asked to inspect saved assistant memory.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 
@@ -190,6 +192,7 @@ async def test_turn_dispatch_routes_pending_confirmation() -> None:
             "memory_action_type": "confirm_pending",
             "reasoning": "The user confirmed the pending deletion.",
             "confidence": "high",
+            "active_flow_action": "continue",
         }
     )
     state = _state("yes, delete it")
@@ -223,6 +226,7 @@ async def test_turn_dispatch_clears_pending_when_user_moves_on() -> None:
             "route": "therapeutic",
             "reasoning": "The user moved on from the pending deletion.",
             "confidence": "high",
+            "active_flow_action": "clear",
         }
     )
     state = _state("Actually, can we talk about work stress?")
@@ -259,6 +263,7 @@ async def test_turn_dispatch_preserves_save_preference_text() -> None:
             "preference_text": "shorter replies when I am panicking",
             "reasoning": "The user asked to save a response preference.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 
@@ -292,6 +297,7 @@ async def test_turn_dispatch_rejects_incomplete_memory_payload() -> None:
             "query": "that",
             "reasoning": "The model selected a vague deletion target.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 

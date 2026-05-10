@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.active_flow import current_turn_active_flow
+from agent.active_flow import current_turn_lifecycle
 from agent.prompts import (
     compose_sources as _compose,
     format_recent_history as _format_recent_history,
@@ -111,7 +111,7 @@ def _format_active_flow_response_block(state: AgentState) -> str:
         str: Optional system-prompt block for active-flow continuity.
     """
 
-    active_flow = current_turn_active_flow(state)
+    active_flow = current_turn_lifecycle(state)
     if (
         active_flow.active_flow == "guided_exercise"
         and active_flow.action == "preserve"

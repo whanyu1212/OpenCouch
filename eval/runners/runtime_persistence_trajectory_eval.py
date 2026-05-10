@@ -150,6 +150,7 @@ class ScriptedRuntimeLLM:
                         "route": "therapeutic",
                         "reasoning": "scripted therapeutic runtime eval route",
                         "confidence": "high",
+                        "active_flow_action": "none",
                     },
                 )
             )

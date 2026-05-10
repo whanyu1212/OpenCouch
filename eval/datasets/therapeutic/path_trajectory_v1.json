@@ -19,7 +19,9 @@
         "procedural_rules": [
           {
             "rule": "You prefer direct, concise responses when you are anxious.",
-            "evidence": ["Please be direct when I am anxious."]
+            "evidence": [
+              "Please be direct when I am anxious."
+            ]
           }
         ],
         "proactive_recall_enabled": false
@@ -38,7 +40,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants emotional support, not lookup or memory administration.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -52,15 +55,31 @@
           "expected": {
             "response_style": "supportive",
             "therapeutic_approach": "cbt",
-            "response_text_contains": ["presentation anxiety", "direct"],
+            "response_text_contains": [
+              "presentation anxiety",
+              "direct"
+            ],
             "safety_decision": "normal",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive/cbt",
-            "diagnostics_contains": ["crisis_gate_ms", "turn_dispatch_ms", "load_memory_ms", "post_finalize_ms"],
+            "diagnostics_contains": [
+              "crisis_gate_ms",
+              "turn_dispatch_ms",
+              "load_memory_ms",
+              "post_finalize_ms"
+            ],
             "working_memory_count_min": 1,
-            "procedural_rules_contain": ["direct, concise"],
-            "session_summary_contains": ["Retrieved", "procedural rule"],
-            "prompt_contains": ["presentation feels risky", "You prefer direct, concise responses"],
+            "procedural_rules_contain": [
+              "direct, concise"
+            ],
+            "session_summary_contains": [
+              "Retrieved",
+              "procedural rule"
+            ],
+            "prompt_contains": [
+              "presentation feels risky",
+              "You prefer direct, concise responses"
+            ],
             "factual_tool_calls": 0,
             "crisis_resource_tool_calls": 0,
             "crisis_log_count": 0,
@@ -82,7 +101,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -97,10 +117,15 @@
           "expected": {
             "response_style": "guided_exercise",
             "therapeutic_approach": "dbt_skills",
-            "response_text_contains": ["five things you can see"],
+            "response_text_contains": [
+              "five things you can see"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
-            "diagnostics_contains": ["load_memory_ms", "post_finalize_ms"],
+            "diagnostics_contains": [
+              "load_memory_ms",
+              "post_finalize_ms"
+            ],
             "factual_tool_calls": 0,
             "crisis_resource_tool_calls": 0,
             "crisis_log_count": 0,
@@ -144,7 +169,9 @@
           "expected": {
             "response_style": "guided_exercise",
             "therapeutic_approach": "dbt_skills",
-            "response_text_contains": ["four things you can hear"],
+            "response_text_contains": [
+              "four things you can hear"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
             "factual_tool_calls": 0,
@@ -189,7 +216,10 @@
           "expected": {
             "response_style": "supportive",
             "therapeutic_approach": "none",
-            "response_text_contains": ["stop the exercise", "just talk"],
+            "response_text_contains": [
+              "stop the exercise",
+              "just talk"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive",
             "factual_tool_calls": 0,
@@ -239,7 +269,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -281,7 +312,10 @@
           },
           "expected": {
             "response_style": "crisis_response",
-            "response_text_contains": ["emergency support", "tonight"],
+            "response_text_contains": [
+              "emergency support",
+              "tonight"
+            ],
             "safety_decision": "crisis",
             "structured_calls": {
               "CrisisAssessmentSchema": 1,
@@ -334,7 +368,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -379,7 +414,10 @@
           },
           "expected": {
             "response_style": "grounded_lookup",
-            "response_text_contains": ["verified factual answer", "official source"],
+            "response_text_contains": [
+              "verified factual answer",
+              "official source"
+            ],
             "turn_dispatch_decision": "grounded_lookup",
             "structured_calls": {
               "CrisisAssessmentSchema": 1,
@@ -431,7 +469,9 @@
           "expected": {
             "response_style": "guided_exercise",
             "therapeutic_approach": "dbt_skills",
-            "response_text_contains": ["four things you can hear"],
+            "response_text_contains": [
+              "four things you can hear"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
             "factual_tool_calls": 0,
@@ -495,7 +535,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -540,7 +581,10 @@
           },
           "expected": {
             "response_style": "memory_control",
-            "response_text_contains": ["Saved facts", "Box breathing helped"],
+            "response_text_contains": [
+              "Saved facts",
+              "Box breathing helped"
+            ],
             "turn_dispatch_decision": "list",
             "structured_calls": {
               "CrisisAssessmentSchema": 1,
@@ -594,7 +638,9 @@
           "expected": {
             "response_style": "guided_exercise",
             "therapeutic_approach": "dbt_skills",
-            "response_text_contains": ["four things you can hear"],
+            "response_text_contains": [
+              "four things you can hear"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
             "factual_tool_calls": 0,
@@ -654,7 +700,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user asks for a therapeutic exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -700,7 +747,10 @@
           },
           "expected": {
             "response_style": "memory_control",
-            "response_text_contains": ["Do you want me to delete it?", "presentations"],
+            "response_text_contains": [
+              "Do you want me to delete it?",
+              "presentations"
+            ],
             "turn_dispatch_decision": "forget_by_query",
             "structured_calls": {
               "CrisisAssessmentSchema": 1,
@@ -789,12 +839,16 @@
               "confidence": "high",
               "memory_action_type": "forget_by_index",
               "target_kind": "fact",
-              "target_index": 1
+              "target_index": 1,
+              "active_flow_action": "none"
             }
           },
           "expected": {
             "response_style": "memory_control",
-            "response_text_contains": ["Do you want me to delete it?", "social plans"],
+            "response_text_contains": [
+              "Do you want me to delete it?",
+              "social plans"
+            ],
             "turn_dispatch_decision": "forget_by_index",
             "memory_control": {
               "action": {
@@ -844,7 +898,10 @@
           "expected": {
             "response_style": "supportive",
             "therapeutic_approach": "cbt",
-            "response_text_contains": ["memory unchanged", "calming"],
+            "response_text_contains": [
+              "memory unchanged",
+              "calming"
+            ],
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive/cbt",
             "memory_control": {

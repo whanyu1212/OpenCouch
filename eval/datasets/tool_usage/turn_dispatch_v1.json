@@ -17,7 +17,8 @@
         "turn_dispatch": {
           "route": "therapeutic",
           "reasoning": "The user wants emotional support, not lookup or memory management.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
@@ -30,7 +31,9 @@
       },
       "expected": {
         "response_style": "supportive",
-        "response_text_contains": ["exhausting"],
+        "response_text_contains": [
+          "exhausting"
+        ],
         "turn_dispatch_decision": "therapeutic",
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
@@ -53,7 +56,8 @@
         "turn_dispatch": {
           "route": "therapeutic",
           "reasoning": "The user is asking for subjective reflection, not external facts.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
@@ -89,12 +93,15 @@
           "route": "grounded_lookup",
           "query": "whether 988 works outside the United States",
           "reasoning": "The user explicitly asked for external factual information.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         }
       },
       "expected": {
         "response_style": "grounded_lookup",
-        "response_text_contains": ["verified factual answer"],
+        "response_text_contains": [
+          "verified factual answer"
+        ],
         "turn_dispatch_decision": "grounded_lookup",
         "factual_tool_calls": 1,
         "factual_tool_query": "whether 988 works outside the United States",
@@ -119,12 +126,15 @@
           "route": "memory_control",
           "memory_action_type": "list",
           "reasoning": "The user asked to inspect saved assistant memory.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         }
       },
       "expected": {
         "response_style": "memory_control",
-        "response_text_contains": ["don't have any saved facts"],
+        "response_text_contains": [
+          "don't have any saved facts"
+        ],
         "turn_dispatch_decision": "list",
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
@@ -142,7 +152,10 @@
             "type": "delete",
             "target": {
               "kind": "fact",
-              "namespace": ["eval-user", "semantic"],
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
               "key": "fact-missing",
               "rule_id": null,
               "preview": "trigger: presentations"
@@ -168,7 +181,9 @@
       },
       "expected": {
         "response_style": "memory_control",
-        "response_text_contains": ["couldn't delete"],
+        "response_text_contains": [
+          "couldn't delete"
+        ],
         "turn_dispatch_decision": "confirm_pending",
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
@@ -192,7 +207,9 @@
       },
       "expected": {
         "response_style": "crisis_response",
-        "response_text_contains": ["emergency support"],
+        "response_text_contains": [
+          "emergency support"
+        ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 1,
         "turn_dispatch_calls": 0,

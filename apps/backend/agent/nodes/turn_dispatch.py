@@ -37,10 +37,6 @@ def _dispatch_update(
         "turn_dispatch_ms": round(duration_ms, 2),
         "turn_dispatch_classifier_path": "llm_primary",
         "turn_dispatch_llm_failure_occurred": False,
-        "turn_dispatch_active_flow": {
-            "active_flow": plan.active_flow,
-            "action": plan.active_flow_action,
-        },
         **append_routing_trace(
             state.get("diagnostics"),
             {
@@ -57,6 +53,10 @@ def _dispatch_update(
 
     update: dict[str, object] = {
         "route": plan.route,
+        "turn_lifecycle": {
+            "active_flow": plan.active_flow,
+            "action": plan.active_flow_action,
+        },
         "diagnostics": diagnostics,
     }
     active_flow_delta = dict(plan.active_flow_delta)

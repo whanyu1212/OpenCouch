@@ -290,6 +290,7 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
             "diagnostics",
             "exercise_state",
             "memory_control",
+            "turn_lifecycle",
         },
     )
     assert command.update["exercise_state"] == {
@@ -302,6 +303,10 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
     assert command.update["memory_control"] == {
         "action": {},
         "pending_action": None,
+    }
+    assert command.update["turn_lifecycle"] == {
+        "active_flow": "none",
+        "action": "none",
     }
 
 
@@ -350,7 +355,13 @@ async def test_turn_dispatch_therapeutic_channel_contract() -> None:
     assert command.goto == "load_memory_node"
     _assert_exact_keys(
         command.update,
-        {"route", "memory_control", "grounded_lookup", "diagnostics"},
+        {
+            "route",
+            "turn_lifecycle",
+            "memory_control",
+            "grounded_lookup",
+            "diagnostics",
+        },
     )
 
 
@@ -376,7 +387,13 @@ async def test_turn_dispatch_memory_control_channel_contract() -> None:
     assert command.goto == "memory_control_node"
     _assert_exact_keys(
         command.update,
-        {"route", "memory_control", "grounded_lookup", "diagnostics"},
+        {
+            "route",
+            "turn_lifecycle",
+            "memory_control",
+            "grounded_lookup",
+            "diagnostics",
+        },
     )
 
 
@@ -415,6 +432,7 @@ async def test_turn_dispatch_memory_mutation_clears_exercise_state() -> None:
         command.update,
         {
             "route",
+            "turn_lifecycle",
             "memory_control",
             "grounded_lookup",
             "diagnostics",
@@ -478,7 +496,13 @@ async def test_turn_dispatch_grounded_lookup_channel_contract() -> None:
     assert command.goto == "grounded_answer_node"
     _assert_exact_keys(
         command.update,
-        {"route", "memory_control", "grounded_lookup", "diagnostics"},
+        {
+            "route",
+            "turn_lifecycle",
+            "memory_control",
+            "grounded_lookup",
+            "diagnostics",
+        },
     )
 
 
@@ -826,11 +850,9 @@ async def test_dispatch_preserves_exercise_on_active_flow_side_turn() -> None:
         "exercise_therapeutic_approach": "dbt_skills",
     }
     state["therapeutic_approach"] = "dbt_skills"
-    state["diagnostics"] = {
-        "turn_dispatch_active_flow": {
-            "active_flow": "guided_exercise",
-            "action": "preserve",
-        }
+    state["turn_lifecycle"] = {
+        "active_flow": "guided_exercise",
+        "action": "preserve",
     }
 
     command = await run_therapeutic_dispatch_node(
@@ -862,11 +884,9 @@ async def test_dispatch_active_flow_continue_forces_guided_exercise() -> None:
         "exercise_therapeutic_approach": "dbt_skills",
     }
     state["therapeutic_approach"] = "pfa"
-    state["diagnostics"] = {
-        "turn_dispatch_active_flow": {
-            "active_flow": "guided_exercise",
-            "action": "continue",
-        }
+    state["turn_lifecycle"] = {
+        "active_flow": "guided_exercise",
+        "action": "continue",
     }
 
     command = await run_therapeutic_dispatch_node(

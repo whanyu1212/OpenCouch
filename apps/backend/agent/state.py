@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Mapping
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import Channel, CrisisAssessment, SessionAction
@@ -156,6 +156,19 @@ class GroundedLookupState(TypedDict):
     status: NotRequired[str]
 
 
+class TurnLifecycleState(TypedDict):
+    """Current-turn active-flow lifecycle decision.
+
+    ``turn_dispatch_node`` writes this after deciding whether an active
+    exercise or pending memory action should continue, pause, resume, or clear.
+    Downstream nodes read it as behavior state. Diagnostics may mirror these
+    values for observability, but diagnostics are not the source of truth.
+    """
+
+    active_flow: Literal["none", "guided_exercise", "pending_memory_action"]
+    action: Literal["none", "continue", "preserve", "resume", "clear"]
+
+
 class CrisisAuditState(TypedDict):
     """Turn-scoped crisis-classifier provenance.
 
@@ -248,12 +261,15 @@ class AgentPrivateState(TypedDict):
 
     These fields are available to nodes during graph execution but are not part
     of the public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
-    ``crisis_audit`` feeds the crisis log, and ``crisis_resource_lookup_node``
-    writes ``inferred_location`` / ``found_resources`` /
-    ``resource_lookup_status`` for crisis-resource lookup turns.
+    ``turn_lifecycle`` carries current-turn active-flow behavior from dispatch
+    to downstream nodes, ``crisis_audit`` feeds the crisis log, and
+    ``crisis_resource_lookup_node`` writes ``inferred_location`` /
+    ``found_resources`` / ``resource_lookup_status`` for crisis-resource lookup
+    turns.
     """
 
     route: NotRequired[str]
+    turn_lifecycle: NotRequired[TurnLifecycleState]
     crisis_audit: NotRequired[CrisisAuditState]
     inferred_location: NotRequired[str]
     found_resources: NotRequired[list[dict[str, str]]]

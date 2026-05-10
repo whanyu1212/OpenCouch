@@ -225,7 +225,21 @@ class _FakeExtractionLLM(BaseLLMClient):
         if response_schema.__name__ == "TurnDispatchDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
                 route="therapeutic",
+                active_flow_action="none",
                 reasoning="ordinary extraction test turn",
+                confidence="high",
+            )
+
+        if response_schema.__name__ == "ProceduralExtractionResult":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                rules=[],
+                reason="no procedural rules in semantic extraction tests",
+            )
+
+        if response_schema.__name__ == "SemanticWritePolicyDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="commit_now",
+                reason="test semantic fact is durable",
                 confidence="high",
             )
 
@@ -445,10 +459,10 @@ class TestExtractFactsNodeUnit:
         assert records[0].value["evidence_quote"] == "my sister Sarah visited"
         assert records[0].value["user_visible"] is True
         assert records[0].value["write_timing"] == "immediate"
-        assert (
-            records[0].value["write_reason"]
-            == "explicit stable semantic fact is safe for immediate commit"
+        assert records[0].value["write_reason"] == (
+            "llm_policy: test semantic fact is durable"
         )
+        assert records[0].value["policy_version"] == "phase1_llm_v1"
 
     @pytest.mark.asyncio
     async def test_duplicate_fact_bumps_last_referenced_at(self) -> None:

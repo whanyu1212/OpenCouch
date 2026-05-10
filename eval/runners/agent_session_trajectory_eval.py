@@ -506,11 +506,8 @@ class AgentSessionTrajectoryEvaluator(BaseEvaluator[AgentSessionCase]):
                             "grounded_lookup": jsonify(
                                 state.get("grounded_lookup") or {}
                             ),
-                            "turn_dispatch_active_flow": jsonify(
-                                (state.get("diagnostics") or {}).get(
-                                    "turn_dispatch_active_flow"
-                                )
-                                or {}
+                            "turn_lifecycle": jsonify(
+                                state.get("turn_lifecycle") or {}
                             ),
                             "crisis": jsonify(state.get("crisis")),
                             "transcript": jsonify(state.get("transcript") or []),
@@ -760,9 +757,9 @@ def _grade_turn(
     )
     _grade_expected_mapping(
         failures,
-        label=f"{label}.turn_dispatch_active_flow",
-        actual=artifact.get("turn_dispatch_active_flow"),
-        expected=expected.get("turn_dispatch_active_flow"),
+        label=f"{label}.turn_lifecycle",
+        actual=artifact.get("turn_lifecycle"),
+        expected=expected.get("turn_lifecycle"),
     )
     _grade_expected_mapping(
         failures,

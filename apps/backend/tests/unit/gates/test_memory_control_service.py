@@ -126,49 +126,44 @@ async def test_service_noops_in_incognito_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_unknown_action_returns_capability_reply() -> None:
+async def test_service_unknown_action_raises() -> None:
     state = _state("memory help")
     state["memory_control"]["action"] = {"type": "unknown"}
 
-    result = await execute_memory_control_action(state, _context())
-
-    assert "I can show saved memory" in result.response_text
-    assert result.memory_control == {"pending_action": None}
+    with pytest.raises(ValueError, match="Invalid memory_control.action payload"):
+        await execute_memory_control_action(state, _context())
 
 
 @pytest.mark.asyncio
-async def test_service_set_recall_without_enabled_returns_capability_reply() -> None:
+async def test_service_set_recall_without_enabled_raises() -> None:
     """Malformed set_recall (missing required ``enabled``) must not silently disable.
 
-    Discriminated-union validation rejects the action; the service falls through
-    to the capability reply rather than defaulting ``enabled=False`` and turning
-    off proactive recall behind the user's back. The result must not emit a
-    ``procedural_profile`` update — that would propagate a fabricated value into
-    graph state.
+    Discriminated-union validation rejects the action rather than defaulting
+    ``enabled=False`` and turning off proactive recall behind the user's back.
     """
 
     store = OpenCouchMemoryStore()
     state = _state("turn proactive recall")
     state["memory_control"]["action"] = {"type": "set_recall"}
 
-    result = await execute_memory_control_action(state, _context(store=store))
+    with pytest.raises(ValueError, match="Invalid memory_control.action payload"):
+        await execute_memory_control_action(state, _context(store=store))
 
-    assert "I can show saved memory" in result.response_text
-    assert result.procedural_profile is None
-    assert result.memory_control == {"pending_action": None}
+    profile = await aget_procedural_profile(store, user_id="user-1")
+    assert profile.proactive_recall_enabled is False
 
 
 @pytest.mark.asyncio
-async def test_service_save_preference_without_text_returns_capability_reply() -> None:
+async def test_service_save_preference_without_text_raises() -> None:
     """Malformed save_preference must not save a blank rule."""
 
     store = OpenCouchMemoryStore()
     state = _state("remember preference")
     state["memory_control"]["action"] = {"type": "save_preference"}
 
-    result = await execute_memory_control_action(state, _context(store=store))
+    with pytest.raises(ValueError, match="Invalid memory_control.action payload"):
+        await execute_memory_control_action(state, _context(store=store))
 
-    assert "I can show saved memory" in result.response_text
     profile = await aget_procedural_profile(store, user_id="user-1")
     assert profile.rules == []
 

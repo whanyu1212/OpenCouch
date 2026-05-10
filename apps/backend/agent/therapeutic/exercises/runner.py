@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from agent.active_flow import current_turn_active_flow
+from agent.active_flow import current_turn_lifecycle
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.state import AgentState
@@ -110,7 +110,7 @@ class ExerciseRunner:
     ) -> dict[str, Any]:
         """Continue an exercise based on the user's current message."""
 
-        active_flow = current_turn_active_flow(state)
+        active_flow = current_turn_lifecycle(state)
         if (
             active_flow.active_flow == "guided_exercise"
             and active_flow.action == "resume"

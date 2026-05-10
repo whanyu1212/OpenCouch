@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from agent.active_flow import current_turn_active_flow
+from agent.active_flow import current_turn_lifecycle
 from agent.memory.models import (
     ConfidenceLevel,
     DispatchDecision,
@@ -75,7 +75,7 @@ async def plan_therapeutic_route(
     pinned_approach = (
         exercise_state.get("exercise_therapeutic_approach") if exercise_active else None
     )
-    active_flow = current_turn_active_flow(state)
+    active_flow = current_turn_lifecycle(state)
 
     if (
         exercise_active

@@ -113,24 +113,27 @@ def resolve_active_flow_decision(
     )
 
 
-def current_turn_active_flow(state: AgentState) -> ActiveFlowDecision:
-    """Read turn-dispatch active-flow metadata from state diagnostics.
+def current_turn_lifecycle(state: AgentState) -> ActiveFlowDecision:
+    """Read the current turn's active-flow lifecycle decision from state.
 
     Args:
         state: Current graph state after turn dispatch.
 
     Returns:
-        ActiveFlowDecision: Diagnostic active-flow metadata with no state delta.
+        ActiveFlowDecision: Turn lifecycle metadata with no state delta.
+
+    Raises:
+        ValueError: If ``turn_lifecycle`` is missing or malformed.
     """
 
-    raw = (state.get("diagnostics") or {}).get("turn_dispatch_active_flow") or {}
+    raw = state.get("turn_lifecycle")
     if not isinstance(raw, Mapping):
-        return ActiveFlowDecision("none", "none", {})
+        raise ValueError("Missing or invalid turn_lifecycle state.")
 
     active_flow = raw.get("active_flow")
     action = raw.get("action")
     if active_flow not in _ACTIVE_FLOWS or action not in _ACTIVE_FLOW_ACTIONS:
-        return ActiveFlowDecision("none", "none", {})
+        raise ValueError(f"Malformed turn_lifecycle state: {raw!r}.")
     return ActiveFlowDecision(active_flow, action, {})
 
 
@@ -144,6 +147,7 @@ def clear_all_active_flows_delta() -> dict[str, object]:
     return {
         "exercise_state": cleared_exercise_state(),
         "memory_control": {"action": {}, "pending_action": None},
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
     }
 
 
@@ -268,7 +272,7 @@ __all__ = [
     "ActiveFlowDecision",
     "active_flow_summary",
     "clear_all_active_flows_delta",
-    "current_turn_active_flow",
+    "current_turn_lifecycle",
     "detect_active_flow",
     "resolve_active_flow_decision",
 ]

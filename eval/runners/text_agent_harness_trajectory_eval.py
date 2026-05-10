@@ -795,9 +795,7 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
         "memory_control": _jsonify(state.get("memory_control") or {}),
         "grounded_lookup": _jsonify(state.get("grounded_lookup") or {}),
         "session_action": state.get("session_action"),
-        "turn_dispatch_active_flow": _jsonify(
-            (state.get("diagnostics") or {}).get("turn_dispatch_active_flow") or {}
-        ),
+        "turn_lifecycle": _jsonify(state.get("turn_lifecycle") or {}),
         "crisis": _jsonify(state.get("crisis")),
     }
 
@@ -1024,9 +1022,9 @@ def _grade_step(
     )
     _grade_expected_mapping(
         failures,
-        label=f"{label}.turn_dispatch_active_flow",
-        actual=artifact.get("turn_dispatch_active_flow"),
-        expected=expected.get("turn_dispatch_active_flow"),
+        label=f"{label}.turn_lifecycle",
+        actual=artifact.get("turn_lifecycle"),
+        expected=expected.get("turn_lifecycle"),
     )
     _grade_expected_mapping(
         failures,

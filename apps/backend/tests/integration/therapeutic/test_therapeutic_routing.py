@@ -170,6 +170,7 @@ class _FakeDispatchLLM(BaseLLMClient):
                 route="therapeutic",
                 reasoning="ordinary therapeutic routing test turn",
                 confidence="high",
+                active_flow_action="none",
             )
         return cast(
             StructuredResponseT,
@@ -295,7 +296,11 @@ def _build_state(
     # Typed as Any so we can build a partial state for the dispatcher
     # tests — the dispatcher only reads ``message`` and ``history``,
     # so missing fields don't matter for these tests.
-    state: Any = {"message": message, "history": history or []}
+    state: Any = {
+        "message": message,
+        "history": history or [],
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
+    }
     return cast(AgentState, state)
 
 
@@ -567,6 +572,7 @@ class TestDispatchNode:
         state: Any = {
             "message": "I see a lamp, a book, a plant, my coffee, and the window.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -595,6 +601,7 @@ class TestDispatchNode:
         state: Any = {
             "message": "Actually can we stop? I don't want to do this right now.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -623,6 +630,7 @@ class TestDispatchNode:
         state: Any = {
             "message": "I had a rough day at work.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 1},
             "exercise_state": {
                 "exercise_type": None,
@@ -733,6 +741,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "Why do I keep ending up in the same fight with my partner?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "response_style": "reflective",
         }
 
@@ -769,6 +778,7 @@ class TestEndToEndRouting:
                 "I want to look at evidence for and against it."
             ),
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "response_style": "technique",
             "therapeutic_approach": "cbt",
         }
@@ -857,6 +867,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "Can you walk me through a grounding exercise?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 1},
         }
 
@@ -884,6 +895,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "I see a lamp, a plant, my coffee, the window, and a book.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -915,6 +927,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "um, a plant?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -951,6 +964,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "That makes sense. I can keep going.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -979,6 +993,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "Okay, let's go back to the grounding step.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 4},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1011,6 +1026,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "I can't focus on this right now.",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1042,6 +1058,7 @@ class TestEndToEndRouting:
         state: Any = {
             "message": "This isn't helping, can we just talk?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 2},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1075,6 +1092,7 @@ class TestEndToEndRouting:
             "message": "Coffee. That's what I can taste right now.",
             "session_id": "test-routing",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 6},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1177,6 +1195,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
         state: Any = {
             "message": "what do you mean by notice?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1211,6 +1230,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
         state: Any = {
             "message": "what do you mean by notice?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1244,6 +1264,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
                 "Do you mean things I can see right now, or just around me in general?"
             ),
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1275,6 +1296,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
         state: Any = {
             "message": "how does grief work?",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1303,6 +1325,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
         state: Any = {
             "message": "okay",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1328,6 +1351,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
         state: Any = {
             "message": "never mind",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",
@@ -1360,6 +1384,7 @@ class TestMidExerciseTherapeuticApproachPreservation:
         state: Any = {
             "message": "actually let's talk about something else",
             "history": [],
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
             "session_progress": {"turn_count": 3},
             "exercise_state": {
                 "exercise_type": "grounding_5_4_3_2_1",

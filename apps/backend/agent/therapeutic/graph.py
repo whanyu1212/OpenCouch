@@ -36,6 +36,7 @@ from agent.state import (
     ProceduralProfileState,
     SessionMemoryState,
     SessionProgressState,
+    TurnLifecycleState,
 )
 from agent.therapeutic.dispatch import (
     GUIDED_EXERCISE_NODE,
@@ -89,6 +90,7 @@ class TherapeuticSubgraphInput(TypedDict):
     procedural_profile: ProceduralProfileState
     session_progress: SessionProgressState
     exercise_state: ExerciseState
+    turn_lifecycle: TurnLifecycleState
     therapeutic_approach: NotRequired[str | None]
     diagnostics: NotRequired[dict[str, Any]]
 

@@ -20,7 +20,10 @@
           {
             "id": "session-presentation-cbt",
             "session_id": "prior-presentation-cbt",
-            "primary_themes": ["presentation anxiety", "catastrophic predictions"],
+            "primary_themes": [
+              "presentation anxiety",
+              "catastrophic predictions"
+            ],
             "summary": "The user explored presentation anxiety, noticed a catastrophic prediction about freezing, and planned to test it with one short practice run.",
             "approach_used": "cbt"
           }
@@ -28,7 +31,9 @@
         "procedural_rules": [
           {
             "rule": "You prefer concise, direct responses when you are panicking.",
-            "evidence": ["Please keep it short when I am panicking."]
+            "evidence": [
+              "Please keep it short when I am panicking."
+            ]
           }
         ],
         "proactive_recall_enabled": true
@@ -40,19 +45,24 @@
             "decision": {
               "route": "therapeutic",
               "reasoning": "The user references prior context while asking for support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
             "goto": "load_memory_node",
             "route": "therapeutic",
             "load_memory_proactive_recall_enabled": true,
-            "load_memory_rules_contain": ["concise, direct"],
+            "load_memory_rules_contain": [
+              "concise, direct"
+            ],
             "store_after": {
               "semantic_count": 1,
               "episodic_count": 1,
               "rule_count": 1,
-              "facts_contain": ["Presentations make me anxious"]
+              "facts_contain": [
+                "Presentations make me anxious"
+              ]
             }
           }
         },
@@ -63,7 +73,8 @@
               "route": "memory_control",
               "memory_action_type": "list",
               "reasoning": "The user asks to inspect saved assistant memory.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -71,7 +82,10 @@
             "route": "memory_control",
             "memory_action_type": "list",
             "response_style": "memory_control",
-            "response_text_contains": ["Presentations make me anxious", "presentation anxiety"],
+            "response_text_contains": [
+              "Presentations make me anxious",
+              "presentation anxiety"
+            ],
             "pending_action_is_null": true,
             "store_after": {
               "semantic_count": 1,
@@ -86,7 +100,9 @@
           "semantic_count": 1,
           "episodic_count": 1,
           "rule_count": 1,
-          "facts_contain": ["Presentations make me anxious"]
+          "facts_contain": [
+            "Presentations make me anxious"
+          ]
         }
       }
     },
@@ -114,7 +130,8 @@
               "memory_action_type": "forget_by_query",
               "query": "presentations",
               "reasoning": "The user asks to delete saved memory by topic.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -123,12 +140,16 @@
             "memory_action_type": "forget_by_query",
             "memory_action_query_contains": "presentations",
             "response_style": "memory_control",
-            "response_text_contains": ["Do you want me to delete it?"],
+            "response_text_contains": [
+              "Do you want me to delete it?"
+            ],
             "pending_action_type": "delete",
             "pending_target_kind": "fact",
             "store_after": {
               "semantic_count": 1,
-              "facts_contain": ["Presentations make me anxious"]
+              "facts_contain": [
+                "Presentations make me anxious"
+              ]
             }
           }
         },
@@ -139,7 +160,8 @@
               "route": "memory_control",
               "memory_action_type": "confirm_pending",
               "reasoning": "The user confirms the pending deletion.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             }
           },
           "expected": {
@@ -147,11 +169,15 @@
             "route": "memory_control",
             "memory_action_type": "confirm_pending",
             "response_style": "memory_control",
-            "response_text_contains": ["Deleted that saved fact"],
+            "response_text_contains": [
+              "Deleted that saved fact"
+            ],
             "pending_action_is_null": true,
             "store_after": {
               "semantic_count": 0,
-              "facts_absent": ["Presentations make me anxious"]
+              "facts_absent": [
+                "Presentations make me anxious"
+              ]
             }
           }
         },
@@ -162,7 +188,8 @@
               "route": "memory_control",
               "memory_action_type": "list",
               "reasoning": "The user asks to inspect saved assistant memory.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -170,12 +197,18 @@
             "route": "memory_control",
             "memory_action_type": "list",
             "response_style": "memory_control",
-            "response_text_contains": ["don't have any saved facts"],
-            "response_text_not_contains": ["Presentations make me anxious"],
+            "response_text_contains": [
+              "don't have any saved facts"
+            ],
+            "response_text_not_contains": [
+              "Presentations make me anxious"
+            ],
             "pending_action_is_null": true,
             "store_after": {
               "semantic_count": 0,
-              "facts_absent": ["Presentations make me anxious"]
+              "facts_absent": [
+                "Presentations make me anxious"
+              ]
             }
           }
         }
@@ -183,7 +216,9 @@
       "expected": {
         "final_store": {
           "semantic_count": 0,
-          "facts_absent": ["Presentations make me anxious"]
+          "facts_absent": [
+            "Presentations make me anxious"
+          ]
         }
       }
     },
@@ -211,19 +246,24 @@
               "memory_action_type": "forget_by_query",
               "query": "work stress",
               "reasoning": "The user asks to delete saved memory by topic.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
             "goto": "memory_control_node",
             "route": "memory_control",
             "memory_action_type": "forget_by_query",
-            "response_text_contains": ["Do you want me to delete it?"],
+            "response_text_contains": [
+              "Do you want me to delete it?"
+            ],
             "pending_action_type": "delete",
             "pending_target_kind": "fact",
             "store_after": {
               "semantic_count": 1,
-              "facts_contain": ["Work stress makes it hard"]
+              "facts_contain": [
+                "Work stress makes it hard"
+              ]
             }
           }
         },
@@ -233,7 +273,8 @@
             "decision": {
               "route": "therapeutic",
               "reasoning": "The user moved on to emotional support, not deletion confirmation.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "clear"
             }
           },
           "expected": {
@@ -242,7 +283,9 @@
             "dispatch_pending_action_is_null": true,
             "store_after": {
               "semantic_count": 1,
-              "facts_contain": ["Work stress makes it hard"]
+              "facts_contain": [
+                "Work stress makes it hard"
+              ]
             }
           }
         }
@@ -250,7 +293,9 @@
       "expected": {
         "final_store": {
           "semantic_count": 1,
-          "facts_contain": ["Work stress makes it hard"]
+          "facts_contain": [
+            "Work stress makes it hard"
+          ]
         }
       }
     },
@@ -266,7 +311,8 @@
               "memory_action_type": "save_preference",
               "preference_text": "direct answers when I am spiraling",
               "reasoning": "The user asks to save a response-style preference.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "preference_rule_text": "You prefer direct answers when you are spiraling."
           },
@@ -276,10 +322,15 @@
             "memory_action_type": "save_preference",
             "memory_action_preference_text_contains": "direct answers",
             "response_style": "memory_control",
-            "response_text_contains": ["Saved:", "direct answers"],
+            "response_text_contains": [
+              "Saved:",
+              "direct answers"
+            ],
             "store_after": {
               "rule_count": 1,
-              "rules_contain": ["direct answers"]
+              "rules_contain": [
+                "direct answers"
+              ]
             }
           }
         },
@@ -289,16 +340,21 @@
             "decision": {
               "route": "therapeutic",
               "reasoning": "The user asks for emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
             "goto": "load_memory_node",
             "route": "therapeutic",
-            "load_memory_rules_contain": ["direct answers"],
+            "load_memory_rules_contain": [
+              "direct answers"
+            ],
             "store_after": {
               "rule_count": 1,
-              "rules_contain": ["direct answers"]
+              "rules_contain": [
+                "direct answers"
+              ]
             }
           }
         }
@@ -306,7 +362,9 @@
       "expected": {
         "final_store": {
           "rule_count": 1,
-          "rules_contain": ["direct answers"]
+          "rules_contain": [
+            "direct answers"
+          ]
         }
       }
     },
@@ -317,7 +375,9 @@
         "procedural_rules": [
           {
             "rule": "You prefer concise, direct responses when you are panicking.",
-            "evidence": ["Please keep it short when I am panicking."]
+            "evidence": [
+              "Please keep it short when I am panicking."
+            ]
           }
         ],
         "proactive_recall_enabled": true
@@ -331,7 +391,8 @@
               "memory_action_type": "set_recall",
               "enabled": false,
               "reasoning": "The user asks to disable proactive recall.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -339,7 +400,9 @@
             "route": "memory_control",
             "memory_action_type": "set_recall",
             "response_style": "memory_control",
-            "response_text_contains": ["turned proactive recall off"],
+            "response_text_contains": [
+              "turned proactive recall off"
+            ],
             "store_after": {
               "rule_count": 1,
               "proactive_recall_enabled": false
@@ -352,14 +415,17 @@
             "decision": {
               "route": "therapeutic",
               "reasoning": "The user asks for emotional support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
             "goto": "load_memory_node",
             "route": "therapeutic",
             "load_memory_proactive_recall_enabled": false,
-            "load_memory_rules_contain": ["concise, direct"],
+            "load_memory_rules_contain": [
+              "concise, direct"
+            ],
             "store_after": {
               "rule_count": 1,
               "proactive_recall_enabled": false
@@ -374,7 +440,8 @@
               "memory_action_type": "set_recall",
               "enabled": true,
               "reasoning": "The user asks to enable proactive recall.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -382,7 +449,9 @@
             "route": "memory_control",
             "memory_action_type": "set_recall",
             "response_style": "memory_control",
-            "response_text_contains": ["turned proactive recall on"],
+            "response_text_contains": [
+              "turned proactive recall on"
+            ],
             "store_after": {
               "rule_count": 1,
               "proactive_recall_enabled": true
@@ -421,7 +490,8 @@
               "memory_action_type": "save_preference",
               "preference_text": "I like direct answers",
               "reasoning": "The user asks to save a response-style preference.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             },
             "preference_rule_text": "You prefer direct answers."
           },
@@ -431,12 +501,19 @@
             "memory_action_type": "save_preference",
             "memory_action_preference_text_contains": "direct answers",
             "response_style": "memory_control",
-            "response_text_contains": ["Saved:", "direct answers"],
+            "response_text_contains": [
+              "Saved:",
+              "direct answers"
+            ],
             "store_after": {
               "semantic_count": 1,
               "rule_count": 1,
-              "facts_contain": ["breakup"],
-              "rules_contain": ["direct answers"]
+              "facts_contain": [
+                "breakup"
+              ],
+              "rules_contain": [
+                "direct answers"
+              ]
             }
           }
         },
@@ -446,13 +523,16 @@
             "decision": {
               "route": "therapeutic",
               "reasoning": "The user describes emotional distress, not saved-memory management.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
             "goto": "load_memory_node",
             "route": "therapeutic",
-            "load_memory_rules_contain": ["direct answers"],
+            "load_memory_rules_contain": [
+              "direct answers"
+            ],
             "store_after": {
               "semantic_count": 1,
               "rule_count": 1
@@ -466,7 +546,8 @@
               "route": "memory_control",
               "memory_action_type": "list",
               "reasoning": "The user asks to inspect saved assistant memory.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "none"
             }
           },
           "expected": {
@@ -474,7 +555,10 @@
             "route": "memory_control",
             "memory_action_type": "list",
             "response_style": "memory_control",
-            "response_text_contains": ["breakup still feels raw", "direct answers"],
+            "response_text_contains": [
+              "breakup still feels raw",
+              "direct answers"
+            ],
             "store_after": {
               "semantic_count": 1,
               "rule_count": 1
@@ -486,8 +570,12 @@
         "final_store": {
           "semantic_count": 1,
           "rule_count": 1,
-          "facts_contain": ["breakup"],
-          "rules_contain": ["direct answers"]
+          "facts_contain": [
+            "breakup"
+          ],
+          "rules_contain": [
+            "direct answers"
+          ]
         }
       }
     }

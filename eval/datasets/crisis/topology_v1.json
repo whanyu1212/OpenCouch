@@ -17,7 +17,8 @@
         "turn_dispatch": {
           "route": "therapeutic",
           "reasoning": "The user wants emotional support.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
@@ -58,7 +59,8 @@
         "turn_dispatch": {
           "route": "therapeutic",
           "reasoning": "The user needs support and clarification.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         },
         "therapeutic_dispatch": {
           "response_style": "clarifying",
@@ -99,7 +101,8 @@
         "turn_dispatch": {
           "route": "therapeutic",
           "reasoning": "The user needs clarification and support.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         },
         "therapeutic_dispatch": {
           "response_style": "clarifying",
@@ -146,7 +149,9 @@
       },
       "expected": {
         "response_style": "crisis_response",
-        "response_text_contains": ["emergency services"],
+        "response_text_contains": [
+          "emergency services"
+        ],
         "crisis_level": 2,
         "crisis_needs_response": true,
         "crisis_needs_clarification": false,
@@ -181,7 +186,9 @@
       },
       "expected": {
         "response_style": "crisis_response",
-        "response_text_contains": ["emergency services"],
+        "response_text_contains": [
+          "emergency services"
+        ],
         "crisis_level": 2,
         "crisis_needs_response": true,
         "crisis_needs_clarification": false,
@@ -216,7 +223,9 @@
       },
       "expected": {
         "response_style": "crisis_response",
-        "response_text_contains": ["right now"],
+        "response_text_contains": [
+          "right now"
+        ],
         "crisis_level": 3,
         "crisis_needs_response": true,
         "crisis_needs_clarification": false,
@@ -258,7 +267,9 @@
       },
       "expected": {
         "response_style": "crisis_response",
-        "response_text_contains": ["1767"],
+        "response_text_contains": [
+          "1767"
+        ],
         "crisis_level": 2,
         "safety_decision": "crisis",
         "crisis_resource_tool_calls": 1,
@@ -289,7 +300,9 @@
       },
       "expected": {
         "response_style": "crisis_response",
-        "response_text_contains": ["local emergency services"],
+        "response_text_contains": [
+          "local emergency services"
+        ],
         "crisis_level": 2,
         "safety_decision": "crisis",
         "crisis_resource_tool_calls": 1,
@@ -324,7 +337,8 @@
         "turn_dispatch": {
           "route": "therapeutic",
           "reasoning": "The user is safe and wants emotional support.",
-          "confidence": "high"
+          "confidence": "high",
+          "active_flow_action": "none"
         },
         "therapeutic_dispatch": {
           "response_style": "supportive",
