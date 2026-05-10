@@ -409,6 +409,32 @@ def grade_diagnostics(
     if "turn_dispatch_source" in expected:
         source = routing_trace_field(diagnostics, "source")
         expect_equal(failures, "turn_dispatch_source", source, expected)
+    if "active_flow" in expected:
+        active_flow = nested_get(
+            diagnostics,
+            "turn_dispatch_active_flow",
+            "active_flow",
+        )
+        expect_equal(failures, "active_flow", active_flow, expected)
+        trace_flow = routing_trace_field(diagnostics, "active_flow")
+        if trace_flow != expected["active_flow"]:
+            failures.append(
+                "active_flow_trace: "
+                f"expected {expected['active_flow']!r}, got {trace_flow!r}"
+            )
+    if "active_flow_action" in expected:
+        active_flow_action = nested_get(
+            diagnostics,
+            "turn_dispatch_active_flow",
+            "action",
+        )
+        expect_equal(failures, "active_flow_action", active_flow_action, expected)
+        trace_action = routing_trace_field(diagnostics, "active_flow_action")
+        if trace_action != expected["active_flow_action"]:
+            failures.append(
+                "active_flow_action_trace: "
+                f"expected {expected['active_flow_action']!r}, got {trace_action!r}"
+            )
 
 
 def routing_trace_field(

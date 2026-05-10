@@ -228,7 +228,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for verified external information.",
               "confidence": "high",
-              "query": "Does 988 work in Singapore?"
+              "query": "Does 988 work in Singapore?",
+              "active_flow_action": "preserve"
             },
             "semantic_extraction": {
               "facts": [],
@@ -247,6 +248,10 @@
             "response_text_contains": ["Sources"],
             "grounded_lookup": {
               "status": "answered"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
             },
             "exercise_state": {
               "exercise_type": "grounding_5_4_3_2_1",
@@ -275,7 +280,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user returns to the active exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -306,6 +312,10 @@
             },
             "grounded_lookup": {
               "status": "not_attempted"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
             },
             "factual_tool_calls": 0,
             "crisis_resource_tool_calls": 0,

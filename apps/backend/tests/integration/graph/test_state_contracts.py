@@ -283,6 +283,7 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
             "crisis_audit",
             "diagnostics",
             "exercise_state",
+            "memory_control",
         },
     )
     assert command.update["exercise_state"] == {
@@ -291,6 +292,10 @@ async def test_crisis_gate_crisis_path_channel_contract() -> None:
         "exercise_step_id": None,
         "exercise_version": None,
         "exercise_therapeutic_approach": None,
+    }
+    assert command.update["memory_control"] == {
+        "action": {},
+        "pending_action": None,
     }
 
 
@@ -478,10 +483,28 @@ async def test_grounded_answer_node_channel_contract() -> None:
     state["route"] = "grounded_lookup"
     state["grounded_lookup"] = {"query": "Can you look up the current 988 rules?"}
 
-    delta = await run_grounded_answer_node(
-        state,
-        cast(Any, _FakeRuntime(llm_client=None)),
-    )
+    async def _lookup(
+        state: AgentState,
+        *,
+        llm_client: BaseLLMClient,
+        query: str,
+    ) -> tuple[str, str]:
+        _ = (state, llm_client, query)
+        return "Verified answer.\n\nSources:\n- Official source", "answered"
+
+    with patch("agent.nodes.grounded_answer.answer_factual_lookup", _lookup):
+        delta = await run_grounded_answer_node(
+            state,
+            cast(
+                Any,
+                _FakeRuntime(
+                    llm_client=_FakeDispatchLLM(
+                        response_style="supportive",
+                        therapeutic_approach="none",
+                    )
+                ),
+            ),
+        )
 
     _assert_exact_keys(
         delta,

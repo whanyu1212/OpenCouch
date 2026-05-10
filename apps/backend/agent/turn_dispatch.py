@@ -14,6 +14,8 @@ from llm.base import BaseLLMClient
 
 
 TurnRoute = Literal["memory_control", "grounded_lookup", "therapeutic"]
+ActiveFlow = Literal["none", "guided_exercise", "pending_memory_action"]
+ActiveFlowAction = Literal["none", "continue", "preserve", "resume", "clear"]
 MemoryControlActionType = Literal[
     "list",
     "status",
@@ -37,6 +39,13 @@ class TurnDispatchDecision(BaseModel):
     )
     reasoning: str = Field(min_length=1, max_length=360)
     confidence: Literal["low", "medium", "high"]
+    active_flow_action: ActiveFlowAction = Field(
+        default="none",
+        description=(
+            "How this turn relates to the active flow named in the prompt. "
+            "Use none when no active flow exists."
+        ),
+    )
     memory_action_type: MemoryControlActionType | None = Field(
         default=None,
         description="Required when route is memory_control.",
@@ -71,6 +80,8 @@ class TurnDispatchPlan:
     route: TurnRoute
     reason: str
     confidence: str
+    active_flow: ActiveFlow = "none"
+    active_flow_action: ActiveFlowAction = "none"
     memory_action: MemoryControlAction | None = None
     grounded_lookup_query: str | None = None
     clear_pending_action: bool = False
@@ -100,6 +111,76 @@ def _pending_action_summary(state: AgentState) -> str:
     return f"type={pending_type}; target_kind={kind}; target_preview={preview}"
 
 
+def _detect_active_flow(state: AgentState) -> ActiveFlow:
+    """Return the currently active turn-level flow.
+
+    Args:
+        state (AgentState): Current graph state.
+
+    Returns:
+        ActiveFlow: The active flow relevant to turn dispatch.
+    """
+
+    pending = (state.get("memory_control", {}) or {}).get("pending_action")
+    if isinstance(pending, dict):
+        return "pending_memory_action"
+
+    exercise_state = state.get("exercise_state", {}) or {}
+    if (
+        exercise_state.get("exercise_type") is not None
+        and exercise_state.get("exercise_step") is not None
+    ):
+        return "guided_exercise"
+
+    return "none"
+
+
+def _active_flow_summary(state: AgentState) -> str:
+    """Return a compact active-flow summary for the dispatch prompt.
+
+    Args:
+        state (AgentState): Current graph state.
+
+    Returns:
+        str: Prompt-ready active-flow summary.
+    """
+
+    active_flow = _detect_active_flow(state)
+    if active_flow == "pending_memory_action":
+        return f"pending_memory_action: {_pending_action_summary(state)}"
+    if active_flow == "guided_exercise":
+        exercise_state = state.get("exercise_state", {}) or {}
+        exercise_type = _compact_text(exercise_state.get("exercise_type") or "unknown")
+        step = exercise_state.get("exercise_step")
+        step_id = _compact_text(exercise_state.get("exercise_step_id") or "")
+        if step_id:
+            return (
+                f"guided_exercise: type={exercise_type}; step={step}; step_id={step_id}"
+            )
+        return f"guided_exercise: type={exercise_type}; step={step}"
+    return "none"
+
+
+def _active_flow_action_for_decision(
+    *,
+    active_flow: ActiveFlow,
+    decision: TurnDispatchDecision,
+) -> ActiveFlowAction:
+    """Normalize the model's active-flow action for local state reality.
+
+    Args:
+        active_flow (ActiveFlow): Locally detected active flow.
+        decision (TurnDispatchDecision): Structured LLM dispatch decision.
+
+    Returns:
+        ActiveFlowAction: Active-flow action to record in diagnostics.
+    """
+
+    if active_flow == "none":
+        return "none"
+    return decision.active_flow_action
+
+
 def build_turn_dispatch_prompt(state: AgentState) -> str:
     """Build the structured dispatch prompt for one safe turn.
 
@@ -112,6 +193,7 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
 
     recent_history = format_recent_history(state, limit=8, empty="(none)")
     pending_summary = _pending_action_summary(state)
+    active_flow_summary = _active_flow_summary(state)
     return (
         "Choose the one graph destination for the current non-crisis user turn.\n\n"
         "Destinations:\n"
@@ -157,6 +239,15 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
         "preference, not a finalized rule. Examples: 'direct answers when I am "
         "spiraling', 'do not suggest journaling', 'ask fewer questions'.\n\n"
         "When route=grounded_lookup, set query to a concise search query.\n\n"
+        "Also set active_flow_action for the current active flow:\n"
+        "- none: no active flow exists.\n"
+        "- continue: user is participating in the current active flow.\n"
+        "- preserve: user asks a side request without ending the active flow.\n"
+        "- resume: user explicitly asks to return to a guided exercise.\n"
+        "- clear: user rejects, cancels, ends, or moves away from the active flow.\n"
+        "For pending memory actions, use continue only for confirm/cancel and "
+        "clear when the user moves on; do not use resume.\n\n"
+        f"Active flow: {active_flow_summary}\n"
         f"Pending memory action: {pending_summary}\n\n"
         "Recent conversation:\n"
         f"{recent_history}\n\n"
@@ -238,12 +329,19 @@ def _plan_from_decision(
 ) -> TurnDispatchPlan:
     pending_action = (state.get("memory_control", {}) or {}).get("pending_action")
     clear_pending_action = bool(pending_action) and decision.route != "memory_control"
+    active_flow = _detect_active_flow(state)
+    active_flow_action = _active_flow_action_for_decision(
+        active_flow=active_flow,
+        decision=decision,
+    )
 
     if decision.route == "memory_control":
         return TurnDispatchPlan(
             route=decision.route,
             reason=decision.reasoning,
             confidence=decision.confidence,
+            active_flow=active_flow,
+            active_flow_action=active_flow_action,
             memory_action=_memory_action_from_decision(decision),
             clear_pending_action=False,
         )
@@ -253,6 +351,8 @@ def _plan_from_decision(
             route=decision.route,
             reason=decision.reasoning,
             confidence=decision.confidence,
+            active_flow=active_flow,
+            active_flow_action=active_flow_action,
             grounded_lookup_query=_required_text(decision.query, field_name="query"),
             clear_pending_action=clear_pending_action,
         )
@@ -261,6 +361,8 @@ def _plan_from_decision(
         route=decision.route,
         reason=decision.reasoning,
         confidence=decision.confidence,
+        active_flow=active_flow,
+        active_flow_action=active_flow_action,
         clear_pending_action=clear_pending_action,
     )
 

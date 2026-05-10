@@ -16,6 +16,8 @@ class RoutingTraceEntry(TypedDict, total=False):
     source: str
     reason: str
     confidence: str
+    active_flow: str
+    active_flow_action: str
 
 
 def append_routing_trace(
@@ -98,12 +100,21 @@ def _normalize_trace_entry(value: Any) -> RoutingTraceEntry | None:
     source = _clean_trace_value(value.get("source"), max_length=64)
     reason = _clean_trace_value(value.get("reason"), max_length=180)
     confidence = _clean_trace_value(value.get("confidence"), max_length=24)
+    active_flow = _clean_trace_value(value.get("active_flow"), max_length=48)
+    active_flow_action = _clean_trace_value(
+        value.get("active_flow_action"),
+        max_length=24,
+    )
     if source:
         entry["source"] = source
     if reason:
         entry["reason"] = reason
     if confidence:
         entry["confidence"] = confidence
+    if active_flow:
+        entry["active_flow"] = active_flow
+    if active_flow_action:
+        entry["active_flow_action"] = active_flow_action
     return entry
 
 

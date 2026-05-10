@@ -60,7 +60,8 @@
               "route": "grounded_lookup",
               "reasoning": "The user asks for verified external factual information.",
               "confidence": "high",
-              "query": "Does 988 work in Singapore?"
+              "query": "Does 988 work in Singapore?",
+              "active_flow_action": "preserve"
             }
           },
           "expected": {
@@ -72,6 +73,10 @@
             "crisis_log_count": 0,
             "grounded_lookup": {
               "status": "answered"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
             },
             "exercise_state": {
               "exercise_type": "grounding_5_4_3_2_1",
@@ -95,7 +100,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user is returning to the active exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -116,6 +122,10 @@
             "grounded_lookup": {
               "query": "",
               "status": "not_attempted"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
             },
             "exercise_state": {
               "exercise_type": "grounding_5_4_3_2_1",
@@ -139,7 +149,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user wants to leave the active exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "clear"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -155,6 +166,10 @@
             "therapeutic_approach": "none",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "clear"
+            },
             "factual_tool_calls": 0,
             "crisis_resource_tool_calls": 0,
             "crisis_log_count": 0,
@@ -391,13 +406,18 @@
               "route": "grounded_lookup",
               "reasoning": "The user moved on and asks for verified external information.",
               "confidence": "high",
-              "query": "official 988 information"
+              "query": "official 988 information",
+              "active_flow_action": "clear"
             }
           },
           "expected": {
             "route": "grounded_lookup",
             "response_style": "grounded_lookup",
             "turn_dispatch_decision": "grounded_lookup",
+            "turn_dispatch_active_flow": {
+              "active_flow": "pending_memory_action",
+              "action": "clear"
+            },
             "memory_control": {
               "pending_action": null
             },
@@ -762,13 +782,18 @@
               "route": "memory_control",
               "reasoning": "The user asks to inspect saved memory.",
               "confidence": "high",
-              "memory_action_type": "list"
+              "memory_action_type": "list",
+              "active_flow_action": "preserve"
             }
           },
           "expected": {
             "route": "memory_control",
             "response_style": "memory_control",
             "turn_dispatch_decision": "list",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
             "memory_control": {
               "action": {
                 "type": "list"
@@ -800,7 +825,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user returns to the active exercise.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "continue"
             },
             "therapeutic_dispatch": {
               "response_style": "guided_exercise",
@@ -815,6 +841,10 @@
             "route": "therapeutic",
             "response_style": "guided_exercise",
             "turn_dispatch_decision": "therapeutic",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
+            },
             "exercise_state": {
               "exercise_type": "grounding_5_4_3_2_1",
               "exercise_step": 1,
@@ -916,7 +946,8 @@
             "turn_dispatch": {
               "route": "therapeutic",
               "reasoning": "The user abandons deletion and asks for support.",
-              "confidence": "high"
+              "confidence": "high",
+              "active_flow_action": "clear"
             },
             "therapeutic_dispatch": {
               "response_style": "supportive",
@@ -930,6 +961,10 @@
             "route": "therapeutic",
             "response_style": "supportive",
             "turn_dispatch_decision": "therapeutic",
+            "turn_dispatch_active_flow": {
+              "active_flow": "pending_memory_action",
+              "action": "clear"
+            },
             "memory_control": {
               "pending_action": null
             },
