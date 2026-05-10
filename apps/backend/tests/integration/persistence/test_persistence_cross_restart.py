@@ -73,6 +73,21 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
+        if response_schema.__name__ == "TurnDispatchDecision":
+            current_message = prompt.lower().rsplit("current user message:", 1)[-1]
+            if "right now, or just around me in general" in current_message:
+                active_flow_action = "preserve"
+            elif "i can see my desk, lamp, and window" in current_message:
+                active_flow_action = "continue"
+            else:
+                active_flow_action = self._active_flow_action_for_prompt(prompt)
+            return response_schema(  # type: ignore[call-arg,return-value]
+                route="therapeutic",
+                active_flow_action=active_flow_action,
+                reasoning="incognito exercise continuity turn",
+                confidence="high",
+            )
+
         if response_schema.__name__ == "ExerciseSelectionDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
                 exercise_type="grounding_5_4_3_2_1",

@@ -324,6 +324,18 @@ def grade_case(
     if isinstance(memory_control, Mapping):
         grade_memory_control(failures, memory_control, expected)
 
+    exercise_state = delta.get("exercise_state")
+    if "exercise_state" in expected:
+        if not isinstance(exercise_state, Mapping):
+            failures.append("exercise_state is not a mapping")
+        else:
+            expect_subset(
+                failures,
+                "exercise_state",
+                exercise_state,
+                expected["exercise_state"],
+            )
+
     diagnostics = delta.get("diagnostics")
     if isinstance(diagnostics, Mapping):
         grade_diagnostics(failures, diagnostics, expected)

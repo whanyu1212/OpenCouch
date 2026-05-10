@@ -590,6 +590,7 @@
         "decision": {
           "route": "memory_control",
           "memory_action_type": "confirm_pending",
+          "active_flow_action": "continue",
           "reasoning": "The user clearly confirms the pending deletion.",
           "confidence": "high"
         }
@@ -602,6 +603,8 @@
         "memory_action": {
           "type": "confirm_pending"
         },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
         "turn_dispatch_decision": "confirm_pending",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -633,6 +636,7 @@
         "decision": {
           "route": "memory_control",
           "memory_action_type": "cancel_pending",
+          "active_flow_action": "continue",
           "reasoning": "The user clearly cancels the pending deletion.",
           "confidence": "high"
         }
@@ -645,6 +649,8 @@
         "memory_action": {
           "type": "cancel_pending"
         },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
         "turn_dispatch_decision": "cancel_pending",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -675,6 +681,7 @@
       "scripted": {
         "decision": {
           "route": "therapeutic",
+          "active_flow_action": "clear",
           "reasoning": "The user moved on to emotional support.",
           "confidence": "high"
         }
@@ -686,6 +693,8 @@
         "grounded_lookup_query": "",
         "memory_action": {},
         "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
         "turn_dispatch_decision": "therapeutic",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -717,6 +726,7 @@
         "decision": {
           "route": "grounded_lookup",
           "query": "credible sleep hygiene guidelines",
+          "active_flow_action": "clear",
           "reasoning": "The user moved on to external lookup.",
           "confidence": "high"
         }
@@ -728,6 +738,8 @@
         "grounded_lookup_query_contains": ["sleep", "guidelines"],
         "memory_action": {},
         "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
         "turn_dispatch_decision": "grounded_lookup",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -758,6 +770,7 @@
       "scripted": {
         "decision": {
           "route": "therapeutic",
+          "active_flow_action": "clear",
           "reasoning": "The user does not clearly confirm or cancel the pending deletion.",
           "confidence": "medium"
         }
@@ -769,6 +782,212 @@
         "grounded_lookup_query": "",
         "memory_action": {},
         "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-support-preserve",
+      "description": "A reassurance side request during a guided exercise should preserve the exercise instead of advancing or clearing it.",
+      "message": "Before I answer, I feel silly and need reassurance that I'm not failing.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for support without ending or participating in the active exercise step.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-grounded-preserve",
+      "description": "A source-backed side request during a guided exercise should route to grounded lookup and preserve the exercise.",
+      "message": "Before I continue, can you find official resources about grounding techniques?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official grounding technique resources",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for official external resources without ending the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": ["official", "grounding"],
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-memory-list-preserve",
+      "description": "A saved-memory inspection side request during a guided exercise should preserve the exercise.",
+      "message": "Before I continue, what do you remember about my presentations?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "list",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks to inspect saved memory while temporarily pausing the exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "list"
+        },
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "list",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-memory-delete-clears",
+      "description": "A saved-memory deletion request during a guided exercise should leave the exercise flow.",
+      "message": "Before I continue, forget what you saved about presentations.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "forget_by_query",
+          "query": "saved memory about presentations",
+          "active_flow_action": "clear",
+          "reasoning": "Deleting memory is a new memory-control flow, so the exercise should be cleared.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "forget_by_query",
+        "memory_action_query_contains": "presentations",
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "active_flow": "guided_exercise",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "forget_by_query",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-explicit-resume",
+      "description": "An explicit return to the guided exercise should resume the active exercise flow.",
+      "message": "Ok, back to the exercise.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "resume",
+          "reasoning": "The user explicitly asks to return to the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "resume",
         "turn_dispatch_decision": "therapeutic",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",

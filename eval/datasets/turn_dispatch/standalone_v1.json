@@ -500,6 +500,7 @@
         "decision": {
           "route": "memory_control",
           "memory_action_type": "confirm_pending",
+          "active_flow_action": "continue",
           "reasoning": "The user confirms the pending deletion.",
           "confidence": "high"
         }
@@ -512,6 +513,8 @@
         "memory_action": {
           "type": "confirm_pending"
         },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
         "turn_dispatch_decision": "confirm_pending",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -543,6 +546,7 @@
         "decision": {
           "route": "memory_control",
           "memory_action_type": "cancel_pending",
+          "active_flow_action": "continue",
           "reasoning": "The user cancels the pending deletion.",
           "confidence": "high"
         }
@@ -555,6 +559,8 @@
         "memory_action": {
           "type": "cancel_pending"
         },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
         "turn_dispatch_decision": "cancel_pending",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -585,6 +591,7 @@
       "scripted": {
         "decision": {
           "route": "therapeutic",
+          "active_flow_action": "clear",
           "reasoning": "The user moved on to an emotional support request.",
           "confidence": "high"
         }
@@ -596,6 +603,8 @@
         "grounded_lookup_query": "",
         "memory_action": {},
         "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
         "turn_dispatch_decision": "therapeutic",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -627,6 +636,7 @@
         "decision": {
           "route": "grounded_lookup",
           "query": "credible sleep hygiene guidelines",
+          "active_flow_action": "clear",
           "reasoning": "The user moved on to an external factual lookup.",
           "confidence": "high"
         }
@@ -638,6 +648,8 @@
         "grounded_lookup_query_contains": ["sleep", "guidelines"],
         "memory_action": {},
         "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
         "turn_dispatch_decision": "grounded_lookup",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -754,8 +766,54 @@
         "grounded_lookup_status": "not_attempted",
         "grounded_lookup_query": "",
         "memory_action": {},
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
         "active_flow": "guided_exercise",
         "active_flow_action": "clear",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-therapeutic-side-support-preserves-flow",
+      "description": "A therapeutic side request during an exercise should preserve exercise state when the LLM marks it as a side turn.",
+      "modes": ["scripted"],
+      "message": "Before I continue, can you reassure me that I'm not failing at this?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 2,
+          "exercise_step_id": "feel",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for support without ending the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
         "turn_dispatch_decision": "therapeutic",
         "turn_dispatch_source": "llm_primary",
         "turn_dispatch_classifier_path": "llm_primary",
@@ -805,6 +863,31 @@
       }
     },
     {
+      "id": "active-exercise-missing-action-fails",
+      "description": "An active exercise dispatch must explicitly classify active-flow intent.",
+      "modes": ["scripted"],
+      "message": "I can hear the fan and my typing.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user is responding to the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "error_contains": "omitted active_flow_action"
+      }
+    },
+    {
       "id": "pending-memory-confirm-continues-flow",
       "description": "A pending memory deletion confirmation should expose continue lifecycle intent.",
       "modes": ["scripted"],
@@ -845,6 +928,35 @@
         "structured_calls": {
           "TurnDispatchDecision": 1
         }
+      }
+    },
+    {
+      "id": "pending-memory-preserve-fails",
+      "description": "Pending memory actions cannot be preserved as side flows; the user must confirm/cancel or move on.",
+      "modes": ["scripted"],
+      "message": "Can you keep that deletion pending while we talk about sleep?",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "rule",
+              "index": 1,
+              "preview": "Avoid suggesting breathing exercises."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks to keep the pending deletion open.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "error_contains": "Unsupported pending memory active_flow_action"
       }
     },
     {

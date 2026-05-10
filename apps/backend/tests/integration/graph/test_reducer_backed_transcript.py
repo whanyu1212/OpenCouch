@@ -281,8 +281,12 @@ class _GuidedExerciseLLM(BaseLLMClient):
                 confidence="high",
             )
         if response_schema.__name__ == "TurnDispatchDecision":
+            active_flow_action = (
+                "continue" if "Active flow: guided_exercise" in prompt else "none"
+            )
             return response_schema(  # type: ignore[call-arg,return-value]
                 route="therapeutic",
+                active_flow_action=active_flow_action,
                 reasoning="safe guided-exercise test turn",
                 confidence="high",
             )

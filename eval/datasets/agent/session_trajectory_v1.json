@@ -879,6 +879,149 @@
       }
     },
     {
+      "id": "exercise-support-side-turn-resume",
+      "description": "A supportive side turn during an active exercise should preserve exercise state, then the next exercise turn should resume from the same step.",
+      "turns": [
+        {
+          "message": "Can we do a 5-4-3-2-1 grounding exercise?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a guided exercise.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Grounding exercise requested.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_5_4_3_2_1",
+            "response_text": "Let's start. Name five things you can see."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "turn_dispatch_decision": "therapeutic",
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "last_assistant_response_style": "guided_exercise"
+          }
+        },
+        {
+          "message": "Before I answer, I feel silly and need reassurance that I'm not failing.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe support side request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for reassurance without ending the exercise.",
+              "confidence": "high",
+              "active_flow_action": "preserve"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "therapeutic_approach": "pfa",
+              "reasoning": "The user needs reassurance before continuing.",
+              "confidence": "high"
+            },
+            "response_text": "You are not failing. Pausing to orient yourself is part of the exercise, not a mistake."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/pfa",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "Ok, back to it: I can see my phone, desk, plant, window, and water bottle.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise continuation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user explicitly resumes the active exercise.",
+              "confidence": "high",
+              "active_flow_action": "continue"
+            },
+            "step_state": "complete",
+            "response_text": "Good. Now name four things you can hear."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "guided_exercise/dbt_skills",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 1,
+              "exercise_step_id": "hear"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 6,
+            "last_assistant_response_style": "guided_exercise"
+          }
+        }
+      ],
+      "expected": {
+        "route_sequence": ["therapeutic", "therapeutic", "therapeutic"],
+        "factual_tool_calls": 0,
+        "crisis_resource_tool_calls": 0,
+        "crisis_log_count": 0,
+        "final_transcript_length": 6,
+        "final_exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear"
+        }
+      }
+    },
+    {
       "id": "pending-delete-therapeutic-clears",
       "description": "A pending memory deletion should clear when the user switches to ordinary support, and the store should remain unchanged.",
       "memory_seed": {
@@ -1304,6 +1447,137 @@
           "level": 0,
           "needs_crisis_response": false
         }
+      }
+    },
+    {
+      "id": "live-exercise-side-requests-resume",
+      "description": "Live LLM trajectory for an active guided exercise interrupted by support and lookup side turns, then resumed.",
+      "modes": ["live"],
+      "turns": [
+        {
+          "message": "Can we do a 5-4-3-2-1 grounding exercise?",
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "turn_dispatch_decision": "therapeutic",
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "transcript_length": 2,
+            "last_assistant_response_style": "guided_exercise"
+          }
+        },
+        {
+          "message": "Before I answer, I feel silly and need reassurance that I'm not failing.",
+          "expected": {
+            "route": "therapeutic",
+            "turn_dispatch_decision": "therapeutic",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4
+          }
+        },
+        {
+          "message": "Before I continue, can you find official resources about grounding techniques?",
+          "expected": {
+            "route": "grounded_lookup",
+            "response_style": "grounded_lookup",
+            "turn_dispatch_decision": "grounded_lookup",
+            "grounded_lookup": {
+              "status": "answered"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "factual_tool_calls": 1,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 6
+          }
+        },
+        {
+          "message": "Ok, back to the exercise: I can see my phone, desk, plant, window, and water bottle.",
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "turn_dispatch_decision": "therapeutic",
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 1,
+              "exercise_step_id": "hear"
+            },
+            "grounded_lookup": {
+              "query": "",
+              "status": "not_attempted"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 8,
+            "last_assistant_response_style": "guided_exercise"
+          }
+        }
+      ],
+      "expected": {
+        "route_sequence": ["therapeutic", "therapeutic", "grounded_lookup", "therapeutic"],
+        "factual_tool_calls": 1,
+        "crisis_resource_tool_calls": 0,
+        "crisis_log_count": 0,
+        "final_transcript_length": 8,
+        "final_exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear"
+        },
+        "final_grounded_lookup": {
+          "query": "",
+          "status": "not_attempted"
+        },
+        "min_judge_score": 0.75
+      },
+      "rubric": {
+        "dimensions": [
+          {
+            "name": "side_request_first",
+            "question": "Does the assistant answer the support and lookup side requests before trying to resume the exercise?",
+            "weight": 1.0
+          },
+          {
+            "name": "exercise_state_continuity",
+            "question": "Does the exercise stay paused during side turns and resume from the original step instead of restarting or skipping ahead?",
+            "weight": 1.2
+          },
+          {
+            "name": "natural_user_experience",
+            "question": "Does the conversation feel natural, low-pressure, and helpful across interruption and resume turns?",
+            "weight": 1.0
+          }
+        ]
       }
     }
   ]

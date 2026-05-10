@@ -50,6 +50,7 @@ class AgentSessionCase:
 
     id: str
     description: str = ""
+    modes: list[str] = field(default_factory=lambda: ["scripted"])
     memory_seed: dict[str, Any] = field(default_factory=dict)
     expected: dict[str, Any] = field(default_factory=dict)
     rubric: dict[str, Any] = field(default_factory=dict)
@@ -296,6 +297,11 @@ class AgentSessionTrajectoryEvaluator(BaseEvaluator[AgentSessionCase]):
         """Parse one session trajectory case."""
 
         return _parse_case(raw_case)
+
+    def load_cases(self) -> list[AgentSessionCase]:
+        """Load cases applicable to the selected mode."""
+
+        return [case for case in super().load_cases() if self.mode in case.modes]
 
     def case_id(self, case: AgentSessionCase, index: int) -> str:
         """Return the stable case identifier."""
@@ -1074,6 +1080,7 @@ def _parse_case(raw_case: Any) -> AgentSessionCase:
     return AgentSessionCase(
         id=str(raw_case["id"]),
         description=str(raw_case.get("description", "")),
+        modes=[str(mode) for mode in raw_case.get("modes", ["scripted"])],
         memory_seed=dict(_optional_mapping(raw_case, "memory_seed")),
         expected=dict(_optional_mapping(raw_case, "expected")),
         rubric=dict(_optional_mapping(raw_case, "rubric")),

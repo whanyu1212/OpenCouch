@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
+from agent.active_flow import current_turn_active_flow
 from agent.memory.models import (
     ConfidenceLevel,
     DispatchDecision,
@@ -68,6 +69,25 @@ async def plan_therapeutic_route(
     pinned_approach = (
         exercise_state.get("exercise_therapeutic_approach") if exercise_active else None
     )
+    active_flow = current_turn_active_flow(state)
+
+    if (
+        exercise_active
+        and active_flow.active_flow == "guided_exercise"
+        and active_flow.action in {"continue", "resume"}
+    ):
+        approach = cast(
+            TherapeuticApproach,
+            pinned_approach or state.get("therapeutic_approach") or "none",
+        )
+        return DispatchPlan(
+            response_style="guided_exercise",
+            therapeutic_approach=approach,
+            clear_exercise=False,
+            source="active_flow",
+            reason=f"Turn dispatch marked the active exercise as {active_flow.action}.",
+            confidence="high",
+        )
 
     if llm_client is None:
         raise RuntimeError("Therapeutic dispatch requires a classifier LLM.")
@@ -82,7 +102,9 @@ async def plan_therapeutic_route(
     approach = decision.therapeutic_approach
 
     clear_exercise = (
-        exercise_active and response_style not in _EXERCISE_PRESERVING_STYLES
+        exercise_active
+        and active_flow.action != "preserve"
+        and response_style not in _EXERCISE_PRESERVING_STYLES
     )
 
     if exercise_active and response_style == "guided_exercise" and pinned_approach:

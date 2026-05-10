@@ -97,6 +97,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         turn_route: str = "therapeutic",
         memory_action_type: str | None = None,
         lookup_query: str | None = None,
+        active_flow_action: str = "none",
         step_state: str = "hold",
         crisis_level: int = 0,
         stream_text: str = "unused",
@@ -106,6 +107,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         self.turn_route = turn_route
         self.memory_action_type = memory_action_type
         self.lookup_query = lookup_query
+        self.active_flow_action = active_flow_action
         self.step_state = step_state
         self.crisis_level = crisis_level
         self.stream_text = stream_text
@@ -165,6 +167,7 @@ class _FakeDispatchLLM(BaseLLMClient):
                 route=self.turn_route,
                 memory_action_type=self.memory_action_type,
                 query=self.lookup_query,
+                active_flow_action=self.active_flow_action,
                 reasoning="contract test turn dispatch",
                 confidence="high",
             )
@@ -398,6 +401,7 @@ async def test_turn_dispatch_memory_mutation_clears_exercise_state() -> None:
                     turn_route="memory_control",
                     memory_action_type="forget_by_query",
                     lookup_query="presentations",
+                    active_flow_action="clear",
                 )
             ),
         ),
@@ -777,6 +781,79 @@ async def test_dispatch_llm_mid_exercise_clarifying_channel_contract() -> None:
         command.update,
         {"response_style", "therapeutic_approach", "diagnostics"},
     )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_preserves_exercise_on_active_flow_side_turn() -> None:
+    """Active-flow preserve should keep exercise state through support side-turns."""
+
+    state = _build_state("I feel silly before I answer the step.")
+    state["exercise_state"] = {
+        "exercise_type": "grounding_5_4_3_2_1",
+        "exercise_step": 0,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+    state["therapeutic_approach"] = "dbt_skills"
+    state["diagnostics"] = {
+        "turn_dispatch_active_flow": {
+            "active_flow": "guided_exercise",
+            "action": "preserve",
+        }
+    }
+
+    command = await run_therapeutic_dispatch_node(
+        state,
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="pfa",
+                )
+            ),
+        ),
+    )
+
+    assert command.goto == "therapeutic_response_node"
+    assert command.update["response_style"] == "supportive"
+    assert "exercise_state" not in command.update
+
+
+@pytest.mark.asyncio
+async def test_dispatch_active_flow_continue_forces_guided_exercise() -> None:
+    """Active-flow continue should keep continuation inside the exercise runner."""
+
+    state = _build_state("I can see my desk and window.")
+    state["exercise_state"] = {
+        "exercise_type": "grounding_5_4_3_2_1",
+        "exercise_step": 0,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+    state["therapeutic_approach"] = "pfa"
+    state["diagnostics"] = {
+        "turn_dispatch_active_flow": {
+            "active_flow": "guided_exercise",
+            "action": "continue",
+        }
+    }
+
+    command = await run_therapeutic_dispatch_node(
+        state,
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="pfa",
+                )
+            ),
+        ),
+    )
+
+    assert command.goto == "guided_exercise_response_node"
+    assert command.update["response_style"] == "guided_exercise"
+    assert command.update["therapeutic_approach"] == "dbt_skills"
+    assert "exercise_state" not in command.update
 
 
 @pytest.mark.asyncio

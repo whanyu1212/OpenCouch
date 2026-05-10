@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent.active_flow import current_turn_active_flow
 from agent.prompts import (
     compose_sources as _compose,
     format_recent_history as _format_recent_history,
@@ -93,9 +94,33 @@ def _compose_system_prompt_with_state(
 
     rules_block = _format_procedural_rules_block(state)
     recall_block = _format_recall_toggle_constraint(state)
+    active_flow_block = _format_active_flow_response_block(state)
     return (
         f"{knowledge}\n\n{instructions}{safety_block}"
-        f"{continuity_block}{rules_block}{recall_block}"
+        f"{continuity_block}{rules_block}{recall_block}{active_flow_block}"
+    )
+
+
+def _format_active_flow_response_block(state: AgentState) -> str:
+    """Return response guidance for preserved active flows.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        str: Optional system-prompt block for side turns.
+    """
+
+    active_flow = current_turn_active_flow(state)
+    if active_flow.active_flow != "guided_exercise" or active_flow.action != "preserve":
+        return ""
+    return (
+        "\n\nActive-flow continuity:\n"
+        "- A guided exercise is paused while you answer this side request.\n"
+        "- Answer the current request first. Do not advance, restart, or end "
+        "the exercise.\n"
+        "- If natural, close with a brief option to return to the exercise "
+        "when the user is ready."
     )
 
 

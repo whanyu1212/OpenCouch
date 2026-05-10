@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
+from agent.active_flow import clear_all_active_flows_delta
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.graph_constants import (
     CRISIS_RESOURCE_LOOKUP_NODE,
@@ -19,7 +20,7 @@ from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.gates.safety.service import CrisisRiskService
-from agent.state import AgentState, cleared_exercise_state
+from agent.state import AgentState
 
 
 def _build_crisis_delta(
@@ -84,8 +85,7 @@ def _build_crisis_delta(
         "diagnostics": diagnostics,
     }
     if assessment.needs_crisis_response:
-        delta["exercise_state"] = cleared_exercise_state()
-        delta["memory_control"] = {"action": {}, "pending_action": None}
+        delta.update(clear_all_active_flows_delta())
     return delta
 
 

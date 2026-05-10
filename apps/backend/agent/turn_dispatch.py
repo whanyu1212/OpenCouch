@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agent.active_flow import (
+    ActiveFlow,
+    ActiveFlowAction,
+    active_flow_summary,
+    resolve_active_flow_decision,
+)
 from agent.conversation import format_recent_history
 from agent.gates.memory_control.actions import MemoryControlAction
 from agent.state import AgentState
@@ -14,8 +20,6 @@ from llm.base import BaseLLMClient
 
 
 TurnRoute = Literal["memory_control", "grounded_lookup", "therapeutic"]
-ActiveFlow = Literal["none", "guided_exercise", "pending_memory_action"]
-ActiveFlowAction = Literal["none", "continue", "preserve", "resume", "clear"]
 MemoryControlActionType = Literal[
     "list",
     "status",
@@ -42,8 +46,8 @@ class TurnDispatchDecision(BaseModel):
     active_flow_action: ActiveFlowAction = Field(
         default="none",
         description=(
-            "How this turn relates to the active flow named in the prompt. "
-            "Use none when no active flow exists."
+            "Required lifecycle label for the active flow named in the prompt. "
+            "Use none only when the prompt says Active flow: none."
         ),
     )
     memory_action_type: MemoryControlActionType | None = Field(
@@ -82,103 +86,9 @@ class TurnDispatchPlan:
     confidence: str
     active_flow: ActiveFlow = "none"
     active_flow_action: ActiveFlowAction = "none"
+    active_flow_delta: dict[str, object] = field(default_factory=dict)
     memory_action: MemoryControlAction | None = None
     grounded_lookup_query: str | None = None
-    clear_pending_action: bool = False
-
-
-def _compact_text(value: Any, *, max_chars: int = 280) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) <= max_chars:
-        return text
-    return f"{text[: max_chars - 1].rstrip()}..."
-
-
-def _pending_action_summary(state: AgentState) -> str:
-    pending = (state.get("memory_control", {}) or {}).get("pending_action")
-    if not isinstance(pending, dict):
-        return "(none)"
-
-    pending_type = _compact_text(pending.get("type") or "unknown")
-    target = pending.get("target")
-    if not isinstance(target, dict):
-        return f"type={pending_type}"
-
-    kind = _compact_text(target.get("kind") or "memory")
-    preview = _compact_text(target.get("preview") or "")
-    if not preview:
-        return f"type={pending_type}; target_kind={kind}"
-    return f"type={pending_type}; target_kind={kind}; target_preview={preview}"
-
-
-def _detect_active_flow(state: AgentState) -> ActiveFlow:
-    """Return the currently active turn-level flow.
-
-    Args:
-        state (AgentState): Current graph state.
-
-    Returns:
-        ActiveFlow: The active flow relevant to turn dispatch.
-    """
-
-    pending = (state.get("memory_control", {}) or {}).get("pending_action")
-    if isinstance(pending, dict):
-        return "pending_memory_action"
-
-    exercise_state = state.get("exercise_state", {}) or {}
-    if (
-        exercise_state.get("exercise_type") is not None
-        and exercise_state.get("exercise_step") is not None
-    ):
-        return "guided_exercise"
-
-    return "none"
-
-
-def _active_flow_summary(state: AgentState) -> str:
-    """Return a compact active-flow summary for the dispatch prompt.
-
-    Args:
-        state (AgentState): Current graph state.
-
-    Returns:
-        str: Prompt-ready active-flow summary.
-    """
-
-    active_flow = _detect_active_flow(state)
-    if active_flow == "pending_memory_action":
-        return f"pending_memory_action: {_pending_action_summary(state)}"
-    if active_flow == "guided_exercise":
-        exercise_state = state.get("exercise_state", {}) or {}
-        exercise_type = _compact_text(exercise_state.get("exercise_type") or "unknown")
-        step = exercise_state.get("exercise_step")
-        step_id = _compact_text(exercise_state.get("exercise_step_id") or "")
-        if step_id:
-            return (
-                f"guided_exercise: type={exercise_type}; step={step}; step_id={step_id}"
-            )
-        return f"guided_exercise: type={exercise_type}; step={step}"
-    return "none"
-
-
-def _active_flow_action_for_decision(
-    *,
-    active_flow: ActiveFlow,
-    decision: TurnDispatchDecision,
-) -> ActiveFlowAction:
-    """Normalize the model's active-flow action for local state reality.
-
-    Args:
-        active_flow (ActiveFlow): Locally detected active flow.
-        decision (TurnDispatchDecision): Structured LLM dispatch decision.
-
-    Returns:
-        ActiveFlowAction: Active-flow action to record in diagnostics.
-    """
-
-    if active_flow == "none":
-        return "none"
-    return decision.active_flow_action
 
 
 def build_turn_dispatch_prompt(state: AgentState) -> str:
@@ -192,8 +102,7 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
     """
 
     recent_history = format_recent_history(state, limit=8, empty="(none)")
-    pending_summary = _pending_action_summary(state)
-    active_flow_summary = _active_flow_summary(state)
+    flow_summary = active_flow_summary(state)
     return (
         "Choose the one graph destination for the current non-crisis user turn.\n\n"
         "Destinations:\n"
@@ -245,10 +154,18 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
         "- preserve: user asks a side request without ending the active flow.\n"
         "- resume: user explicitly asks to return to a guided exercise.\n"
         "- clear: user rejects, cancels, ends, or moves away from the active flow.\n"
-        "For pending memory actions, use continue only for confirm/cancel and "
-        "clear when the user moves on; do not use resume.\n\n"
-        f"Active flow: {active_flow_summary}\n"
-        f"Pending memory action: {pending_summary}\n\n"
+        "When Active flow is guided_exercise, every non-exercise side request "
+        "must still set active_flow_action. Use preserve for reassurance, "
+        "explanation, grounded_lookup, or saved-memory inspection side requests. "
+        "Use clear for stopping the exercise or starting a saved-memory deletion. "
+        "Use continue only when the user gives an exercise answer, and resume "
+        "only when the user explicitly asks to return to the exercise.\n"
+        "When Active flow is pending_memory_action, every route must still set "
+        "active_flow_action. Use continue only when memory_action_type is "
+        "confirm_pending or cancel_pending. Use clear for any unrelated "
+        "therapeutic or grounded_lookup route. Do not use preserve or resume "
+        "for pending memory actions.\n\n"
+        f"Active flow: {flow_summary}\n\n"
         "Recent conversation:\n"
         f"{recent_history}\n\n"
         f'Current user message: "{state.get("message", "")}"'
@@ -327,43 +244,47 @@ def _plan_from_decision(
     state: AgentState,
     decision: TurnDispatchDecision,
 ) -> TurnDispatchPlan:
-    pending_action = (state.get("memory_control", {}) or {}).get("pending_action")
-    clear_pending_action = bool(pending_action) and decision.route != "memory_control"
-    active_flow = _detect_active_flow(state)
-    active_flow_action = _active_flow_action_for_decision(
-        active_flow=active_flow,
-        decision=decision,
-    )
-
     if decision.route == "memory_control":
+        memory_action = _memory_action_from_decision(decision)
+        active_flow = resolve_active_flow_decision(
+            state,
+            action=decision.active_flow_action,
+            route=decision.route,
+            memory_action_type=decision.memory_action_type,
+        )
         return TurnDispatchPlan(
             route=decision.route,
             reason=decision.reasoning,
             confidence=decision.confidence,
-            active_flow=active_flow,
-            active_flow_action=active_flow_action,
-            memory_action=_memory_action_from_decision(decision),
-            clear_pending_action=False,
+            active_flow=active_flow.active_flow,
+            active_flow_action=active_flow.action,
+            active_flow_delta=active_flow.state_delta,
+            memory_action=memory_action,
         )
 
+    active_flow = resolve_active_flow_decision(
+        state,
+        action=decision.active_flow_action,
+        route=decision.route,
+    )
     if decision.route == "grounded_lookup":
         return TurnDispatchPlan(
             route=decision.route,
             reason=decision.reasoning,
             confidence=decision.confidence,
-            active_flow=active_flow,
-            active_flow_action=active_flow_action,
+            active_flow=active_flow.active_flow,
+            active_flow_action=active_flow.action,
+            active_flow_delta=active_flow.state_delta,
             grounded_lookup_query=_required_text(decision.query, field_name="query"),
-            clear_pending_action=clear_pending_action,
         )
 
     return TurnDispatchPlan(
         route=decision.route,
         reason=decision.reasoning,
         confidence=decision.confidence,
-        active_flow=active_flow,
-        active_flow_action=active_flow_action,
-        clear_pending_action=clear_pending_action,
+        active_flow=active_flow.active_flow,
+        active_flow_action=active_flow.action,
+        active_flow_delta=active_flow.state_delta,
     )
 
 

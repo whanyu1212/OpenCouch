@@ -344,6 +344,258 @@
       }
     },
     {
+      "id": "exercise-support-lookup-stream-resume",
+      "description": "A guided exercise should survive both a therapeutic side turn and a grounded lookup side turn, then resume through streaming.",
+      "modes": ["scripted"],
+      "thread_id": "{run_id}-exercise-multi-interrupt",
+      "user_id": "{run_id}-user",
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "message": "Can we do a 5-4-3-2-1 grounding exercise?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a guided exercise.",
+              "confidence": "high"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Grounding exercise requested.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_5_4_3_2_1",
+            "response_text": "Let's start. Name five things you can see.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "turn_dispatch_decision": "therapeutic",
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "message": "Before I answer, I feel silly and need reassurance that I'm not failing.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe reassurance request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support without ending the exercise.",
+              "confidence": "high",
+              "active_flow_action": "preserve"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Reassurance side turn fits.",
+              "confidence": "high"
+            },
+            "response_text": "You are not failing. Pausing to steady yourself is part of the exercise, not a mistake.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/pfa",
+            "response_text_contains": ["not failing"],
+            "response_text_not_contains": ["four things you can hear"],
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "message": "Before I continue, can you find official resources about grounding techniques?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe source-backed lookup request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "grounded_lookup",
+              "reasoning": "The user asks for official external resources.",
+              "confidence": "high",
+              "query": "official grounding technique resources",
+              "active_flow_action": "preserve"
+            },
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "grounded_lookup",
+            "response_style": "grounded_lookup",
+            "turn_dispatch_decision": "grounded_lookup",
+            "response_text_contains": ["Sources"],
+            "grounded_lookup": {
+              "status": "answered"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "factual_tool_calls": 1,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 6,
+            "assistant_turn_count": 3,
+            "turn_count": 3
+          }
+        },
+        {
+          "type": "stream_turn",
+          "message": "Ok, back to the exercise: I can see my phone, desk, plant, window, and water bottle.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise continuation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user returns to the active exercise.",
+              "confidence": "high",
+              "active_flow_action": "continue"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "therapeutic_approach": "none",
+              "reasoning": "Continue the active exercise.",
+              "confidence": "high"
+            },
+            "step_state": "complete",
+            "response_chunks": ["Good. ", "Now name four things you can hear."],
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no durable rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "turn_dispatch_decision": "therapeutic",
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 1,
+              "exercise_step_id": "hear"
+            },
+            "grounded_lookup": {
+              "status": "not_attempted"
+            },
+            "turn_dispatch_active_flow": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "response_ready_count": 1,
+            "done_count": 1,
+            "chunk_text_contains": "four things you can hear",
+            "transcript_length": 8,
+            "assistant_turn_count": 4,
+            "turn_count": 4
+          }
+        }
+      ],
+      "expected": {
+        "status": "active",
+        "crisis_log_count": 0,
+        "final_transcript_length": 8,
+        "final_exercise_state": {
+          "exercise_type": "grounding_5_4_3_2_1",
+          "exercise_step": 1,
+          "exercise_step_id": "hear"
+        },
+        "final_grounded_lookup": {
+          "status": "not_attempted"
+        }
+      }
+    },
+    {
       "id": "exercise-crisis-clears-and-logs",
       "description": "A crisis disclosure should interrupt an active exercise, log the crisis turn, clear exercise state, and allow later ordinary support.",
       "modes": ["scripted"],

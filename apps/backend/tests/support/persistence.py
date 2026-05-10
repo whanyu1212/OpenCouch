@@ -115,6 +115,7 @@ class FakeCrossRestartLLM(BaseLLMClient):
         if schema_name == "TurnDispatchDecision":
             return response_schema(  # type: ignore[call-arg,return-value]
                 route="therapeutic",
+                active_flow_action=self._active_flow_action_for_prompt(prompt),
                 reasoning="ordinary persistence test turn",
                 confidence="high",
             )
@@ -127,11 +128,46 @@ class FakeCrossRestartLLM(BaseLLMClient):
             self.procedural_calls += 1
             return cast(StructuredResponseT, self.procedural_result)
 
+        if schema_name == "SemanticWritePolicyDecision":
+            action = (
+                "commit_at_session_end"
+                if "family conflict is a big trigger" in prompt.lower()
+                else "commit_now"
+            )
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action=action,
+                reason="fake semantic write policy for persistence tests",
+                confidence="high",
+            )
+
+        if schema_name == "ProceduralWritePolicyDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="commit_now",
+                reason="fake procedural write policy for persistence tests",
+                confidence="high",
+            )
+
         if schema_name == "SummarizationResult":
             self.summarization_calls += 1
             return cast(StructuredResponseT, self.summarization_result)
 
         raise RuntimeError(f"FakeCrossRestartLLM: unexpected schema {schema_name}")
+
+    def _active_flow_action_for_prompt(self, prompt: str) -> str:
+        """Return active-flow action for deterministic persistence tests.
+
+        Args:
+            prompt (str): Turn-dispatch prompt.
+
+        Returns:
+            str: Active-flow action for the fake dispatch decision.
+        """
+
+        if "Active flow: guided_exercise" in prompt:
+            return "clear"
+        if "Active flow: pending_memory_action" in prompt:
+            return "clear"
+        return "none"
 
 
 def runtime_paths(tmp_path: Path) -> dict[str, Path]:
