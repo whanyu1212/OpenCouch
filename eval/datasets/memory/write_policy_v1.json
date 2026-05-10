@@ -190,9 +190,6 @@
         "policy_version": "phase1_llm_v1",
         "structured_calls": {
           "ProceduralWritePolicyDecision": 1
-        },
-        "candidate": {
-          "explicitness": "implied"
         }
       }
     },

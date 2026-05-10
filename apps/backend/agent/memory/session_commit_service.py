@@ -438,7 +438,6 @@ def _select_procedural_candidates_to_commit(
         effective_support = max(support_turn_count, transcript_support_turns)
         if should_commit_implicit_procedural_preference(
             hold_action=representative.hold_action,
-            explicitness=candidate.explicitness,
             evidence_count=effective_support,
         ):
             evidence = list(

@@ -723,7 +723,12 @@ class TestExtractFactsNodeUnit:
             extraction_result=ExtractionResult(
                 facts=[_make_memory_write(evidence_quote="should never be written")],
                 reason="would-be extraction",
-            )
+            ),
+            semantic_policy_decision={
+                "action": "require_repetition",
+                "reason": "early negative self-belief needs repeated evidence",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state(
@@ -748,7 +753,12 @@ class TestExtractFactsNodeUnit:
             extraction_result=ExtractionResult(
                 facts=[_make_memory_write(evidence_quote="should never be written")],
                 reason="would-be extraction",
-            )
+            ),
+            semantic_policy_decision={
+                "action": "require_repetition",
+                "reason": "early emerging pattern needs repeated evidence",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state(
@@ -808,7 +818,12 @@ class TestExtractFactsNodeUnit:
                     )
                 ],
                 reason="extracted self-belief candidate",
-            )
+            ),
+            semantic_policy_decision={
+                "action": "require_repetition",
+                "reason": "negative self-belief needs repeated evidence",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state(

@@ -16,7 +16,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.policy.candidates import (
-    CandidateExplicitness,
     PolicyDecision,
     ProceduralCandidate,
     ProceduralHoldAction,
@@ -28,8 +27,6 @@ from agent.memory.policy.constants import (
 )
 from agent.memory.policy.semantic import (
     SEMANTIC_SESSION_ONLY_CATEGORIES,
-    contains_emerging_pattern,
-    contains_negative_self_belief,
 )
 from llm.base import BaseLLMClient
 
@@ -107,23 +104,19 @@ def should_commit_pattern(
 def should_commit_implicit_procedural_preference(
     *,
     hold_action: ProceduralHoldAction,
-    explicitness: CandidateExplicitness,
     evidence_count: int,
 ) -> bool:
     """Return whether a buffered implicit procedural preference can promote.
 
     Args:
         hold_action (ProceduralHoldAction): Policy action that held the candidate.
-        explicitness (CandidateExplicitness): Whether the preference was explicit.
         evidence_count (int): Number of reinforcing occurrences seen so far.
 
     Returns:
-        bool: ``True`` when the implicit preference has enough evidence to promote.
+        bool: ``True`` when the held preference has enough evidence to promote.
     """
 
     if hold_action != "commit_at_session_end":
-        return False
-    if explicitness == "explicit":
         return False
     return evidence_count >= 2
 
@@ -141,33 +134,10 @@ def semantic_hard_policy_guard(
         LLM policy classifier must decide.
     """
 
-    text = _lowered_texts(
-        candidate.reason,
-        candidate.payload.evidence_quote,
-        candidate.payload.subject.identifier,
-        candidate.payload.object.identifier,
-    )
-
-    if (
-        candidate.policy_recommendation == "require_repetition"
-        or contains_negative_self_belief(text)
-        or contains_emerging_pattern(text)
-    ):
-        return PolicyDecision(
-            action="require_repetition",
-            reason="negative self-belief or emerging pattern requires repetition",
-        )
-
     if candidate.payload.predicate == "MENTIONED_IN":
         return PolicyDecision(
             action="drop",
             reason="provenance predicates should not become durable semantic memory",
-        )
-
-    if candidate.scope == "turn" or candidate.durability == "transient":
-        return PolicyDecision(
-            action="drop",
-            reason="turn-scoped or transient semantic candidate should not persist",
         )
 
     return None
@@ -266,9 +236,9 @@ def _clamp_semantic_policy_decision(
         PolicyDecision: Final policy decision.
     """
 
-    if decision.action == "commit_now" and (
-        candidate.sensitivity == "high"
-        or candidate.payload.category in SEMANTIC_SESSION_ONLY_CATEGORIES
+    if (
+        decision.action == "commit_now"
+        and candidate.payload.category in SEMANTIC_SESSION_ONLY_CATEGORIES
     ):
         return PolicyDecision(
             action="commit_at_session_end",
@@ -332,11 +302,7 @@ def procedural_hard_policy_guard(
         LLM policy classifier must decide.
     """
 
-    text = _lowered_texts(
-        candidate.reason,
-        candidate.payload.rule,
-        *candidate.payload.evidence,
-    )
+    text = _lowered_texts(candidate.payload.rule, *candidate.payload.evidence)
     classification = classify_procedural_request(text)
 
     if classification.safety_conflict:
@@ -345,7 +311,7 @@ def procedural_hard_policy_guard(
             reason="safety-conflicting procedural request cannot be persisted",
         )
 
-    if candidate.scope == "turn" or classification.turn_scoped:
+    if classification.turn_scoped:
         return PolicyDecision(
             action="drop",
             reason="turn-scoped procedural request should not become long-term memory",

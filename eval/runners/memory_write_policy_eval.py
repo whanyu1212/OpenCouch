@@ -261,11 +261,9 @@ class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
         return {
             "layer": case.layer,
             "candidate": {
-                "policy_recommendation": candidate.policy_recommendation,
-                "scope": candidate.scope,
-                "durability": candidate.durability,
-                "sensitivity": candidate.sensitivity,
-                "explicitness": candidate.explicitness,
+                "source_session_id": candidate.source_session_id,
+                "source_turn_index": candidate.source_turn_index,
+                "evidence_quotes": list(candidate.evidence_quotes),
             },
             "decision": decision.model_dump(mode="json"),
             "structured_calls": getattr(llm, "structured_calls", {}),

@@ -139,7 +139,8 @@ async def test_high_sensitivity_semantic_fact_is_clamped_to_session_end() -> Non
     assert llm.structured_calls == 1
 
 
-def test_negative_self_belief_requires_repetition() -> None:
+@pytest.mark.asyncio
+async def test_negative_self_belief_can_be_held_for_repetition_by_llm_policy() -> None:
     candidate = build_semantic_candidate(
         _semantic_write(
             category="context",
@@ -148,11 +149,19 @@ def test_negative_self_belief_requires_repetition() -> None:
         ),
         message="I always assume one mistake means I'm incompetent.",
     )
+    llm = _FakePolicyLLM(
+        {
+            "action": "require_repetition",
+            "reason": "negative self-belief needs repeated evidence",
+            "confidence": "high",
+        }
+    )
 
-    decision = semantic_hard_policy_guard(candidate)
+    decision = await decide_semantic_candidate_llm_primary(candidate, llm_client=llm)
 
-    assert decision is not None
     assert decision.action == "require_repetition"
+    assert decision.policy_version == "phase1_llm_v1"
+    assert llm.structured_calls == 1
     assert (
         should_commit_pattern(hold_action="require_repetition", evidence_count=1)
         is False
@@ -227,7 +236,6 @@ async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> Non
     assert (
         should_commit_implicit_procedural_preference(
             hold_action="commit_at_session_end",
-            explicitness=candidate.explicitness,
             evidence_count=1,
         )
         is False
@@ -235,7 +243,6 @@ async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> Non
     assert (
         should_commit_implicit_procedural_preference(
             hold_action="commit_at_session_end",
-            explicitness=candidate.explicitness,
             evidence_count=2,
         )
         is True
