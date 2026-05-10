@@ -304,6 +304,9 @@ async def _handle_save_preference(
     owner_id: str,
     state: AgentState,
 ) -> MemoryControlServiceResult:
+    if context.llm_client is None:
+        raise RuntimeError("save_preference requires an LLM client.")
+
     rule_text = await _write_preference_rule(
         action=action,
         context=context,
@@ -314,6 +317,7 @@ async def _handle_save_preference(
         owner_id=owner_id,
         rule_text=rule_text,
         evidence=state.get("message", ""),
+        llm_client=context.llm_client,
     )
     return MemoryControlServiceResult(
         response_text=f"Saved: {saved_rule}",

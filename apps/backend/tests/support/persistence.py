@@ -148,6 +148,22 @@ class FakeCrossRestartLLM(BaseLLMClient):
                 confidence="high",
             )
 
+        if schema_name == "SemanticReconciliationDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="coexist",
+                record_indexes=[],
+                reason="fake semantic reconciliation for persistence tests",
+                confidence="high",
+            )
+
+        if schema_name == "ProceduralReconciliationDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="append",
+                replace_indexes=[],
+                reason="fake procedural reconciliation for persistence tests",
+                confidence="high",
+            )
+
         if schema_name == "SummarizationResult":
             self.summarization_calls += 1
             return cast(StructuredResponseT, self.summarization_result)

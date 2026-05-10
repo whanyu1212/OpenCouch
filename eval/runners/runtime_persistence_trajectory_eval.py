@@ -236,6 +236,32 @@ class ScriptedRuntimeLLM:
                     },
                 )
             )
+        if schema_name == "SemanticReconciliationDecision":
+            return response_schema(
+                **_mapping_or_default(
+                    self.scripted,
+                    "semantic_reconciliation",
+                    {
+                        "action": "coexist",
+                        "record_indexes": [],
+                        "reason": "scripted runtime eval reconciliation",
+                        "confidence": "high",
+                    },
+                )
+            )
+        if schema_name == "ProceduralReconciliationDecision":
+            return response_schema(
+                **_mapping_or_default(
+                    self.scripted,
+                    "procedural_reconciliation",
+                    {
+                        "action": "append",
+                        "replace_indexes": [],
+                        "reason": "scripted runtime eval reconciliation",
+                        "confidence": "high",
+                    },
+                )
+            )
         if schema_name == "SummarizationResult":
             return response_schema(
                 **_mapping_or_default(

@@ -1,8 +1,8 @@
-"""Shared semantic-memory heuristics for candidate promotion and policy.
+"""Shared semantic-memory heuristics for candidate promotion and hard guards.
 
 This module centralizes the semantic marker vocabulary used by the
-candidate builder, deterministic write policy, and extraction node's
-early-turn guard so those paths do not drift.
+candidate builder and hard safety/storage guards so those paths do not
+drift.
 """
 
 from __future__ import annotations

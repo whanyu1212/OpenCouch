@@ -133,6 +133,7 @@ class _FakeExtractionLLM(BaseLLMClient):
 
     - For the crisis classifier schema: returns a safe (level 0) result.
     - For ExtractionResult: returns the canned ``extraction_result``.
+    - For write-policy / reconciliation schemas: returns canned decisions.
     - For any other structured schema: raises (tests should not hit this).
     - ``generate_text`` returns a fixed string (used by therapeutic modes).
 
@@ -146,12 +147,29 @@ class _FakeExtractionLLM(BaseLLMClient):
         extraction_result: ExtractionResult,
         raise_on_extraction: bool = False,
         crisis_level: int = 0,
+        semantic_policy_decision: dict[str, Any] | None = None,
+        semantic_reconciliation_decision: dict[str, Any] | None = None,
+        raise_on_schema: set[str] | None = None,
     ) -> None:
         self.extraction_result = extraction_result
         self.raise_on_extraction = raise_on_extraction
         self.crisis_level = crisis_level
+        self.semantic_policy_decision = semantic_policy_decision or {
+            "action": "commit_now",
+            "reason": "test semantic fact is durable",
+            "confidence": "high",
+        }
+        self.semantic_reconciliation_decision = semantic_reconciliation_decision or {
+            "action": "coexist",
+            "record_indexes": [],
+            "reason": "test default keeps separate semantic facts",
+            "confidence": "high",
+        }
+        self.raise_on_schema = raise_on_schema or set()
         self.extraction_calls = 0
         self.crisis_calls = 0
+        self.semantic_policy_calls = 0
+        self.semantic_reconciliation_calls = 0
         self.text_calls = 0
 
     async def generate_text(
@@ -237,10 +255,19 @@ class _FakeExtractionLLM(BaseLLMClient):
             )
 
         if response_schema.__name__ == "SemanticWritePolicyDecision":
+            self.semantic_policy_calls += 1
+            if response_schema.__name__ in self.raise_on_schema:
+                raise RuntimeError("simulated semantic policy failure")
             return response_schema(  # type: ignore[call-arg,return-value]
-                action="commit_now",
-                reason="test semantic fact is durable",
-                confidence="high",
+                **self.semantic_policy_decision,
+            )
+
+        if response_schema.__name__ == "SemanticReconciliationDecision":
+            self.semantic_reconciliation_calls += 1
+            if response_schema.__name__ in self.raise_on_schema:
+                raise RuntimeError("simulated semantic reconciliation failure")
+            return response_schema(  # type: ignore[call-arg,return-value]
+                **self.semantic_reconciliation_decision,
             )
 
         raise RuntimeError(
@@ -347,6 +374,8 @@ class TestExtractFactsNodeUnit:
             "semantic_session_end_holds": 0,
             "semantic_repeat_required": 0,
             "semantic_policy_drops": 0,
+            "semantic_policy_errors": 0,
+            "semantic_write_skips": 0,
             "extract_facts_reason": "skipped: no llm_client",
         }
         assert await store.arecord_count() == 0
@@ -413,8 +442,10 @@ class TestExtractFactsNodeUnit:
         assert await store.arecord_count() == 0
 
     @pytest.mark.asyncio
-    async def test_deterministic_backstop_recovers_helper_relationship(self) -> None:
-        """High-precision relationship mentions are recovered if the LLM skips."""
+    async def test_empty_extraction_does_not_create_fallback_relationships(
+        self,
+    ) -> None:
+        """An empty LLM extraction should not create non-LLM fallback writes."""
 
         store = OpenCouchMemoryStore()
         fake = _FakeExtractionLLM(
@@ -428,13 +459,13 @@ class TestExtractFactsNodeUnit:
 
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
-        assert delta["diagnostics"]["semantic_writes"] == 1
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert (
+            delta["diagnostics"]["extract_facts_reason"]
+            == "model skipped short acknowledgment"
+        )
         records = await store.asearch(("user-1", "semantic"), query=None, limit=10)
-        assert len(records) == 1
-        value = records[0].value
-        assert value["category"] == "relationship"
-        assert value["predicate"] == "KNOWS"
-        assert value["object"]["identifier"] == "Sarah"
+        assert records == []
 
     @pytest.mark.asyncio
     async def test_single_new_fact_writes_to_store(self) -> None:
@@ -463,6 +494,31 @@ class TestExtractFactsNodeUnit:
             "llm_policy: test semantic fact is durable"
         )
         assert records[0].value["policy_version"] == "phase1_llm_v1"
+
+    @pytest.mark.asyncio
+    async def test_policy_failure_skips_candidate_without_fallback_write(self) -> None:
+        """Write-policy LLM failures should skip candidates explicitly."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[_make_memory_write(evidence_quote="my sister Sarah visited")],
+                reason="extracted one relationship fact",
+            ),
+            raise_on_schema={"SemanticWritePolicyDecision"},
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state()
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["semantic_policy_errors"] == 1
+        assert (
+            delta["diagnostics"]["extract_facts_reason"]
+            == "skipped: semantic policy error"
+        )
+        assert await store.arecord_count(("user-1", "semantic")) == 0
 
     @pytest.mark.asyncio
     async def test_duplicate_fact_bumps_last_referenced_at(self) -> None:
@@ -650,9 +706,7 @@ class TestExtractFactsNodeUnit:
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state()
 
-        with caplog.at_level(
-            logging.WARNING, logger="agent.nodes.extract_semantic_facts"
-        ):
+        with caplog.at_level(logging.WARNING, logger="agent.memory.extraction_service"):
             delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["diagnostics"]["semantic_writes"] == 0
@@ -876,7 +930,13 @@ class TestExtractFactsNodeUnit:
                     )
                 ],
                 reason="extracted more specific relationship fact",
-            )
+            ),
+            semantic_reconciliation_decision={
+                "action": "supersede",
+                "record_indexes": [0],
+                "reason": "new fact identifies Sarah more specifically",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state(
@@ -894,6 +954,62 @@ class TestExtractFactsNodeUnit:
         assert stale.value["superseded_by"] == fresh.key
         assert stale.value["dormant_at"] is not None
         assert fresh.value["evidence_quote"] == "My sister Sarah called last night."
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_failure_skips_collision_candidate(self) -> None:
+        """Collision reconciliation failures should not fall back to local judgment."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("user-1", "semantic"),
+            "fact-old",
+            {
+                "id": "fact-old",
+                "category": "relationship",
+                "subject": {"type": "User", "identifier": "user-1"},
+                "predicate": "KNOWS",
+                "object": {"type": "Person", "identifier": "Sarah"},
+                "evidence_quote": "I talked to Sarah yesterday.",
+                "confidence": "high",
+                "source_session_id": "thread-old",
+                "source_turn_index": 0,
+                "created_at": "2026-04-18T10:00:00Z",
+                "last_referenced_at": "2026-04-18T10:00:00Z",
+                "dormant_at": None,
+                "superseded_by": None,
+                "user_visible": True,
+            },
+        )
+
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        category="relationship",
+                        predicate="KNOWS",
+                        object_type="Person",
+                        object_identifier="my sister Sarah",
+                        evidence_quote="My sister Sarah called last night.",
+                    )
+                ],
+                reason="extracted more specific relationship fact",
+            ),
+            raise_on_schema={"SemanticReconciliationDecision"},
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(
+            message="My sister Sarah called last night.",
+            turn_count=4,
+        )
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 0
+        assert delta["diagnostics"]["semantic_write_skips"] == 1
+        assert await store.arecord_count(("user-1", "semantic")) == 1
+        stale = await store.aget(("user-1", "semantic"), "fact-old")
+        assert stale is not None
+        assert stale.value["superseded_by"] is None
 
 
 # ─── 3. End-to-end extraction via run_agent ──────────────────────────────

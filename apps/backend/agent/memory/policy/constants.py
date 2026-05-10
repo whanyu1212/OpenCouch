@@ -1,10 +1,8 @@
 """Shared constants for the memory write pipeline.
 
-These marker tuples and helpers are used by both
-:mod:`agent.memory.candidates` (candidate promotion) and
-:mod:`agent.memory.write_policy` (deterministic commit/hold/drop).
-Keeping them in a single dependency-free module avoids duplication
-and prevents circular imports between those two modules.
+These marker tuples and helpers are used by candidate promotion and hard
+write-policy guards. Keeping them in a single dependency-free module avoids
+duplication and prevents circular imports between those two modules.
 """
 
 from __future__ import annotations
@@ -27,7 +25,7 @@ def contains_any(text: str, markers: tuple[str, ...]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class ProceduralRequestClassification:
-    """Deterministic marker-based classification of a procedural request."""
+    """Marker-based classification of a procedural request."""
 
     explicit: bool
     turn_scoped: bool

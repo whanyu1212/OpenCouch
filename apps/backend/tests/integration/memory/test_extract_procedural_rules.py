@@ -90,11 +90,8 @@ def _partial_state(
 class _FakeProceduralLLM(BaseLLMClient):
     """Fake LLM client that returns a canned ``ProceduralExtractionResult``.
 
-    Unlike ``_FakeExtractionLLM`` in ``test_extract_facts.py``, this
-    fake only needs to dispatch on one schema — the procedural writer
-    node makes exactly one structured-output call per invocation.
-    Still implements the full BaseLLMClient interface so it can be
-    dropped into a runtime context.
+    The fake dispatches extraction, write-policy, and reconciliation
+    schemas so the procedural writer can stay LLM-primary in tests.
     """
 
     def __init__(
@@ -102,10 +99,27 @@ class _FakeProceduralLLM(BaseLLMClient):
         *,
         result: ProceduralExtractionResult,
         should_raise: bool = False,
+        policy_decision: dict[str, Any] | None = None,
+        reconciliation_decision: dict[str, Any] | None = None,
+        raise_on_schema: set[str] | None = None,
     ) -> None:
         self.result = result
         self.should_raise = should_raise
+        self.policy_decision = policy_decision or {
+            "action": "commit_now",
+            "reason": "test procedural rule is durable",
+            "confidence": "high",
+        }
+        self.reconciliation_decision = reconciliation_decision or {
+            "action": "append",
+            "replace_indexes": [],
+            "reason": "test default appends distinct procedural rules",
+            "confidence": "high",
+        }
+        self.raise_on_schema = raise_on_schema or set()
         self.structured_calls = 0
+        self.policy_calls = 0
+        self.reconciliation_calls = 0
         self.text_calls = 0
 
     async def generate_text(
@@ -133,14 +147,31 @@ class _FakeProceduralLLM(BaseLLMClient):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
-        if response_schema.__name__ != "ProceduralExtractionResult":
-            raise RuntimeError(
-                f"_FakeProceduralLLM: unexpected schema {response_schema.__name__}"
+        if response_schema.__name__ == "ProceduralExtractionResult":
+            self.structured_calls += 1
+            if self.should_raise:
+                raise RuntimeError("simulated procedural writer LLM failure")
+            return cast(StructuredResponseT, self.result)
+
+        if response_schema.__name__ == "ProceduralWritePolicyDecision":
+            self.policy_calls += 1
+            if response_schema.__name__ in self.raise_on_schema:
+                raise RuntimeError("simulated procedural policy failure")
+            return response_schema(  # type: ignore[call-arg,return-value]
+                **self.policy_decision,
             )
-        self.structured_calls += 1
-        if self.should_raise:
-            raise RuntimeError("simulated procedural writer LLM failure")
-        return cast(StructuredResponseT, self.result)
+
+        if response_schema.__name__ == "ProceduralReconciliationDecision":
+            self.reconciliation_calls += 1
+            if response_schema.__name__ in self.raise_on_schema:
+                raise RuntimeError("simulated procedural reconciliation failure")
+            return response_schema(  # type: ignore[call-arg,return-value]
+                **self.reconciliation_decision,
+            )
+
+        raise RuntimeError(
+            f"_FakeProceduralLLM: unexpected schema {response_schema.__name__}"
+        )
 
 
 class _MockRuntime:
@@ -324,10 +355,7 @@ class TestSingleRuleWrite:
         assert rule.confidence == "high"
         assert rule.source == "explicit_user"
         assert rule.write_timing == "immediate"
-        assert (
-            rule.write_reason
-            == "explicit durable procedural request is safe for immediate commit"
-        )
+        assert rule.write_reason == "llm_policy: test procedural rule is durable"
         assert rule.added_at.endswith("Z")  # ISO-8601 UTC with Z suffix
 
     @pytest.mark.asyncio
@@ -394,6 +422,12 @@ class TestSingleRuleWrite:
                 ],
                 reason="user corrected the meditation preference",
             ),
+            reconciliation_decision={
+                "action": "replace",
+                "replace_indexes": [0],
+                "reason": "new rule conflicts with older meditation guidance",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state(message="Please don't suggest meditation again.")
@@ -409,6 +443,47 @@ class TestSingleRuleWrite:
             profile.archived_rules[0].rule == "Suggest meditation when it seems useful."
         )
         assert profile.archived_rules[0].superseded_by == profile.rules[0].id
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_failure_skips_candidate_without_fallback_write(
+        self,
+    ) -> None:
+        """Reconciliation LLM failures should skip conflicting writes."""
+
+        store = OpenCouchMemoryStore()
+        profile = await aget_procedural_profile(store, user_id="alice")
+        profile.rules.append(
+            build_procedural_rule(
+                rule_text="Suggest meditation when it seems useful.",
+                evidence=["Meditation is okay."],
+            )
+        )
+        await aput_procedural_profile(store, user_id="alice", profile=profile)
+
+        fake = _FakeProceduralLLM(
+            result=ProceduralExtractionResult(
+                rules=[
+                    ProceduralRuleDraft(
+                        rule="You've said meditation makes you more anxious.",
+                        evidence=["Please don't suggest meditation again."],
+                        confidence="high",
+                    ),
+                ],
+                reason="user corrected the meditation preference",
+            ),
+            raise_on_schema={"ProceduralReconciliationDecision"},
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(message="Please don't suggest meditation again.")
+
+        delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["procedural_write_skips"] == 1
+        profile = await aget_procedural_profile(store, user_id="alice")
+        assert len(profile.rules) == 1
+        assert profile.rules[0].rule == "Suggest meditation when it seems useful."
+        assert profile.archived_rules == []
 
 
 # ─── Multiple rules in one turn ───────────────────────────────────────────
@@ -485,7 +560,7 @@ class TestFailureModes:
 
         with caplog.at_level(
             logging.WARNING,
-            logger="agent.nodes.extract_procedural_rules",
+            logger="agent.memory.extraction_service",
         ):
             delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
@@ -535,6 +610,37 @@ class TestFailureModes:
         assert delta["diagnostics"]["procedural_writes"] == 1
 
     @pytest.mark.asyncio
+    async def test_policy_failure_skips_candidate_without_fallback_write(self) -> None:
+        """Write-policy LLM failures should not become local fallback writes."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeProceduralLLM(
+            result=ProceduralExtractionResult(
+                rules=[
+                    ProceduralRuleDraft(
+                        rule="You prefer shorter responses.",
+                        evidence=["Keep it short"],
+                    ),
+                ],
+                reason="user requested shorter replies",
+            ),
+            raise_on_schema={"ProceduralWritePolicyDecision"},
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state()
+
+        delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["procedural_policy_errors"] == 1
+        assert (
+            delta["diagnostics"]["extract_procedural_reason"]
+            == "skipped: procedural policy error"
+        )
+        profile = await aget_procedural_profile(store, user_id="alice")
+        assert profile.rules == []
+
+    @pytest.mark.asyncio
     async def test_implicit_preference_is_held_not_written(self) -> None:
         """Implicit procedural preferences should not write immediately."""
 
@@ -550,6 +656,11 @@ class TestFailureModes:
                 ],
                 reason="implicit dislike of meditation",
             ),
+            policy_decision={
+                "action": "commit_at_session_end",
+                "reason": "implicit preference needs repeated evidence",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(
             llm_client=fake,

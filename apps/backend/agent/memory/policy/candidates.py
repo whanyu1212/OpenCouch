@@ -2,12 +2,12 @@
 
 These types sit between the LLM extractor output and the persistent
 memory store. The node layer first promotes extractor outputs into
-``MemoryCandidate`` instances, then the deterministic policy engine
-decides whether to commit immediately, defer, require repetition, or
-drop.
+``MemoryCandidate`` instances, then the write-policy layer decides
+whether to commit immediately, defer, require repetition, or drop.
 
 The extractor still owns *detection* of potentially memory-worthy
-content. Code now owns the final write timing decision.
+content. Candidate metadata is a hint for the LLM-primary policy layer,
+not a fallback write decision.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ class SessionMemoryBuffer(BaseModel):
 
 
 class PolicyDecision(BaseModel):
-    """The final deterministic decision returned by the write policy."""
+    """The final decision returned by the write policy."""
 
     action: PolicyRecommendation
     reason: str = Field(min_length=1, max_length=240)
@@ -131,7 +131,7 @@ def build_semantic_candidate(
         message (str): Current user message for durability/sensitivity heuristics.
 
     Returns:
-        SemanticCandidate: Semantic candidate with deterministic policy hints.
+        SemanticCandidate: Semantic candidate with policy metadata hints.
     """
 
     lowered = f"{message} {write.evidence_quote}".lower()
@@ -206,7 +206,7 @@ def build_procedural_candidate(
         turn_index (int): Turn index for candidate provenance.
 
     Returns:
-        ProceduralCandidate: Procedural candidate with deterministic policy hints.
+        ProceduralCandidate: Procedural candidate with policy metadata hints.
     """
 
     lowered = f"{message} {draft.rule} {' '.join(draft.evidence)}".lower()

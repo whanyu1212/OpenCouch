@@ -5,7 +5,6 @@ candidates and persisted writes:
 
 - ``constants`` — small lookup tables and the procedural-request classifier.
 - ``semantic`` — category-based heuristics for semantic facts.
-- ``backstops`` — deterministic fallback writes for crisis-adjacent content.
 - ``small_talk`` — lightweight discourse filter that suppresses extraction.
 - ``candidates`` — promote extractor outputs into ``MemoryCandidate`` instances.
 - ``write`` — the LLM-primary write-policy gate.

@@ -2,17 +2,16 @@
 
 Per AGENTS.md §6, the LangGraph nodes that surface memory extraction to
 the graph topology should stay thin — orchestration only. The actual
-work of building prompts, calling the LLM, applying deterministic
-backstops, and dispatching candidates through ``TurnWriteService`` lives
-here as plain async services.
+work of building prompts, calling the LLM, and dispatching candidates
+through ``TurnWriteService`` lives here as plain async services.
 
 Two parallel functions live in this module:
 
 - :func:`extract_semantic_facts` — wraps the semantic extractor LLM
-  call, appends deterministic backstops, and dispatches the resulting
-  facts through :class:`TurnWriteService` for policy-aware writes.
+  call and dispatches the resulting facts through
+  :class:`TurnWriteService` for policy-aware writes.
 - :func:`extract_procedural_rules` — same shape for procedural rules,
-  minus the backstops (procedural extraction has no backstop helper).
+  with procedural-memory prompts and policy.
 
 Both functions:
 
@@ -23,7 +22,7 @@ Both functions:
    dispatch, logging at WARNING level with ``exc_info=True`` and
    returning a degraded outcome rather than propagating. Memory
    extraction is a side-effect path; an extraction failure must not
-   fail the parent turn.
+   fail the parent turn or create fallback writes.
 3. Return a structured outcome carrying the duration, candidate
    counts, write counts, and a reason string. The node wrappers
    format these into LangGraph diagnostics deltas.
@@ -38,7 +37,6 @@ from typing import Any
 
 from agent.memory.models import ExtractionResult, ProceduralExtractionResult
 from agent.memory.modes import MemoryMode
-from agent.memory.policy.backstops import get_deterministic_semantic_backstops
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.policy.turn_routing import (
     get_session_turn_index,
@@ -78,6 +76,8 @@ class SemanticExtractionOutcome:
     semantic_session_end_holds: int = 0
     semantic_repeat_required: int = 0
     semantic_policy_drops: int = 0
+    semantic_policy_errors: int = 0
+    semantic_write_skips: int = 0
     reason: str = ""
 
     def as_diagnostics(self) -> dict[str, Any]:
@@ -97,6 +97,8 @@ class SemanticExtractionOutcome:
             "semantic_session_end_holds": self.semantic_session_end_holds,
             "semantic_repeat_required": self.semantic_repeat_required,
             "semantic_policy_drops": self.semantic_policy_drops,
+            "semantic_policy_errors": self.semantic_policy_errors,
+            "semantic_write_skips": self.semantic_write_skips,
             "extract_facts_reason": self.reason,
         }
 
@@ -111,6 +113,8 @@ class ProceduralExtractionOutcome:
     procedural_commit_now_candidates: int = 0
     procedural_session_end_holds: int = 0
     procedural_policy_drops: int = 0
+    procedural_policy_errors: int = 0
+    procedural_write_skips: int = 0
     reason: str = ""
 
     def as_diagnostics(self) -> dict[str, Any]:
@@ -128,6 +132,8 @@ class ProceduralExtractionOutcome:
             "procedural_commit_now_candidates": self.procedural_commit_now_candidates,
             "procedural_session_end_holds": self.procedural_session_end_holds,
             "procedural_policy_drops": self.procedural_policy_drops,
+            "procedural_policy_errors": self.procedural_policy_errors,
+            "procedural_write_skips": self.procedural_write_skips,
             "extract_procedural_reason": self.reason,
         }
 
@@ -212,14 +218,6 @@ async def extract_semantic_facts(
         extraction.reason,
     )
 
-    backstop_facts = get_deterministic_semantic_backstops(
-        message=state["message"],
-        session_id=state.get("session_id"),
-        turn_index=turn_index,
-    )
-    if backstop_facts:
-        extraction.facts.extend(backstop_facts)
-
     if not extraction.facts:
         return SemanticExtractionOutcome(
             duration_ms=elapsed_ms(start),
@@ -245,6 +243,8 @@ async def extract_semantic_facts(
         semantic_session_end_holds=result.session_end_holds,
         semantic_repeat_required=result.repeat_required,
         semantic_policy_drops=result.policy_drops,
+        semantic_policy_errors=result.policy_errors,
+        semantic_write_skips=result.write_skips,
         reason=result.reason,
     )
 
@@ -350,5 +350,7 @@ async def extract_procedural_rules(
         procedural_commit_now_candidates=processing.commit_now_candidates,
         procedural_session_end_holds=processing.session_end_holds,
         procedural_policy_drops=processing.policy_drops,
+        procedural_policy_errors=processing.policy_errors,
+        procedural_write_skips=processing.write_skips,
         reason=processing.reason,
     )

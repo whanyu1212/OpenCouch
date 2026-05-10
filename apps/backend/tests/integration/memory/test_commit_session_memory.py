@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -109,6 +109,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
         extraction_result: ExtractionResult,
         summarization_result: SummarizationResult,
         procedural_result: ProceduralExtractionResult | None = None,
+        semantic_reconciliation_decision: dict[str, Any] | None = None,
     ) -> None:
         self.extraction_result = extraction_result
         self.summarization_result = summarization_result
@@ -116,6 +117,12 @@ class _FakeSessionCommitLLM(BaseLLMClient):
             rules=[],
             reason="no procedural rules in session commit test",
         )
+        self.semantic_reconciliation_decision = semantic_reconciliation_decision or {
+            "action": "coexist",
+            "record_indexes": [],
+            "reason": "test semantic reconciliation keeps candidates separate",
+            "confidence": "high",
+        }
 
     async def generate_text(
         self,
@@ -201,6 +208,19 @@ class _FakeSessionCommitLLM(BaseLLMClient):
                 confidence="high",
             )
 
+        if schema_name == "SemanticReconciliationDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                **self.semantic_reconciliation_decision,
+            )
+
+        if schema_name == "ProceduralReconciliationDecision":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                action="append",
+                replace_indexes=[],
+                reason="test procedural reconciliation appends",
+                confidence="high",
+            )
+
         raise RuntimeError(f"_FakeSessionCommitLLM: unexpected schema {schema_name}")
 
 
@@ -283,6 +303,16 @@ async def test_session_end_correction_supersedes_stale_fact() -> None:
             summary="User clarified that their sister moved back in this week.",
             primary_themes=["family", "home"],
             open_loops=[],
+        ),
+        llm_client=_FakeSessionCommitLLM(
+            extraction_result=ExtractionResult(facts=[], reason="unused"),
+            summarization_result=SummarizationResult(arc=None, reason="unused"),
+            semantic_reconciliation_decision={
+                "action": "supersede",
+                "record_indexes": [0],
+                "reason": "new session-end fact corrects the older living situation",
+                "confidence": "high",
+            },
         ),
     )
 

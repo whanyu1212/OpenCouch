@@ -91,6 +91,13 @@ class ScriptedTurnDispatchLLM:
                 reasoning="scripted preference rule",
                 confidence="high",
             )
+        if schema_name == "ProceduralReconciliationDecision":
+            return response_schema(
+                action="append",
+                replace_indexes=[],
+                reason="scripted memory-control reconciliation",
+                confidence="high",
+            )
         raise RuntimeError(f"Unexpected structured schema {schema_name!r}.")
 
 

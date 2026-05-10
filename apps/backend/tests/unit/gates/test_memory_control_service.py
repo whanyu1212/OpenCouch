@@ -50,6 +50,13 @@ class _FakePreferenceRuleLLM:
         use_search: bool = False,
     ) -> Any:
         if response_schema.__name__ != "PreferenceRuleDecision":
+            if response_schema.__name__ == "ProceduralReconciliationDecision":
+                return response_schema(
+                    action="append",
+                    replace_indexes=[],
+                    reason="test preference reconciliation appends",
+                    confidence="high",
+                )
             raise AssertionError(f"Unexpected schema {response_schema.__name__!r}.")
         return response_schema(
             rule_text=self.rule_text,

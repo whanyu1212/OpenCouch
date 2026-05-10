@@ -8,9 +8,10 @@ into a full consolidation system. They answer two narrow questions:
 2. Should a new procedural rule append, replace an older weaker rule,
    or be skipped as a duplicate/conflict?
 
-The async helpers use LLM-primary classifiers with conservative
-deterministic fallback. They only act when the signals are strong enough
-to avoid silently deleting valid parallel facts or preferences.
+The async helpers use LLM-primary classifiers for product judgment.
+Local code keeps only exact duplicate/storage mechanics; classifier
+failures are raised so callers can skip affected candidates explicitly
+instead of silently writing fallback memories.
 """
 
 from __future__ import annotations
@@ -430,12 +431,15 @@ async def plan_semantic_write_llm_primary(
         SemanticReconciliationPlan: Final reconciliation plan.
     """
 
-    deterministic = plan_semantic_write(fact, existing_records)
     collision_records = filter_semantic_collision_candidates(fact, existing_records)
-    if not collision_records or llm_client is None:
-        return deterministic
+    if not collision_records:
+        return SemanticReconciliationPlan()
+
+    deterministic = plan_semantic_write(fact, collision_records)
     if deterministic.bump_record is not None:
         return deterministic
+    if llm_client is None:
+        raise RuntimeError("Semantic reconciliation requires an LLM client.")
 
     try:
         decision: SemanticReconciliationDecision = await llm_client.generate_structured(
@@ -445,10 +449,10 @@ async def plan_semantic_write_llm_primary(
         )
     except Exception:
         logger.warning(
-            "Semantic reconciliation LLM classifier failed; using deterministic fallback.",
+            "Semantic reconciliation LLM classifier failed.",
             exc_info=True,
         )
-        return deterministic
+        raise
 
     if decision.confidence == "low" or decision.action == "coexist":
         return SemanticReconciliationPlan()
@@ -460,19 +464,21 @@ async def plan_semantic_write_llm_primary(
     ]
     if decision.action == "bump":
         if len(valid_indexes) != 1:
-            return deterministic
+            raise ValueError("Semantic reconciliation selected invalid bump index.")
         return SemanticReconciliationPlan(
             bump_record=collision_records[valid_indexes[0]]
         )
 
     if decision.action == "supersede":
         if not valid_indexes:
-            return deterministic
+            raise ValueError(
+                "Semantic reconciliation selected no valid supersede records."
+            )
         return SemanticReconciliationPlan(
             supersede_records=[collision_records[index] for index in valid_indexes]
         )
 
-    return deterministic
+    raise ValueError(f"Unsupported semantic reconciliation action: {decision.action}")
 
 
 def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
@@ -592,9 +598,14 @@ async def plan_procedural_rule_write_llm_primary(
         ProceduralReconciliationPlan: Final reconciliation plan.
     """
 
+    if not existing_rules:
+        return ProceduralReconciliationPlan(action="append")
+
     deterministic = plan_procedural_rule_write(new_rule, existing_rules)
-    if not existing_rules or llm_client is None:
+    if deterministic.action == "skip":
         return deterministic
+    if llm_client is None:
+        raise RuntimeError("Procedural reconciliation requires an LLM client.")
 
     try:
         decision: ProceduralReconciliationDecision = (
@@ -606,13 +617,13 @@ async def plan_procedural_rule_write_llm_primary(
         )
     except Exception:
         logger.warning(
-            "Procedural reconciliation LLM classifier failed; using deterministic fallback.",
+            "Procedural reconciliation LLM classifier failed.",
             exc_info=True,
         )
-        return deterministic
+        raise
 
     if decision.confidence == "low":
-        return deterministic
+        return ProceduralReconciliationPlan(action="append")
     if decision.action == "append":
         return ProceduralReconciliationPlan(action="append")
     if decision.action == "skip":
@@ -624,5 +635,5 @@ async def plan_procedural_rule_write_llm_primary(
         if 0 <= index < len(existing_rules)
     ]
     if not valid_indexes:
-        return deterministic
+        raise ValueError("Procedural reconciliation selected no valid replace indexes.")
     return ProceduralReconciliationPlan(action="replace", replace_indexes=valid_indexes)

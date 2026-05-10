@@ -161,6 +161,13 @@ class ScriptedAgentSessionLLM:
                 reasoning="scripted preference rule",
                 confidence="high",
             )
+        if schema_name == "ProceduralReconciliationDecision":
+            return response_schema(
+                action="append",
+                replace_indexes=[],
+                reason="scripted preference reconciliation",
+                confidence="high",
+            )
         if schema_name == "ExtractionResult":
             return response_schema(
                 facts=[],

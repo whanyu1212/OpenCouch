@@ -112,7 +112,7 @@
     },
     {
       "id": "semantic-policy-llm-failure-surfaces",
-      "description": "A policy LLM failure should raise instead of silently falling back to deterministic commit logic.",
+      "description": "A policy LLM failure should raise instead of silently creating a local fallback write.",
       "layer": "semantic",
       "message": "My sister Sarah lives nearby.",
       "semantic_write": {
@@ -243,7 +243,7 @@
     },
     {
       "id": "procedural-policy-llm-failure-surfaces",
-      "description": "A procedural policy LLM failure should raise instead of silently falling back to deterministic commit logic.",
+      "description": "A procedural policy LLM failure should raise instead of silently creating a local fallback write.",
       "layer": "procedural",
       "message": "Please remember to be direct with me.",
       "procedural_rule": {

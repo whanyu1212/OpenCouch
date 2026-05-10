@@ -56,6 +56,20 @@ class _FakeReconciliationLLM(BaseLLMClient):
         return cast(StructuredResponseT, response_schema(**self.decision))
 
 
+class _FailingReconciliationLLM(_FakeReconciliationLLM):
+    """Fake reconciliation client that raises from structured generation."""
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        self.structured_calls += 1
+        raise RuntimeError("reconciliation LLM failed")
+
+
 def _semantic_fact(
     *,
     fact_id: str,
@@ -250,6 +264,66 @@ async def test_llm_semantic_reconciliation_can_supersede_without_marker() -> Non
 
 
 @pytest.mark.asyncio
+async def test_llm_semantic_reconciliation_requires_client_for_collision() -> None:
+    existing = _store_record(
+        _semantic_fact(
+            fact_id="fact-old",
+            object_identifier="sister moved out",
+            evidence_quote="My sister moved out last month.",
+        )
+    )
+    new_fact = _semantic_fact(
+        fact_id="fact-new",
+        object_identifier="sister moved back in",
+        evidence_quote="My sister moved back in this week.",
+    )
+    new_fact.category = "context"  # type: ignore[assignment]
+    new_fact.predicate = "EXPERIENCED"  # type: ignore[assignment]
+    new_fact.object.type = "Event"
+    existing.value["category"] = "context"
+    existing.value["predicate"] = "EXPERIENCED"
+    existing.value["object"]["type"] = "Event"
+
+    with pytest.raises(RuntimeError, match="requires an LLM client"):
+        await plan_semantic_write_llm_primary(
+            new_fact,
+            [existing],
+            llm_client=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_llm_semantic_reconciliation_failure_surfaces() -> None:
+    existing = _store_record(
+        _semantic_fact(
+            fact_id="fact-old",
+            object_identifier="sister moved out",
+            evidence_quote="My sister moved out last month.",
+        )
+    )
+    new_fact = _semantic_fact(
+        fact_id="fact-new",
+        object_identifier="sister moved back in",
+        evidence_quote="My sister moved back in this week.",
+    )
+    new_fact.category = "context"  # type: ignore[assignment]
+    new_fact.predicate = "EXPERIENCED"  # type: ignore[assignment]
+    new_fact.object.type = "Event"
+    existing.value["category"] = "context"
+    existing.value["predicate"] = "EXPERIENCED"
+    existing.value["object"]["type"] = "Event"
+    llm = _FailingReconciliationLLM({})
+
+    with pytest.raises(RuntimeError, match="reconciliation LLM failed"):
+        await plan_semantic_write_llm_primary(
+            new_fact,
+            [existing],
+            llm_client=llm,
+        )
+    assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_llm_procedural_reconciliation_can_replace_weaker_rule() -> None:
     existing = build_procedural_rule(
         rule_text="Use a gentle tone.",
@@ -277,3 +351,43 @@ async def test_llm_procedural_reconciliation_can_replace_weaker_rule() -> None:
     assert llm.structured_calls == 1
     assert plan.action == "replace"
     assert plan.replace_indexes == [0]
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_reconciliation_requires_client() -> None:
+    existing = build_procedural_rule(
+        rule_text="Use a gentle tone.",
+        evidence=["Please be gentle."],
+    )
+    new_rule = build_procedural_rule(
+        rule_text="Use a direct tone instead of a gentle one.",
+        evidence=["Be direct with me, not gentle."],
+    )
+
+    with pytest.raises(RuntimeError, match="requires an LLM client"):
+        await plan_procedural_rule_write_llm_primary(
+            new_rule,
+            [existing],
+            llm_client=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_reconciliation_failure_surfaces() -> None:
+    existing = build_procedural_rule(
+        rule_text="Use a gentle tone.",
+        evidence=["Please be gentle."],
+    )
+    new_rule = build_procedural_rule(
+        rule_text="Use a direct tone instead of a gentle one.",
+        evidence=["Be direct with me, not gentle."],
+    )
+    llm = _FailingReconciliationLLM({})
+
+    with pytest.raises(RuntimeError, match="reconciliation LLM failed"):
+        await plan_procedural_rule_write_llm_primary(
+            new_rule,
+            [existing],
+            llm_client=llm,
+        )
+    assert llm.structured_calls == 1

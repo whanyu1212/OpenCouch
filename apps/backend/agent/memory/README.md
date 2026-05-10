@@ -70,9 +70,8 @@ There are 3 main memory shapes:
 The [policy/](./policy) subpackage owns the decision layer between extracted candidates and persisted writes:
 
 - [policy/candidates.py](./policy/candidates.py): candidate objects for semantic / procedural writes plus `SessionMemoryBuffer`.
-- [policy/write.py](./policy/write.py): deterministic promotion policy for whether a candidate should become durable memory.
+- [policy/write.py](./policy/write.py): LLM-primary write policy with hard local safety / storage guards.
 - [policy/semantic.py](./policy/semantic.py): semantic heuristics such as durability markers and negative-self-belief detection.
-- [policy/backstops.py](./policy/backstops.py): backstop facts the extractor should produce regardless of LLM output.
 - [policy/small_talk.py](./policy/small_talk.py): pre-extractor filter for turns that should not produce memory writes.
 - [policy/turn_routing.py](./policy/turn_routing.py): `should_skip_memory_extraction`, `get_session_turn_index`.
 - [policy/constants.py](./policy/constants.py): procedural request classification markers and helpers.

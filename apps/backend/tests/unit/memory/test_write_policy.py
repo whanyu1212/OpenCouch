@@ -1,4 +1,4 @@
-"""Unit tests for the deterministic phase-1 memory write policy."""
+"""Unit tests for the LLM-primary phase-1 memory write policy."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from agent.memory.policy.candidates import (
 )
 from agent.memory.policy.write import (
     decide_procedural_candidate_llm_primary,
-    decide_procedural_candidate,
     decide_semantic_candidate_llm_primary,
-    decide_semantic_candidate,
+    procedural_hard_policy_guard,
+    semantic_hard_policy_guard,
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
 )
@@ -92,7 +92,7 @@ def _semantic_write(
     )
 
 
-def test_explicit_stable_semantic_fact_commits_now() -> None:
+def test_explicit_stable_semantic_fact_has_no_hard_guard() -> None:
     candidate = build_semantic_candidate(
         _semantic_write(
             category="relationship",
@@ -104,12 +104,13 @@ def test_explicit_stable_semantic_fact_commits_now() -> None:
         message="My sister Sarah lives nearby.",
     )
 
-    decision = decide_semantic_candidate(candidate)
+    decision = semantic_hard_policy_guard(candidate)
 
-    assert decision.action == "commit_now"
+    assert decision is None
 
 
-def test_high_sensitivity_semantic_fact_waits_for_session_end() -> None:
+@pytest.mark.asyncio
+async def test_high_sensitivity_semantic_fact_is_clamped_to_session_end() -> None:
     candidate = build_semantic_candidate(
         _semantic_write(
             category="trigger",
@@ -118,10 +119,22 @@ def test_high_sensitivity_semantic_fact_waits_for_session_end() -> None:
         ),
         message="Family conflict is a big trigger for panic.",
     )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "model considered it durable",
+            "confidence": "high",
+        }
+    )
 
-    decision = decide_semantic_candidate(candidate)
+    decision = await decide_semantic_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
 
     assert decision.action == "commit_at_session_end"
+    assert decision.policy_version == "phase1_v1"
+    assert llm.structured_calls == 1
 
 
 def test_negative_self_belief_requires_repetition() -> None:
@@ -134,8 +147,9 @@ def test_negative_self_belief_requires_repetition() -> None:
         message="I always assume one mistake means I'm incompetent.",
     )
 
-    decision = decide_semantic_candidate(candidate)
+    decision = semantic_hard_policy_guard(candidate)
 
+    assert decision is not None
     assert decision.action == "require_repetition"
     assert should_commit_pattern(candidate, evidence_count=1) is False
     assert should_commit_pattern(candidate, evidence_count=2) is True
@@ -153,12 +167,13 @@ def test_provenance_semantic_predicate_drops() -> None:
         message="My sister Sarah lives nearby.",
     )
 
-    decision = decide_semantic_candidate(candidate)
+    decision = semantic_hard_policy_guard(candidate)
 
+    assert decision is not None
     assert decision.action == "drop"
 
 
-def test_explicit_procedural_request_commits_now() -> None:
+def test_explicit_procedural_request_has_no_hard_guard() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
             rule="You prefer shorter responses.",
@@ -169,12 +184,13 @@ def test_explicit_procedural_request_commits_now() -> None:
         turn_index=2,
     )
 
-    decision = decide_procedural_candidate(candidate)
+    decision = procedural_hard_policy_guard(candidate)
 
-    assert decision.action == "commit_now"
+    assert decision is None
 
 
-def test_implicit_procedural_preference_requires_repetition_to_promote() -> None:
+@pytest.mark.asyncio
+async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
             rule="You've said meditation makes you more anxious.",
@@ -184,10 +200,22 @@ def test_implicit_procedural_preference_requires_repetition_to_promote() -> None
         session_id="session-1",
         turn_index=2,
     )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_at_session_end",
+            "reason": "implicit preference needs more evidence",
+            "confidence": "high",
+        }
+    )
 
-    decision = decide_procedural_candidate(candidate)
+    decision = await decide_procedural_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
 
     assert decision.action == "commit_at_session_end"
+    assert decision.policy_version == "phase1_llm_v1"
+    assert llm.structured_calls == 1
     assert (
         should_commit_implicit_procedural_preference(candidate, evidence_count=1)
         is False
@@ -209,8 +237,9 @@ def test_turn_scoped_procedural_request_drops() -> None:
         turn_index=2,
     )
 
-    decision = decide_procedural_candidate(candidate)
+    decision = procedural_hard_policy_guard(candidate)
 
+    assert decision is not None
     assert decision.action == "drop"
 
 
@@ -225,8 +254,9 @@ def test_safety_conflicting_procedural_request_drops() -> None:
         turn_index=2,
     )
 
-    decision = decide_procedural_candidate(candidate)
+    decision = procedural_hard_policy_guard(candidate)
 
+    assert decision is not None
     assert decision.action == "drop"
 
 
