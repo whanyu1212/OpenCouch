@@ -106,6 +106,10 @@ Evals are split by purpose:
 - `memory_write_policy_eval.py`: direct semantic/procedural write-policy checks
   for LLM-primary decisions, hard safety guards, and visible failure when the
   policy LLM is unavailable.
+- `memory_extraction_quality_eval.py`: direct semantic/procedural extractor
+  quality checks. Defaults to scripted mode for evaluator mechanics; `--mode
+  live` evaluates the configured control model on precision-first extraction
+  cases.
 - `runtime_stress_eval.py`: manual long-session stress checks over the
   persistent runtime. This reports turn timing and verifies transcript/session
   growth without making normal CI evals slow.
@@ -136,6 +140,7 @@ apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eva
 apps/backend/.venv/bin/python -m eval.runners.runtime_recovery_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.text_surface_runtime_eval
 apps/backend/.venv/bin/python -m eval.runners.memory_write_policy_eval
+apps/backend/.venv/bin/python -m eval.runners.memory_extraction_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_stress_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
 ```
