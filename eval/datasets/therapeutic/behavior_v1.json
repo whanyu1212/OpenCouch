@@ -142,6 +142,27 @@
           "supportive/pfa"
         ]
       }
+    },
+    {
+      "id": "practical-support-contact-not-exercise",
+      "description": "A request to contact a support person should stay supportive/PFA instead of starting a guided exercise.",
+      "message": "Panic is starting. Help me text Maya during panic and keep it brief.",
+      "scripted": {
+        "dispatch": {
+          "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
+          "therapeutic_approach": "pfa"
+        },
+        "response_text": "Text Maya one clear line: panic is here, and I need you to stay with me for a few minutes."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "therapeutic_approach_any_of": ["pfa", "none"],
+        "response_text_non_empty": true,
+        "response_text_contains": ["Maya"],
+        "exercise_state": {},
+        "routing_decision_any_of": ["supportive", "supportive/pfa"]
+      }
     }
   ]
 }

@@ -151,17 +151,20 @@ async def seed_memory_store(
 async def memory_snapshot(store: Any, *, owner_id: str) -> dict[str, Any]:
     """Return a compact, user-visible snapshot of seeded memory."""
 
+    from agent.memory.reconciliation import filter_active_semantic_records
     from agent.memory.procedural_profile import aget_procedural_profile
 
     semantic_records = await store.asearch(
         (owner_id, "semantic"), query=None, limit=100
     )
+    active_semantic_records = filter_active_semantic_records(semantic_records)
     episodic_records = await store.asearch(
         (owner_id, "episodic"), query=None, limit=100
     )
     profile = await aget_procedural_profile(store, user_id=owner_id)
     return {
         "semantic_count": len(semantic_records),
+        "active_semantic_count": len(active_semantic_records),
         "episodic_count": len(episodic_records),
         "rule_count": len(profile.rules),
         "proactive_recall_enabled": profile.proactive_recall_enabled,
@@ -173,6 +176,15 @@ async def memory_snapshot(store: Any, *, owner_id: str) -> dict[str, Any]:
                 "predicate": str(record.value.get("predicate", "")),
             }
             for record in semantic_records
+        ],
+        "active_facts": [
+            {
+                "key": record.key,
+                "evidence_quote": str(record.value.get("evidence_quote", "")),
+                "object_identifier": _entity_identifier(record.value.get("object")),
+                "predicate": str(record.value.get("predicate", "")),
+            }
+            for record in active_semantic_records
         ],
         "sessions": [
             {
@@ -218,6 +230,7 @@ def grade_store_expectations(
 
     for key in (
         "semantic_count",
+        "active_semantic_count",
         "episodic_count",
         "rule_count",
         "proactive_recall_enabled",
@@ -243,6 +256,22 @@ def grade_store_expectations(
         ],
         contains=store_expected.get("facts_contain", []),
         absent=store_expected.get("facts_absent", []),
+    )
+    _grade_collection_phrases(
+        failures,
+        label=f"{prefix}.active_facts",
+        values=[
+            " ".join(
+                [
+                    str(item.get("evidence_quote", "")),
+                    str(item.get("object_identifier", "")),
+                    str(item.get("predicate", "")),
+                ]
+            )
+            for item in _mapping_list(snapshot.get("active_facts", []), "active_facts")
+        ],
+        contains=store_expected.get("active_facts_contain", []),
+        absent=store_expected.get("active_facts_absent", []),
     )
     _grade_collection_phrases(
         failures,

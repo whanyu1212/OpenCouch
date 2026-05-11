@@ -14,6 +14,7 @@ from typing import Any
 
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.models import (
+    EntityRef,
     MemoryWrite,
     ProceduralRule,
     ProceduralRuleDraft,
@@ -39,6 +40,24 @@ from agent.memory.semantic_writes import (
 from agent.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
+
+
+def _canonicalize_semantic_owner(write: MemoryWrite, *, owner_id: str) -> MemoryWrite:
+    """Normalize extractor user-subject aliases to the concrete memory owner.
+
+    Args:
+        write (MemoryWrite): Extracted semantic fact candidate.
+        owner_id (str): Concrete memory owner namespace for the current turn.
+
+    Returns:
+        MemoryWrite: Candidate with the ``User`` subject bound to ``owner_id``.
+    """
+
+    if write.subject.type != "User" or write.subject.identifier == owner_id:
+        return write
+    return write.model_copy(
+        update={"subject": EntityRef(type="User", identifier=owner_id)}
+    )
 
 
 @dataclass(frozen=True)
@@ -115,8 +134,12 @@ class TurnWriteService:
         # ``gather`` is safe; policy-classifier failures are allowed to
         # surface so transient provider failures do not silently become
         # deterministic memory writes.
+        normalized_writes = [
+            _canonicalize_semantic_owner(write, owner_id=owner_id) for write in writes
+        ]
         candidates = [
-            build_semantic_candidate(write, message=message) for write in writes
+            build_semantic_candidate(write, message=message)
+            for write in normalized_writes
         ]
         try:
             decisions = await asyncio.gather(

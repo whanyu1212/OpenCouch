@@ -972,6 +972,78 @@ class TestExtractFactsNodeUnit:
         assert fresh.value["evidence_quote"] == "My sister Sarah called last night."
 
     @pytest.mark.asyncio
+    async def test_user_subject_alias_is_canonicalized_before_reconciliation(
+        self,
+    ) -> None:
+        """Extractor aliases like current_user should reconcile with owner facts."""
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("user-1", "semantic"),
+            "fact-old-plan",
+            {
+                "id": "fact-old-plan",
+                "category": "coping_strategy",
+                "subject": {"type": "User", "identifier": "user-1"},
+                "predicate": "USES",
+                "object": {
+                    "type": "CopingStrategy",
+                    "identifier": "calling Sarah during panic",
+                },
+                "evidence_quote": "My panic plan is calling Sarah during panic.",
+                "confidence": "high",
+                "source_session_id": "thread-old",
+                "source_turn_index": 0,
+                "created_at": "2026-04-18T10:00:00Z",
+                "last_referenced_at": "2026-04-18T10:00:00Z",
+                "dormant_at": None,
+                "superseded_by": None,
+                "user_visible": True,
+            },
+        )
+
+        fake = _FakeExtractionLLM(
+            extraction_result=ExtractionResult(
+                facts=[
+                    _make_memory_write(
+                        category="coping_strategy",
+                        predicate="USES",
+                        object_type="CopingStrategy",
+                        object_identifier="text Maya during panic",
+                        subject_identifier="current_user",
+                        evidence_quote="text Maya during panic instead of calling Sarah",
+                    )
+                ],
+                reason="extracted corrected panic plan",
+            ),
+            semantic_reconciliation_decision={
+                "action": "supersede",
+                "record_indexes": [0],
+                "reason": "new panic plan replaces stale panic plan",
+                "confidence": "high",
+            },
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(
+            message=(
+                "This is my ongoing panic plan going forward: text Maya "
+                "during panic instead of calling Sarah."
+            ),
+            turn_count=4,
+        )
+
+        delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["semantic_writes"] == 1
+        assert fake.semantic_reconciliation_calls == 1
+        records = await store.asearch(("user-1", "semantic"), query=None, limit=10)
+        stale = next(record for record in records if record.key == "fact-old-plan")
+        fresh = next(record for record in records if record.key != "fact-old-plan")
+        assert stale.value["superseded_by"] == fresh.key
+        assert fresh.value["subject"]["identifier"] == "user-1"
+        assert fresh.value["object"]["identifier"] == "text Maya during panic"
+
+    @pytest.mark.asyncio
     async def test_reconciliation_failure_skips_collision_candidate(self) -> None:
         """Collision reconciliation failures should not fall back to local judgment."""
 

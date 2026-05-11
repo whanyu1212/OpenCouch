@@ -94,7 +94,9 @@ Evals are split by purpose:
   `PersistentAgentRuntime` trajectory checks for checkpoint resume, memory
   extraction durability, active-session liveness, streaming persistence, crisis
   logs, feedback, and incognito isolation. Defaults to Postgres; use
-  `--backend sqlite` only for fallback compatibility coverage.
+  `--backend sqlite` only for fallback compatibility coverage. It also accepts
+  focused runtime datasets such as `memory_lifecycle_trajectory_v1.json` for
+  write, recall, correction, deletion, and fresh-thread absence checks.
 - `runtime_recovery_trajectory_eval.py`: Postgres-first runtime recovery checks
   for thread-lock serialization, cross-thread isolation, interrupted mutation
   recovery, rotation-required leases, foreign mutation markers, and
@@ -142,6 +144,7 @@ apps/backend/.venv/bin/python -m eval.runners.text_surface_runtime_eval
 apps/backend/.venv/bin/python -m eval.runners.memory_write_policy_eval
 apps/backend/.venv/bin/python -m eval.runners.memory_extraction_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_stress_eval
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_lifecycle_trajectory_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
 ```
 

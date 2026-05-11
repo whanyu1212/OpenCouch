@@ -929,6 +929,9 @@ def _turn_artifact(
         "output": _jsonify(output),
         "state_after": _state_summary(state),
         "route": state.get("route"),
+        "response_text": getattr(output, "response_text", None)
+        if output is not None
+        else state.get("response_text"),
         "response_style": getattr(output, "response_style", None)
         if output is not None
         else state.get("response_style"),
@@ -1036,6 +1039,13 @@ def _grade_step(
     _expect_equal(
         failures, label, "status_after", artifact.get("status_after"), expected
     )
+    _grade_text_collection(
+        failures,
+        label=f"{label}.response_text",
+        values=artifact.get("response_text"),
+        contains=expected.get("response_text_contains"),
+        absent=expected.get("response_text_not_contains"),
+    )
     _expect_equal(
         failures,
         label,
@@ -1081,6 +1091,12 @@ def _grade_step(
             actual=state.get("exercise_state"),
             expected=expected.get("exercise_state"),
         )
+        _grade_mapping_expectation(
+            failures,
+            label=f"{label}.memory_control",
+            actual=state.get("memory_control"),
+            expected=expected.get("memory_control"),
+        )
         _grade_text_collection(
             failures,
             label=f"{label}.working_memory",
@@ -1088,6 +1104,28 @@ def _grade_step(
             contains=expected.get("working_memory_contains"),
             absent=expected.get("working_memory_not_contains"),
         )
+        diagnostics = state.get("diagnostics")
+        if isinstance(diagnostics, Mapping):
+            for key in (
+                "retrieval_path",
+                "semantic_hits",
+                "episodic_hits",
+                "procedural_count",
+                "proactive_recall",
+            ):
+                _expect_equal(failures, label, key, diagnostics.get(key), expected)
+            _grade_minimum(
+                failures,
+                label=f"{label}.semantic_hits",
+                actual=diagnostics.get("semantic_hits"),
+                expected=expected.get("semantic_hits_min"),
+            )
+            _grade_minimum(
+                failures,
+                label=f"{label}.episodic_hits",
+                actual=diagnostics.get("episodic_hits"),
+                expected=expected.get("episodic_hits_min"),
+            )
 
     stream = artifact.get("stream")
     if isinstance(stream, Mapping):
@@ -1136,10 +1174,8 @@ def _grade_final_memory(
     *,
     final: Mapping[str, Any],
     expected: Mapping[str, Any],
-    mode: str,
+    mode: str,  # noqa: ARG001 - memory snapshots are deterministic in all modes
 ) -> None:
-    if mode != "scripted":
-        return
     observations = {
         item.get("owner_id"): item.get("snapshot")
         for item in _mapping_list(final.get("memory_snapshots", []), "memory_snapshots")
@@ -1328,7 +1364,14 @@ def _grade_mapping_expectation(
     actual_map = actual if isinstance(actual, Mapping) else {}
     for key, expected_value in expected.items():
         actual_value = actual_map.get(key)
-        if actual_value != expected_value:
+        if isinstance(expected_value, Mapping):
+            _grade_mapping_expectation(
+                failures,
+                label=f"{label}.{key}",
+                actual=actual_value,
+                expected=expected_value,
+            )
+        elif actual_value != expected_value:
             failures.append(
                 f"{label}.{key}: expected {expected_value!r}, got {actual_value!r}"
             )
@@ -1349,6 +1392,19 @@ def _grade_text_collection(
     for phrase in _as_list(absent):
         if str(phrase).casefold() in haystack:
             failures.append(f"{label} contains forbidden {phrase!r}")
+
+
+def _grade_minimum(
+    failures: list[str],
+    *,
+    label: str,
+    actual: Any,
+    expected: Any,
+) -> None:
+    if expected is None:
+        return
+    if not isinstance(actual, int | float) or actual < expected:
+        failures.append(f"{label}: expected >= {expected!r}, got {actual!r}")
 
 
 async def _judge_trajectory(
