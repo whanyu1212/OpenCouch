@@ -565,7 +565,7 @@ class TestDispatchNode:
 
         fake = _FakeDispatchLLM(
             response_style="guided_exercise",
-            exercise_start_basis="explicit_user_request",
+            exercise_start_basis="ambiguous_or_none",
         )
         runtime = _MockRuntime(llm_client=fake)
 
@@ -587,6 +587,37 @@ class TestDispatchNode:
 
         assert cmd.goto == GUIDED_EXERCISE_NODE
         assert fake.structured_calls == 1  # LLM was called
+
+    @pytest.mark.asyncio
+    async def test_active_flow_clear_can_start_new_explicit_exercise(self) -> None:
+        """A new explicit exercise request clears stale exercise state first."""
+
+        fake = _FakeDispatchLLM(
+            response_style="guided_exercise",
+            exercise_start_basis="explicit_user_request",
+        )
+        runtime = _MockRuntime(llm_client=fake)
+
+        state: Any = {
+            "message": "Stop this one and walk me through box breathing instead.",
+            "history": [],
+            "turn_lifecycle": {"active_flow": "guided_exercise", "action": "clear"},
+            "session_progress": {"turn_count": 2},
+            "exercise_state": {
+                "exercise_type": "grounding_5_4_3_2_1",
+                "exercise_step": 0,
+            },
+        }
+
+        cmd = await run_therapeutic_dispatch_node(
+            cast(AgentState, state),  # type: ignore[arg-type]
+            runtime,  # type: ignore[arg-type]
+        )
+
+        assert cmd.goto == GUIDED_EXERCISE_NODE
+        update = cast(dict[str, Any], cmd.update)
+        assert update["exercise_state"]["exercise_type"] is None
+        assert update["exercise_state"]["exercise_step"] is None
 
     @pytest.mark.asyncio
     async def test_active_exercise_stop_request_clears_state(self) -> None:

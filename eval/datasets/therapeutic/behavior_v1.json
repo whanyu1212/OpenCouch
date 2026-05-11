@@ -126,7 +126,7 @@
       },
       "expected": {
         "response_style_any_of": ["reflective", "psychoeducation", "supportive"],
-        "therapeutic_approach_any_of": ["cbt", "none", "pfa"],
+        "therapeutic_approach_any_of": ["cbt", "dbt_skills", "none", "pfa"],
         "response_text_non_empty": true,
         "exercise_state": {
           "exercise_type": null,
@@ -137,6 +137,7 @@
         },
         "routing_decision_any_of": [
           "reflective/cbt",
+          "psychoeducation/dbt_skills",
           "psychoeducation",
           "supportive",
           "supportive/pfa"

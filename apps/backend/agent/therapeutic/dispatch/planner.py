@@ -110,8 +110,11 @@ async def plan_therapeutic_route(
     reason = decision.reasoning
     exercise_start_basis = decision.exercise_start_basis
 
+    starts_new_exercise = response_style == "guided_exercise" and (
+        not exercise_active or active_flow.action == "clear"
+    )
     if (
-        response_style == "guided_exercise"
+        starts_new_exercise
         and exercise_start_basis not in _AUTHORIZED_EXERCISE_START_BASES
     ):
         response_style = _CONSENT_GATE_RESPONSE_STYLE
@@ -121,10 +124,12 @@ async def plan_therapeutic_route(
             "of a specific assistant offer."
         )
 
-    clear_exercise = (
-        exercise_active
-        and active_flow.action != "preserve"
-        and response_style not in _EXERCISE_PRESERVING_STYLES
+    clear_exercise = exercise_active and (
+        active_flow.action == "clear"
+        or (
+            active_flow.action != "preserve"
+            and response_style not in _EXERCISE_PRESERVING_STYLES
+        )
     )
 
     if exercise_active and response_style == "guided_exercise" and pinned_approach:
