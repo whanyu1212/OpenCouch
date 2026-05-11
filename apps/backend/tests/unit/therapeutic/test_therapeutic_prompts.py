@@ -648,6 +648,7 @@ class TestTherapeuticResponsePrompt:
         """Raw working-memory dicts should be rendered at prompt time."""
 
         state = _make_state(
+            recall_enabled=True,
             working_memory=[
                 {
                     "type": "semantic",
@@ -659,7 +660,7 @@ class TestTherapeuticResponsePrompt:
                     "primary_themes": ["grief"],
                     "is_catch_up": True,
                 },
-            ]
+            ],
         )
 
         prompt = build_therapeutic_response_prompt(state, response_style="supportive")
@@ -672,9 +673,28 @@ class TestTherapeuticResponsePrompt:
         should pass through the formatter unchanged."""
 
         state = _make_state(
+            recall_enabled=True,
             working_memory=[
                 "Previously noted: legacy fact about the user.",  # type: ignore[list-item]
-            ]
+            ],
         )
         prompt = build_therapeutic_response_prompt(state, response_style="supportive")
         assert "legacy fact about the user" in prompt
+
+    def test_recall_off_hides_specific_working_memory_details(self) -> None:
+        """Recall-off prompts should not expose specific memory content."""
+
+        state = _make_state(
+            recall_enabled=False,
+            working_memory=[
+                {
+                    "type": "semantic",
+                    "evidence_quote": "My sister Sarah helps when panic starts.",
+                }
+            ],
+        )
+
+        prompt = build_therapeutic_response_prompt(state, response_style="supportive")
+        assert "Private memory context is available" in prompt
+        assert "Sarah" not in prompt
+        assert "panic starts" not in prompt

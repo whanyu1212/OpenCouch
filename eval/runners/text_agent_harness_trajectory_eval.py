@@ -989,6 +989,12 @@ def _grade_step(
         contains=expected.get("response_text_contains"),
         absent=expected.get("response_text_not_contains"),
     )
+    _grade_max_chars(
+        failures,
+        label=f"{label}.response_text",
+        text=str(artifact.get("response_text", "")),
+        expected=expected.get("response_text_max_chars"),
+    )
     _grade_text_contains(
         failures,
         label=f"{label}.prompt_text",
@@ -1001,6 +1007,54 @@ def _grade_step(
         label=f"{label}.working_memory_count",
         actual=artifact.get("working_memory_count"),
         expected=expected.get("working_memory_count_min"),
+    )
+    _grade_text_collection(
+        failures,
+        label=f"{label}.working_memory",
+        values=_flatten_text(artifact.get("working_memory")),
+        contains=expected.get("working_memory_contains"),
+        absent=expected.get("working_memory_not_contains"),
+    )
+
+    procedural_profile = _mapping_or_empty(artifact.get("procedural_profile"))
+    _grade_text_collection(
+        failures,
+        label=f"{label}.procedural_rules",
+        values=[
+            str(rule)
+            for rule in _list_or_empty(procedural_profile.get("procedural_rules"))
+        ],
+        contains=expected.get("procedural_rules_contain"),
+        absent=expected.get("procedural_rules_not_contains"),
+    )
+    _expect_equal(
+        failures,
+        label,
+        "proactive_recall_enabled",
+        procedural_profile.get("proactive_recall_enabled"),
+        expected,
+    )
+
+    diagnostics = _mapping_or_empty(artifact.get("diagnostics"))
+    for key in (
+        "retrieval_path",
+        "semantic_hits",
+        "episodic_hits",
+        "procedural_count",
+        "proactive_recall",
+    ):
+        _expect_equal(failures, label, key, diagnostics.get(key), expected)
+    _grade_minimum(
+        failures,
+        label=f"{label}.semantic_hits",
+        actual=diagnostics.get("semantic_hits"),
+        expected=expected.get("semantic_hits_min"),
+    )
+    _grade_minimum(
+        failures,
+        label=f"{label}.episodic_hits",
+        actual=diagnostics.get("episodic_hits"),
+        expected=expected.get("episodic_hits_min"),
     )
     _grade_expected_mapping(
         failures,
@@ -1213,6 +1267,37 @@ def _grade_text_contains(
             failures.append(f"{label} contains forbidden {str(phrase)!r}")
 
 
+def _grade_text_collection(
+    failures: list[str],
+    *,
+    label: str,
+    values: Sequence[str],
+    contains: Any,
+    absent: Any,
+) -> None:
+    haystack = "\n".join(values).casefold()
+    for phrase in _as_list(contains):
+        if str(phrase).casefold() not in haystack:
+            failures.append(f"{label} missing {str(phrase)!r}")
+    for phrase in _as_list(absent):
+        if str(phrase).casefold() in haystack:
+            failures.append(f"{label} contains forbidden {str(phrase)!r}")
+
+
+def _grade_max_chars(
+    failures: list[str],
+    *,
+    label: str,
+    text: str,
+    expected: Any,
+) -> None:
+    if expected is None:
+        return
+    limit = int(expected)
+    if len(text) > limit:
+        failures.append(f"{label}: expected <= {limit} chars, got {len(text)}")
+
+
 def _grade_minimum(
     failures: list[str],
     *,
@@ -1253,7 +1338,9 @@ async def _judge_trajectory(
                     "invariants. session_action is a structured machine signal "
                     "for the host UI; do not require the assistant's prose to "
                     "repeat it when the structured field is correct. Judge "
-                    "qualitative conversation behavior."
+                    "qualitative conversation behavior. Seeded memory stores may "
+                    "contain decoys; use hard checks and working-memory summaries "
+                    "to decide whether recall selected the right records."
                 ),
             },
             output=_judge_output(artifact, hard_failures=hard_failures),
@@ -1290,6 +1377,7 @@ def _judge_output(
                 "therapeutic_approach": step.get("therapeutic_approach"),
                 "session_action": step.get("session_action"),
                 "response_text": step.get("response_text"),
+                "memory": _judge_memory_summary(step),
                 "routing": step.get("routing"),
                 "exercise_state": step.get("exercise_state"),
                 "memory_control": step.get("memory_control"),
@@ -1301,9 +1389,74 @@ def _judge_output(
             for step in steps
             if isinstance(step, Mapping)
         ],
-        "final": artifact.get("final"),
+        "final": _judge_final_summary(artifact.get("final")),
         "tool_calls": artifact.get("tool_calls"),
     }
+
+
+def _judge_final_summary(final: Any) -> dict[str, Any]:
+    final_map = _mapping_or_empty(final)
+    state = _mapping_or_empty(final_map.get("state"))
+    store = _mapping_or_empty(final_map.get("store"))
+    return {
+        "status": final_map.get("status"),
+        "crisis_log_count": final_map.get("crisis_log_count"),
+        "state": {
+            "transcript_length": state.get("transcript_length"),
+            "assistant_turn_count": state.get("assistant_turn_count"),
+            "turn_count": state.get("turn_count"),
+            "working_memory_count": state.get("working_memory_count"),
+            "working_memory": state.get("working_memory"),
+            "procedural_profile": state.get("procedural_profile"),
+            "retrieval": _judge_retrieval_summary(state.get("diagnostics")),
+            "transcript_tail": _transcript_tail(state.get("transcript")),
+        },
+        "store_counts": {
+            "semantic_count": store.get("semantic_count"),
+            "episodic_count": store.get("episodic_count"),
+            "rule_count": store.get("rule_count"),
+            "proactive_recall_enabled": store.get("proactive_recall_enabled"),
+        },
+        "expected": final_map.get("expected"),
+    }
+
+
+def _judge_memory_summary(step: Mapping[str, Any]) -> dict[str, Any]:
+    diagnostics = _mapping_or_empty(step.get("diagnostics"))
+    return {
+        "working_memory_count": step.get("working_memory_count"),
+        "working_memory": step.get("working_memory"),
+        "procedural_profile": step.get("procedural_profile"),
+        "retrieval": _judge_retrieval_summary(diagnostics),
+    }
+
+
+def _judge_retrieval_summary(diagnostics: Any) -> dict[str, Any]:
+    diagnostics_map = _mapping_or_empty(diagnostics)
+    return {
+        "retrieval_path": diagnostics_map.get("retrieval_path"),
+        "semantic_hits": diagnostics_map.get("semantic_hits"),
+        "episodic_hits": diagnostics_map.get("episodic_hits"),
+        "procedural_count": diagnostics_map.get("procedural_count"),
+        "proactive_recall": diagnostics_map.get("proactive_recall"),
+    }
+
+
+def _transcript_tail(transcript: Any, *, limit: int = 4) -> list[dict[str, Any]]:
+    if not isinstance(transcript, list):
+        return []
+    tail: list[dict[str, Any]] = []
+    for item in transcript[-limit:]:
+        if not isinstance(item, Mapping):
+            continue
+        tail.append(
+            {
+                "role": item.get("role"),
+                "content": item.get("content"),
+                "response_style": item.get("response_style"),
+            }
+        )
+    return tail
 
 
 def _rubric_dimensions(case: TextHarnessCase) -> list[RubricDimension]:
@@ -1428,6 +1581,32 @@ def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _flatten_text(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Mapping):
+        texts: list[str] = []
+        for item in value.values():
+            texts.extend(_flatten_text(item))
+        return texts
+    if isinstance(value, list | tuple):
+        texts: list[str] = []
+        for item in value:
+            texts.extend(_flatten_text(item))
+        return texts
+    return [str(value)]
 
 
 def _jsonify(value: Any) -> Any:
