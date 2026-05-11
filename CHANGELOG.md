@@ -1,5 +1,85 @@
 # Changelog
 
+## 2026-05-11 — Text and Voice Dogfooding Scripts
+
+### Local dogfooding
+- Added `scripts/voice_agent.sh`, a dedicated LiveKit voice-agent launcher that starts the Dockerized Postgres service by default and then runs `agent.voice.agent`; it defaults to `start` but forwards LiveKit agent commands such as `console`, `console --text`, and `connect --room <name>`
+- Added voice-script flags for common dogfooding configuration without requiring manual environment exports: `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres`
+- Kept `scripts/cli_dogfood.sh` as the text-agent wrapper, so local users can run the text and voice agents independently while the web UI is being reworked
+
+### LiveKit text-mode verification
+- Fixed the LiveKit local text console path so typed turns go through the same OpenCouch pre-turn policy hook as spoken turns, including crisis classification, turn policy, and exercise-consent state
+- Verified live text-mode box-breathing entry against Postgres: direct typed consent now grants `grounding_box_breathing`, starts `VoiceExerciseTask`, and begins from the first catalog exercise step
+- Removed the duplicate post-exercise completion check-in after handoff back to the therapeutic agent
+
+### Validation
+- Focused LiveKit voice tests passed (`67 passed`)
+- `scripts/voice_agent.sh --help`, unknown-option handling, shell syntax, and pre-commit passed for the new script
+
+## 2026-05-08 — Turn Dispatch + Grounded Tool Simplification
+
+This entry continues the graph-slimming pass by collapsing safe-turn routing
+and grounded lookup into smaller LLM-primary services, with the graph kept to
+true lifecycle boundaries.
+
+### Turn-level routing
+- Replaced the separate `memory_control_gate` and `grounded_lookup_gate` graph
+  nodes with one `turn_dispatch` node that returns a typed route plan for
+  memory control, grounded lookup, or normal therapeutic support
+- Deleted the old grounded-lookup gate package and memory-control regex router,
+  moving memory-control action parsing into a plain service module instead of a
+  graph gate
+- Updated the agent graph, public state fields, voice tool wiring, docs, and
+  routing tests so tool invocation is handled at the turn-dispatch level rather
+  than through scattered regex/pattern gates
+
+### Grounded tools
+- Consolidated `grounded_lookup` and `web_search` into one
+  `grounded_search` execution module backed by provider-native search tools
+- Added structured factual lookup preflight and structured search-grounded
+  results with explicit source lists, avoiding text-marker parsing for success
+  or verification status
+- Added structured crisis-location classification, including a
+  `location_refused` status so crisis responses respect an explicit refusal to
+  share location instead of guessing or asking again
+
+### Evals and validation
+- Added turn-dispatch tool-usage eval coverage and grounded-tool quality evals
+  for factual lookup, non-crisis mental-health resources, crisis resources, and
+  explicit location refusal
+- Reusable LLM-as-judge helpers now support rubric-based quality checks for
+  grounded tool outputs
+- Focused backend checks passed (`52 passed`), grounded-tool quality passed in
+  scripted and live modes (`11/11` each), and pre-commit passed for the touched
+  files
+
+## 2026-05-08 — Therapeutic Dispatch Simplification + Output-State Trim
+
+This entry covers a focused architectural pass on top of the 2026-05-07 restructure: collapsing the therapeutic dispatcher to LLM-primary policy and deleting three carrying-cost-only fields from the agent's output state. Same `refactor/agent-restructure` branch.
+
+### Therapeutic dispatch — LLM-primary policy
+- Deleted four dispatch modules totaling ~821 LOC (`fallback.py`, `guards.py`, `patterns.py`, `regex_catalog.py`) that encoded a parallel regex-based routing system layered in front of the LLM classifier; replaced with a single 109 LOC `router.py` whose only non-LLM logic is exercise-state bookkeeping (clear `exercise_state` when the LLM routes away from an active exercise; pin the original therapeutic approach when the LLM stays inside one)
+- Trimmed the `dispatch/__init__.py` public surface from 57 re-exported names to 22 by dropping helpers that no longer exist; the surviving underscore-prefixed exports are the small set of internal helpers genuinely shared between `router.py` and `routing.py`
+- Removed the response-style postprocessor pipeline (`_ensure_reflective_question`, `_ensure_psychoeducation_question`, `_ensure_attuned_opening`, plus the threading through `TherapeuticResponseStyleConfig` and `run_streamed_response_style`) — these were regex-based hedges against LLM output that became dead weight once the dispatcher was trusted to pick the right style
+- `exercises/selection.py` shrank from 412 to 326 LOC as a follow-on cleanup
+
+### Output-state surface — three field deletions
+The agent's `AgentGraphOutputState` previously declared 8 channels; three of them did no runtime work and have been removed end-to-end (writers, schemas, public API, tests, frontend, docs):
+- **`response_style_type`** — a 3-value enum (`OPERATIONAL`/`THERAPEUTIC`/`CRISIS`) that was fully derivable from `response_kind` + `response_style`, never branched on, and explicitly labeled "Deprecated style-type label retained for call-site compatibility" in the CLI; the `ResponseStyleType` enum class itself is gone, along with its entry in the checkpoint deserializer's msgpack allowlist
+- **`response_style_source`** — provenance metadata (`crisis_gate`, `grounded_lookup_gate`, etc.) that was display-only with no consumers branching on its value; deletion removed three CLI display sites, one web `<Pill>` element, and the `responseStyleSource` field from the Zustand session store
+- **`response_kind`** — a 2-value enum (`THERAPEUTIC`/`CRISIS`) whose information was already encoded in `crisis.level`; replaced by a single derivation at the public-output boundary, so the public `AgentOutput.response_type` is now computed once in `state_to_output` from `crisis.level >= 2` rather than written by 5 different nodes and re-read
+
+The public `AgentOutput.response_type` field is unchanged in shape and value — only the internal computation changed from "5 writers + 1 reader" to "0 writers + 1 derivation."
+
+### Therapeutic subgraph contract
+- Tightened `TherapeuticSubgraphOutput` to its minimal load-bearing shape (`response_text`, `response_style`, `therapeutic_approach`, `exercise_state`, `diagnostics`); the explicit output schema continues to prevent the LangGraph subgraph-completion footgun where the parent re-appends an already-merged `transcript` reducer-channel
+- `TherapeuticSubgraphInput` similarly trimmed; subgraph internal state (`AgentState`) is unchanged
+
+### Validation
+- Backend test suite at **1025 passed, 0 failed, 15 skipped** throughout each of the three field deletions; assertions on the deleted fields were removed (~17 across `test_state_contracts.py`, `test_crisis_gate.py`, `test_therapeutic_routing.py`, `test_grounded_lookup.py`, `test_diagnostics_reducer.py`, `test_opencouch_cli.py`, `test_session_trajectory_eval_helpers.py`, `test_grounded_lookup.py`)
+- Frontend type definitions, the assistant-message Pill rendering, the debug `state` page sections, and the CLI diagnostics line were updated in the same commit so the public API and UI stay coherent
+- Docs (`AgentGraph.tsx`, `StateFields.tsx`, `NodeCatalog.tsx`, `agent/README.md`) updated to reflect the trimmed state surface
+
 ## 2026-05-07 — Agent Module Restructure + Service Extraction + Latency Wins
 
 This entry covers ~50 commits on `refactor/agent-restructure` since the 2026-05-03 entry, with a net **−1043 lines across 172 files** — a structural simplification rather than a feature push, plus one user-perceptible latency improvement and end-of-week dogfooding ergonomics.

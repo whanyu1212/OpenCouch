@@ -19,7 +19,6 @@ const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }
   { key: "route", label: "Route", desc: "Top-level graph branch", icon: "⇢" },
   { key: "response_style", label: "Response Style", desc: "Current reply style", icon: "◆" },
   { key: "therapeutic_approach", label: "Approach", desc: "Therapeutic approach overlay", icon: "◇" },
-  { key: "response_kind", label: "Response Kind", desc: "Therapeutic or crisis category", icon: "◈" },
   { key: "response_text", label: "Response Text", desc: "Generated reply text", icon: "¶" },
   { key: "crisis", label: "Crisis", desc: "Safety assessment: level, confidence, flags", icon: "⚑" },
   { key: "session_memory", label: "Session Memory", desc: "Summary, concerns, loops, goal", icon: "◉" },
@@ -27,7 +26,7 @@ const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }
   { key: "session_progress", label: "Session Progress", desc: "Turn count", icon: "▸" },
   { key: "exercise_state", label: "Exercise State", desc: "Guided exercise continuity", icon: "◎" },
   { key: "memory_control", label: "Memory Control", desc: "Pending memory action", icon: "⌁" },
-  { key: "grounded_lookup_status", label: "Grounded Lookup", desc: "Factual lookup status", icon: "⌕" },
+  { key: "grounded_lookup", label: "Grounded Lookup", desc: "Factual lookup query and status", icon: "⌕" },
   { key: "resource_lookup_status", label: "Crisis Resources", desc: "Crisis resource lookup status", icon: "✚" },
   { key: "inferred_location", label: "Inferred Location", desc: "User-stated crisis location", icon: "⌖" },
   { key: "found_resources", label: "Found Resources", desc: "Verified crisis resources", icon: "☑" },
@@ -191,8 +190,6 @@ export default function StateInspectorPage() {
                       "user_id",
                       "session_id",
                       "installed_skills",
-                      "response_style_source",
-                      "response_style_type",
                       "should_persist_memory",
                       "crisis_audit",
                     ].includes(k)
@@ -395,11 +392,11 @@ function getSummary(key: string, value: unknown): string {
     case "route":
     case "response_style":
     case "therapeutic_approach":
-    case "response_kind":
-    case "grounded_lookup_status":
     case "resource_lookup_status":
     case "inferred_location":
       return String(value || "—");
+    case "grounded_lookup":
+      return `status=${String(obj.status ?? "—")}`;
     case "response_text":
       return String(value || "").slice(0, 80);
     case "crisis": {

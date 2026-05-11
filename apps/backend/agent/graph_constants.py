@@ -9,22 +9,18 @@ CRISIS_GATE_NODE = "crisis_gate_node"
 CRISIS_RESOURCE_LOOKUP_NODE = "crisis_resource_lookup_node"
 CRISIS_RESPONSE_NODE = "crisis_response_node"
 CRISIS_LOG_NODE = "crisis_log_node"
-MEMORY_CONTROL_GATE_NODE = "memory_control_gate_node"
+TURN_DISPATCH_NODE = "turn_dispatch_node"
 MEMORY_CONTROL_NODE = "memory_control_node"
-GROUNDED_LOOKUP_GATE_NODE = "grounded_lookup_gate_node"
 GROUNDED_ANSWER_NODE = "grounded_answer_node"
 THERAPEUTIC_SUBGRAPH_NODE = "therapeutic_subgraph"
 FINALIZE_TURN_NODE = "finalize_turn_node"
 
 CrisisGateNextNode: TypeAlias = Literal[
     "crisis_resource_lookup_node",
-    "memory_control_gate_node",
+    "turn_dispatch_node",
 ]
-MemoryControlGateNextNode: TypeAlias = Literal[
+TurnDispatchNextNode: TypeAlias = Literal[
     "memory_control_node",
-    "grounded_lookup_gate_node",
-]
-GroundedLookupGateNextNode: TypeAlias = Literal[
     "grounded_answer_node",
     "load_memory_node",
 ]
@@ -35,9 +31,8 @@ GRAPH_NODE_TO_STATUS_STAGE = {
     CRISIS_RESOURCE_LOOKUP_NODE: "crisis_resource_lookup",
     CRISIS_RESPONSE_NODE: "crisis_response",
     CRISIS_LOG_NODE: "crisis_log",
-    MEMORY_CONTROL_GATE_NODE: "memory_control_gate",
+    TURN_DISPATCH_NODE: "turn_dispatch",
     MEMORY_CONTROL_NODE: "memory_control",
-    GROUNDED_LOOKUP_GATE_NODE: "grounded_lookup_gate",
     GROUNDED_ANSWER_NODE: "grounded_lookup",
     THERAPEUTIC_SUBGRAPH_NODE: "therapeutic",
     FINALIZE_TURN_NODE: "finalize",

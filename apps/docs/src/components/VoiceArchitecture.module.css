@@ -360,7 +360,7 @@
   letter-spacing: 0;
 }
 
-/* GroundingTask — beneath the therapist column */
+/* VoiceExerciseTask — beneath the therapist column */
 .taskWrap {
   grid-area: task;
   display: flex;

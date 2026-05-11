@@ -130,6 +130,16 @@ def build_summarization_system_prompt() -> str:
         "- Focus on CONTENT, not process. Don't write 'the user asked\n"
         "  clarifying questions about X' — write 'the user was trying to\n"
         "  understand X'.\n"
+        "- Ignore brief side requests that are not part of the user's emotional\n"
+        "  or therapeutic thread: factual lookups, current-information checks,\n"
+        "  source lists, tool outputs, logistical detours, and similar one-off\n"
+        "  interruptions. Do not mention them in summary, primary_themes,\n"
+        "  open_loops, or resolved_threads unless the user made that external\n"
+        "  information the actual emotional focus of the session.\n"
+        "- Assistant turns may include a style marker such as\n"
+        "  ``assistant[grounded_lookup]``. Treat grounded lookup answers and their\n"
+        "  source text as context to omit from episodic memory, not as material\n"
+        "  to summarize.\n"
         "\n"
         "═══ primary_themes ═══\n"
         "\n"
@@ -265,9 +275,7 @@ def build_summarization_user_prompt(
         transcript_block = "(empty transcript — the session had no turns)"
     else:
         transcript_block = "\n".join(
-            f"{turn.get('role', 'unknown')}: {turn.get('content', '').strip()}"
-            for turn in transcript
-            if turn.get("content")
+            _format_transcript_turn(turn) for turn in transcript if turn.get("content")
         )
 
     # Build approach extraction block — only for sessions with a clear therapeutic approach.
@@ -304,3 +312,22 @@ def build_summarization_user_prompt(
         f"talk, a capability check, or otherwise too thin to summarize\n"
         f"meaningfully, return ``arc=None`` with a reason explaining why."
     )
+
+
+def _format_transcript_turn(turn: dict[str, str]) -> str:
+    """Render one transcript turn for the summarizer prompt.
+
+    Args:
+        turn (dict[str, str]): Transcript turn with role, content, and optional
+            response_style metadata.
+
+    Returns:
+        str: Prompt line for the turn.
+    """
+
+    role = turn.get("role", "unknown")
+    content = turn.get("content", "").strip()
+    response_style = turn.get("response_style")
+    if role == "assistant" and response_style:
+        return f"{role}[{response_style}]: {content}"
+    return f"{role}: {content}"

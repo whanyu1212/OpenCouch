@@ -42,19 +42,18 @@ const STEPS: StepDef[] = [
     label: 'crisis_gate_node',
     sub: 'Safety first — every message, no exceptions',
     badges: [
-      { label: 'deterministic' },
-      { label: 'optional LLM', llm: true },
+      { label: 'LLM structured output', llm: true },
       { label: 'retry', retry: true },
     ],
     branch: {
       condition: 'needs_crisis_response',
       targetA: 'crisis_response → crisis_log → finalize',
-      targetB: 'load_memory → therapeutic_subgraph → finalize',
+      targetB: 'turn_dispatch → load_memory → therapeutic_subgraph → finalize',
       crisis: true,
     },
     detail: {
       what: 'Hard safety boundary. Runs BEFORE memory retrieval — there is no path that loads context without first passing the safety check. Returns a Command(goto=...) that routes the turn.',
-      how: 'Layer 1: deterministic hard overrides for imminent risk and idiomatic-safe wording. Layer 2: LLM classifier for ambiguous cases. Layer 3: deterministic fallback when no LLM is configured or parsing fails. Layer 4: policy normalization. Output: CrisisAssessment with level 0–3 and routing decision.',
+      how: 'LLM-only classifier returns a structured CrisisAssessment with level 0–3. Local normalization enforces needs_crisis_response for levels 2–3 and needs_clarification for level 1; provider failures retry or surface instead of falling back to regex.',
       emits: 'state.crisis + state.routing.route ("crisis" | "therapeutic")',
     },
   },
@@ -82,8 +81,8 @@ const STEPS: StepDef[] = [
     ],
     detail: {
       what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and exercise state flow back to the parent — preventing reducer double-counting on history/transcript.',
-      how: 'Dispatcher is LLM-primary: deterministic regex only fires for explicit exercise opt-out, the LLM picks response_style + therapeutic_approach for everything else, and regex fallback runs when no LLM is configured. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
-      emits: 'response_style + response_style_source + response_style_type + response_kind + response_text + therapeutic_approach + exercise_state',
+      how: 'Dispatcher is LLM-owned: the model picks response_style + therapeutic_approach, with local validation around active exercise state. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
+      emits: 'response_style + response_text + therapeutic_approach + exercise_state',
     },
   },
   {
@@ -122,7 +121,7 @@ const STEPS: StepDef[] = [
     sub: 'Normalized public response returned to the API layer',
     detail: {
       what: 'state_to_output extracts the public response shape from the final state. The checkpoint stores the full accumulated state for the next turn — including the reducer-merged transcript, diagnostics, and progress.',
-      how: 'Extracts response_text, crisis assessment, response_style, response_style_type, response_style_source, diagnostics (including turn_total_ms stamped by the runtime).',
+      how: 'Extracts response_text, crisis assessment, response_style, diagnostics (including turn_total_ms stamped by the runtime).',
       emits: 'AgentOutput',
     },
   },
@@ -143,7 +142,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'reflective', label: 'reflective',
     detail: {
       what: 'User describing a recurring pattern they\'ve already named. Reflects on themes, connections, cycles.',
-      how: 'Picked by the LLM dispatcher when the user is already naming a pattern. Regex fallback covers no-LLM runs.',
+      how: 'Picked by the LLM dispatcher when the user is already naming a pattern.',
       emits: 'response.kind = THERAPEUTIC',
     },
   },
@@ -151,7 +150,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'clarifying', label: 'clarifying',
     detail: {
       what: 'Ambiguous or very short message — agent needs context before responding.',
-      how: 'Picked by the LLM dispatcher when the next useful move is one small clarifying question. Regex fallback covers no-LLM runs.',
+      how: 'Picked by the LLM dispatcher when the next useful move is one small clarifying question.',
       emits: 'response.kind = THERAPEUTIC',
     },
   },
@@ -168,15 +167,15 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     detail: {
       what: 'User wants structured therapeutic work without launching a named exercise — examining a thought, weighing evidence for a belief, working through a dilemma. The therapeutic_approach knowledge drives the response shape.',
       how: 'Picked by the LLM dispatcher when the user asks for structure but not a specific exercise. Requires an active therapeutic_approach.',
-      emits: 'response_kind = THERAPEUTIC + therapeutic_approach',
+      emits: 'therapeutic_approach',
     },
   },
   {
     id: 'guided_exercise', label: 'guided_exercise',
     detail: {
       what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_therapeutic_approach) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
-      how: 'Active-exercise context is passed to the LLM dispatcher; explicit exit phrases fire deterministically. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
-      emits: 'response_kind = THERAPEUTIC + exercise_state.{exercise_type, exercise_step, exercise_therapeutic_approach}',
+      how: 'Active-exercise context is passed to the LLM dispatcher. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
+      emits: 'exercise_state.{exercise_type, exercise_step, exercise_therapeutic_approach}',
     },
   },
   {
@@ -184,7 +183,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     detail: {
       what: 'User signals wind-down ("I should go", "thanks, this helped"). Graceful session close. May set should_persist_memory=True.',
       how: 'LLM dispatcher distinguishes a real wind-down ("I have to head out") from mid-conversation thanks ("thanks, that helps").',
-      emits: 'response_kind = THERAPEUTIC',
+      emits: 'response_text',
     },
   },
 ];

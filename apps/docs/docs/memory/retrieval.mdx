@@ -100,17 +100,7 @@ backend-agnostic by contract, not by accident.
 
 ---
 
-## Eval harness
+## Regression coverage
 
-```bash
-# From apps/backend.
-
-# Token-recall baseline (no API key needed)
-uv run python ../../eval/runners/retrieval_eval.py --mode token-only
-
-# Compare all three scorers (requires API key)
-uv run python ../../eval/runners/retrieval_eval.py --mode hybrid --verbose
-```
-
-17 hand-curated cases across 6 categories. Output is a scorer
-comparison matrix showing recall@1 / recall@5 per category.
+The eval harness is being rebuilt. Until the replacement lands, retrieval
+changes should be covered with backend tests and targeted manual trace review.

@@ -42,6 +42,7 @@ export type AssistantVoiceOption =
   (typeof ASSISTANT_VOICE_OPTIONS)[number]["value"];
 
 export type VoiceMemoryMode = "persistent" | "incognito";
+export type SessionAction = "none" | "suggest_end_session";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -57,8 +58,8 @@ export interface ChatResponse {
   response_text: string;
   response_type: string;
   response_style: string | null;
-  response_style_source: string | null;
   therapeutic_approach: string | null;
+  session_action: SessionAction;
   crisis: CrisisInfo;
   diagnostics: Record<string, unknown>;
 }

@@ -12,6 +12,8 @@ evolves.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from agent.memory.models import FeedbackLabel
@@ -89,15 +91,17 @@ class ChatResponse(BaseModel):
         "(supportive, reflective, technique, clarifying, psychoeducation, "
         "guided_exercise, closing, or None for crisis path).",
     )
-    response_style_source: str | None = Field(
-        default=None,
-        description="How the response style was selected: keyword, llm, default.",
-    )
     therapeutic_approach: str | None = Field(
         default=None,
         description="Which therapeutic approach informed the reply "
         "(motivational_interviewing, cbt, act, dbt_skills, "
         "grief_support, interpersonal_therapy, pfa, or none).",
+    )
+    session_action: Literal["none", "suggest_end_session"] = Field(
+        default="none",
+        description="Optional session-level UI hint. "
+        "'suggest_end_session' means the assistant has produced a closing "
+        "reply and the client may offer explicit session finalization.",
     )
     crisis: CrisisInfo
     diagnostics: dict[str, object] = Field(
@@ -210,3 +214,11 @@ class StreamDoneMessage(BaseModel):
 
     type: str = "done"
     response: ChatResponse
+
+
+class StreamErrorMessage(BaseModel):
+    """WebSocket message: terminal error event."""
+
+    type: str = "error"
+    code: str
+    message: str

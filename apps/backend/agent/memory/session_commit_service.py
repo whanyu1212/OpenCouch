@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agent.memory.policy.candidates import (
+    BufferedProceduralCandidate,
+    BufferedSemanticCandidate,
     ProceduralCandidate,
     SemanticCandidate,
     SessionMemoryBuffer,
@@ -290,49 +292,49 @@ def _token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
 
 
 def _cluster_procedural_candidates(
-    buffered_candidates: list[ProceduralCandidate],
-) -> list[list[ProceduralCandidate]]:
+    buffered_candidates: list[BufferedProceduralCandidate],
+) -> list[list[BufferedProceduralCandidate]]:
     """Cluster procedural candidates with similar repeated preferences.
 
     Args:
-        buffered_candidates: Procedural candidates buffered during the session.
+        buffered_candidates: Procedural records buffered during the session.
 
     Returns:
-        Groups of similar procedural candidates.
+        Groups of similar procedural records.
     """
 
-    groups: list[list[ProceduralCandidate]] = []
+    groups: list[list[BufferedProceduralCandidate]] = []
     group_tokens: list[frozenset[str]] = []
 
-    for candidate in buffered_candidates:
-        tokens = _procedural_signature_tokens(candidate)
+    for record in buffered_candidates:
+        tokens = _procedural_signature_tokens(record.candidate)
         placed = False
         for index, existing_tokens in enumerate(group_tokens):
             overlap = len(tokens & existing_tokens)
             similarity = _token_similarity(tokens, existing_tokens)
             if similarity >= 0.5 or overlap >= 3:
-                groups[index].append(candidate)
+                groups[index].append(record)
                 group_tokens[index] = frozenset(existing_tokens | tokens)
                 placed = True
                 break
         if not placed:
-            groups.append([candidate])
+            groups.append([record])
             group_tokens.append(tokens)
 
     return groups
 
 
 def _select_semantic_candidates_to_commit(
-    buffered_candidates: list[SemanticCandidate],
+    buffered_candidates: list[BufferedSemanticCandidate],
     *,
     stored_arc: "StoredSessionArc | None",
     user_turn_texts: list[str],
     prior_session_support_texts: list[str],
-) -> tuple[list[SemanticCandidate], int]:
+) -> tuple[list[BufferedSemanticCandidate], int]:
     """Choose which buffered semantic candidates are durable enough to commit.
 
     Args:
-        buffered_candidates: Semantic candidates buffered during the session.
+        buffered_candidates: Semantic records buffered during the session.
         stored_arc: Optional session arc produced at session end.
         user_turn_texts: User transcript turns for repetition checks.
         prior_session_support_texts: Prior episodic support texts.
@@ -341,27 +343,30 @@ def _select_semantic_candidates_to_commit(
         Selected candidates plus skipped group count.
     """
 
-    grouped: dict[tuple[str, ...], list[SemanticCandidate]] = defaultdict(list)
-    for candidate in buffered_candidates:
-        grouped[_semantic_group_key(candidate)].append(candidate)
+    grouped: dict[tuple[str, ...], list[BufferedSemanticCandidate]] = defaultdict(list)
+    for record in buffered_candidates:
+        grouped[_semantic_group_key(record.candidate)].append(record)
 
-    selected: list[SemanticCandidate] = []
+    selected: list[BufferedSemanticCandidate] = []
     skipped = 0
     for group in grouped.values():
-        support_turn_count = len({c.source_turn_index for c in group})
-        repetition_candidate = next(
+        support_turn_count = len(
+            {record.candidate.source_turn_index for record in group}
+        )
+        repetition_record = next(
             (
-                candidate
-                for candidate in reversed(group)
-                if candidate.policy_recommendation == "require_repetition"
+                record
+                for record in reversed(group)
+                if record.hold_action == "require_repetition"
             ),
             None,
         )
-        representative = repetition_candidate or group[-1]
-        object_identifier = representative.payload.object.identifier.lower().strip()
+        representative = repetition_record or group[-1]
+        candidate = representative.candidate
+        object_identifier = candidate.payload.object.identifier.lower().strip()
         candidate_tokens = _candidate_tokens(
-            representative.payload.evidence_quote,
-            representative.payload.object.identifier,
+            candidate.payload.evidence_quote,
+            candidate.payload.object.identifier,
         )
         transcript_support_turns = _count_supported_user_turns(
             candidate_tokens,
@@ -381,9 +386,9 @@ def _select_semantic_candidates_to_commit(
         )
 
         should_commit = False
-        if representative.policy_recommendation == "require_repetition":
+        if representative.hold_action == "require_repetition":
             should_commit = should_commit_pattern(
-                representative,
+                hold_action=representative.hold_action,
                 evidence_count=effective_support,
             ) or (effective_support >= 1 and prior_session_supports >= 1)
         else:
@@ -402,41 +407,44 @@ def _select_semantic_candidates_to_commit(
 
 
 def _select_procedural_candidates_to_commit(
-    buffered_candidates: list[ProceduralCandidate],
+    buffered_candidates: list[BufferedProceduralCandidate],
     *,
     user_turn_texts: list[str],
-) -> tuple[list[tuple[ProceduralCandidate, list[str], int]], int]:
+) -> tuple[list[tuple[BufferedProceduralCandidate, list[str], int]], int]:
     """Choose which buffered implicit procedural candidates can promote.
 
     Args:
-        buffered_candidates: Procedural candidates buffered during the session.
+        buffered_candidates: Procedural records buffered during the session.
         user_turn_texts: User transcript turns for repetition checks.
 
     Returns:
-        Selected candidates with evidence/support counts plus skipped group count.
+        Selected records with evidence/support counts plus skipped group count.
     """
 
-    selected: list[tuple[ProceduralCandidate, list[str], int]] = []
+    selected: list[tuple[BufferedProceduralCandidate, list[str], int]] = []
     skipped = 0
 
     for group in _cluster_procedural_candidates(buffered_candidates):
         representative = group[-1]
-        candidate_tokens = _procedural_signature_tokens(representative)
+        candidate = representative.candidate
+        candidate_tokens = _procedural_signature_tokens(candidate)
         transcript_support_turns = _count_supported_user_turns(
             candidate_tokens,
             user_turn_texts,
         )
-        support_turn_count = len({candidate.source_turn_index for candidate in group})
+        support_turn_count = len(
+            {record.candidate.source_turn_index for record in group}
+        )
         effective_support = max(support_turn_count, transcript_support_turns)
         if should_commit_implicit_procedural_preference(
-            representative,
+            hold_action=representative.hold_action,
             evidence_count=effective_support,
         ):
             evidence = list(
                 dict.fromkeys(
                     quote
-                    for candidate in group
-                    for quote in candidate.evidence_quotes
+                    for record in group
+                    for quote in record.candidate.evidence_quotes
                     if quote
                 )
             )
@@ -472,8 +480,8 @@ async def commit_session_memory(
 
     if (
         session_buffer is None
-        or not session_buffer.semantic_candidates
-        and not session_buffer.procedural_candidates
+        or not session_buffer.held_semantic_candidates
+        and not session_buffer.held_procedural_candidates
     ):
         return None
 
@@ -501,7 +509,7 @@ async def commit_session_memory(
 
     semantic_candidates_to_commit, result.semantic_skips = (
         _select_semantic_candidates_to_commit(
-            session_buffer.semantic_candidates,
+            session_buffer.held_semantic_candidates,
             stored_arc=stored_arc,
             user_turn_texts=user_turn_texts,
             prior_session_support_texts=prior_session_support_texts,
@@ -509,10 +517,11 @@ async def commit_session_memory(
     )
     if semantic_candidates_to_commit:
         batch_items: list[BatchWriteItem] = []
-        for candidate in semantic_candidates_to_commit:
+        for record in semantic_candidates_to_commit:
+            candidate = record.candidate
             write_timing = (
                 "promotion"
-                if candidate.policy_recommendation == "require_repetition"
+                if record.hold_action == "require_repetition"
                 else "session_end"
             )
             write_reason = (
@@ -543,16 +552,17 @@ async def commit_session_memory(
 
     procedural_candidates_to_commit, result.procedural_skips = (
         _select_procedural_candidates_to_commit(
-            session_buffer.procedural_candidates,
+            session_buffer.held_procedural_candidates,
             user_turn_texts=user_turn_texts,
         )
     )
     if procedural_candidates_to_commit:
         for (
-            procedural_candidate,
+            procedural_record,
             evidence,
             effective_support,
         ) in procedural_candidates_to_commit:
+            procedural_candidate = procedural_record.candidate
             try:
                 rule = build_procedural_rule(
                     rule_text=procedural_candidate.payload.rule,

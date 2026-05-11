@@ -34,12 +34,7 @@ class ResponseCategory(str, Enum):
     CRISIS = "crisis"
 
 
-class ResponseStyleType(str, Enum):
-    """High-level response-style family used for observability."""
-
-    OPERATIONAL = "operational"
-    THERAPEUTIC = "therapeutic"
-    CRISIS = "crisis"
+SessionAction = Literal["none", "suggest_end_session"]
 
 
 class Message(BaseModel):
@@ -81,9 +76,8 @@ class AgentOutput(BaseModel):
     response_type: ResponseCategory
     crisis: CrisisAssessment
     response_style: str | None = None
-    response_style_type: ResponseStyleType | None = None
-    response_style_source: str | None = None
     therapeutic_approach: str | None = None
+    session_action: SessionAction = "none"
     should_persist_memory: bool = False
     # Per-turn diagnostics for CLI/API observability. Nodes write timings
     # and write-counts into ``state["diagnostics"]``; ``state_to_output``
@@ -111,9 +105,8 @@ STAGE_LABELS: dict[str, str] = {
     "memory_profile_save": "saving profile memory",
     "memory_graph_save": "writing graph memory",
     "crisis_gate": "safety check",
-    "memory_control_gate": "checking memory command",
+    "turn_dispatch": "routing turn",
     "memory_control": "updating memory",
-    "grounded_lookup_gate": "checking factual lookup",
     "grounded_lookup": "looking up factual answer",
     "crisis_resource_lookup": "looking up crisis resources",
     "crisis_response": "generating crisis reply",

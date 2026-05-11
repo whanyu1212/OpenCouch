@@ -12,8 +12,6 @@ to ``context.userdata`` for session state.
 from __future__ import annotations
 
 import logging
-import re
-import uuid
 from typing import cast
 
 from livekit.agents import RunContext, function_tool
@@ -26,51 +24,18 @@ from agent.gates.memory_control import (
     list_memory_for_owner,
     set_memory_recall,
 )
-from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import aget_procedural_profile
-from agent.gates.safety.crisis_rules import (
-    AMBIGUOUS_PATTERNS,
-    CLEAR_SELF_HARM_PATTERNS,
-    IMMINENT_PATTERNS,
-)
 from agent.state import AgentState
-from agent.tools.grounded_lookup import answer_grounded_lookup
-from agent.tools.web_search import ResourceLookupStatus, find_local_crisis_resources
+from agent.tools.grounded_search import (
+    CrisisResourceLookupStatus,
+    answer_factual_lookup,
+    find_crisis_resources,
+)
 from agent.voice.activity import emit_voice_activity
 from agent.voice.session_data import SessionData
 
 logger = logging.getLogger(__name__)
-
-
-# ── Keyword patterns for the safety net ─────────────────────────────
-# Subset of the deterministic patterns used for fast pre-screening
-# in on_user_turn_completed.  These are the high-confidence patterns
-# that should trigger an immediate agent swap without waiting for
-# the LLM to decide.
-SAFETY_NET_PATTERNS: tuple[str, ...] = IMMINENT_PATTERNS + CLEAR_SELF_HARM_PATTERNS
-
-
-def matches_crisis_keywords(text: str) -> bool:
-    """Return True if text matches any high-confidence crisis pattern.
-
-    Used by the ``on_user_turn_completed`` safety net to force an
-    immediate handoff to CrisisAgent without waiting for the LLM.
-    """
-    lowered = text.lower()
-    return any(
-        re.search(pattern, lowered, flags=re.IGNORECASE)
-        for pattern in SAFETY_NET_PATTERNS
-    )
-
-
-def matches_ambiguous_distress(text: str) -> bool:
-    """Return True if text matches ambiguous distress patterns (level 1)."""
-    lowered = text.lower()
-    return any(
-        re.search(pattern, lowered, flags=re.IGNORECASE)
-        for pattern in AMBIGUOUS_PATTERNS
-    )
 
 
 # ── Shared function tools ───────────────────────────────────────────
@@ -234,7 +199,7 @@ def _format_crisis_resources(
     return "\n".join(lines)
 
 
-def _crisis_resource_fallback(status: ResourceLookupStatus) -> str:
+def _crisis_resource_fallback(status: CrisisResourceLookupStatus) -> str:
     """Return safe fallback crisis-resource text.
 
     Args:
@@ -255,66 +220,6 @@ def _crisis_resource_fallback(status: ResourceLookupStatus) -> str:
         "If you're in immediate danger, call local emergency services now. "
         "If you're in the US or Canada, call or text 988. You can also use "
         "findahelpline.com to find support by country."
-    )
-
-
-@function_tool()
-async def save_insight(
-    context: RunContext[SessionData],
-    fact: str,
-) -> str:
-    """Save an important fact about the user to memory for future sessions.
-
-    Call this when the user shares something meaningful about themselves,
-    their situation, relationships, or preferences that would be useful
-    to remember in future conversations.
-
-    Args:
-        fact: A concise factual statement about the user.
-    """
-    userdata = context.userdata
-    store = userdata.memory_store
-
-    if store is None:
-        return "Memory is not available in this session."
-
-    if userdata.memory_mode == MemoryMode.INCOGNITO:
-        return "Memory is disabled in guest mode."
-
-    # This mutates durable memory, so do not allow a barge-in to hide a write.
-    context.disallow_interruptions()
-
-    namespace = (userdata.user_id, "semantic")
-    key = f"voice-insight-{uuid.uuid4().hex[:12]}"
-
-    await store.aput(
-        namespace,
-        key,
-        {
-            "evidence_quote": fact,
-            "created_at": iso_now(),
-            "source": "voice_tool",
-            "thread_id": userdata.thread_id,
-        },
-    )
-
-    logger.info(
-        "save_insight: user=%s key=%s fact=%s",
-        userdata.user_id,
-        key,
-        fact[:80],
-    )
-    await emit_voice_activity(
-        context,
-        activity="memory_saved",
-        status="completed",
-        label="Memory saved",
-        detail="Saved for future sessions.",
-    )
-
-    return (
-        "Saved for future conversations. Do not narrate the save unless "
-        "the user asked you to."
     )
 
 
@@ -361,7 +266,7 @@ async def answer_grounded_factual_lookup(
         label="Lookup started",
         detail="Checking current information.",
     )
-    answer, status = await answer_grounded_lookup(
+    answer, status = await answer_factual_lookup(
         _lookup_state_from_context(context, message=query),
         llm_client=llm_client,
         query=query,
@@ -425,7 +330,7 @@ async def provide_crisis_resources(
             label="Resource lookup unavailable",
             detail="Local crisis-resource search is not available.",
         )
-        return _crisis_resource_fallback("search_failed")
+        return _crisis_resource_fallback("no_verified_results")
 
     await emit_voice_activity(
         context,
@@ -434,7 +339,7 @@ async def provide_crisis_resources(
         label="Crisis resources search started",
         detail="Checking verified local resources.",
     )
-    location, resources, status = await find_local_crisis_resources(
+    location, resources, status = await find_crisis_resources(
         _lookup_state_from_context(
             context,
             message=location_context.strip(),
@@ -787,90 +692,3 @@ async def cancel_memory_deletion(context: RunContext[SessionData]) -> str:
         detail="No saved memory was changed.",
     )
     return "Cancelled. I didn't change your memory."
-
-
-@function_tool()
-async def crisis_check(
-    context: RunContext[SessionData],
-    concern: str,
-) -> str:
-    """Assess whether the user may be in crisis and needs immediate support.
-
-    Call this when the user expresses hopelessness, self-harm thoughts,
-    suicidal ideation, or indicates they may be in danger.  Provide
-    the specific statement or behaviour that triggered your concern.
-
-    Args:
-        concern: The user's statement or behaviour that raised concern.
-    """
-    userdata = context.userdata
-
-    # Run deterministic check first (instant, no network).
-    lowered = concern.lower()
-
-    is_imminent = any(
-        re.search(p, lowered, flags=re.IGNORECASE) for p in IMMINENT_PATTERNS
-    )
-    is_clear_self_harm = any(
-        re.search(p, lowered, flags=re.IGNORECASE) for p in CLEAR_SELF_HARM_PATTERNS
-    )
-    is_ambiguous = any(
-        re.search(p, lowered, flags=re.IGNORECASE) for p in AMBIGUOUS_PATTERNS
-    )
-
-    if is_imminent:
-        userdata.crisis_level = 3
-        userdata.max_crisis_level = max(userdata.max_crisis_level, 3)
-        logger.warning(
-            "crisis_check: IMMINENT RISK detected user=%s concern=%s",
-            userdata.user_id,
-            concern[:100],
-        )
-        from agent.voice.agent import CrisisAgent, _copy_handoff_chat_ctx
-
-        return (
-            CrisisAgent(
-                chat_ctx=_copy_handoff_chat_ctx(context.session.current_agent.chat_ctx)
-            ),
-            "Transferring to crisis support",
-        )
-
-    if is_clear_self_harm:
-        userdata.crisis_level = 2
-        userdata.max_crisis_level = max(userdata.max_crisis_level, 2)
-        logger.warning(
-            "crisis_check: clear self-harm detected user=%s concern=%s",
-            userdata.user_id,
-            concern[:100],
-        )
-        from agent.voice.agent import CrisisAgent, _copy_handoff_chat_ctx
-
-        return (
-            CrisisAgent(
-                chat_ctx=_copy_handoff_chat_ctx(context.session.current_agent.chat_ctx)
-            ),
-            "Transferring to crisis support",
-        )
-
-    if is_ambiguous:
-        userdata.crisis_level = 1
-        userdata.max_crisis_level = max(userdata.max_crisis_level, 1)
-        logger.info(
-            "crisis_check: ambiguous distress user=%s concern=%s",
-            userdata.user_id,
-            concern[:100],
-        )
-        return (
-            "The user may be experiencing distress. "
-            "Gently ask a clarifying question to understand whether "
-            "they are having thoughts of self-harm, without being "
-            "alarmist. If they confirm, call crisis_check again with "
-            "their response."
-        )
-
-    # No crisis signal detected.
-    userdata.crisis_level = 0
-    return (
-        "No immediate crisis signal detected. Continue the "
-        "conversation with care and empathy."
-    )

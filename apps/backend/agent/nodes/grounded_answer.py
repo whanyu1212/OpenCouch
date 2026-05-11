@@ -7,17 +7,16 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
-from agent.models import ResponseStyleType, ResponseCategory
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.tools.grounded_lookup import GroundedLookupStatus, answer_grounded_lookup
+from agent.tools.grounded_search import FactualLookupStatus, answer_factual_lookup
 
 
 def _base_delta(
     response_text: str,
     *,
-    status: GroundedLookupStatus,
+    status: FactualLookupStatus,
     started_at: float,
 ) -> dict[str, Any]:
     """Return the shared response delta for grounded lookup turns.
@@ -35,9 +34,6 @@ def _base_delta(
         "route": "grounded_lookup",
         "grounded_lookup": {"status": status},
         "response_style": "grounded_lookup",
-        "response_style_source": "grounded_lookup_gate",
-        "response_style_type": ResponseStyleType.OPERATIONAL,
-        "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
         "diagnostics": {"grounded_lookup_ms": elapsed_ms(started_at)},
     }
@@ -61,31 +57,20 @@ async def run_grounded_answer_node(
 
     started_at = time.monotonic()
     grounded_lookup = state.get("grounded_lookup", {}) or {}
-    query = (
-        grounded_lookup.get("query")
-        or state.get("grounded_lookup_query")
-        or state.get("message", "")
-    ).strip()
+    query = str(grounded_lookup.get("query") or "").strip()
+    if not query:
+        raise ValueError("grounded_answer_node requires grounded_lookup.query.")
     llm_client = runtime.context.llm_client
 
     if llm_client is None:
-        return _base_delta(
-            "I can't look that up from here right now, so I don't want to guess.",
-            status="search_unavailable",
-            started_at=started_at,
-        )
+        raise RuntimeError("grounded_answer_node requires an LLM client.")
 
-    answer, status = await answer_grounded_lookup(
+    answer, status = await answer_factual_lookup(
         state,
         llm_client=llm_client,
         query=query,
     )
-    if status == "answered":
-        return _base_delta(answer, status=status, started_at=started_at)
     if answer:
         return _base_delta(answer, status=status, started_at=started_at)
-    if status == "search_failed":
-        text = "I couldn't complete the lookup right now, so I don't want to guess."
-    else:
-        text = "I couldn't verify that from reliable sources, so I don't want to guess."
-    return _base_delta(text, status=status, started_at=started_at)
+    text = "I couldn't verify that from reliable sources, so I don't want to guess."
+    return _base_delta(text, status="no_verified_answer", started_at=started_at)

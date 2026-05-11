@@ -125,7 +125,7 @@ uv run uvicorn main:app --port 8000 --reload
 
 # Terminal 2: LiveKit worker
 cd apps/backend
-uv run python -m voice.livekit.agent start`}
+uv run python -m agent.voice.agent start`}
 </TerminalWindow>
 
 For prompt and tool smoke tests without a browser room:
@@ -134,10 +134,10 @@ For prompt and tool smoke tests without a browser room:
 {`cd apps/backend
 
 # Spoken, uses your mic
-uv run python -m voice.livekit.agent console
+uv run python -m agent.voice.agent console
 
 # Text-only
-uv run python -m voice.livekit.agent console --text`}
+uv run python -m agent.voice.agent console --text`}
 </TerminalWindow>
 
 The standalone LiveKit test page is still available from the backend
@@ -186,22 +186,65 @@ thread rotation and rendering details.
 
 Once inside the text CLI:
 
+### Session & Display
+
 | Command | What it does |
 |---|---|
 | `/help` | List all commands |
 | `/status` | Thread id, response tier, turn count, and active response LLM |
 | `/history [n]` | Recent messages with response-style metadata |
 | `/context` | Session context snapshot |
-| `/memory status` | Per-namespace counts, recall toggle |
-| `/memory list` | Semantic facts + episodic arcs |
-| `/memory list rules` | Procedural style rules |
-| `/memory recall on\|off` | Toggle proactive content recall |
-| `/memory forget fact\|session\|rule <n>` | Delete one record |
-| `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
-| `/memory purge-crisis [days]` | Retention-purge crisis log |
-| `/debug state` | Raw graph state as JSON |
+| `/keys` | Show keyboard shortcuts and prompt tips |
+| `/ui <compact\|full>` | Switch toolbar density |
+| `/theme <mono\|contrast\|calm>` | Switch prompt color theme |
+| `/clear` | Clear terminal and redraw header |
+| `/reset` | Clear the conversation history |
 | `/end` | Summarize session and save session-end memory |
 | `/exit` | End session with save prompt |
+
+### Memory
+
+| Command | What it does |
+|---|---|
+| `/memory status` | Per-namespace counts, recall toggle |
+| `/memory list [facts\|sessions\|rules]` | Semantic facts, episodic arcs, or procedural rules |
+| `/memory recall on\|off` | Toggle proactive content recall |
+| `/memory forget fact\|session\|rule <n>` | Delete one record by index |
+| `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
+| `/memory purge-crisis [days]` | Retention-purge crisis log |
+
+### Threads
+
+| Command | What it does |
+|---|---|
+| `/threads [n]` | List persisted thread ids (default: 12) |
+| `/resume <thread-id>` | Switch to an existing thread |
+| `/new [thread-id]` | Start a fresh thread |
+
+### Runtime
+
+| Command | What it does |
+|---|---|
+| `/mode <deterministic\|hybrid\|auto>` | Switch LLM resolution mode |
+| `/response-tier <fast\|quality>` | Switch response quality/latency tradeoff |
+| `/trace on\|off\|once` | Show or hide routing trace overlay |
+| `/debug state` | Raw graph state as JSON |
+
+### Aliases
+
+| Alias | Expands to |
+|---|---|
+| `/h` | `/help` |
+| `/s` | `/status` |
+| `/m` | `/memory` |
+| `/k` | `/keys` |
+| `/t` | `/theme` |
+| `/q` | `/quit` |
+| `/c` | `/clear` |
+
+:::tip
+The completion menu shows recently used commands at the top (marked with ↻) and suggests corrections for typos.
+:::
 
 ## Tests and Evals
 
@@ -213,7 +256,7 @@ Run backend tests from `apps/backend`:
 
 <TerminalWindow title="bash — backend tests">
 {`cd apps/backend
-uv run pytest tests/`}
+uv run pytest tests/unit tests/integration`}
 </TerminalWindow>
 
 Run frontend checks from the repo root:
@@ -223,26 +266,8 @@ Run frontend checks from the repo root:
 pnpm --dir apps/web build`}
 </TerminalWindow>
 
-Run eval harnesses from `apps/backend`:
-
-<TerminalWindow title="bash — eval harnesses">
-{`cd apps/backend
-
-# No API key needed
-uv run python ../../eval/runners/retrieval_eval.py --mode token-only
-
-# LLM-backed examples
-uv run python ../../eval/runners/crisis_gate_eval.py --mode hybrid
-uv run python ../../eval/runners/therapeutic_routing_eval.py --mode hybrid
-uv run python ../../eval/runners/therapeutic_behavior_eval.py --mode hybrid
-uv run python ../../eval/runners/exercise_selection_eval.py --mode hybrid
-uv run python ../../eval/runners/grounded_lookup_routing_eval.py --mode hybrid
-uv run python ../../eval/runners/memory_control_routing_eval.py --mode hybrid
-uv run python ../../eval/runners/memory_write_policy_eval.py --mode hybrid`}
-</TerminalWindow>
-
-See [Routing & Classifiers](/docs/agent/routing-classifiers) for the
-current eval map.
+The eval harness is being rebuilt. Until the new harness lands, use backend
+tests and targeted live-provider tests as the regression checks.
 
 ## Eval-driven Observability
 
@@ -267,7 +292,6 @@ LANGCHAIN_API_KEY=...
 LANGCHAIN_PROJECT=opencouch-dev`}
 </TerminalWindow>
 
-The `eval/runners/*` scripts remain the source of truth for behavioral
-regression checks. Opik is the primary trace surface for graph execution,
-run filtering, and experiment review. LangSmith tracing remains supported
-as an optional secondary LangChain integration.
+Opik is the primary trace surface for graph execution, run filtering, and
+experiment review. LangSmith tracing remains supported as an optional secondary
+LangChain integration.

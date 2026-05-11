@@ -11,30 +11,28 @@ First node in the graph. Every message passes through it before
 memory loads, before routing, before response generation. Cannot
 be skipped.
 
-The classifier is **LLM-primary**: a structured-output call decides
-the level for any message that doesn't hit a deterministic
-override, with a regex ladder as fallback when the LLM fails.
+The classifier is **LLM-only**: a structured-output call decides the
+level for every message, then local normalization enforces the
+level-to-route truth table. Provider failures are handled by graph
+retries and surfaced as errors instead of silently degrading to regex.
 
 ---
 
 ## Walkthrough
 
-Pick a sample input. Watch which tier produces the verdict, see
-the `state` delta build up on the right, and where the turn ends
-up routing.
+Pick a sample input. Watch the LLM verdict normalize into the state
+delta on the right, and where the turn ends up routing.
 
 <CrisisGateFlow />
 
 ---
 
-## Decision tiers
+## Decision steps
 
-| Tier | When it runs | What it does |
+| Step | When it runs | What it does |
 |---|---|---|
-| **1. Deterministic overrides** | Every message, before any network call | Imminent-risk patterns force level 3. Idiomatic-safe phrases ("killing me", "dead tired") force level 0. Safety-denials after a check ("I'm safe, just venting") force level 0. The override is the floor and ceiling for two patterns the LLM can't reliably get right. |
-| **2. LLM classifier** | Default for any non-override message | Structured output: `level`, `confidence`, `reason`. Sees recent history, handles negation, sarcasm, and quoted speech. |
-| **3. Regex ladder** | Only when no LLM is configured **or** the LLM call raises | Pattern tuples in `agent/safety/crisis_rules.py`. Degraded but functional — keeps the safety floor intact during provider outages. |
-| **4. Truth-table normalization** | Always | Forces `needs_crisis_response = level ≥ 2` and `needs_clarification = level == 1`, regardless of what the classifier returned. Prevents miscalibrated outputs from wrong-flagging. |
+| **1. LLM classifier** | Every message | Structured output: `level`, `confidence`, `reason`. Sees recent history, handles negation, sarcasm, quoted speech, idioms, and safety-denial context. |
+| **2. Truth-table normalization** | Always after a classifier result | Forces `needs_crisis_response = level ≥ 2` and `needs_clarification = level == 1`, regardless of what the classifier returned. Prevents miscalibrated flags from wrong-routing. |
 
 ---
 
@@ -42,7 +40,7 @@ up routing.
 
 | Final level | Route | Pipeline |
 |---|---|---|
-| 0 / 1 | `therapeutic` | `memory_control_gate_node → grounded_lookup_gate_node → load_memory_node → therapeutic_subgraph` |
+| 0 / 1 | `therapeutic` | `turn_dispatch_node → load_memory_node → therapeutic_subgraph` |
 | 2 / 3 | `crisis` | `crisis_resource_lookup_node → crisis_response_node → crisis_log_node` |
 
 **Level 1 stays therapeutic.** `needs_clarification=true` is set in
@@ -76,10 +74,10 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | Key | Value |
 |---|---|
 | `crisis_gate_ms` | Wall-clock time for the full assessment |
-| `crisis_classifier_path` | `override` / `llm_primary` / `llm_fallback` / `deterministic` |
+| `crisis_classifier_path` | `llm_primary` |
 | `crisis_level` | Normalized level (0–3) |
-| `crisis_audit.crisis_override_kind` | `imminent_risk` / `idiomatic_safe` / `safety_denial` / `none` |
-| `crisis_audit.crisis_llm_failure_occurred` | Set when the LLM call raised — useful for fallback-rate dashboards |
+| `crisis_audit.crisis_override_kind` | Always `none` |
+| `crisis_audit.crisis_llm_failure_occurred` | Always `false` for completed turns; failed classifier calls surface through retry/error handling instead of producing a degraded verdict |
 
 ---
 
@@ -88,11 +86,11 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | Rule | Why |
 |---|---|
 | Response pipeline waits for the gate | Safety sequencing > latency |
-| Overrides fire before any network call | Imminent risk cannot wait 1–2s for an LLM |
-| LLM is primary, not regex | Handles negation, context, sarcasm, quoted speech |
+| LLM is the classifier, not regex | Handles negation, context, sarcasm, quoted speech, idioms, and subtle escalation |
+| No silent no-LLM fallback | A failed safety classifier should be visible and retried, not converted into brittle local pattern matching |
 | Normalization enforces the truth table | Prevents miscalibrated LLMs from wrong-flagging |
 | Audit log is always-on | Privacy asymmetry — incognito scrubs identity but still records |
-| 42-case eval dataset | Covers imminent risk, clear self-harm, idiomatic-safe, ambiguous, and safety-denial boundary cases |
+| Boundary-case tests | Cover imminent risk, clear self-harm, idiomatic-safe, ambiguous, and safety-denial cases |
 
 ---
 
@@ -100,14 +98,14 @@ window (exclusive boundary — the cutoff date itself is preserved).
 
 | File | Purpose |
 |---|---|
-| `agent/nodes/crisis_gate.py` | Override detection, LLM classifier, deterministic fallback, normalization |
+| `agent/nodes/crisis_gate.py` | Crisis gate orchestration, truth-table normalization, graph routing |
+| `agent/gates/safety/service.py` | LLM-only crisis classifier service and structured output schema |
+| `agent/gates/safety/prompts.py` | Crisis classifier prompt and system instruction |
 | `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup (runs first on the crisis branch) |
 | `agent/nodes/crisis_response.py` | Crisis reply with optional resource overlay |
 | `agent/nodes/crisis_log.py` | Always-on audit record writer (graph node) |
-| `agent/safety/crisis_rules.py` | Pattern tuples — imminent / clear-self-harm / ambiguous / distress / idiomatic-safe / safety-denial — and `detect_crisis_override` |
 | `agent/audit/crisis_log.py` | Backend protocol + in-memory + null implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
 | `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
-| `agent/tools/web_search.py` | `find_local_crisis_resources` (called by `crisis_resource_lookup_node`) |
-| `eval/runners/crisis_gate_eval.py` | Deterministic eval runner |
+| `agent/tools/grounded_search.py` | `find_crisis_resources` (called by `crisis_resource_lookup_node`) |

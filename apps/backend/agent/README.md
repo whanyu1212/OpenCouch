@@ -23,20 +23,17 @@ START
   -> crisis_gate_node
        -> crisis_resource_lookup_node -> crisis_response_node
           -> crisis_log_node -> finalize_turn_node
-       -> memory_control_gate_node
+       -> turn_dispatch_node
           -> memory_control_node -> finalize_turn_node
-          -> grounded_lookup_gate_node
-             -> grounded_answer_node -> finalize_turn_node
-             -> load_memory_node -> therapeutic_subgraph -> finalize_turn_node
+          -> grounded_answer_node -> finalize_turn_node
+          -> load_memory_node -> therapeutic_subgraph -> finalize_turn_node
 
-finalize_turn_node
-  -> extract_semantic_facts_node -> END
-  -> extract_procedural_rules_node -> END
+finalize_turn_node -> END
 ```
 
-`crisis_gate_node` returns a LangGraph `Command` with both a state update and
-the next node. There is no conditional edge for the crisis branch. This keeps
-the routing decision and the audit metadata in one place.
+`crisis_gate_node` and `turn_dispatch_node` return LangGraph `Command` values
+with both a state update and the next node. This keeps each lifecycle routing
+decision and its diagnostics in one place.
 
 `therapeutic_subgraph` is itself a compiled `StateGraph`, registered as one
 node in the parent graph. It handles therapeutic response-style routing and
@@ -71,8 +68,8 @@ The state schema lives in `agent.state`.
 | Conversation | `history`, `transcript`, `working_memory` | `build_initial_state`, `load_memory_node`, `finalize_turn_node`. |
 | Persistent continuity | `session_memory`, `procedural_profile`, `session_progress`, `exercise_state`, `memory_control` | Memory load, turn counting, guided exercise, memory-control confirmation/action state, runtime session management. |
 | Crisis | `crisis` | `crisis_gate_node`. |
-| Output | `therapeutic_approach`, `response_style`, `response_style_source`, `response_style_type`, `response_kind`, `response_text`, `should_persist_memory`, `diagnostics` | Routing and response nodes. |
-| Private | `route`, `crisis_audit`, `grounded_lookup_query`, `grounded_lookup_status`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
+| Output | `therapeutic_approach`, `response_style`, `session_action`, `response_text`, `should_persist_memory`, `diagnostics` | Routing and response nodes. |
+| Private | `route`, `crisis_audit`, `grounded_lookup`, `inferred_location`, `found_resources`, `resource_lookup_status` | Crisis gate, grounded factual lookup, crisis resource lookup, crisis response/logging, and internal observability. |
 
 Reducer-backed channels:
 
@@ -88,11 +85,9 @@ Reducer-backed channels:
 memory retrieval so a safety-critical turn is not delayed by optional memory
 work.
 
-Classification order:
-
-1. Deterministic hard overrides from `agent.gates.safety.crisis_rules`.
-2. LLM structured classifier when `llm_client` is available.
-3. Deterministic fallback when no LLM is available or the LLM call fails.
+Classification is LLM-only. `CrisisRiskService` requires an `llm_client`,
+calls the structured crisis classifier, and lets provider failures surface to
+LangGraph's node retry policy instead of falling back to local heuristics.
 
 The crisis truth table is enforced after classification:
 
@@ -115,9 +110,10 @@ When the branch is crisis:
 
 `load_memory_node` runs only on the non-crisis branch.
 
-`memory_control_gate_node` runs before memory load on non-crisis turns. Explicit
-memory-management requests route to `memory_control_node`; ordinary therapeutic
-turns continue to `grounded_lookup_gate_node`, then `load_memory_node`.
+`turn_dispatch_node` runs before memory load on non-crisis turns. It routes
+explicit memory-management requests to `memory_control_node`, explicit external
+factual lookup requests to `grounded_answer_node`, and ordinary therapeutic
+turns to `load_memory_node`.
 
 In incognito mode it returns empty working memory, a guest-session summary, and
 disabled procedural recall.
@@ -158,7 +154,7 @@ Recall behavior is intentionally selective:
   memory and does not disable style preferences.
 
 Users can manage memory conversationally. These explicit requests route through
-`memory_control_gate_node` to `memory_control_node` before memory loading:
+`turn_dispatch_node` to `memory_control_node` before memory loading:
 
 | User wording | Effect |
 | --- | --- |
@@ -204,8 +200,8 @@ Write timing:
 
 ## Grounded Factual Lookup
 
-`grounded_lookup_gate_node` runs after memory-control routing and before memory
-loading. It is a narrow guard for explicit factual/current-information requests,
+`turn_dispatch_node` sends explicit factual/current-information requests to
+`grounded_answer_node` before memory loading. This is a narrow operational path,
 not a general therapeutic tool.
 
 It routes to `grounded_answer_node` only when the user clearly asks the agent to
@@ -249,12 +245,9 @@ The subgraph has explicit input and output schemas. This is intentional:
 
 ## Therapeutic Routing
 
-The dispatcher uses an LLM-primary strategy:
-
-1. If an exercise is active and the user gives an explicit deterministic exit
-   signal, clear `exercise_state` and route to supportive.
-2. Otherwise, call the structured LLM dispatcher when available.
-3. If the LLM is unavailable or fails, use narrow regex fallback heuristics.
+The dispatcher uses structured LLM routing. Active exercise continuity is passed
+into the routing prompt, and provider failures are allowed to surface to the
+graph retry policy instead of silently switching to regex heuristics.
 
 Response styles:
 
@@ -278,7 +271,10 @@ Wrap-up takeaway requests stay inside the `closing` style. Examples include
 this?", or "Can you put the main thing in one sentence?" The closing node should
 give one concise synthesis and avoid reopening exploration. This is distinct
 from session-end summarization: it does not end the session, write episodic
-memory, or require a separate recap node.
+memory, or require a separate recap node. When the route is truly closing, the
+graph sets `session_action="suggest_end_session"` so clients can offer an
+explicit end-session control; only the runtime's existing end-session command
+finalizes the session.
 
 ## Guided Exercises
 
@@ -310,13 +306,10 @@ completion fact when persistence is enabled.
 `transcript`. It returns only the new assistant turn because both channels are
 reducer-backed.
 
-After finalization, two side-effect nodes run:
-
-- `extract_semantic_facts_node`
-- `extract_procedural_rules_node`
-
-These nodes write diagnostics into state, but their durable memory writes are
-side effects on `memory_store` or `session_memory_buffer`.
+After finalization, semantic and procedural extraction run outside the graph as
+runtime-managed side effects. They write diagnostics into the turn output, but
+their durable memory writes are side effects on `memory_store` or
+`session_memory_buffer`.
 
 They skip when:
 
@@ -359,14 +352,10 @@ When adding a new node:
    appending exactly those new items.
 5. Keep routing decisions inside `Command`-returning nodes when the route and
    state update must stay atomic.
-6. Add or update eval cases for behavior changes, especially crisis routing,
-   therapeutic dispatch, guided-exercise continuity, and memory writes.
+6. Add or update behavioral tests for graph and state-contract changes.
 
 Common verification commands:
 
 ```bash
 uv run pytest apps/backend/tests -q
-uv run python eval/runners/exercise_selection_eval.py --mode deterministic
-uv run python eval/runners/exercise_flow_eval.py
-uv run python eval/runners/session_trajectory_eval.py --mode deterministic
 ```

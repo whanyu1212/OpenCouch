@@ -92,9 +92,6 @@ const GROUPS: GroupDef[] = [
     fields: [
       { name: 'response_text', type: 'str', setBy: 'reply node (response style / crisis_response / memory_control / grounded_answer)', lifecycle: 'turn', desc: 'Generated reply for the turn.' },
       { name: 'response_style', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'supportive · reflective · clarifying · psychoeducation · technique · guided_exercise · closing · safety_check · crisis_response · memory_control · grounded_lookup' },
-      { name: 'response_style_source', type: 'str', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'Which decision point picked it: crisis_gate, therapeutic_dispatch, memory_control_gate, grounded_lookup_gate.' },
-      { name: 'response_style_type', type: 'ResponseStyleType', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC · OPERATIONAL · CRISIS' },
-      { name: 'response_kind', type: 'ResponseCategory', setBy: 'reply node + gates', lifecycle: 'turn', desc: 'THERAPEUTIC or CRISIS — exposed publicly via AgentOutput.response_type.' },
       { name: 'therapeutic_approach', type: 'str | None', setBy: 'therapeutic_dispatch_node', lifecycle: 'turn', desc: 'motivational_interviewing · cbt · act · dbt_skills · grief_support · interpersonal_therapy · pfa · none' },
       { name: 'should_persist_memory', type: 'bool', setBy: 'guided_exercise_node', lifecycle: 'turn', desc: 'Set on exercise completion as a hint that the turn is worth summarizing.' },
     ],
@@ -102,11 +99,11 @@ const GROUPS: GroupDef[] = [
   {
     id: 'lookup',
     label: 'Lookup scratch fields',
-    blurb: 'Turn-scoped IO between gates and their worker nodes.',
+    blurb: 'Turn-scoped IO between routing and worker nodes.',
     fields: [
-      { name: 'memory_control.action', type: 'dict', setBy: 'memory_control_gate_node', lifecycle: 'turn', desc: 'Detected memory command (kind, args). Consumed by memory_control_node.' },
-      { name: 'grounded_lookup.query', type: 'str', setBy: 'grounded_lookup_gate_node', lifecycle: 'turn', desc: 'Factual query extracted by the gate. Consumed by grounded_answer_node.' },
-      { name: 'grounded_lookup_status', type: 'str', setBy: 'grounded_answer_node', lifecycle: 'turn', desc: 'answered · no_verified_answer · search_failed · search_unavailable · not_attempted' },
+      { name: 'memory_control.action', type: 'dict', setBy: 'turn_dispatch_node', lifecycle: 'turn', desc: 'Detected memory command (kind, args). Consumed by memory_control_node.' },
+      { name: 'grounded_lookup.query', type: 'str', setBy: 'turn_dispatch_node', lifecycle: 'turn', desc: 'Factual query extracted by dispatch. Consumed by grounded_answer_node.' },
+      { name: 'grounded_lookup.status', type: 'str', setBy: 'grounded_answer_node', lifecycle: 'turn', desc: 'answered · no_verified_answer · search_failed · search_unavailable · not_attempted' },
       { name: 'inferred_location', type: 'str', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'Region extracted from recent context for hotline lookup.' },
       { name: 'found_resources', type: 'list[dict]', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'Verified hotlines (name / phone / website / region). Empty on failure or missing location.' },
       { name: 'resource_lookup_status', type: 'str', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'found · no_location · search_failed · no_verified_results · not_attempted' },

@@ -19,6 +19,7 @@ from agent.memory.procedural_profile import (
 from agent.memory.reconciliation import filter_active_semantic_records
 from agent.memory.store import MemoryStore, Namespace
 from agent.memory.text_tokens import tokenize_meaningful
+from llm.base import BaseLLMClient
 
 MemoryControlKind = Literal["fact", "session", "rule"]
 
@@ -177,6 +178,7 @@ async def save_preference_rule(
     owner_id: str,
     rule_text: str,
     evidence: str,
+    llm_client: BaseLLMClient,
 ) -> str:
     """Save one explicit procedural preference.
 
@@ -185,6 +187,7 @@ async def save_preference_rule(
         owner_id: Owner namespace to update.
         rule_text: User-facing rule text to persist.
         evidence: User message that justifies the rule.
+        llm_client: Control LLM used for procedural reconciliation.
 
     Returns:
         The final stored rule text.
@@ -197,7 +200,12 @@ async def save_preference_rule(
         source="explicit_user",
         write_reason="explicit conversational memory-management request",
     )
-    result = await aupsert_procedural_rule(store, user_id=owner_id, rule=rule)
+    result = await aupsert_procedural_rule(
+        store,
+        user_id=owner_id,
+        rule=rule,
+        llm_client=llm_client,
+    )
     stored_rule = result.profile.rules[-1] if result.profile.rules else rule
     return stored_rule.rule
 

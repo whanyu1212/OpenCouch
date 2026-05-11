@@ -65,6 +65,7 @@ class BaseLLMClient(ABC):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
         """Generate and parse a structured response.
 
@@ -72,6 +73,7 @@ class BaseLLMClient(ABC):
             prompt: The user or task prompt to send to the model.
             response_schema: The Pydantic schema expected in the response.
             system_instruction: Optional top-level instruction for model behavior.
+            use_search: Whether to enable provider-native web search/grounding.
 
         Returns:
             A parsed Pydantic object matching `response_schema`.

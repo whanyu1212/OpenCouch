@@ -119,6 +119,7 @@ class OpenAILLMClient(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
         """Generate a structured response with OpenAI.
 
@@ -126,6 +127,7 @@ class OpenAILLMClient(BaseLLMClient):
             prompt: The user or task prompt to send to the model.
             response_schema: The Pydantic schema expected in the response.
             system_instruction: Optional top-level instruction for model behavior.
+            use_search: Whether to attach OpenAI's hosted web-search tool.
 
         Returns:
             A parsed object matching `response_schema`.
@@ -138,11 +140,15 @@ class OpenAILLMClient(BaseLLMClient):
             input_items.append({"role": "system", "content": system_instruction})
         input_items.append({"role": "user", "content": prompt})
 
-        response = await self.client.responses.parse(
-            model=self.model,
-            input=input_items,
-            text_format=response_schema,
-        )
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": input_items,
+            "text_format": response_schema,
+        }
+        if use_search:
+            kwargs["tools"] = [{"type": "web_search_preview"}]
+
+        response = await self.client.responses.parse(**kwargs)
 
         parsed = response.output_parsed
         if not isinstance(parsed, response_schema):

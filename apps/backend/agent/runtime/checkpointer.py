@@ -20,7 +20,6 @@ ALLOWED_MSGPACK_MODULES = [
     ("agent.models", "Channel"),
     ("agent.models", "CrisisAssessment"),
     ("agent.models", "ResponseCategory"),
-    ("agent.models", "ResponseStyleType"),
 ]
 
 

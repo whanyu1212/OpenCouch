@@ -8,9 +8,8 @@ no reverse mapping.
 
 - Writes one record per crisis event, keyed off ``state["crisis"]``.
 - Runs on the crisis branch only, after ``crisis_response_node``.
-- ``response_node_completed = True`` unconditionally (if we're
-  executing, the response node finished — failures are handled by the
-  response node's own try/except, not by this node).
+- ``response_node_completed = True`` unconditionally: if this node executes,
+  the response node has finished successfully.
 - Failures in this node are logged LOUDLY via ``exc_info=True`` but do
   not fail the turn. A silent crisis log failure would mean the
   operator loses the audit trail, so observability is essential.
@@ -66,13 +65,13 @@ async def run_crisis_log_node(
     # a missing field means the crisis gate added a path without audit metadata.
     crisis_audit = state.get("crisis_audit", {})
     override_kind = crisis_audit.get("crisis_override_kind", "none")
-    classifier_path = crisis_audit.get("crisis_classifier_path", "deterministic")
+    classifier_path = crisis_audit.get("crisis_classifier_path", "llm_primary")
     llm_failure_occurred = crisis_audit.get("crisis_llm_failure_occurred", False)
 
     if "crisis_classifier_path" not in crisis_audit:
         logger.debug(
             "crisis_log_node: no classifier_path in crisis_audit state; "
-            "using backward-compat default 'deterministic'"
+            "using default 'llm_primary'"
         )
 
     record = CrisisLogRecord(

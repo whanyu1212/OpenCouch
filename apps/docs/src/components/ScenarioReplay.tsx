@@ -31,7 +31,7 @@ interface Scenario {
  * safety_check.
  *
  * Routing-trace conventions:
- *   - Level 0 (safe): crisis_gate(safe) → memory_control_gate → grounded_lookup_gate → load_memory → therapeutic_subgraph → <response style>
+ *   - Level 0 (safe): crisis_gate(safe) → turn_dispatch → load_memory → therapeutic_subgraph → <response style>
  *   - Level 1 (ambiguous, needs_clarification=true): SAME path as level 0; the dispatcher typically picks clarifying or supportive. The response_style "safety_check" is reserved for the crisis branch.
  *   - Level ≥ 2 (needs_crisis_response=true): crisis_gate(level=N) → crisis_resource_lookup_node → crisis_response_node → crisis_log_node
  *
@@ -66,7 +66,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Let's do that. Try the 5-4-3-2-1 technique with me: name 5 things you can see right now. Take your time — there's no rush.",
         route: 'safe gate → load_memory → therapeutic → guided_exercise',
         responseStyle: 'guided_exercise', responseCategory: 'therapeutic',
-        why: 'Explicit exercise request: "grounding exercise" + "calm down" matched the guided_exercise regex fast path.',
+        why: 'Explicit exercise request: "grounding exercise" + "calm down"; the LLM dispatcher selects guided_exercise.',
       },
     ],
   },
@@ -92,9 +92,9 @@ const SCENARIOS: Scenario[] = [
       {
         user: "I've been thinking about ending things. I have pills saved up. I was going to do it this weekend.",
         agent: "Thank you for telling me. I take this seriously and I want to make sure you're safe right now. Please contact the 988 Suicide & Crisis Lifeline by calling or texting 988, or go to your nearest emergency room. Is there someone you trust who can be with you right now?",
-        route: 'crisis_gate(level 3, imminent_risk override) → crisis_resource_lookup → crisis_response → crisis_log',
+        route: 'crisis_gate(level 3) → crisis_resource_lookup → crisis_response → crisis_log',
         responseStyle: 'crisis_response', responseCategory: 'crisis',
-        why: 'Plan + means + timeline detected. Level 3 imminent-risk override fires in the deterministic tier before the LLM is even called. The full crisis branch runs: hotline lookup overlay, then the crisis reply, then the always-on audit log.',
+        why: 'Plan + means + timeline detected by the LLM crisis classifier. The full crisis branch runs: hotline lookup overlay, then the crisis reply, then the always-on audit log.',
       },
     ],
   },
@@ -108,7 +108,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Absolutely. Let's slow it down. What's the specific situation? Tell me about the presentation — when is it, and what's the thought that keeps showing up.",
         route: 'safe gate → load_memory → therapeutic → guided_exercise',
         responseStyle: 'guided_exercise', responseCategory: 'therapeutic',
-        why: 'Explicit "thought record" pattern matched the guided_exercise regex fast path.',
+        why: 'Explicit "thought record" request; the LLM dispatcher selects guided_exercise and the selector chooses the matching exercise.',
       },
       {
         user: "It's a team update on Friday. The thought is 'everyone will think I'm incompetent and I'll get fired.'",
@@ -129,7 +129,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Good work. The key things: you caught the catastrophizing thought, examined the evidence, and landed on a more balanced take. Noticing the thought is the hardest part — and you did that. Take care.",
         route: 'safe gate → load_memory → therapeutic → closing',
         responseStyle: 'closing', responseCategory: 'therapeutic',
-        why: '"I\'m good for today" + "thanks" matched the closing regex fast path. Warm wrap-up with summary, no new exploration opened.',
+        why: '"I\'m good for today" + "thanks" is classified as a real closing signal. Warm wrap-up with summary, no new exploration opened.',
       },
     ],
   },
@@ -213,7 +213,7 @@ const SCENARIOS: Scenario[] = [
         agent: "That was a lot, and you stayed with it. The main thing: the numbness and the waves are normal, the guilt about the argument doesn't mean you failed him, and the replaying is grief trying to fix something unfixable. Take care of yourself tonight.",
         route: 'safe gate → load_memory → therapeutic → closing',
         responseStyle: 'closing', responseCategory: 'therapeutic',
-        why: '"Need to stop for today" matched the closing regex fast path. Summary + gentle landing. No new exploration opened.',
+        why: '"Need to stop for today" is classified as a closing signal. Summary + gentle landing. No new exploration opened.',
       },
     ],
   },
@@ -255,7 +255,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Heard. And for what it's worth — you're managing a lot more than most people see.",
         route: 'safe gate → load_memory → therapeutic → closing',
         responseStyle: 'closing', responseCategory: 'therapeutic',
-        why: '"Thanks" + natural ending signal matched the closing regex fast path. Brief close without homework or next steps.',
+        why: '"Thanks" plus a natural ending signal is classified as closing. Brief close without homework or next steps.',
       },
     ],
   },
@@ -304,7 +304,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Here's what we covered: panic attacks are false alarms from your amygdala, not actual danger. The double-inhale sighing technique can help in the moment. And the pattern you noticed — it's the fear of the fear, not the places themselves, that drives the avoidance. One thing to try this week: next time you notice the anticipation building, name it ('that's the fear of the fear') before it escalates. Take care.",
         route: 'safe gate → load_memory → therapeutic → closing',
         responseStyle: 'closing', responseCategory: 'therapeutic',
-        why: '"Can we wrap up" matched the closing regex fast path. Summary of key takeaways + one actionable next step.',
+        why: '"Can we wrap up" is classified as closing. Summary of key takeaways + one actionable next step.',
       },
     ],
   },

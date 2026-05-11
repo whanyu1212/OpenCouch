@@ -1,13 +1,13 @@
 ---
-title: Tracing & Evals
+title: Tracing
 sidebar_position: 1
 ---
 
-# Eval-driven development
+# Trace-driven development
 
-OpenCouch uses two complementary surfaces for eval-driven development:
+OpenCouch uses two complementary surfaces for trace-driven development:
 
-1. **Opik** for primary external trace-level observability, run search, and evaluation review.
+1. **Opik** for primary external trace-level observability and run search.
 2. **CLI inspection commands + live status** for local visibility into execution, state, and memory.
 
 LangSmith remains supported as an optional secondary LangChain tracing
@@ -67,14 +67,13 @@ OpenCouch, Opik is the primary external surface for:
 
 - inspecting graph execution paths
 - filtering runs by thread and runtime metadata
-- reviewing failures from local eval harnesses
+- reviewing failures from tests and manual trace runs
 - comparing behavior across prompt, model, or routing changes
 
 OpenCouch also attaches runtime metadata such as `thread_id`, `channel`, `memory_mode`, `streaming`, and `user_scope` to text runs to make traces easier to search.
 
-Opik complements the local CLI inspection surfaces below; it does not
-replace the project's deterministic eval runners or local debugging
-commands.
+Opik complements the local CLI inspection surfaces below; it does not replace
+backend tests or local debugging commands.
 
 Enable Opik by setting:
 
@@ -150,9 +149,8 @@ consistent text:
 | Internal stage | Friendly label |
 |---|---|
 | `crisis_gate` | safety check |
-| `memory_control_gate` | checking memory command |
+| `turn_dispatch` | routing turn |
 | `memory_control` | updating memory |
-| `grounded_lookup_gate` | checking factual lookup |
 | `grounded_lookup` | looking up factual answer |
 | `crisis_resource_lookup` | looking up crisis resources |
 | `crisis_response` | generating crisis reply |
@@ -183,10 +181,9 @@ render without a mapping update.
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
 | `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
 | `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `search_failed` / `no_verified_results` / `not_attempted` |
-| `memory_control_gate_ms` | memory_control_gate | Gate evaluation wall-clock time |
-| `memory_control.action` | memory_control_gate | Detected command kind (or empty when none) |
-| `grounded_lookup_gate_ms` | grounded_lookup_gate | Gate evaluation wall-clock time |
-| `grounded_lookup_status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
+| `turn_dispatch_ms` | turn_dispatch | Safe-turn routing wall-clock time |
+| `memory_control.action` | turn_dispatch | Detected command kind (or empty when none) |
+| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |

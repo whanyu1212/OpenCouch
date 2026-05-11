@@ -17,19 +17,19 @@ Three escalating tiers — each with stronger confirmation gates.
 ## Memory control runs in the graph
 
 Explicit memory commands are now first-class graph traffic.
-`memory_control_gate_node` detects natural-language commands like:
+`turn_dispatch_node` routes natural-language memory commands like:
 
 - `"what do you remember about me?"` / `"show my memories"`
 - `"forget #3"` / `"forget that I mentioned my therapist"`
 - `"turn proactive recall off"` / `"enable recall"`
 - `"remember that I prefer shorter replies"`
 
-When the gate fires, the turn skips memory retrieval and the
+When this route fires, the turn skips memory retrieval and the
 therapeutic subgraph entirely and routes to `memory_control_node`,
 which executes the operation deterministically (no LLM call) and
 returns a user-facing confirmation. Destructive single-record
 deletes write a `pending_action` to `memory_control` state so the
-**next turn** can confirm or cancel it without LLM ambiguity.
+**next turn** can confirm or cancel it through the same dispatch node.
 
 ---
 

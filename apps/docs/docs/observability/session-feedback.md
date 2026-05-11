@@ -100,7 +100,7 @@ unaffected by the feedback write (no status surfaced).
   same `record_session_feedback()` method works — the closing node
   would call the runtime directly.
 - **Voice disconnect** — the LiveKit voice runtime
-  (`voice/livekit/`) bypasses `PersistentAgentRuntime.end_session()`
+  (`agent/voice/`) bypasses `PersistentAgentRuntime.end_session()`
   and uses its own `runtime.end_transcript_session(...)` seam to
   replay the room transcript. Voice feedback would need to be
   collected through that seam (or a dedicated voice-side prompt)

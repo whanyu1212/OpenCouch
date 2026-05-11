@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Mapping
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.models import Channel, CrisisAssessment, ResponseStyleType, ResponseCategory
+from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.memory.entries import WorkingMemoryEntry
 
 
@@ -111,17 +111,33 @@ class ExerciseState(TypedDict):
 
     exercise_type: NotRequired[str | None]
     exercise_step: NotRequired[int | None]
+    exercise_step_id: NotRequired[str | None]
+    exercise_version: NotRequired[int | None]
     exercise_therapeutic_approach: NotRequired[str | None]
-    exercise_selection_options: NotRequired[list[str] | None]
+
+
+def cleared_exercise_state() -> ExerciseState:
+    """Return a graph delta that clears active guided-exercise continuity.
+
+    Returns:
+        ExerciseState: Exercise-state fields set to their inactive values.
+    """
+
+    return {
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_step_id": None,
+        "exercise_version": None,
+        "exercise_therapeutic_approach": None,
+    }
 
 
 class MemoryControlState(TypedDict):
     """User-directed memory-control continuity.
 
     ``memory_control_node`` writes pending destructive actions here so the next
-    turn can confirm or cancel them without relying on the LLM to infer which
-    record was meant. ``memory_control_gate_node`` writes the current turn's
-    explicit memory command into ``action``.
+    turn can confirm or cancel them. ``turn_dispatch_node`` writes the current
+    turn's explicit memory command into ``action``.
     """
 
     pending_action: NotRequired[dict[str, Any] | None]
@@ -131,13 +147,38 @@ class MemoryControlState(TypedDict):
 class GroundedLookupState(TypedDict):
     """Explicit factual lookup scratch state.
 
-    ``grounded_lookup_gate_node`` writes the current turn's search query and
-    initial status. ``grounded_answer_node`` updates the status after attempting
-    the grounded response.
+    ``turn_dispatch_node`` writes the current turn's search query and initial
+    status. ``grounded_answer_node`` updates the status after attempting the
+    grounded response.
     """
 
     query: NotRequired[str]
     status: NotRequired[str]
+
+
+class TurnLifecycleState(TypedDict):
+    """Current-turn active-flow lifecycle decision.
+
+    ``turn_dispatch_node`` writes this after deciding whether an active
+    exercise or pending memory action should continue, pause, resume, or clear.
+    Downstream nodes read it as behavior state. Diagnostics may mirror these
+    values for observability, but diagnostics are not the source of truth.
+    """
+
+    active_flow: Literal["none", "guided_exercise", "pending_memory_action"]
+    action: Literal["none", "continue", "preserve", "resume", "clear"]
+
+
+class MemoryReferenceState(TypedDict):
+    """Current-turn permission to reference retrieved user memories.
+
+    ``turn_dispatch_node`` writes this after classifying the current safe
+    turn. It is distinct from the durable proactive-recall toggle: a user may
+    keep proactive recall off while explicitly asking "what did we work out
+    last time?" for this one turn.
+    """
+
+    mode: Literal["none", "explicit"]
 
 
 class CrisisAuditState(TypedDict):
@@ -221,9 +262,7 @@ class AgentGraphOutputState(AgentCrisisState, TypedDict):
 
     therapeutic_approach: NotRequired[str | None]
     response_style: NotRequired[str]
-    response_style_source: NotRequired[str | None]
-    response_style_type: NotRequired[ResponseStyleType]
-    response_kind: NotRequired[ResponseCategory]
+    session_action: NotRequired[SessionAction]
     response_text: NotRequired[str]
     should_persist_memory: NotRequired[bool]
     diagnostics: NotRequired[Annotated[dict[str, Any], _merge_dicts]]
@@ -234,12 +273,17 @@ class AgentPrivateState(TypedDict):
 
     These fields are available to nodes during graph execution but are not part
     of the public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
-    ``crisis_audit`` feeds the crisis log, and ``crisis_resource_lookup_node``
-    writes ``inferred_location`` / ``found_resources`` /
-    ``resource_lookup_status`` for crisis-resource lookup turns.
+    ``turn_lifecycle`` carries current-turn active-flow behavior from dispatch
+    to downstream nodes, ``memory_reference`` controls one-turn permission to
+    cite retrieved memories, ``crisis_audit`` feeds the crisis log, and
+    ``crisis_resource_lookup_node`` writes ``inferred_location`` /
+    ``found_resources`` / ``resource_lookup_status`` for crisis-resource lookup
+    turns.
     """
 
     route: NotRequired[str]
+    turn_lifecycle: NotRequired[TurnLifecycleState]
+    memory_reference: NotRequired[MemoryReferenceState]
     crisis_audit: NotRequired[CrisisAuditState]
     inferred_location: NotRequired[str]
     found_resources: NotRequired[list[dict[str, str]]]

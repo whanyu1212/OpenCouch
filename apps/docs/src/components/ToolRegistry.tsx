@@ -44,7 +44,7 @@ interface Tool {
 const TOOLS: Tool[] = [
   {
     id: 'crisis_resource_search',
-    name: 'find_local_crisis_resources',
+    name: 'find_crisis_resources',
     status: 'active',
     triggerPath: 'crisis_resource_lookup_node',
     triggerCondition: 'crisis gate routes to the crisis branch AND llm_client is available',
@@ -89,27 +89,27 @@ const TOOLS: Tool[] = [
     ],
     gracefulDegradation:
       'Any stage failure returns empty results with a status code (no_location / search_failed / no_verified_results). The crisis response proceeds without resources rather than blocking on a third-party outage.',
-    file: 'agent/tools/web_search.py',
-    fn: 'find_local_crisis_resources',
-    tests: 'tests/test_web_search_parser.py (parser tests)',
+    file: 'agent/tools/grounded_search.py',
+    fn: 'find_crisis_resources',
+    tests: 'tests/unit/tools/test_grounded_search_parser.py (parser tests)',
   },
   {
     id: 'grounded_lookup',
-    name: 'answer_grounded_lookup',
+    name: 'answer_factual_lookup',
     status: 'active',
     triggerPath: 'grounded_answer_node',
-    triggerCondition: 'grounded_lookup_gate detects an explicit factual lookup request AND llm_client is available',
+    triggerCondition: 'turn_dispatch_node routes an explicit factual lookup request AND llm_client is available',
     providers: ['gemini', 'openai'],
     description:
       'Answers explicit, non-therapeutic factual lookup requests ("look up the eligibility for…", "search for the latest guidelines on…", "verify whether X is true"). Uses provider-native search grounding via use_search=True. Returns ("answer", status) where status reports whether the answer is verified, unverified, or whether the search failed. The therapeutic subgraph never runs on these turns — the user gets a single grounded reply with sources.',
     pipeline: [
       {
         id: 'detect_intent',
-        label: 'Gate detection',
-        systemPrompt: '(deterministic regex — no LLM)',
+        label: 'Turn dispatch',
+        systemPrompt: 'LLM structured routing decision',
         temperature: 0,
         useSearch: false,
-        onFailure: 'falls through to load_memory_node + therapeutic subgraph',
+        onFailure: 'graph retry/error; no silent regex fallback',
         produces: 'state.grounded_lookup.query (str) when matched',
       },
       {
@@ -129,17 +129,17 @@ const TOOLS: Tool[] = [
         temperature: 0,
         useSearch: false,
         onFailure: 'flags answer as no_verified_answer',
-        produces: 'GroundedLookupStatus literal',
+        produces: 'FactualLookupStatus literal',
       },
     ],
     outputFields: [
       'state.response_text',
-      'state.grounded_lookup_status',
+      'state.grounded_lookup.status',
     ],
     gracefulDegradation:
       'On any failure the user receives an explicit "I couldn\'t verify that" reply rather than an invented answer. The status field (answered / no_verified_answer / search_failed / search_unavailable) drives observability.',
-    file: 'agent/tools/grounded_lookup.py',
-    fn: 'answer_grounded_lookup',
+    file: 'agent/tools/grounded_search.py',
+    fn: 'answer_factual_lookup',
   },
 ];
 

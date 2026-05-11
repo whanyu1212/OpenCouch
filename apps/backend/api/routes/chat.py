@@ -10,7 +10,8 @@ contract and the internal ``AgentInput``/``AgentOutput`` types.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from agent.models import (
     AgentOutput,
@@ -21,6 +22,11 @@ from agent.models import (
     friendly_stage,
 )
 from agent.persistence import PersistentAgentRuntime
+from agent.runtime.types import (
+    ActiveSessionExists,
+    SessionInterrupted,
+    SessionLeaseExpired,
+)
 from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
 from api.models import (
     ChatRequest,
@@ -28,12 +34,101 @@ from api.models import (
     CrisisInfo,
     StreamChunkMessage,
     StreamDoneMessage,
+    StreamErrorMessage,
     StreamStatusMessage,
 )
 from config import ResponseModelTier
 from llm.base import BaseLLMClient
 
 router = APIRouter(tags=["chat"])
+
+_TURN_FAILURE_HTTP_STATUS = 500
+_SESSION_CONFLICT_HTTP_STATUS = 409
+_TURN_FAILURE_WS_CLOSE_CODE = 1011
+_SESSION_CONFLICT_WS_CLOSE_CODE = 1008
+_ERROR_REASON_LIMIT = 120
+
+
+def _agent_error_code(exc: Exception) -> str:
+    """Return the public error code for an agent turn exception.
+
+    Args:
+        exc (Exception): Exception raised by the runtime.
+
+    Returns:
+        str: Stable public error code.
+    """
+
+    if isinstance(exc, SessionInterrupted):
+        return "session_interrupted"
+    if isinstance(exc, ActiveSessionExists):
+        return "active_session_exists"
+    if isinstance(exc, SessionLeaseExpired):
+        return "session_lease_expired"
+    if isinstance(exc, ValidationError):
+        return "invalid_request"
+    return "agent_turn_failed"
+
+
+def _agent_error_status(exc: Exception) -> int:
+    """Return the HTTP status for an agent turn exception.
+
+    Args:
+        exc (Exception): Exception raised by the runtime.
+
+    Returns:
+        int: Public HTTP status code.
+    """
+
+    if isinstance(
+        exc,
+        (
+            ActiveSessionExists,
+            SessionInterrupted,
+            SessionLeaseExpired,
+        ),
+    ):
+        return _SESSION_CONFLICT_HTTP_STATUS
+    return _TURN_FAILURE_HTTP_STATUS
+
+
+def _agent_ws_close_code(exc: Exception) -> int:
+    """Return the WebSocket close code for an agent turn exception.
+
+    Args:
+        exc (Exception): Exception raised by the runtime.
+
+    Returns:
+        int: WebSocket close code.
+    """
+
+    if isinstance(
+        exc,
+        (
+            ActiveSessionExists,
+            SessionInterrupted,
+            SessionLeaseExpired,
+            ValidationError,
+        ),
+    ):
+        return _SESSION_CONFLICT_WS_CLOSE_CODE
+    return _TURN_FAILURE_WS_CLOSE_CODE
+
+
+def _agent_error_message(exc: Exception) -> str:
+    """Return a compact user-safe error message.
+
+    Args:
+        exc (Exception): Exception raised by the runtime.
+
+    Returns:
+        str: Compact error text suitable for API responses.
+    """
+
+    message = str(exc).strip()
+    if message:
+        return message
+    return exc.__class__.__name__
 
 
 def _output_to_chat_response(output: AgentOutput) -> ChatResponse:
@@ -50,8 +145,8 @@ def _output_to_chat_response(output: AgentOutput) -> ChatResponse:
         response_text=output.response_text,
         response_type=output.response_type.value,
         response_style=output.response_style,
-        response_style_source=output.response_style_source,
         therapeutic_approach=output.therapeutic_approach,
+        session_action=output.session_action,
         crisis=CrisisInfo(
             level=output.crisis.level,
             confidence=output.crisis.confidence,
@@ -96,14 +191,23 @@ async def chat(
     """
 
     response_tier: ResponseModelTier = body.response_model_tier or "fast"
-    result = await runtime.run_turn(
-        thread_id=body.thread_id,
-        message=body.message,
-        channel=Channel.WEB,
-        user_id=body.user_id,
-        llm_client=llm_client,
-        response_llm_client=response_llm_clients.get(response_tier),
-    )
+    try:
+        result = await runtime.run_turn(
+            thread_id=body.thread_id,
+            message=body.message,
+            channel=Channel.WEB,
+            user_id=body.user_id,
+            llm_client=llm_client,
+            response_llm_client=response_llm_clients.get(response_tier),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=_agent_error_status(exc),
+            detail={
+                "code": _agent_error_code(exc),
+                "message": _agent_error_message(exc),
+            },
+        ) from exc
     return _output_to_chat_response(result.output)
 
 
@@ -132,9 +236,9 @@ async def chat_stream(
     The client can reconnect for the next turn.
 
     Error handling: if the graph raises during execution, the server
-    sends a close frame with code 1011 (internal error) and a reason
-    string. The client should display the error and allow the user
-    to retry.
+    sends a terminal ``{"type": "error", ...}`` message before closing.
+    Session liveness conflicts close with code 1008. Unexpected turn
+    failures close with code 1011.
 
     Args:
         websocket: Accepted WebSocket connection.
@@ -184,8 +288,16 @@ async def chat_stream(
         # support cancellation), but we stop sending messages.
         pass
     except Exception as exc:
-        # Send the error to the client before closing.
+        message = _agent_error_message(exc)
         try:
-            await websocket.close(code=1011, reason=str(exc)[:120])
+            error_msg = StreamErrorMessage(
+                code=_agent_error_code(exc),
+                message=message,
+            )
+            await websocket.send_json(error_msg.model_dump())
+            await websocket.close(
+                code=_agent_ws_close_code(exc),
+                reason=message[:_ERROR_REASON_LIMIT],
+            )
         except Exception:
             pass

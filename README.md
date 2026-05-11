@@ -18,8 +18,8 @@
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
 > OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
 
-> [!NOTE]
-> **Active Development:** OpenCouch is currently maintained by a solo developer. Expect occasional breaking changes while the architecture and features are still settling. Documentation may lag behind the code at times because the project moves quickly.
+> [!WARNING]
+> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/cli_dogfood.sh`](scripts/cli_dogfood.sh) to start the text agent and [`scripts/voice_agent.sh`](scripts/voice_agent.sh) to start the LiveKit voice agent. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
 
 ---
 
@@ -64,7 +64,7 @@ The project is still pre-beta; a closed beta is planned.
 - **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
 - **Voice Support:** Browser voice sessions via LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
 - **Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
-- **Evaluation & Tracing:** Local eval runners and Opik traces for regression tracking.
+- **Tracing & Regression Checks:** Backend tests, live-provider checks, and Opik traces for regression tracking.
 
 ## Screenshots
 
@@ -147,7 +147,7 @@ docker compose up --build
 This starts:
 - PostgreSQL + pgvector for runtime persistence: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
 - backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
-- LiveKit voice worker: `python -m voice.livekit.agent start`
+- LiveKit voice worker: `python -m agent.voice.agent start`
 - Next.js web UI in production mode: [localhost:3000](http://localhost:3000)
 
 The first run can take a while. Docker needs to pull base images, install backend dependencies, build the production web bundle, and warm the voice worker dependencies. Later runs should be much faster because Docker reuses image layers and dependency caches unless the lockfiles or Dockerfiles change.
@@ -194,7 +194,7 @@ Open [localhost:3000](http://localhost:3000) in your browser.
 Optional terminal 3 — LiveKit voice worker:
 ```bash
 cd apps/backend
-uv run python -m voice.livekit.agent start
+uv run python -m agent.voice.agent start
 ```
 
 ### CLI
@@ -221,6 +221,16 @@ For everyday persistent-mode dogfooding, [`scripts/cli_dogfood.sh`](scripts/cli_
 ```
 
 This assumes `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and `OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch` are set in your `.env` (see [Environment](#environment)). Use the raw `uv run python -m opencouch_cli ...` invocations above when you want guest mode, deterministic mode, or the SQLite fallback without starting Postgres.
+
+For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice worker independently from the text agent:
+
+```bash
+./scripts/voice_agent.sh --user-id dogfood start
+./scripts/voice_agent.sh --user-id dogfood console --text
+./scripts/voice_agent.sh --memory-mode incognito console
+```
+
+The voice wrapper supports `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres` before the forwarded LiveKit command.
 
 ### Telegram Gateway
 Run the standalone Telegram gateway. It does not require the FastAPI server.
@@ -284,29 +294,29 @@ flowchart TD
     IN(["User message / transcript"]):::inputNode
 
     subgraph GATE ["Safety Gate"]
-        CG{"crisis_gate<br/>LLM + regex fallback"}:::gateNode
+        CG{"crisis_gate<br/>rules + LLM classifier"}:::gateNode
     end
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
-        MCG{"memory_control_gate<br/>LLM + deterministic fallback"}:::safeNode
+        TDISP{"turn_dispatch<br/>LLM route plan"}:::safeNode
         MC[["memory_control<br/>slash + natural language"]]:::safeNode
-        GLG{"grounded_lookup_gate<br/>LLM + hard-yes fallback"}:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
-        MCG ==>|memory control| MC
-        MCG ==>|ordinary turn| GLG
-        GLG ==>|lookup| GA
-        GLG ==>|support| LM
+        TDISP ==>|memory control| MC
+        TDISP ==>|lookup| GA
+        TDISP ==>|support| LM
     end
 
     subgraph THERAPY ["Therapeutic Subgraph"]
         direction TB
-        TD{"therapeutic_dispatch<br/>style + exercise routing"}:::safeNode
-        TR[["therapeutic_response<br/>supportive response styles"]]:::safeNode
-        GE[["guided_exercise_response<br/>state-tracked exercises"]]:::safeNode
-        TD ==>|support| TR
-        TD ==>|exercise| GE
+        TD{"therapeutic_dispatch<br/>LLM route plan + continuity"}:::safeNode
+        TR[["therapeutic_response<br/>shared response node"]]:::safeNode
+        GE[["guided_exercise_response<br/>LangGraph adapter"]]:::safeNode
+        ER[["ExerciseRunner service<br/>selection • step state • deltas"]]:::safeNode
+        TD ==>|response style| TR
+        TD ==>|guided exercise| GE
+        GE -.-> ER
     end
 
     subgraph RISK ["Crisis Branch"]
@@ -319,11 +329,11 @@ flowchart TD
 
     FT{{"finalize_turn<br/>checkpoint reply • set route"}}:::sysNode
 
-    subgraph POST ["Post-response Memory Side Effects"]
+    subgraph POST ["Runtime Memory Side Effects (outside LangGraph)"]
         direction LR
-        MX["memory_extraction<br/>parallel terminal side effects"]:::sysNode
-        EF["extract_facts<br/>+ write_policy: commit • hold • drop"]:::sysNode
-        EP["extract_procedural<br/>+ write_policy: commit • hold • drop"]:::sysNode
+        MX["TurnExtractionCoordinator<br/>background after graph END"]:::sysNode
+        EF["extract_semantic_facts<br/>write policy: commit • hold • drop"]:::sysNode
+        EP["extract_procedural_rules<br/>write policy: commit • hold • drop"]:::sysNode
         SB[("session buffer<br/>held semantic • procedural")]:::sysNode
         MX -.-> EF
         MX -.-> EP
@@ -349,7 +359,7 @@ flowchart TD
     API ==> IN
     TG ==> IN
     IN ==> CG
-    CG ==>|Safe| MCG
+    CG ==>|Safe| TDISP
     CG -.->|Risk| RL
     MC ==> FT
     GA ==> FT
@@ -357,7 +367,7 @@ flowchart TD
     TR ==> FT
     GE ==> FT
     CL -.-> FT
-    FT -.-> MX
+    FT -.->|runtime schedules| MX
     EF -.->|immediate writes| DB
     EP -.->|immediate writes| DB
     SB -.->|held candidates| CM
@@ -391,7 +401,7 @@ OpenCouch/
 │   │   │   ├── nodes/          # Individual graph nodes
 │   │   │   ├── memory/         # Memory retrieval, deduplication, embeddings
 │   │   │   └── therapeutic/    # Therapeutic subgraph, modes, prompt logic
-│   │   ├── services/llm/       # LLM adapters (Gemini, OpenAI, etc.)
+│   │   ├── llm/                # LLM adapters (Gemini, OpenAI, etc.)
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── voice/              # LiveKit voice worker + direct Realtime harness
 │   │   ├── channels/           # Telegram gateway and channel adapters
@@ -399,7 +409,6 @@ OpenCouch/
 │   │   └── tests/              # 1100+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
-└── eval/                       # Evaluation harnesses + curated datasets
 ```
 </details>
 
@@ -413,11 +422,7 @@ Backend:
 cd apps/backend && uv sync --group dev
 
 # Run the test suite before opening a PR.
-uv run pytest tests/
-
-# Run core deterministic evaluation checks.
-uv run python ../../eval/runners/crisis_gate_eval.py --mode deterministic
-uv run python ../../eval/runners/therapeutic_routing_eval.py --mode deterministic
+uv run pytest tests/unit tests/integration
 ```
 
 Web:
@@ -436,7 +441,7 @@ uv run pre-commit run --all-files
 
 ### Observability
 
-For local development traces and eval review, add Opik credentials to `.env` before running the CLI or API:
+For local development trace review, add Opik credentials to `.env` before running the CLI or API:
 
 ```env
 OPIK_API_KEY=...
@@ -464,13 +469,16 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of **May 2026**:
 
+- **May 2026 — Text and voice dogfooding scripts** — the web UI is temporarily broken during the app-shell refactor, so local dogfooding now has separate script entrypoints: `scripts/cli_dogfood.sh` for the text agent and `scripts/voice_agent.sh` for the LiveKit voice agent. The voice script starts Postgres by default, forwards LiveKit commands, and exposes flags for user id, thread id, memory mode, backend, database URL, and skipping Postgres.
+- **May 2026 — Turn dispatch & grounded tools cleanup** — safe-turn routing now uses one typed `turn_dispatch` node for memory control, grounded lookup, or therapeutic support instead of separate regex/pattern gate nodes. Grounded lookup and web search were consolidated into structured provider-native search helpers with explicit source lists, crisis-location classification, and `location_refused` handling. Scripted and live grounded-tool quality evals pass `11/11`.
+- **May 2026 — Therapeutic dispatch & state-surface cleanup** — the therapeutic router collapsed to an LLM-primary policy (~821 LOC removed across four deleted dispatch modules) with a small deterministic exercise-state bookkeeping layer. Three carrying-cost-only output channels (`response_style_type`, `response_style_source`, `response_kind`) were removed end-to-end across the agent, public API, frontend, and docs, with the public `AgentOutput.response_type` now derived once from the crisis assessment rather than written by five separate nodes. 1025/1025 backend tests pass.
 - **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose. A `scripts/cli_dogfood.sh` helper ensures Postgres is up before launching the CLI, and `get_settings()` now fails fast with an actionable error when the Postgres backend is selected without `OPENCOUCH_MEMORY_DATABASE_URL`.
 - **May 2026 — Agent module restructure & service extraction** — large structural cleanup of the agent package (net **−1043 lines across 172 files**): voice and active-session modules pulled into `agent/`, memory store promoted to a backend-aware package, risk-gating subsystems grouped under `agent/gates/`, facade and wrapper modules dissolved, and standalone services extracted for memory control, session finalization, runtime streaming, and turn-extraction coordination. Routing decisions are now typed across the agent router, grounded-lookup router, and memory-control router.
 - **May 2026 — Off-turn memory extraction** — semantic and procedural memory extraction now runs after the user-visible reply has rendered, removing ~250–300ms median (and up to ~800ms p95) of post-turn latency from the perceived response time. Extractor edges and candidate-policy evaluation also run in parallel where safe.
 - **May 2026 — Full local product stack** — the one-command Compose setup runs Postgres, the FastAPI backend, production-mode Next.js web UI, and the LiveKit voice worker together for a closer-to-real local environment.
 - **Apr–May 2026 — Web and voice experience refresh** — chat, memory, state, and voice routes now have stronger session continuity, clearer setup/end-session flows, voice selection, mic warmup states, and route-persistent text streaming.
-- **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests, hybrid evals, and Opik tracing.
-- **Recent — Guided support coverage** — OpenCouch includes 13 state-tracked coping exercises, including grounding, breathing, thought work, and values reflection, with evaluation coverage for selection, flow, and memory behavior.
+- **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests and Opik tracing.
+- **Recent — Guided support coverage** — OpenCouch includes 13 state-tracked coping exercises, including grounding, breathing, thought work, and values reflection, with tests covering selection, flow, and memory behavior.
 - **Recent — Channel expansion** — Telegram direct-message support now includes allow-listing, `/end`, markdown rendering, session rotation, startup recovery, and non-blocking maintenance sweeps.
 
 ---

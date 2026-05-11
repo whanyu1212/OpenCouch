@@ -1,0 +1,531 @@
+{
+  "name": "memory_lifecycle_trajectory_v1",
+  "description": "Postgres-first text-agent trajectories for long-term memory lifecycle behavior across fresh threads.",
+  "cases": [
+    {
+      "id": "semantic-write-recall-fresh-thread",
+      "description": "A durable support-person fact shared in one thread should be written and recalled on a fresh thread for the same user.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-write",
+          "user_id": "{run_id}-user",
+          "message": "A stable support fact about me: my sister Sarah helps when panic starts.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe support-person context",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is sharing support context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Supportive acknowledgement fits.",
+              "confidence": "high"
+            },
+            "response_text": "It is useful to know that Sarah is someone who helps when panic starts.",
+            "semantic_extraction": {
+              "facts": [
+                {
+                  "category": "relationship",
+                  "subject": {
+                    "type": "User",
+                    "identifier": "{run_id}-user"
+                  },
+                  "predicate": "KNOWS",
+                  "object": {
+                    "type": "Person",
+                    "identifier": "Sarah"
+                  },
+                  "evidence_quote": "my sister Sarah helps when panic starts",
+                  "confidence": "high",
+                  "source_session_id": "{run_id}-write",
+                  "source_turn_index": 0
+                }
+              ],
+              "reason": "stored named support-person relationship"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-recall",
+          "user_id": "{run_id}-user",
+          "message": "Panic starts again and I need Sarah's help. Help me use that support.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for emotional support using known context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Supportive response fits.",
+              "confidence": "high"
+            },
+            "response_text": "Sarah is the support person you mentioned. If it feels safe, text or call her now and stay with one grounding cue while you wait.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no new durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no new style rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "working_memory_count": 1,
+            "working_memory_contains": ["Sarah"],
+            "semantic_hits": 1,
+            "response_text_contains": ["Sarah"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "semantic_count": 1,
+            "active_semantic_count": 1,
+            "facts_contain": ["Sarah"],
+            "active_facts_contain": ["Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-recall",
+            "exists": true,
+            "transcript_length": 2,
+            "turn_count": 1,
+            "status": "active"
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "cross_thread_recall",
+            "question": "Does the fresh-thread response use the written support-person memory naturally and only because it is relevant?",
+            "weight": 1.2
+          },
+          {
+            "name": "support_quality",
+            "question": "Does the assistant give calm, immediately usable panic support?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "semantic-correction-supersedes-stale-plan",
+      "description": "A corrected coping plan should supersede the stale active fact and only the current plan should be recalled on a fresh thread.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-stale-panic-plan",
+                  "category": "coping_strategy",
+                  "predicate": "USES",
+                  "object_type": "CopingStrategy",
+                  "object_identifier": "calling Sarah during panic",
+                  "evidence_quote": "My panic plan is calling Sarah during panic."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-correct",
+          "user_id": "{run_id}-user",
+          "message": "This is my ongoing panic plan going forward: text Maya during panic instead of calling Sarah.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe correction to coping plan",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is updating personal support context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "A concise acknowledgement fits.",
+              "confidence": "high"
+            },
+            "response_text": "Got it: your current panic plan is texting Maya.",
+            "semantic_extraction": {
+              "facts": [
+                {
+                  "category": "coping_strategy",
+                  "subject": {
+                    "type": "User",
+                    "identifier": "{run_id}-user"
+                  },
+                  "predicate": "USES",
+                  "object": {
+                    "type": "CopingStrategy",
+                    "identifier": "texting Maya during panic"
+                  },
+                  "evidence_quote": "text Maya during panic instead of calling Sarah",
+                  "confidence": "high",
+                  "source_session_id": "{run_id}-correct",
+                  "source_turn_index": 0
+                }
+              ],
+              "reason": "stored corrected coping plan"
+            },
+            "semantic_reconciliation": {
+              "action": "supersede",
+              "record_indexes": [0],
+              "reason": "the new coping plan replaces the stale panic plan",
+              "confidence": "high"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-correct-recall",
+          "user_id": "{run_id}-user",
+          "message": "Panic is starting. Help me text Maya during panic and keep it brief.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for emotional support using current context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Supportive response fits.",
+              "confidence": "high"
+            },
+            "response_text": "Use the current plan: text Maya now, then keep your feet on the floor while you wait.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no new durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no new style rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "working_memory_count": 1,
+            "working_memory_contains": ["text Maya"],
+            "semantic_hits": 1,
+            "response_text_contains": ["Maya"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "semantic_count": 2,
+            "active_semantic_count": 1,
+            "facts_contain": ["calling Sarah", "text Maya"],
+            "active_facts_contain": ["text Maya"],
+            "active_facts_absent": ["My panic plan is calling Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-correct-recall",
+            "exists": true,
+            "transcript_length": 2,
+            "turn_count": 1,
+            "status": "active"
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "correction_hygiene",
+            "question": "Does the trajectory prefer the corrected Maya plan over the stale Sarah plan?",
+            "weight": 1.3
+          },
+          {
+            "name": "support_quality",
+            "question": "Does the assistant make the current plan easy to act on during panic?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "semantic-delete-confirm-absence-fresh-thread",
+      "description": "Deleting a seeded fact should require confirmation, physically remove the fact, and prevent fresh-thread recall.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-sarah-support",
+                  "category": "relationship",
+                  "predicate": "KNOWS",
+                  "object_type": "Person",
+                  "object_identifier": "Sarah",
+                  "evidence_quote": "My sister Sarah helps when panic starts."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-delete",
+          "user_id": "{run_id}-user",
+          "message": "Delete saved fact 1.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe memory deletion request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user asks to delete a saved fact by index.",
+              "confidence": "high",
+              "memory_action_type": "forget_by_index",
+              "target_kind": "fact",
+              "target_index": 1,
+              "active_flow_action": "none"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "memory_control": {
+              "pending_action": {
+                "type": "delete",
+                "target": {
+                  "kind": "fact"
+                }
+              }
+            },
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-delete",
+          "user_id": "{run_id}-user",
+          "message": "Yes, delete that saved fact.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe confirmation of pending deletion",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user confirms the pending saved-memory deletion.",
+              "confidence": "high",
+              "memory_action_type": "confirm_pending",
+              "active_flow_action": "continue"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "memory_control": {
+              "pending_action": null
+            },
+            "response_text_contains": ["Deleted"],
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-absence",
+          "user_id": "{run_id}-user",
+          "message": "Panic is starting again. Help me choose one support step.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for emotional support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Supportive response fits.",
+              "confidence": "high"
+            },
+            "response_text": "Take one immediate step: place both feet on the floor, slow your exhale, and contact someone you trust if that would help.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "status_after": "active",
+            "working_memory_count": 0,
+            "working_memory_not_contains": ["Sarah", "panic starts"],
+            "semantic_hits": 0,
+            "response_text_not_contains": ["Sarah"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "semantic_count": 0,
+            "active_semantic_count": 0,
+            "facts_absent": ["Sarah", "panic starts"],
+            "active_facts_absent": ["Sarah", "panic starts"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-absence",
+            "exists": true,
+            "transcript_length": 2,
+            "turn_count": 1,
+            "status": "active"
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "deletion_lifecycle",
+            "question": "Does the trajectory require deletion confirmation and then avoid recalling the deleted Sarah fact on a fresh thread?",
+            "weight": 1.3
+          },
+          {
+            "name": "support_without_deleted_memory",
+            "question": "After deletion, does the assistant still provide useful support without relying on deleted memory?",
+            "weight": 1.0
+          }
+        ]
+      }
+    }
+  ]
+}

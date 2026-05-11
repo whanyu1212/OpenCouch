@@ -11,17 +11,23 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.models import (
+    EntityRef,
+    MemoryWrite,
+    ProceduralRule,
+    ProceduralRuleDraft,
+    SemanticFact,
+)
 from agent.memory.policy.candidates import (
     SessionMemoryBuffer,
     build_procedural_candidate,
     build_semantic_candidate,
 )
-from agent.memory.embeddings import EmbeddingProvider
-from agent.memory.models import (
-    MemoryWrite,
-    ProceduralRule,
-    ProceduralRuleDraft,
-    SemanticFact,
+from agent.memory.policy.write import (
+    decide_procedural_candidate_llm_primary,
+    decide_semantic_candidate_llm_primary,
 )
 from agent.memory.procedural_profile import (
     aupsert_procedural_rule,
@@ -32,12 +38,26 @@ from agent.memory.semantic_writes import (
     apply_semantic_writes_batch,
 )
 from agent.memory.store import MemoryStore
-from agent.memory.policy.write import (
-    decide_procedural_candidate_llm_primary,
-    decide_semantic_candidate_llm_primary,
-)
 
 logger = logging.getLogger(__name__)
+
+
+def _canonicalize_semantic_owner(write: MemoryWrite, *, owner_id: str) -> MemoryWrite:
+    """Normalize extractor user-subject aliases to the concrete memory owner.
+
+    Args:
+        write (MemoryWrite): Extracted semantic fact candidate.
+        owner_id (str): Concrete memory owner namespace for the current turn.
+
+    Returns:
+        MemoryWrite: Candidate with the ``User`` subject bound to ``owner_id``.
+    """
+
+    if write.subject.type != "User" or write.subject.identifier == owner_id:
+        return write
+    return write.model_copy(
+        update={"subject": EntityRef(type="User", identifier=owner_id)}
+    )
 
 
 @dataclass(frozen=True)
@@ -51,6 +71,8 @@ class SemanticProcessingResult:
     session_end_holds: int
     repeat_required: int
     policy_drops: int
+    policy_errors: int
+    write_skips: int
     reason: str
     written_items: list[SemanticFact] = field(default_factory=list)
 
@@ -64,6 +86,8 @@ class ProceduralProcessingResult:
     commit_now_candidates: int
     session_end_holds: int
     policy_drops: int
+    policy_errors: int
+    write_skips: int
     reason: str
     written_items: list[ProceduralRule] = field(default_factory=list)
 
@@ -86,7 +110,7 @@ class TurnWriteService:
         """Apply policy, deduplication, reconciliation, and writes to facts.
 
         Args:
-            writes: Candidate fact writes from the extractor and backstops.
+            writes: Candidate fact writes from the extractor.
             message: Current user message used for candidate context.
             reason: Extractor reason to preserve in diagnostics.
             owner_id: Owner whose memory namespace receives writes.
@@ -107,21 +131,46 @@ class TurnWriteService:
         # Build candidates synchronously, then fan out the per-candidate
         # policy decisions in parallel. The decision functions are pure
         # async with no shared state and no ordering dependency, so
-        # ``gather`` is safe; LLM-failure fallbacks are handled inside the
-        # decision function and surface as deterministic decisions, not
-        # raised exceptions.
-        candidates = [
-            build_semantic_candidate(write, message=message) for write in writes
+        # ``gather`` is safe; policy-classifier failures are allowed to
+        # surface so transient provider failures do not silently become
+        # deterministic memory writes.
+        normalized_writes = [
+            _canonicalize_semantic_owner(write, owner_id=owner_id) for write in writes
         ]
-        decisions = await asyncio.gather(
-            *(
-                decide_semantic_candidate_llm_primary(
-                    candidate,
-                    llm_client=llm_client,
+        candidates = [
+            build_semantic_candidate(write, message=message)
+            for write in normalized_writes
+        ]
+        try:
+            decisions = await asyncio.gather(
+                *(
+                    decide_semantic_candidate_llm_primary(
+                        candidate,
+                        llm_client=llm_client,
+                    )
+                    for candidate in candidates
                 )
-                for candidate in candidates
             )
-        )
+        except Exception:
+            logger.warning(
+                "memory_service: semantic write-policy failed; skipping all "
+                "%d semantic candidates for this turn.",
+                len(candidates),
+                exc_info=True,
+            )
+            return SemanticProcessingResult(
+                written=0,
+                bumped=0,
+                candidates=len(writes),
+                commit_now_candidates=0,
+                session_end_holds=0,
+                repeat_required=0,
+                policy_drops=0,
+                policy_errors=len(writes),
+                write_skips=0,
+                reason="skipped: semantic policy error",
+                written_items=[],
+            )
 
         for candidate, decision in zip(candidates, decisions):
             if decision.action == "commit_now":
@@ -129,11 +178,11 @@ class TurnWriteService:
             elif decision.action == "commit_at_session_end":
                 session_end_holds += 1
                 if session_buffer is not None:
-                    session_buffer.semantic_candidates.append(candidate)
+                    session_buffer.hold_semantic(candidate, decision)
             elif decision.action == "require_repetition":
                 repeat_required += 1
                 if session_buffer is not None:
-                    session_buffer.semantic_candidates.append(candidate)
+                    session_buffer.hold_semantic(candidate, decision)
             else:
                 policy_drops += 1
 
@@ -154,6 +203,8 @@ class TurnWriteService:
                 session_end_holds=session_end_holds,
                 repeat_required=repeat_required,
                 policy_drops=policy_drops,
+                policy_errors=0,
+                write_skips=0,
                 reason=reason,
                 written_items=[],
             )
@@ -185,6 +236,8 @@ class TurnWriteService:
                 session_end_holds=session_end_holds,
                 repeat_required=repeat_required,
                 policy_drops=policy_drops,
+                policy_errors=0,
+                write_skips=batch_outcome.skipped,
                 reason="skipped: dedup fetch failed",
                 written_items=[],
             )
@@ -207,6 +260,8 @@ class TurnWriteService:
             session_end_holds=session_end_holds,
             repeat_required=repeat_required,
             policy_drops=policy_drops,
+            policy_errors=0,
+            write_skips=batch_outcome.skipped,
             reason=reason,
             written_items=batch_outcome.written_items,
         )
@@ -257,15 +312,34 @@ class TurnWriteService:
             )
             for draft in drafts
         ]
-        decisions = await asyncio.gather(
-            *(
-                decide_procedural_candidate_llm_primary(
-                    candidate,
-                    llm_client=llm_client,
+        try:
+            decisions = await asyncio.gather(
+                *(
+                    decide_procedural_candidate_llm_primary(
+                        candidate,
+                        llm_client=llm_client,
+                    )
+                    for candidate in candidates
                 )
-                for candidate in candidates
             )
-        )
+        except Exception:
+            logger.warning(
+                "memory_service: procedural write-policy failed; skipping all "
+                "%d procedural candidates for this turn.",
+                len(candidates),
+                exc_info=True,
+            )
+            return ProceduralProcessingResult(
+                written=0,
+                candidates=len(drafts),
+                commit_now_candidates=0,
+                session_end_holds=0,
+                policy_drops=0,
+                policy_errors=len(drafts),
+                write_skips=0,
+                reason="skipped: procedural policy error",
+                written_items=[],
+            )
 
         for candidate, decision in zip(candidates, decisions):
             if decision.action == "commit_now":
@@ -273,7 +347,7 @@ class TurnWriteService:
             elif decision.action == "commit_at_session_end":
                 session_end_holds += 1
                 if session_buffer is not None:
-                    session_buffer.procedural_candidates.append(candidate)
+                    session_buffer.hold_procedural(candidate, decision)
             else:
                 policy_drops += 1
 
@@ -291,11 +365,14 @@ class TurnWriteService:
                 commit_now_candidates=0,
                 session_end_holds=session_end_holds,
                 policy_drops=policy_drops,
+                policy_errors=0,
+                write_skips=0,
                 reason=reason,
                 written_items=[],
             )
 
         written = 0
+        write_skips = 0
         written_items: list[ProceduralRule] = []
         for candidate, decision in immediate_candidates:
             draft = candidate.payload
@@ -318,6 +395,8 @@ class TurnWriteService:
                 if upsert.action != "skipped":
                     written += 1
                     written_items.append(rule)
+                else:
+                    write_skips += 1
             except Exception:
                 logger.warning(
                     "memory_service: failed to write procedural draft %r; "
@@ -325,6 +404,7 @@ class TurnWriteService:
                     draft.rule[:60],
                     exc_info=True,
                 )
+                write_skips += 1
 
         logger.info(
             "memory_service: procedural turn complete — %d written, %d immediate, "
@@ -340,6 +420,8 @@ class TurnWriteService:
             commit_now_candidates=len(immediate_candidates),
             session_end_holds=session_end_holds,
             policy_drops=policy_drops,
+            policy_errors=0,
+            write_skips=write_skips,
             reason=reason,
             written_items=written_items,
         )

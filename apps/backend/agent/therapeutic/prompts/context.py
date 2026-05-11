@@ -11,7 +11,9 @@ def _format_working_memory(state: AgentState) -> str:
 
     If there is no working memory (incognito mode, or no facts extracted
     yet), returns an empty string so the prompt section is simply absent
-    rather than showing an empty list.
+    rather than showing an empty list. When proactive recall is off, the
+    response prompt receives only a private availability signal, not the
+    specific saved facts or session details.
 
     Args:
         state: Current graph state.
@@ -23,7 +25,17 @@ def _format_working_memory(state: AgentState) -> str:
     snippets = format_working_memory_entries(state.get("working_memory", []))
     if not snippets:
         return ""
+    explicit_reference = _explicit_memory_reference_requested(state)
+    if not _proactive_recall_enabled(state) and not explicit_reference:
+        return (
+            "\nPrivate memory context is available for this turn, but proactive "
+            "recall is off. Use it only as a silent signal for pacing and "
+            "continuity. Do NOT mention or imply any specific saved names, "
+            "facts, events, quotes, past sessions, or memories.\n"
+        )
     joined = "\n".join(f"- {snippet}" for snippet in snippets)
+    if explicit_reference:
+        return f"\nRelevant context requested by the user:\n{joined}\n"
     return f"\nRelevant context from past sessions:\n{joined}\n"
 
 
@@ -93,26 +105,51 @@ def _format_recall_toggle_constraint(state: AgentState) -> str:
         Formatted memory-reference guidance block.
     """
 
-    procedural_profile = state.get("procedural_profile", {}) or {}
-    enabled = procedural_profile.get("proactive_recall_enabled", False)
-
-    if enabled:
+    if _proactive_recall_enabled(state):
         # Recall ON: relaxed constraint.
         return (
             "\n\n═══ Memory reference guidance (proactive recall: ON) ═══\n"
             "You may reference relevant past memories when it adds value "
             "to the current moment, but do so sparingly and never for "
-            "emotionally charged topics without strong contextual fit."
+            "emotionally charged topics without strong contextual fit.\n"
+            "If the user explicitly asks what helped, what you worked out, "
+            "or what to continue from a past session, answer from the "
+            "retrieved context and include one small concrete continuation "
+            "step. Do not stop at a recap when the user is asking for "
+            "support or coaching."
+        )
+
+    if _explicit_memory_reference_requested(state):
+        return (
+            "\n\n═══ Memory reference guidance (proactive recall: OFF; explicit "
+            "user request) ═══\n"
+            "The user is explicitly asking to recap or continue from prior "
+            "conversation context. For this turn only, you may answer from "
+            "retrieved context when it is available. Be concrete about what "
+            "was worked out, what helped, or where to continue. Do not mention "
+            "memory storage, retrieval, or internal records."
         )
 
     # Recall OFF (default): silent-shaping constraint.
     return (
         "\n\n═══ Memory reference guidance (proactive recall: OFF) ═══\n"
-        "Use any retrieved memories to inform the warmth, pacing, and "
-        "content of your response, but do NOT explicitly reference past "
-        "sessions or past statements unless the user has just asked "
-        "about them."
+        "do NOT explicitly reference past sessions, saved memories, or "
+        "specific saved facts unless the user has just asked about them. "
+        "If a private memory-availability signal is present, treat it only "
+        "as a silent pacing and continuity cue."
     )
+
+
+def _proactive_recall_enabled(state: AgentState) -> bool:
+    procedural_profile = state.get("procedural_profile", {}) or {}
+    return bool(procedural_profile.get("proactive_recall_enabled", False))
+
+
+def _explicit_memory_reference_requested(state: AgentState) -> bool:
+    memory_reference = state.get("memory_reference", {}) or {}
+    if not isinstance(memory_reference, dict):
+        return False
+    return memory_reference.get("mode") == "explicit"
 
 
 def _has_episodic_context(state: AgentState) -> bool:

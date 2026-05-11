@@ -1,0 +1,611 @@
+{
+  "name": "memory_recall_robustness_v1",
+  "description": "Postgres-first runtime trajectories for realistic memory recall phrasing, correction, and no-memory boundaries.",
+  "cases": [
+    {
+      "id": "indirect-support-person-recall",
+      "description": "A fresh-thread indirect question should recall the relevant support person without needing exact saved wording.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-sarah-support",
+                  "category": "relationship",
+                  "predicate": "KNOWS",
+                  "object_type": "Person",
+                  "object_identifier": "Sarah",
+                  "evidence_quote": "My sister Sarah helps when panic starts."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-indirect",
+          "user_id": "{run_id}-user",
+          "message": "I'm getting that panic feeling again. Who did I say I reach out to when panic starts?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe recall request about support context",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support around remembered panic context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Brief support with recalled context fits.",
+              "confidence": "high"
+            },
+            "response_text": "You said Sarah is the person who helps when panic starts. If it feels okay, send her one clear text now.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no new durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "working_memory_count_min": 1,
+            "working_memory_contains": ["Sarah", "panic starts"],
+            "semantic_hits_min": 1,
+            "response_text_contains": ["Sarah"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "active_facts_contain": ["Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-indirect",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "indirect_recall",
+            "question": "Does the assistant answer the indirect recall question using the saved Sarah support-person memory without sounding mechanical?",
+            "weight": 1.2
+          },
+          {
+            "name": "support_quality",
+            "question": "Does the response give a calm next step for panic support?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "support-plan-recall-without-name",
+      "description": "A user asking for their support plan without naming the person should recall the plan details.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-maya-support-plan",
+                  "category": "coping_strategy",
+                  "predicate": "USES",
+                  "object_type": "CopingStrategy",
+                  "object_identifier": "panic support plan",
+                  "evidence_quote": "My panic support plan is to text Maya and hold a cold drink."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-plan",
+          "user_id": "{run_id}-user",
+          "message": "Panic is starting. Help me use my support plan.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support using their known plan.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Brief plan support fits.",
+              "confidence": "high"
+            },
+            "response_text": "Use the plan you named: text Maya now, and hold a cold drink while you wait for her reply.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no new durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "working_memory_count_min": 1,
+            "working_memory_contains": ["Maya", "cold drink"],
+            "semantic_hits_min": 1,
+            "response_text_contains": ["Maya"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "active_facts_contain": ["Maya", "cold drink"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-plan",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "plan_recall",
+            "question": "Does the assistant recall the support plan details even though the user did not name Maya directly?",
+            "weight": 1.2
+          },
+          {
+            "name": "support_quality",
+            "question": "Does the response translate the remembered plan into a small usable next step?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "correction-recall-current-person-only",
+      "description": "A support-plan correction should make the fresh-thread recall use the current person and avoid the stale person.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-stale-sarah-plan",
+                  "category": "coping_strategy",
+                  "predicate": "USES",
+                  "object_type": "CopingStrategy",
+                  "object_identifier": "calling Sarah during panic",
+                  "evidence_quote": "My panic plan is calling Sarah during panic."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-correct",
+          "user_id": "{run_id}-user",
+          "message": "Correction to my saved panic support plan: going forward, text Maya during panic instead of calling Sarah.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe memory correction",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user corrects durable support context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Acknowledge the correction briefly.",
+              "confidence": "high"
+            },
+            "response_text": "Got it: going forward, Maya is the person for your panic support plan.",
+            "semantic_extraction": {
+              "facts": [
+                {
+                  "category": "coping_strategy",
+                  "subject": {
+                    "type": "User",
+                    "identifier": "{run_id}-user"
+                  },
+                  "predicate": "USES",
+                  "object": {
+                    "type": "CopingStrategy",
+                    "identifier": "text Maya during panic"
+                  },
+                  "evidence_quote": "going forward, text Maya during panic instead of calling Sarah",
+                  "confidence": "high",
+                  "source_session_id": "{run_id}-correct",
+                  "source_turn_index": 0
+                }
+              ],
+              "reason": "stored corrected support plan"
+            },
+            "semantic_reconciliation": {
+              "action": "supersede",
+              "record_indexes": [0],
+              "reason": "new corrected panic plan replaces stale Sarah plan",
+              "confidence": "high"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "response_text_contains": ["Maya"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-recall-current",
+          "user_id": "{run_id}-user",
+          "message": "Panic is starting. Who is my current support person for this?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe current support recall request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support using current recalled context.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Brief current support recall fits.",
+              "confidence": "high"
+            },
+            "response_text": "Your current support plan says to text Maya during panic. Start with one short message to Maya now.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no new durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "working_memory_count_min": 1,
+            "working_memory_contains": ["Maya"],
+            "working_memory_not_contains": ["My panic plan is calling Sarah"],
+            "semantic_hits_min": 1,
+            "response_text_contains": ["Maya"],
+            "response_text_not_contains": ["Sarah"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "semantic_count": 2,
+            "active_semantic_count": 1,
+            "active_facts_contain": ["Maya"],
+            "active_facts_absent": ["My panic plan is calling Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-recall-current",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "current_memory",
+            "question": "Does the fresh-thread response use Maya as the current support person and avoid reviving the stale Sarah plan?",
+            "weight": 1.4
+          },
+          {
+            "name": "correction_lifecycle",
+            "question": "Does the trajectory reflect a correction rather than coexisting conflicting plans?",
+            "weight": 1.1
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-saved-support-plan-does-not-invent",
+      "description": "When no support-plan memory exists, explicit saved-memory inspection should say nothing is saved instead of inventing details.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-none",
+          "user_id": "{run_id}-user",
+          "message": "What support plan is saved in memory about panic?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe saved-memory inspection request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user asks what support-plan content is saved in memory.",
+              "confidence": "high",
+              "memory_action_type": "list",
+              "active_flow_action": "none"
+            }
+          },
+          "expected": {
+            "route": "memory_control",
+            "response_style": "memory_control",
+            "status_after": "active",
+            "response_text_contains": ["don't have any saved"],
+            "response_text_not_contains": ["Sarah", "Maya", "panic plan is"],
+            "memory_control": {
+              "pending_action": null
+            },
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "semantic_count": 0,
+            "active_semantic_count": 0
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-none",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "no_memory_hallucination",
+            "question": "Does the assistant avoid inventing a saved support plan when none exists?",
+            "weight": 1.4
+          },
+          {
+            "name": "memory_transparency",
+            "question": "Does the response make the absence of saved memory clear without unnecessary friction?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "unrelated-memory-does-not-leak-into-panic-support",
+      "description": "A decoy unrelated memory should not be retrieved or mentioned during panic support.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-pasta-decoy",
+                  "category": "preference",
+                  "predicate": "EXPERIENCED",
+                  "object_type": "Event",
+                  "object_identifier": "Sunday pasta cooking",
+                  "evidence_quote": "I like cooking pasta on Sundays."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-decoy",
+          "user_id": "{run_id}-user",
+          "message": "Panic is starting and I need one calming step.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for emotional support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Brief panic support fits.",
+              "confidence": "high"
+            },
+            "response_text": "Try one small step: lengthen your exhale and name one thing you can feel under your feet.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "working_memory_count": 0,
+            "working_memory_not_contains": ["pasta", "Sundays"],
+            "semantic_hits": 0,
+            "response_text_not_contains": ["pasta", "Sundays", "cooking"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "active_facts_contain": ["pasta"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-decoy",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "irrelevant_memory_hygiene",
+            "question": "Does the response avoid injecting unrelated pasta/cooking memory into panic support?",
+            "weight": 1.2
+          },
+          {
+            "name": "support_quality",
+            "question": "Does the assistant give a calm, usable next step?",
+            "weight": 1.0
+          }
+        ]
+      }
+    }
+  ]
+}

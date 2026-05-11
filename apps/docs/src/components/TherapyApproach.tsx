@@ -182,7 +182,7 @@ export default function TherapyApproach() {
       <section className={styles.responseStylesSection}>
         <h3 className={styles.sectionTitle}>Therapeutic response styles</h3>
         <p className={styles.sectionSub}>
-          Seven response styles are dispatched per turn by the therapeutic subgraph. The LLM classifier is the primary path; deterministic regex fires only for explicit exercise opt-out and as a fallback when no LLM is configured. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <Link to="/docs/philosophy/crisis-gate">Crisis Gate</Link>).
+          Seven response styles are dispatched per turn by the therapeutic subgraph. The LLM classifier owns natural-language style decisions; local code validates active exercise state and structured output. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <Link to="/docs/philosophy/crisis-gate">Crisis Gate</Link>).
         </p>
         <div className={styles.responseStyleTable}>
           {RESPONSE_STYLES.map(m => (

@@ -25,9 +25,9 @@ Two functions live here:
 Stopword philosophy: keep the list tiny and obviously-safe. The risk of
 an over-eager stopword list is weird retrieval behavior that's hard to
 debug later. The current list covers pronouns, articles, the two most
-common copulas, and a handful of high-frequency connectives — all
-things that don't meaningfully distinguish one therapy utterance from
-another.
+common copulas, a handful of high-frequency connectives, and question
+framing words — all things that don't meaningfully distinguish one
+therapy utterance from another.
 """
 
 from __future__ import annotations
@@ -104,8 +104,8 @@ def _split_cjk(token: str) -> list[str]:
 # Keep this list small and boring. A 200-word stopword list is a recipe
 # for surprising retrieval failures ("I can't remember" queries where
 # "can" is stripped, etc.). The current set is pronouns, articles, the
-# copula, and a few prepositions — all of which are safe to drop without
-# changing the semantic thrust of a query.
+# copula, a few prepositions, and question framing words — all of which are
+# safe to drop without changing the semantic thrust of a query.
 _STOPWORDS: frozenset[str] = frozenset(
     {
         # pronouns
@@ -172,6 +172,23 @@ _STOPWORDS: frozenset[str] = frozenset(
         "this",
         "these",
         "those",
+        # question / reminder framing
+        "what",
+        "who",
+        "whom",
+        "whose",
+        "where",
+        "when",
+        "why",
+        "how",
+        "which",
+        "remind",
+        # temporal / particle filler
+        "again",
+        "before",
+        "after",
+        "during",
+        "out",
     }
 )
 

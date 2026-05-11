@@ -8,7 +8,6 @@ from typing import Any
 from langgraph.runtime import Runtime
 
 from agent.gates.memory_control import execute_memory_control_action
-from agent.models import ResponseCategory, ResponseStyleType
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -28,9 +27,6 @@ def _base_delta(response_text: str, *, started_at: float) -> dict[str, Any]:
     return {
         "route": "memory_control",
         "response_style": "memory_control",
-        "response_style_source": "memory_control_gate",
-        "response_style_type": ResponseStyleType.OPERATIONAL,
-        "response_kind": ResponseCategory.THERAPEUTIC,
         "response_text": response_text,
         "diagnostics": {"memory_control_ms": elapsed_ms(started_at)},
     }

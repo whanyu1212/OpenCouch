@@ -1,0 +1,473 @@
+{
+  "name": "memory_control_node_contract_v1",
+  "description": "Standalone memory-control node contracts with production-shaped seeded memory fixtures.",
+  "cases": [
+    {
+      "id": "list-empty-memory",
+      "description": "Listing memory for a new user should be explicit and non-mutating.",
+      "message": "What do you remember about me?",
+      "action": {"type": "list"},
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["don't have any saved facts"],
+        "pending_action_is_null": true,
+        "diagnostics_memory_control_ms": true,
+        "store_after": {
+          "semantic_count": 0,
+          "episodic_count": 0,
+          "rule_count": 0,
+          "proactive_recall_enabled": false
+        }
+      }
+    },
+    {
+      "id": "list-seeded-memory",
+      "description": "Listing memory should expose realistic semantic, episodic, and procedural previews.",
+      "message": "Show me what is saved in memory.",
+      "action": {"type": "list"},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious, especially when senior leaders are in the room."
+          }
+        ],
+        "episodic_sessions": [
+          {
+            "id": "session-presentation-cbt",
+            "session_id": "prior-presentation-cbt",
+            "primary_themes": ["presentation anxiety", "catastrophic predictions"],
+            "summary": "The user explored presentation anxiety, noticed a catastrophic prediction about freezing, and planned to test it with one short practice run.",
+            "approach_used": "cbt"
+          }
+        ],
+        "procedural_rules": [
+          {
+            "rule": "You prefer concise, direct responses when you are panicking.",
+            "evidence": ["Please keep it short when I am panicking."]
+          }
+        ],
+        "proactive_recall_enabled": true
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Presentations make me anxious", "presentation anxiety", "concise, direct"],
+        "pending_action_is_null": true,
+        "diagnostics_memory_control_ms": true,
+        "store_after": {
+          "semantic_count": 1,
+          "episodic_count": 1,
+          "rule_count": 1,
+          "proactive_recall_enabled": true,
+          "facts_contain": ["Presentations make me anxious"],
+          "sessions_contain": ["catastrophic prediction"],
+          "rules_contain": ["concise, direct"]
+        }
+      }
+    },
+    {
+      "id": "status-seeded-memory",
+      "description": "Status should summarize counts and proactive recall state.",
+      "message": "What is my memory status?",
+      "action": {"type": "status"},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-sleep-conflict",
+            "category": "context",
+            "predicate": "EXPERIENCED",
+            "object_type": "Event",
+            "object_identifier": "sleep after partner conflict",
+            "evidence_quote": "My sleep gets worse after conflict with my partner."
+          }
+        ],
+        "episodic_sessions": [
+          {
+            "id": "session-partner-conflict",
+            "session_id": "prior-partner-conflict",
+            "primary_themes": ["partner conflict", "sleep"],
+            "summary": "The user connected poor sleep with unresolved tension after partner conflict and named one boundary they wanted to communicate.",
+            "approach_used": "interpersonal_therapy"
+          }
+        ],
+        "procedural_rules": [
+          {
+            "rule": "You should avoid unsolicited journaling prompts.",
+            "evidence": ["Please do not default to journaling prompts."]
+          }
+        ],
+        "proactive_recall_enabled": true
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Saved facts: 1", "Session summaries: 1", "Style preferences: 1", "Proactive recall: on"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "semantic_count": 1,
+          "episodic_count": 1,
+          "rule_count": 1,
+          "proactive_recall_enabled": true
+        }
+      }
+    },
+    {
+      "id": "set-recall-off",
+      "description": "The node should persistently disable proactive recall.",
+      "message": "Turn proactive recall off.",
+      "action": {"type": "set_recall", "enabled": false},
+      "memory_seed": {"proactive_recall_enabled": true},
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["turned proactive recall off"],
+        "pending_action_is_null": true,
+        "procedural_profile_proactive_recall_enabled": false,
+        "store_after": {"proactive_recall_enabled": false}
+      }
+    },
+    {
+      "id": "set-recall-on",
+      "description": "The node should persistently enable proactive recall.",
+      "message": "Turn proactive recall back on.",
+      "action": {"type": "set_recall", "enabled": true},
+      "memory_seed": {"proactive_recall_enabled": false},
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["turned proactive recall on"],
+        "pending_action_is_null": true,
+        "procedural_profile_proactive_recall_enabled": true,
+        "store_after": {"proactive_recall_enabled": true}
+      }
+    },
+    {
+      "id": "save-preference-rule",
+      "description": "An explicit style preference should write a procedural rule.",
+      "message": "Remember that I prefer direct answers when I am spiraling.",
+      "action": {
+        "type": "save_preference",
+        "preference_text": "direct answers when I am spiraling"
+      },
+      "scripted": {
+        "preference_rule_text": "You prefer direct answers when you are spiraling."
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Saved:", "direct answers"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "rule_count": 1,
+          "rules_contain": ["direct answers"]
+        }
+      }
+    },
+    {
+      "id": "forget-fact-by-index-pending",
+      "description": "Deleting by displayed fact index should require confirmation.",
+      "message": "Forget saved fact number 1.",
+      "action": {"type": "forget_by_index", "target_kind": "fact", "target_index": 1},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious."
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Do you want me to delete it?"],
+        "pending_action_type": "delete",
+        "pending_target_kind": "fact",
+        "pending_target_preview_contains": "Presentations make me anxious",
+        "store_after": {
+          "semantic_count": 1,
+          "facts_contain": ["Presentations make me anxious"]
+        }
+      }
+    },
+    {
+      "id": "forget-session-by-index-pending",
+      "description": "Deleting by displayed session index should require confirmation.",
+      "message": "Forget saved session number 1.",
+      "action": {"type": "forget_by_index", "target_kind": "session", "target_index": 1},
+      "memory_seed": {
+        "episodic_sessions": [
+          {
+            "id": "session-sister-conversation",
+            "session_id": "prior-sister-conversation",
+            "primary_themes": ["family conflict", "avoidance"],
+            "summary": "The user avoided a difficult conversation with their sister and planned a short opening sentence to reduce defensiveness.",
+            "approach_used": "interpersonal_therapy"
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Do you want me to delete it?"],
+        "pending_action_type": "delete",
+        "pending_target_kind": "session",
+        "pending_target_preview_contains": "sister",
+        "store_after": {
+          "episodic_count": 1,
+          "sessions_contain": ["sister"]
+        }
+      }
+    },
+    {
+      "id": "forget-rule-by-index-pending",
+      "description": "Deleting by displayed rule index should require confirmation.",
+      "message": "Forget style preference number 1.",
+      "action": {"type": "forget_by_index", "target_kind": "rule", "target_index": 1},
+      "memory_seed": {
+        "procedural_rules": [
+          {
+            "rule": "You prefer concise, direct responses when you are panicking.",
+            "evidence": ["Please keep it short when I am panicking."]
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Do you want me to delete it?"],
+        "pending_action_type": "delete",
+        "pending_target_kind": "rule",
+        "pending_target_preview_contains": "concise, direct",
+        "store_after": {
+          "rule_count": 1,
+          "rules_contain": ["concise, direct"]
+        }
+      }
+    },
+    {
+      "id": "forget-by-query-single-match",
+      "description": "A clear query match should create a pending delete target without deleting yet.",
+      "message": "Forget what you saved about box breathing.",
+      "action": {"type": "forget_by_query", "query": "box breathing"},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-box-breathing",
+            "category": "coping_strategy",
+            "predicate": "USES",
+            "object_type": "CopingStrategy",
+            "object_identifier": "box breathing",
+            "evidence_quote": "Box breathing helps when panic starts."
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Box breathing helps", "Do you want me to delete it?"],
+        "pending_action_type": "delete",
+        "pending_target_kind": "fact",
+        "store_after": {
+          "semantic_count": 1,
+          "facts_contain": ["Box breathing helps"]
+        }
+      }
+    },
+    {
+      "id": "forget-by-query-multiple-matches",
+      "description": "A broad deletion query with multiple matches should ask for disambiguation.",
+      "message": "Forget what you saved about presentations.",
+      "action": {"type": "forget_by_query", "query": "presentations"},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious."
+          }
+        ],
+        "episodic_sessions": [
+          {
+            "id": "session-presentation-cbt",
+            "session_id": "prior-presentation-cbt",
+            "primary_themes": ["presentations"],
+            "summary": "The user practiced a kinder interpretation of presentation feedback and chose one rehearsal step.",
+            "approach_used": "cbt"
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["multiple saved memories", "Which one should I delete?"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "semantic_count": 1,
+          "episodic_count": 1,
+          "facts_contain": ["Presentations make me anxious"],
+          "sessions_contain": ["presentation feedback"]
+        }
+      }
+    },
+    {
+      "id": "confirm-pending-delete",
+      "description": "Confirming a pending deletion should remove the target exactly once.",
+      "message": "Yes, delete it.",
+      "action": {"type": "confirm_pending"},
+      "pending_action": {
+        "type": "delete",
+        "target": {
+          "kind": "fact",
+          "namespace": ["eval-user-confirm-pending-delete", "semantic"],
+          "key": "fact-presentations",
+          "rule_id": null,
+          "preview": "trigger: presentations"
+        }
+      },
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious."
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Deleted that saved fact"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "semantic_count": 0,
+          "facts_absent": ["Presentations make me anxious"]
+        }
+      }
+    },
+    {
+      "id": "cancel-pending-delete",
+      "description": "Canceling a pending deletion should leave memory untouched.",
+      "message": "No, keep it.",
+      "action": {"type": "cancel_pending"},
+      "pending_action": {
+        "type": "delete",
+        "target": {
+          "kind": "fact",
+          "namespace": ["eval-user-cancel-pending-delete", "semantic"],
+          "key": "fact-presentations",
+          "rule_id": null,
+          "preview": "trigger: presentations"
+        }
+      },
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious."
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["Cancelled"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "semantic_count": 1,
+          "facts_contain": ["Presentations make me anxious"]
+        }
+      }
+    },
+    {
+      "id": "forget-by-query-no-match",
+      "description": "No match should not create a pending destructive action.",
+      "message": "Forget what you saved about gardening.",
+      "action": {"type": "forget_by_query", "query": "gardening"},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious."
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["couldn't find a saved memory"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "semantic_count": 1,
+          "facts_contain": ["Presentations make me anxious"]
+        }
+      }
+    },
+    {
+      "id": "incognito-mode",
+      "description": "Guest mode should not expose or mutate persistent memory.",
+      "message": "What do you remember about me?",
+      "memory_mode": "incognito",
+      "action": {"type": "list"},
+      "memory_seed": {
+        "semantic_facts": [
+          {
+            "id": "fact-presentations",
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object_type": "Event",
+            "object_identifier": "presentations",
+            "evidence_quote": "Presentations make me anxious."
+          }
+        ]
+      },
+      "expected": {
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["guest mode"],
+        "response_text_not_contains": ["Presentations make me anxious"],
+        "pending_action_is_null": true,
+        "store_after": {
+          "semantic_count": 1,
+          "facts_contain": ["Presentations make me anxious"]
+        }
+      }
+    },
+    {
+      "id": "missing-owner",
+      "description": "The node should refuse to manage memory without a stable owner.",
+      "message": "Show my saved memories.",
+      "action": {"type": "list"},
+      "expected": {
+        "missing_owner": true,
+        "route": "memory_control",
+        "response_style": "memory_control",
+        "response_text_contains": ["stable memory owner"],
+        "pending_action_is_null": true
+      }
+    }
+  ]
+}

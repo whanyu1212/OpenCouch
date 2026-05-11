@@ -116,6 +116,7 @@ class GeminiLLMClient(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
         """Generate a structured response with Gemini.
 
@@ -123,6 +124,7 @@ class GeminiLLMClient(BaseLLMClient):
             prompt: The user or task prompt to send to the model.
             response_schema: The Pydantic schema expected in the response.
             system_instruction: Optional top-level instruction for model behavior.
+            use_search: Whether to enable Google Search grounding.
 
         Returns:
             A parsed object matching `response_schema`.
@@ -131,11 +133,15 @@ class GeminiLLMClient(BaseLLMClient):
             ValueError: If Gemini does not return parsed structured output.
         """
 
+        tools: list[Any] | None = (
+            [types.Tool(google_search=types.GoogleSearch())] if use_search else None
+        )
         response = await self.client.aio.models.generate_content(
             model=self.model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
+                tools=tools,
                 response_mime_type="application/json",
                 response_schema=response_schema,
             ),

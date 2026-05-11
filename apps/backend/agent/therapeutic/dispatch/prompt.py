@@ -4,8 +4,37 @@ from __future__ import annotations
 
 from agent.conversation import format_recent_history
 from agent.state import AgentState
-from agent.therapeutic.dispatch.regex_catalog import _TRIGGER_LIST_SENTENCE
 from agent.memory.entries import format_working_memory_entries
+
+
+# Canonical trigger phrases for the guided_exercise style, inlined into the
+# dispatcher prompt so the LLM knows which user requests warrant an exercise.
+_PROMPT_GUIDED_EXERCISE_TRIGGERS: tuple[str, ...] = (
+    "ground me",
+    "breathing exercise",
+    "guide me through a grounding exercise",
+    "let's do a thought record",
+    "can we figure out a way to test it",
+    "behavioral experiment",
+    "can we look at what actually matters to me",
+    "is there something we can do about that",
+    "values compass",
+    "leaves exercise",
+    "STOP technique",
+    "IMPROVE the moment",
+    "gratitude exercise",
+)
+
+
+def _format_prompt_trigger_phrases() -> str:
+    """Format the canonical trigger list as a quoted, comma-separated string."""
+    return ", ".join(f"'{t}'" for t in _PROMPT_GUIDED_EXERCISE_TRIGGERS)
+
+
+_TRIGGER_LIST_SENTENCE = (
+    f"<!-- triggers:start -->Trigger phrases include: "
+    f"{_format_prompt_trigger_phrases()}.<!-- triggers:end -->"
+)
 
 
 _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
@@ -156,7 +185,10 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
             "anaphoric requests for guidance on changing a behavior or "
             "pattern — the user wants a frame or one or two options, not a "
             "structured exercise like grounding, breathing, or a thought "
-            "record). "
+            "record). Also do not route practical one-step support requests "
+            "like 'help me text Maya' or 'help me call my friend' to "
+            "guided_exercise; use supportive/PFA and help with the requested "
+            "action. "
             "When uncertain, route to supportive — the user can always "
             "ask again more explicitly if they want the structured path.\n"
             "- clarifying: ask one focused question. Use only when the user's "
@@ -184,7 +216,20 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
             "question like 'yes, that makes sense, but how do I stop doing "
             "this?' is NOT an acceptance. If neither holds — for example, the "
             "prior therapeutic_approach is dbt_skills and the user asks 'how do I stop "
-            "doing this' — route to psychoeducation, not guided_exercise.\n\n"
+            "doing this' — route to psychoeducation, not guided_exercise.\n"
+            "Set exercise_start_basis to explicit_user_request only when the "
+            "current user message asks to do a structured exercise now. Set it "
+            "to accepted_assistant_offer only when the previous assistant turn "
+            "offered a specific exercise and the current user cleanly accepts. "
+            "Broad requests like 'help me calm down', 'I can't calm down', "
+            "'what can I do?', or 'I need something practical' are "
+            "ambiguous_or_none unless they explicitly ask to do an exercise. "
+            "Requests to contact a support person, draft a brief message, or "
+            "take one practical support action are also ambiguous_or_none "
+            "unless the user names a structured exercise. "
+            "Set it to ambiguous_or_none for every other turn. If "
+            "exercise_start_basis is ambiguous_or_none, do not choose "
+            "guided_exercise.\n\n"
         ),
     ),
     (
@@ -228,6 +273,8 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
         "output_contract",
         (
             "Return your decision in the structured schema. "
+            "Always include exercise_start_basis. For non-exercise response "
+            "styles, exercise_start_basis should usually be ambiguous_or_none. "
             "Keep the reasoning to one short sentence — it's for debugging, "
             "not for the user."
         ),

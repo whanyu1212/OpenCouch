@@ -11,6 +11,7 @@ import {
   type EndSessionResponse,
   type MemoryFact,
   type ResponseModelTier,
+  type SessionAction,
   type StreamEvent,
   type TranscriptionLanguageOption,
 } from "./api";
@@ -34,8 +35,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   responseStyle?: string | null;
-  responseStyleSource?: string | null;
   therapeuticApproach?: string | null;
+  sessionAction?: SessionAction | null;
   responseType?: string | null;
   crisis?: {
     level: number;
@@ -568,8 +569,8 @@ export function startTextChatStream({
         useSessionStore.getState().updateLastMessage({
           content: resp.response_text,
           responseStyle: resp.response_style,
-          responseStyleSource: resp.response_style_source,
           therapeuticApproach: resp.therapeutic_approach,
+          sessionAction: resp.session_action,
           responseType: resp.response_type,
           crisis: resp.crisis,
           diagnostics: resp.diagnostics,
@@ -579,8 +580,8 @@ export function startTextChatStream({
           role: "assistant",
           content: resp.response_text,
           responseStyle: resp.response_style,
-          responseStyleSource: resp.response_style_source,
           therapeuticApproach: resp.therapeutic_approach,
+          sessionAction: resp.session_action,
           responseType: resp.response_type,
           crisis: resp.crisis,
           diagnostics: resp.diagnostics,

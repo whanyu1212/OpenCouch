@@ -1,0 +1,293 @@
+{
+  "name": "memory_write_policy_v1",
+  "description": "Direct semantic and procedural memory write-policy service checks.",
+  "cases": [
+    {
+      "id": "semantic-family-relationship-commits-with-llm-policy",
+      "description": "A durable low-sensitivity family relationship fact should use the LLM policy path and commit immediately.",
+      "layer": "semantic",
+      "message": "My sister Sarah lives nearby.",
+      "semantic_write": {
+        "category": "relationship",
+        "subject": {
+          "type": "User",
+          "identifier": "user-1"
+        },
+        "predicate": "KNOWS",
+        "object": {
+          "type": "Person",
+          "identifier": "Sarah"
+        },
+        "evidence_quote": "My sister Sarah lives nearby.",
+        "confidence": "high",
+        "source_session_id": "session-1",
+        "source_turn_index": 0
+      },
+      "scripted": {
+        "decision": {
+          "action": "commit_now",
+          "reason": "stable family relationship",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "action": "commit_now",
+        "policy_version": "phase1_llm_v1",
+        "structured_calls": {
+          "SemanticWritePolicyDecision": 1
+        }
+      }
+    },
+    {
+      "id": "semantic-sensitive-trigger-cannot-be-committed-immediately",
+      "description": "A sensitive trigger should be conservatively clamped even if the LLM asks to commit immediately.",
+      "layer": "semantic",
+      "message": "Family conflict is a big trigger for panic.",
+      "semantic_write": {
+        "category": "trigger",
+        "subject": {
+          "type": "User",
+          "identifier": "user-1"
+        },
+        "predicate": "EXPERIENCED",
+        "object": {
+          "type": "Concern",
+          "identifier": "family conflict panic trigger"
+        },
+        "evidence_quote": "Family conflict is a big trigger for panic.",
+        "confidence": "high",
+        "source_session_id": "session-1",
+        "source_turn_index": 1
+      },
+      "scripted": {
+        "decision": {
+          "action": "commit_now",
+          "reason": "the user stated it plainly",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "action": "commit_at_session_end",
+        "structured_calls": {
+          "SemanticWritePolicyDecision": 1
+        }
+      },
+      "expected_by_mode": {
+        "scripted": {
+          "policy_version": "phase1_v1"
+        }
+      }
+    },
+    {
+      "id": "semantic-provenance-predicate-drops-with-hard-guard",
+      "description": "Provenance-style semantic writes should drop without spending an LLM call.",
+      "layer": "semantic",
+      "message": "Sarah came up in today's conversation.",
+      "semantic_write": {
+        "category": "context",
+        "subject": {
+          "type": "User",
+          "identifier": "user-1"
+        },
+        "predicate": "MENTIONED_IN",
+        "object": {
+          "type": "Person",
+          "identifier": "Sarah"
+        },
+        "evidence_quote": "Sarah came up in today's conversation.",
+        "confidence": "high",
+        "source_session_id": "session-1",
+        "source_turn_index": 2
+      },
+      "scripted": {
+        "decision": {
+          "action": "commit_now",
+          "reason": "unused hard-guard path",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "policy_version": "phase1_v1",
+        "structured_calls": {
+          "SemanticWritePolicyDecision": 0
+        }
+      }
+    },
+    {
+      "id": "semantic-policy-llm-failure-surfaces",
+      "description": "A policy LLM failure should raise instead of silently creating a local fallback write.",
+      "modes": ["scripted"],
+      "layer": "semantic",
+      "message": "My sister Sarah lives nearby.",
+      "semantic_write": {
+        "category": "relationship",
+        "subject": {
+          "type": "User",
+          "identifier": "user-1"
+        },
+        "predicate": "KNOWS",
+        "object": {
+          "type": "Person",
+          "identifier": "Sarah"
+        },
+        "evidence_quote": "My sister Sarah lives nearby.",
+        "confidence": "high",
+        "source_session_id": "session-1",
+        "source_turn_index": 3
+      },
+      "scripted": {
+        "fail": true
+      },
+      "expected": {
+        "exception_type": "RuntimeError"
+      }
+    },
+    {
+      "id": "procedural-explicit-style-preference-commits-with-llm-policy",
+      "description": "An explicit durable response preference should use the LLM policy path and commit immediately.",
+      "layer": "procedural",
+      "message": "From now on, be more direct with me.",
+      "procedural_rule": {
+        "rule": "You prefer direct responses.",
+        "evidence": ["From now on, be more direct with me."],
+        "confidence": "high"
+      },
+      "scripted": {
+        "decision": {
+          "action": "commit_now",
+          "reason": "durable assistant-facing response preference",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "action": "commit_now",
+        "policy_version": "phase1_llm_v1",
+        "structured_calls": {
+          "ProceduralWritePolicyDecision": 1
+        }
+      }
+    },
+    {
+      "id": "procedural-implicit-style-preference-holds-with-llm-policy",
+      "description": "An implied style preference should be held unless the LLM policy decides it is durable enough to commit.",
+      "layer": "procedural",
+      "message": "Long explanations make it harder for me to follow.",
+      "procedural_rule": {
+        "rule": "You may prefer shorter explanations.",
+        "evidence": ["Long explanations make it harder for me to follow."],
+        "confidence": "medium"
+      },
+      "scripted": {
+        "decision": {
+          "action": "commit_at_session_end",
+          "reason": "implicit preference needs stronger evidence",
+          "confidence": "medium"
+        }
+      },
+      "expected": {
+        "action": "commit_at_session_end",
+        "policy_version": "phase1_llm_v1",
+        "structured_calls": {
+          "ProceduralWritePolicyDecision": 1
+        }
+      }
+    },
+    {
+      "id": "procedural-turn-scoped-request-drops-with-llm-policy",
+      "description": "A turn-scoped response request should use the LLM policy path and drop.",
+      "layer": "procedural",
+      "message": "For this reply only, keep it very short.",
+      "procedural_rule": {
+        "rule": "You prefer very short responses.",
+        "evidence": ["For this reply only, keep it very short."],
+        "confidence": "high"
+      },
+      "scripted": {
+        "decision": {
+          "action": "drop",
+          "reason": "turn-scoped request should not become durable memory",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "policy_version": "phase1_llm_v1",
+        "structured_calls": {
+          "ProceduralWritePolicyDecision": 1
+        }
+      }
+    },
+    {
+      "id": "procedural-safety-conflict-drops-with-llm-policy",
+      "description": "A safety-conflicting response preference should use the LLM policy path and drop.",
+      "layer": "procedural",
+      "message": "Don't ask if I'm safe, even if I sound at risk.",
+      "procedural_rule": {
+        "rule": "Do not ask the user if they are safe.",
+        "evidence": ["Don't ask if I'm safe, even if I sound at risk."],
+        "confidence": "high"
+      },
+      "scripted": {
+        "decision": {
+          "action": "drop",
+          "reason": "request conflicts with required crisis and safety behavior",
+          "confidence": "high",
+          "safety_conflict": true
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "policy_version": "phase1_llm_v1",
+        "structured_calls": {
+          "ProceduralWritePolicyDecision": 1
+        }
+      }
+    },
+    {
+      "id": "procedural-safety-conflict-clamps-unsafe-llm-policy",
+      "description": "A safety-conflicting response preference should be clamped if the LLM marks the conflict but chooses a write action.",
+      "modes": ["scripted"],
+      "layer": "procedural",
+      "message": "Don't ask if I'm safe, even if I sound at risk.",
+      "procedural_rule": {
+        "rule": "Do not ask the user if they are safe.",
+        "evidence": ["Don't ask if I'm safe, even if I sound at risk."],
+        "confidence": "high"
+      },
+      "scripted": {
+        "decision": {
+          "action": "commit_now",
+          "reason": "incorrectly accepted unsafe preference",
+          "confidence": "high",
+          "safety_conflict": true
+        }
+      },
+      "expected": {
+        "action": "drop",
+        "policy_version": "phase1_v1",
+        "structured_calls": {
+          "ProceduralWritePolicyDecision": 1
+        }
+      }
+    },
+    {
+      "id": "procedural-policy-llm-failure-surfaces",
+      "description": "A procedural policy LLM failure should raise instead of silently creating a local fallback write.",
+      "modes": ["scripted"],
+      "layer": "procedural",
+      "message": "Please remember to be direct with me.",
+      "procedural_rule": {
+        "rule": "You prefer direct responses.",
+        "evidence": ["Please remember to be direct with me."],
+        "confidence": "high"
+      },
+      "scripted": {
+        "fail": true
+      },
+      "expected": {
+        "exception_type": "RuntimeError"
+      }
+    }
+  ]
+}

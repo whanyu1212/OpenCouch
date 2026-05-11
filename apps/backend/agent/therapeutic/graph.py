@@ -22,27 +22,29 @@ automatically.
 
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
 
-from agent.models import CrisisAssessment, ResponseStyleType, ResponseCategory
+from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.runtime_context import WorkflowContext
 from agent.state import (
     AgentState,
     ExerciseState,
+    MemoryReferenceState,
     ProceduralProfileState,
     SessionMemoryState,
     SessionProgressState,
+    TurnLifecycleState,
 )
 from agent.therapeutic.dispatch import (
     GUIDED_EXERCISE_NODE,
     THERAPEUTIC_RESPONSE_NODE,
     run_therapeutic_dispatch_node,
 )
-from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
+from agent.therapeutic.exercises.node import run_guided_exercise_response_node
 from agent.therapeutic.response import run_therapeutic_response_node
 from agent.memory.entries import WorkingMemoryEntry
 
@@ -66,22 +68,22 @@ class TherapeuticSubgraphOutput(TypedDict):
     input state inside the subgraph itself.
     """
 
-    exercise_state: NotRequired[ExerciseState]
-    therapeutic_approach: NotRequired[str | None]
-    response_style: NotRequired[str]
-    response_style_source: NotRequired[str | None]
-    response_style_type: NotRequired[ResponseStyleType]
-    response_kind: NotRequired[ResponseCategory]
     response_text: NotRequired[str]
-    should_persist_memory: NotRequired[bool]
+    response_style: NotRequired[str]
+    session_action: NotRequired[SessionAction]
+    therapeutic_approach: NotRequired[str | None]
+    exercise_state: NotRequired[ExerciseState]
+    diagnostics: NotRequired[dict[str, Any]]
 
 
 class TherapeuticSubgraphInput(TypedDict):
     """Subset of parent state consumed by the therapeutic subgraph."""
 
     message: str
+    channel: Channel
     user_id: str | None
     session_id: str | None
+    installed_skills: list[str]
     crisis: CrisisAssessment
     transcript: list[dict[str, str]]
     working_memory: list[WorkingMemoryEntry]
@@ -89,7 +91,10 @@ class TherapeuticSubgraphInput(TypedDict):
     procedural_profile: ProceduralProfileState
     session_progress: SessionProgressState
     exercise_state: ExerciseState
+    turn_lifecycle: TurnLifecycleState
+    memory_reference: MemoryReferenceState
     therapeutic_approach: NotRequired[str | None]
+    diagnostics: NotRequired[dict[str, Any]]
 
 
 def build_therapeutic_subgraph() -> CompiledStateGraph[
@@ -127,11 +132,9 @@ def build_therapeutic_subgraph() -> CompiledStateGraph[
         output_schema=TherapeuticSubgraphOutput,
     )
 
-    # Retry policy for therapeutic nodes that make LLM calls. Acts as
-    # defense-in-depth: each response-style node catches LLM exceptions internally
-    # and falls back to deterministic responses, so retries fire only
-    # for unexpected transient failures outside the node's own error
-    # handling (framework-level errors, connection resets, etc.).
+    # Retry policy for therapeutic nodes that make LLM calls. Response-generation
+    # failures propagate out of the node so transient provider errors can be
+    # retried by LangGraph rather than hidden behind canned text.
     _io_retry = RetryPolicy(max_attempts=2)
 
     subgraph.add_node(

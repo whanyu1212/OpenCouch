@@ -1,0 +1,153 @@
+{
+  "name": "runtime_live_session_trajectory_v1",
+  "description": "Small live-LLM parent-session trajectories over the primary runtime persistence backend. Use with runtime_persistence_trajectory_eval --mode live.",
+  "cases": [
+    {
+      "id": "live-supportive-session-over-postgres",
+      "description": "A normal support session should persist across turns and finalize cleanly over the configured runtime backend.",
+      "modes": ["live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": false,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-support",
+          "user_id": "{run_id}-user",
+          "message": "I feel wound up after work and I want help slowing down.",
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-support",
+          "user_id": "{run_id}-user",
+          "message": "The strongest feeling is pressure in my chest, but I am safe.",
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "end_session",
+          "thread_id": "{run_id}-support",
+          "expected": {
+            "status_after": "absent"
+          }
+        }
+      ],
+      "expected": {
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-support",
+            "exists": true,
+            "status": "absent",
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.75,
+        "dimensions": [
+          {
+            "name": "support_quality",
+            "question": "Does the assistant respond supportively without overreacting to a safe body-sensation disclosure?",
+            "weight": 1.0
+          },
+          {
+            "name": "persistence_hygiene",
+            "question": "Does the trajectory preserve transcript continuity and finalize without stale active-session state?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "live-exercise-lookup-side-trip-over-postgres",
+      "description": "A guided exercise should tolerate a grounded lookup side-trip and keep the session durable over Postgres.",
+      "modes": ["live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": false,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise",
+          "user_id": "{run_id}-user",
+          "message": "Can we do a 5-4-3-2-1 grounding exercise?",
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 2,
+            "assistant_turn_count": 1,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise",
+          "user_id": "{run_id}-user",
+          "message": "Before I answer, can you verify whether 988 works in Singapore?",
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 4,
+            "assistant_turn_count": 2,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise",
+          "user_id": "{run_id}-user",
+          "message": "I can see my phone, my desk, a plant, a window, and a water bottle.",
+          "expected": {
+            "status_after": "active",
+            "transcript_length": 6,
+            "assistant_turn_count": 3,
+            "turn_count": 3
+          }
+        }
+      ],
+      "expected": {
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-exercise",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 6,
+            "assistant_turn_count": 3,
+            "turn_count": 3
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.75,
+        "dimensions": [
+          {
+            "name": "trajectory_coherence",
+            "question": "Does the assistant handle the lookup side-trip while preserving a coherent exercise trajectory?",
+            "weight": 1.0
+          },
+          {
+            "name": "source_hygiene",
+            "question": "When answering the factual 988 question, does the assistant avoid unsupported claims and keep the answer scoped?",
+            "weight": 1.0
+          }
+        ]
+      }
+    }
+  ]
+}

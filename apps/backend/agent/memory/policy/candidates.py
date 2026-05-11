@@ -2,37 +2,25 @@
 
 These types sit between the LLM extractor output and the persistent
 memory store. The node layer first promotes extractor outputs into
-``MemoryCandidate`` instances, then the deterministic policy engine
-decides whether to commit immediately, defer, require repetition, or
-drop.
+``MemoryCandidate`` instances, then the write-policy layer decides
+whether to commit immediately, defer, require repetition, or drop.
 
 The extractor still owns *detection* of potentially memory-worthy
-content. Code now owns the final write timing decision.
+content. Candidates carry provenance and payload only; write timing is
+owned by the policy decision.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 from agent.memory.models import MemoryWrite, ProceduralRuleDraft
-from agent.memory.policy.constants import classify_procedural_request
-from agent.memory.policy.semantic import (
-    SEMANTIC_SESSION_ONLY_CATEGORIES,
-    SEMANTIC_STABLE_CATEGORIES,
-    contains_emerging_pattern,
-    contains_negative_self_belief,
-    looks_transient_context,
-)
 
 CandidateLayer = Literal["semantic", "procedural"]
-CandidateExplicitness = Literal["explicit", "implied"]
-CandidateDurability = Literal["transient", "possible", "stable"]
-CandidateSensitivity = Literal["low", "medium", "high"]
-CandidateScope = Literal["turn", "session", "cross_session"]
-PolicyRecommendation = Literal[
+PolicyAction = Literal[
     "commit_now",
     "commit_at_session_end",
     "require_repetition",
@@ -45,16 +33,9 @@ class MemoryCandidate(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     layer: CandidateLayer
-    candidate_type: str = Field(min_length=1, max_length=80)
     evidence_quotes: list[str] = Field(default_factory=list)
     source_session_id: str
     source_turn_index: int = Field(ge=0)
-    explicitness: CandidateExplicitness
-    durability: CandidateDurability
-    sensitivity: CandidateSensitivity
-    scope: CandidateScope
-    policy_recommendation: PolicyRecommendation
-    reason: str = Field(min_length=1, max_length=240)
     payload: Any
 
 
@@ -72,12 +53,46 @@ class ProceduralCandidate(MemoryCandidate):
     payload: ProceduralRuleDraft
 
 
+class PolicyDecision(BaseModel):
+    """The final decision returned by the write policy."""
+
+    action: PolicyAction
+    reason: str = Field(min_length=1, max_length=240)
+    policy_version: str = "phase1_v1"
+
+
+SemanticHoldAction = Literal["commit_at_session_end", "require_repetition"]
+ProceduralHoldAction = Literal["commit_at_session_end"]
+
+
+class BufferedSemanticCandidate(BaseModel):
+    """Semantic candidate held with the policy decision that held it."""
+
+    candidate: SemanticCandidate
+    hold_action: SemanticHoldAction
+    policy_reason: str = Field(min_length=1, max_length=240)
+    policy_version: str = Field(min_length=1, max_length=80)
+
+
+class BufferedProceduralCandidate(BaseModel):
+    """Procedural candidate held with the policy decision that held it."""
+
+    candidate: ProceduralCandidate
+    hold_action: ProceduralHoldAction
+    policy_reason: str = Field(min_length=1, max_length=240)
+    policy_version: str = Field(min_length=1, max_length=80)
+
+
 class SessionMemoryBuffer(BaseModel):
     """Runtime-managed per-session buffer for held memory candidates."""
 
     session_id: str
-    semantic_candidates: list[SemanticCandidate] = Field(default_factory=list)
-    procedural_candidates: list[ProceduralCandidate] = Field(default_factory=list)
+    held_semantic_candidates: list[BufferedSemanticCandidate] = Field(
+        default_factory=list
+    )
+    held_procedural_candidates: list[BufferedProceduralCandidate] = Field(
+        default_factory=list
+    )
 
     # Per-turn therapeutic-approach accumulator. The runtime increments the
     # count for the dispatched approach after each turn. At session end, the
@@ -110,13 +125,59 @@ class SessionMemoryBuffer(BaseModel):
             return None
         return max(self.approach_counts, key=self.approach_counts.get)  # type: ignore[arg-type]
 
+    def hold_semantic(
+        self,
+        candidate: SemanticCandidate,
+        decision: PolicyDecision,
+    ) -> None:
+        """Hold a semantic candidate for session-end review or promotion.
 
-class PolicyDecision(BaseModel):
-    """The final deterministic decision returned by the write policy."""
+        Args:
+            candidate (SemanticCandidate): Candidate to buffer.
+            decision (PolicyDecision): Policy decision that held the candidate.
 
-    action: PolicyRecommendation
-    reason: str = Field(min_length=1, max_length=240)
-    policy_version: str = "phase1_v1"
+        Returns:
+            None: Mutates the buffer in place.
+        """
+
+        if decision.action not in ("commit_at_session_end", "require_repetition"):
+            raise ValueError(f"Invalid semantic hold action: {decision.action!r}.")
+        hold_action = cast(SemanticHoldAction, decision.action)
+        self.held_semantic_candidates.append(
+            BufferedSemanticCandidate(
+                candidate=candidate,
+                hold_action=hold_action,
+                policy_reason=decision.reason,
+                policy_version=decision.policy_version,
+            )
+        )
+
+    def hold_procedural(
+        self,
+        candidate: ProceduralCandidate,
+        decision: PolicyDecision,
+    ) -> None:
+        """Hold a procedural candidate for session-end review.
+
+        Args:
+            candidate (ProceduralCandidate): Candidate to buffer.
+            decision (PolicyDecision): Policy decision that held the candidate.
+
+        Returns:
+            None: Mutates the buffer in place.
+        """
+
+        if decision.action != "commit_at_session_end":
+            raise ValueError(f"Invalid procedural hold action: {decision.action!r}.")
+        hold_action = cast(ProceduralHoldAction, decision.action)
+        self.held_procedural_candidates.append(
+            BufferedProceduralCandidate(
+                candidate=candidate,
+                hold_action=hold_action,
+                policy_reason=decision.reason,
+                policy_version=decision.policy_version,
+            )
+        )
 
 
 def build_semantic_candidate(
@@ -128,64 +189,18 @@ def build_semantic_candidate(
 
     Args:
         write (MemoryWrite): Extracted semantic fact.
-        message (str): Current user message for durability/sensitivity heuristics.
+        message (str): Current user message.
 
     Returns:
-        SemanticCandidate: Semantic candidate with deterministic policy hints.
+        SemanticCandidate: Semantic candidate with provenance and payload.
     """
 
-    lowered = f"{message} {write.evidence_quote}".lower()
-    category = write.category
-
-    if contains_negative_self_belief(lowered) or contains_emerging_pattern(lowered):
-        sensitivity: CandidateSensitivity = "high"
-        durability: CandidateDurability = "possible"
-        scope: CandidateScope = "session"
-        recommendation: PolicyRecommendation = "require_repetition"
-        reason = "negative self-belief or emerging pattern needs repetition"
-    elif category in SEMANTIC_SESSION_ONLY_CATEGORIES:
-        sensitivity = "high"
-        durability = "possible"
-        scope = "session"
-        recommendation = "commit_at_session_end"
-        reason = "high-sensitivity semantic content should wait for session review"
-    elif category in SEMANTIC_STABLE_CATEGORIES:
-        sensitivity = "low"
-        durability = "stable"
-        scope = "cross_session"
-        recommendation = "commit_now"
-        reason = "explicit stable semantic fact"
-    elif category == "context":
-        if looks_transient_context(lowered):
-            sensitivity = "medium"
-            durability = "possible"
-            scope = "session"
-            recommendation = "commit_at_session_end"
-            reason = "context candidate looks recent or one-off"
-        else:
-            sensitivity = "low"
-            durability = "stable"
-            scope = "cross_session"
-            recommendation = "commit_now"
-            reason = "stable context fact"
-    else:
-        sensitivity = "medium"
-        durability = "possible"
-        scope = "session"
-        recommendation = "commit_at_session_end"
-        reason = "semantic candidate needs session-level confirmation"
+    _ = message
 
     return SemanticCandidate(
-        candidate_type=category,
         evidence_quotes=[write.evidence_quote],
         source_session_id=write.source_session_id,
         source_turn_index=write.source_turn_index,
-        explicitness="explicit",
-        durability=durability,
-        sensitivity=sensitivity,
-        scope=scope,
-        policy_recommendation=recommendation,
-        reason=reason,
         payload=write,
     )
 
@@ -201,44 +216,19 @@ def build_procedural_candidate(
 
     Args:
         draft (ProceduralRuleDraft): Extracted procedural rule draft.
-        message (str): Current user message for procedural heuristics.
+        message (str): Current user message.
         session_id (str): Session identifier for candidate provenance.
         turn_index (int): Turn index for candidate provenance.
 
     Returns:
-        ProceduralCandidate: Procedural candidate with deterministic policy hints.
+        ProceduralCandidate: Procedural candidate with provenance and payload.
     """
 
-    lowered = f"{message} {draft.rule} {' '.join(draft.evidence)}".lower()
-
-    classification = classify_procedural_request(lowered)
-    explicit = classification.explicit
-    turn_scoped = classification.turn_scoped
-    safety_conflict = classification.safety_conflict
-
-    if safety_conflict:
-        recommendation: PolicyRecommendation = "drop"
-        reason = "procedural request conflicts with safety behavior"
-    elif turn_scoped:
-        recommendation = "drop"
-        reason = "procedural request only applies to the current turn"
-    elif explicit:
-        recommendation = "commit_now"
-        reason = "explicit durable procedural request"
-    else:
-        recommendation = "commit_at_session_end"
-        reason = "implicit procedural preference needs stronger evidence"
+    _ = message
 
     return ProceduralCandidate(
-        candidate_type="response_style",
         evidence_quotes=list(draft.evidence),
         source_session_id=session_id,
         source_turn_index=turn_index,
-        explicitness="explicit" if explicit else "implied",
-        durability="transient" if turn_scoped else "stable",
-        sensitivity="high" if safety_conflict else "low",
-        scope="turn" if turn_scoped else "cross_session",
-        policy_recommendation=recommendation,
-        reason=reason,
         payload=draft,
     )

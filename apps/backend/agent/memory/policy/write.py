@@ -1,11 +1,11 @@
 """Write policy for hot-path memory persistence.
 
-The LLM extractors still decide whether something is *candidate*
-memory. This module decides whether that candidate is safe and durable
-enough to commit immediately. The async helpers use an LLM-primary
-classifier with deterministic safety guards and fallback. Anything that
-is not ``commit_now`` is buffered or dropped by the caller; session-end
-promotion logic lives in ``agent.runtime.session_commit``.
+The LLM extractors decide whether something is *candidate* memory.
+This module asks an LLM-primary policy classifier whether that candidate
+should commit immediately, wait for session-end review, require repeated
+evidence, or drop. Local code only enforces hard safety/storage
+invariants; it does not provide product-judgment fallback writes when the
+policy LLM is unavailable.
 """
 
 from __future__ import annotations
@@ -18,17 +18,12 @@ from pydantic import BaseModel, Field
 from agent.memory.policy.candidates import (
     PolicyDecision,
     ProceduralCandidate,
+    ProceduralHoldAction,
     SemanticCandidate,
-)
-from agent.memory.policy.constants import (
-    classify_procedural_request,
+    SemanticHoldAction,
 )
 from agent.memory.policy.semantic import (
     SEMANTIC_SESSION_ONLY_CATEGORIES,
-    SEMANTIC_STABLE_CATEGORIES,
-    contains_emerging_pattern,
-    contains_negative_self_belief,
-    looks_transient_context,
 )
 from llm.base import BaseLLMClient
 
@@ -68,117 +63,75 @@ class ProceduralWritePolicyDecision(BaseModel):
     action: Literal["commit_now", "commit_at_session_end", "drop"]
     reason: str = Field(min_length=1, max_length=240)
     confidence: Literal["low", "medium", "high"]
+    safety_conflict: bool = Field(
+        default=False,
+        description=(
+            "True when the candidate asks the assistant to weaken, suppress, "
+            "or bypass safety or crisis behavior."
+        ),
+    )
 
 
-def _lowered_texts(*values: str) -> str:
-    """Join non-empty values into one lowercase text blob.
-
-    Args:
-        values: Text fragments to normalize.
-
-    Returns:
-        Lowercase text joined with spaces.
-    """
-
-    return " ".join(v.lower() for v in values if v).strip()
-
-
-def should_commit_pattern(candidate: SemanticCandidate, evidence_count: int) -> bool:
+def should_commit_pattern(
+    *,
+    hold_action: SemanticHoldAction,
+    evidence_count: int,
+) -> bool:
     """Return whether a repetition-gated semantic candidate can promote.
 
     Args:
-        candidate (SemanticCandidate): Candidate being evaluated.
+        hold_action (SemanticHoldAction): Policy action that held the candidate.
         evidence_count (int): Number of reinforcing occurrences seen so far.
 
     Returns:
         bool: ``True`` when the candidate is repetition-gated and has enough evidence.
     """
 
-    if candidate.policy_recommendation != "require_repetition":
+    if hold_action != "require_repetition":
         return False
     return evidence_count >= 2
 
 
 def should_commit_implicit_procedural_preference(
-    candidate: ProceduralCandidate,
+    *,
+    hold_action: ProceduralHoldAction,
     evidence_count: int,
 ) -> bool:
     """Return whether a buffered implicit procedural preference can promote.
 
     Args:
-        candidate (ProceduralCandidate): Candidate being evaluated.
+        hold_action (ProceduralHoldAction): Policy action that held the candidate.
         evidence_count (int): Number of reinforcing occurrences seen so far.
 
     Returns:
-        bool: ``True`` when the implicit preference has enough evidence to promote.
+        bool: ``True`` when the held preference has enough evidence to promote.
     """
 
-    if candidate.policy_recommendation != "commit_at_session_end":
-        return False
-    if candidate.explicitness == "explicit":
+    if hold_action != "commit_at_session_end":
         return False
     return evidence_count >= 2
 
 
-def decide_semantic_candidate(candidate: SemanticCandidate) -> PolicyDecision:
-    """Return the deterministic write decision for a semantic candidate.
+def semantic_hard_policy_guard(
+    candidate: SemanticCandidate,
+) -> PolicyDecision | None:
+    """Return a non-LLM semantic policy only for hard invariants.
 
     Args:
-        candidate (SemanticCandidate): Semantic candidate to evaluate.
+        candidate (SemanticCandidate): Semantic candidate to inspect.
 
     Returns:
-        PolicyDecision: Deterministic commit, hold, repetition, or drop decision.
+        PolicyDecision | None: Hard policy decision, or ``None`` when the
+        LLM policy classifier must decide.
     """
 
-    category = candidate.payload.category
-    predicate = candidate.payload.predicate
-    text = _lowered_texts(
-        candidate.reason,
-        candidate.payload.evidence_quote,
-        candidate.payload.subject.identifier,
-        candidate.payload.object.identifier,
-    )
-
-    if contains_negative_self_belief(text) or contains_emerging_pattern(text):
-        return PolicyDecision(
-            action="require_repetition",
-            reason="negative self-belief or emerging pattern requires repetition",
-        )
-
-    if candidate.sensitivity == "high" or category in SEMANTIC_SESSION_ONLY_CATEGORIES:
-        return PolicyDecision(
-            action="commit_at_session_end",
-            reason="high-sensitivity semantic candidate should not commit immediately",
-        )
-
-    if candidate.scope == "turn" or candidate.durability == "transient":
-        return PolicyDecision(
-            action="drop",
-            reason="turn-scoped or transient semantic candidate should not persist",
-        )
-
-    if predicate == "MENTIONED_IN":
+    if candidate.payload.predicate == "MENTIONED_IN":
         return PolicyDecision(
             action="drop",
             reason="provenance predicates should not become durable semantic memory",
         )
 
-    if category in SEMANTIC_STABLE_CATEGORIES:
-        return PolicyDecision(
-            action="commit_now",
-            reason="explicit stable semantic fact is safe for immediate commit",
-        )
-
-    if category == "context" and not looks_transient_context(text):
-        return PolicyDecision(
-            action="commit_now",
-            reason="stable context fact is safe for immediate commit",
-        )
-
-    return PolicyDecision(
-        action="commit_at_session_end",
-        reason="semantic candidate is plausible but should wait for session-level review",
-    )
+    return None
 
 
 def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:
@@ -202,12 +155,16 @@ def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:
         "- require_repetition: negative self-belief, fragile interpretation, "
         "or emerging pattern that should need repeated evidence.\n"
         "- drop: transient, turn-scoped, provenance-only, or not useful memory.\n\n"
+        "Use commit_at_session_end, not drop, for clearly stated sensitive "
+        "therapeutic context such as triggers or losses that may be useful "
+        "after full-session review.\n"
+        "Use commit_now for explicit, low-risk coping strategies or support "
+        "plans the user frames as ongoing or going forward, such as who they "
+        "plan to text during panic. Do not delay these when they are direct "
+        "corrections to stale memory and contain no self-harm, suicide, "
+        "imminent danger, or emergency safety material.\n"
         "Never commit_now for negative self-beliefs, fresh therapeutic "
         "interpretations, crisis/safety material, or high-sensitivity triggers.\n\n"
-        f"Candidate metadata: durability={candidate.durability}, "
-        f"sensitivity={candidate.sensitivity}, scope={candidate.scope}, "
-        f"recommendation={candidate.policy_recommendation}, "
-        f"reason={candidate.reason!r}\n"
         f"Category: {payload.category}\n"
         f"Predicate: {payload.predicate}\n"
         f"Object: {payload.object.type}:{payload.object.identifier}\n"
@@ -236,12 +193,17 @@ def _procedural_policy_prompt(candidate: ProceduralCandidate) -> str:
         "evidence before becoming durable.\n"
         "- drop: only applies to this turn/session, is not assistant-facing, "
         "or conflicts with safety behavior.\n\n"
+        "Set safety_conflict=true when the candidate asks the assistant to "
+        "weaken, suppress, skip, hide, or bypass crisis checks, safety "
+        "questions, emergency guidance, or crisis resources. Safety-conflict "
+        "candidates must use action=drop.\n\n"
+        "Treat direct future-facing requests as explicit durable preferences "
+        "when they are assistant-facing and do not conflict with safety.\n\n"
+        "Use commit_at_session_end for inferred preferences from statements "
+        "about what is hard, helpful, or unpleasant unless the user directly "
+        "asks for an ongoing assistant behavior change.\n\n"
         "Never commit a request to suppress crisis checks, safety questions, "
         "or crisis resources.\n\n"
-        f"Candidate metadata: explicitness={candidate.explicitness}, "
-        f"durability={candidate.durability}, sensitivity={candidate.sensitivity}, "
-        f"scope={candidate.scope}, recommendation={candidate.policy_recommendation}, "
-        f"reason={candidate.reason!r}\n"
         f"Rule: {payload.rule!r}\n"
         f"Evidence: {payload.evidence!r}"
     )
@@ -260,38 +222,6 @@ def _write_policy_system_prompt() -> str:
     )
 
 
-def _semantic_hard_guard(candidate: SemanticCandidate) -> PolicyDecision | None:
-    """Return hard deterministic semantic policy when it must not be overridden.
-
-    Args:
-        candidate (SemanticCandidate): Candidate to inspect.
-
-    Returns:
-        PolicyDecision | None: Hard policy decision, or None when the LLM may
-        classify the candidate.
-    """
-
-    deterministic = decide_semantic_candidate(candidate)
-    text = _lowered_texts(
-        candidate.reason,
-        candidate.payload.evidence_quote,
-        candidate.payload.subject.identifier,
-        candidate.payload.object.identifier,
-    )
-    if candidate.policy_recommendation == "require_repetition":
-        return PolicyDecision(
-            action="require_repetition",
-            reason=candidate.reason,
-        )
-    if contains_negative_self_belief(text) or contains_emerging_pattern(text):
-        return deterministic
-    if candidate.payload.predicate == "MENTIONED_IN":
-        return deterministic
-    if candidate.scope == "turn" or candidate.durability == "transient":
-        return deterministic
-    return None
-
-
 def _clamp_semantic_policy_decision(
     candidate: SemanticCandidate,
     decision: SemanticWritePolicyDecision,
@@ -306,15 +236,39 @@ def _clamp_semantic_policy_decision(
         PolicyDecision: Final policy decision.
     """
 
-    deterministic = decide_semantic_candidate(candidate)
-    if decision.confidence == "low":
-        return deterministic
-
-    if decision.action == "commit_now" and (
-        candidate.sensitivity == "high"
-        or candidate.payload.category in SEMANTIC_SESSION_ONLY_CATEGORIES
+    if (
+        decision.action == "commit_now"
+        and candidate.payload.category in SEMANTIC_SESSION_ONLY_CATEGORIES
     ):
-        return deterministic
+        return PolicyDecision(
+            action="commit_at_session_end",
+            reason="high-sensitivity semantic candidate should not commit immediately",
+        )
+
+    return PolicyDecision(
+        action=decision.action,
+        reason=_prefixed_policy_reason("llm_policy", decision.reason),
+        policy_version="phase1_llm_v1",
+    )
+
+
+def _clamp_procedural_policy_decision(
+    decision: ProceduralWritePolicyDecision,
+) -> PolicyDecision:
+    """Convert and safety-clamp an LLM procedural policy decision.
+
+    Args:
+        decision (ProceduralWritePolicyDecision): LLM policy decision.
+
+    Returns:
+        PolicyDecision: Final policy decision.
+    """
+
+    if decision.safety_conflict and decision.action != "drop":
+        return PolicyDecision(
+            action="drop",
+            reason="safety-conflicting procedural candidate cannot be persisted",
+        )
 
     return PolicyDecision(
         action=decision.action,
@@ -335,15 +289,14 @@ async def decide_semantic_candidate_llm_primary(
         llm_client (BaseLLMClient | None): Optional classifier client.
 
     Returns:
-        PolicyDecision: Final write policy, falling back to deterministic policy
-        when no classifier is available or the classifier is uncertain.
+        PolicyDecision: Final write policy.
     """
 
-    hard_guard = _semantic_hard_guard(candidate)
+    hard_guard = semantic_hard_policy_guard(candidate)
     if hard_guard is not None:
         return hard_guard
     if llm_client is None:
-        return decide_semantic_candidate(candidate)
+        raise RuntimeError("Semantic write-policy classification requires an LLM.")
 
     try:
         decision: SemanticWritePolicyDecision = await llm_client.generate_structured(
@@ -353,75 +306,12 @@ async def decide_semantic_candidate_llm_primary(
         )
     except Exception:
         logger.warning(
-            "Semantic write-policy LLM classifier failed; using deterministic fallback.",
+            "Semantic write-policy LLM classifier failed.",
             exc_info=True,
         )
-        return decide_semantic_candidate(candidate)
+        raise
 
     return _clamp_semantic_policy_decision(candidate, decision)
-
-
-def decide_procedural_candidate(candidate: ProceduralCandidate) -> PolicyDecision:
-    """Return the deterministic write decision for a procedural candidate.
-
-    Args:
-        candidate (ProceduralCandidate): Procedural candidate to evaluate.
-
-    Returns:
-        PolicyDecision: Deterministic commit, hold, or drop decision.
-    """
-
-    text = _lowered_texts(
-        candidate.reason,
-        candidate.payload.rule,
-        *candidate.payload.evidence,
-    )
-    classification = classify_procedural_request(text)
-
-    if classification.safety_conflict:
-        return PolicyDecision(
-            action="drop",
-            reason="safety-conflicting procedural request cannot be persisted",
-        )
-
-    if candidate.scope == "turn" or classification.turn_scoped:
-        return PolicyDecision(
-            action="drop",
-            reason="turn-scoped procedural request should not become long-term memory",
-        )
-
-    if candidate.explicitness != "explicit" and not classification.explicit:
-        return PolicyDecision(
-            action="commit_at_session_end",
-            reason="implicit procedural preference should wait for stronger evidence",
-        )
-
-    return PolicyDecision(
-        action="commit_now",
-        reason="explicit durable procedural request is safe for immediate commit",
-    )
-
-
-def _procedural_hard_guard(candidate: ProceduralCandidate) -> PolicyDecision | None:
-    """Return hard deterministic procedural policy when it must not be overridden.
-
-    Args:
-        candidate (ProceduralCandidate): Candidate to inspect.
-
-    Returns:
-        PolicyDecision | None: Hard policy decision, or None when the LLM may
-        classify the candidate.
-    """
-
-    text = _lowered_texts(
-        candidate.reason,
-        candidate.payload.rule,
-        *candidate.payload.evidence,
-    )
-    classification = classify_procedural_request(text)
-    if classification.safety_conflict or classification.turn_scoped:
-        return decide_procedural_candidate(candidate)
-    return None
 
 
 async def decide_procedural_candidate_llm_primary(
@@ -436,15 +326,11 @@ async def decide_procedural_candidate_llm_primary(
         llm_client (BaseLLMClient | None): Optional classifier client.
 
     Returns:
-        PolicyDecision: Final write policy, falling back to deterministic policy
-        when no classifier is available or the classifier is uncertain.
+        PolicyDecision: Final write policy.
     """
 
-    hard_guard = _procedural_hard_guard(candidate)
-    if hard_guard is not None:
-        return hard_guard
     if llm_client is None:
-        return decide_procedural_candidate(candidate)
+        raise RuntimeError("Procedural write-policy classification requires an LLM.")
 
     try:
         decision: ProceduralWritePolicyDecision = await llm_client.generate_structured(
@@ -454,15 +340,9 @@ async def decide_procedural_candidate_llm_primary(
         )
     except Exception:
         logger.warning(
-            "Procedural write-policy LLM classifier failed; using deterministic fallback.",
+            "Procedural write-policy LLM classifier failed.",
             exc_info=True,
         )
-        return decide_procedural_candidate(candidate)
+        raise
 
-    if decision.confidence == "low":
-        return decide_procedural_candidate(candidate)
-    return PolicyDecision(
-        action=decision.action,
-        reason=_prefixed_policy_reason("llm_policy", decision.reason),
-        policy_version="phase1_llm_v1",
-    )
+    return _clamp_procedural_policy_decision(decision)
