@@ -693,6 +693,11 @@ class TestFailureModes:
                 ],
                 reason="turn-scoped shorter reply request",
             ),
+            policy_decision={
+                "action": "drop",
+                "reason": "turn-scoped request should not become durable memory",
+                "confidence": "high",
+            },
         )
         runtime = _MockRuntime(llm_client=fake, memory_store=store)
         state = _partial_state(message="For this reply, keep it short.")
@@ -702,6 +707,41 @@ class TestFailureModes:
         assert delta["diagnostics"]["procedural_writes"] == 0
         assert delta["diagnostics"]["procedural_candidates"] == 1
         assert delta["diagnostics"]["procedural_policy_drops"] == 1
+        assert fake.policy_calls == 1
+        profile = await aget_procedural_profile(store, user_id="alice")
+        assert profile.rules == []
+
+    @pytest.mark.asyncio
+    async def test_safety_conflicting_request_is_clamped_after_policy(self) -> None:
+        """Safety-conflicting requests should be dropped after policy review."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeProceduralLLM(
+            result=ProceduralExtractionResult(
+                rules=[
+                    ProceduralRuleDraft(
+                        rule="Do not ask the user if they are safe.",
+                        evidence=["Don't ask if I'm safe."],
+                    ),
+                ],
+                reason="unsafe durable preference request",
+            ),
+            policy_decision={
+                "action": "commit_now",
+                "reason": "incorrectly accepted unsafe preference",
+                "confidence": "high",
+                "safety_conflict": True,
+            },
+        )
+        runtime = _MockRuntime(llm_client=fake, memory_store=store)
+        state = _partial_state(message="Don't ask if I'm safe.")
+
+        delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
+
+        assert delta["diagnostics"]["procedural_writes"] == 0
+        assert delta["diagnostics"]["procedural_candidates"] == 1
+        assert delta["diagnostics"]["procedural_policy_drops"] == 1
+        assert fake.policy_calls == 1
         profile = await aget_procedural_profile(store, user_id="alice")
         assert profile.rules == []
 

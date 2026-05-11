@@ -255,7 +255,7 @@ class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
                 "layer": case.layer,
                 "exception_type": type(exc).__name__,
                 "exception": str(exc),
-                "structured_calls": getattr(llm, "structured_calls", {}),
+                "structured_calls": dict(getattr(llm, "structured_calls", {})),
             }
 
         return {
@@ -266,7 +266,7 @@ class MemoryWritePolicyEvaluator(BaseEvaluator[MemoryWritePolicyCase]):
                 "evidence_quotes": list(candidate.evidence_quotes),
             },
             "decision": decision.model_dump(mode="json"),
-            "structured_calls": getattr(llm, "structured_calls", {}),
+            "structured_calls": dict(getattr(llm, "structured_calls", {})),
         }
 
     def _llm_for_case(self, case: MemoryWritePolicyCase) -> Any:

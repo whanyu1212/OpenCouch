@@ -22,9 +22,6 @@ from agent.memory.policy.candidates import (
     SemanticCandidate,
     SemanticHoldAction,
 )
-from agent.memory.policy.constants import (
-    classify_procedural_request,
-)
 from agent.memory.policy.semantic import (
     SEMANTIC_SESSION_ONLY_CATEGORIES,
 )
@@ -66,19 +63,13 @@ class ProceduralWritePolicyDecision(BaseModel):
     action: Literal["commit_now", "commit_at_session_end", "drop"]
     reason: str = Field(min_length=1, max_length=240)
     confidence: Literal["low", "medium", "high"]
-
-
-def _lowered_texts(*values: str) -> str:
-    """Join non-empty values into one lowercase text blob.
-
-    Args:
-        values: Text fragments to normalize.
-
-    Returns:
-        Lowercase text joined with spaces.
-    """
-
-    return " ".join(v.lower() for v in values if v).strip()
+    safety_conflict: bool = Field(
+        default=False,
+        description=(
+            "True when the candidate asks the assistant to weaken, suppress, "
+            "or bypass safety or crisis behavior."
+        ),
+    )
 
 
 def should_commit_pattern(
@@ -197,6 +188,10 @@ def _procedural_policy_prompt(candidate: ProceduralCandidate) -> str:
         "evidence before becoming durable.\n"
         "- drop: only applies to this turn/session, is not assistant-facing, "
         "or conflicts with safety behavior.\n\n"
+        "Set safety_conflict=true when the candidate asks the assistant to "
+        "weaken, suppress, skip, hide, or bypass crisis checks, safety "
+        "questions, emergency guidance, or crisis resources. Safety-conflict "
+        "candidates must use action=drop.\n\n"
         "Treat direct future-facing requests as explicit durable preferences "
         "when they are assistant-facing and do not conflict with safety.\n\n"
         "Use commit_at_session_end for inferred preferences from statements "
@@ -252,6 +247,31 @@ def _clamp_semantic_policy_decision(
     )
 
 
+def _clamp_procedural_policy_decision(
+    decision: ProceduralWritePolicyDecision,
+) -> PolicyDecision:
+    """Convert and safety-clamp an LLM procedural policy decision.
+
+    Args:
+        decision (ProceduralWritePolicyDecision): LLM policy decision.
+
+    Returns:
+        PolicyDecision: Final policy decision.
+    """
+
+    if decision.safety_conflict and decision.action != "drop":
+        return PolicyDecision(
+            action="drop",
+            reason="safety-conflicting procedural candidate cannot be persisted",
+        )
+
+    return PolicyDecision(
+        action=decision.action,
+        reason=_prefixed_policy_reason("llm_policy", decision.reason),
+        policy_version="phase1_llm_v1",
+    )
+
+
 async def decide_semantic_candidate_llm_primary(
     candidate: SemanticCandidate,
     *,
@@ -289,37 +309,6 @@ async def decide_semantic_candidate_llm_primary(
     return _clamp_semantic_policy_decision(candidate, decision)
 
 
-def procedural_hard_policy_guard(
-    candidate: ProceduralCandidate,
-) -> PolicyDecision | None:
-    """Return a non-LLM procedural policy only for hard invariants.
-
-    Args:
-        candidate (ProceduralCandidate): Procedural candidate to inspect.
-
-    Returns:
-        PolicyDecision | None: Hard policy decision, or ``None`` when the
-        LLM policy classifier must decide.
-    """
-
-    text = _lowered_texts(candidate.payload.rule, *candidate.payload.evidence)
-    classification = classify_procedural_request(text)
-
-    if classification.safety_conflict:
-        return PolicyDecision(
-            action="drop",
-            reason="safety-conflicting procedural request cannot be persisted",
-        )
-
-    if classification.turn_scoped:
-        return PolicyDecision(
-            action="drop",
-            reason="turn-scoped procedural request should not become long-term memory",
-        )
-
-    return None
-
-
 async def decide_procedural_candidate_llm_primary(
     candidate: ProceduralCandidate,
     *,
@@ -335,9 +324,6 @@ async def decide_procedural_candidate_llm_primary(
         PolicyDecision: Final write policy.
     """
 
-    hard_guard = procedural_hard_policy_guard(candidate)
-    if hard_guard is not None:
-        return hard_guard
     if llm_client is None:
         raise RuntimeError("Procedural write-policy classification requires an LLM.")
 
@@ -354,8 +340,4 @@ async def decide_procedural_candidate_llm_primary(
         )
         raise
 
-    return PolicyDecision(
-        action=decision.action,
-        reason=_prefixed_policy_reason("llm_policy", decision.reason),
-        policy_version="phase1_llm_v1",
-    )
+    return _clamp_procedural_policy_decision(decision)

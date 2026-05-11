@@ -17,7 +17,6 @@ from agent.memory.policy.candidates import (
 from agent.memory.policy.write import (
     decide_procedural_candidate_llm_primary,
     decide_semantic_candidate_llm_primary,
-    procedural_hard_policy_guard,
     semantic_hard_policy_guard,
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
@@ -190,22 +189,6 @@ def test_provenance_semantic_predicate_drops() -> None:
     assert decision.action == "drop"
 
 
-def test_explicit_procedural_request_has_no_hard_guard() -> None:
-    candidate = build_procedural_candidate(
-        ProceduralRuleDraft(
-            rule="You prefer shorter responses.",
-            evidence=["Please keep responses shorter."],
-        ),
-        message="Please keep responses shorter.",
-        session_id="session-1",
-        turn_index=2,
-    )
-
-    decision = procedural_hard_policy_guard(candidate)
-
-    assert decision is None
-
-
 @pytest.mark.asyncio
 async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> None:
     candidate = build_procedural_candidate(
@@ -249,7 +232,8 @@ async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> Non
     )
 
 
-def test_turn_scoped_procedural_request_drops() -> None:
+@pytest.mark.asyncio
+async def test_turn_scoped_procedural_request_uses_llm_policy() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
             rule="You prefer shorter responses.",
@@ -259,14 +243,23 @@ def test_turn_scoped_procedural_request_drops() -> None:
         session_id="session-1",
         turn_index=2,
     )
+    llm = _FakePolicyLLM(
+        {
+            "action": "drop",
+            "reason": "turn-scoped request should not become durable memory",
+            "confidence": "high",
+        }
+    )
 
-    decision = procedural_hard_policy_guard(candidate)
+    decision = await decide_procedural_candidate_llm_primary(candidate, llm_client=llm)
 
-    assert decision is not None
     assert decision.action == "drop"
+    assert decision.policy_version == "phase1_llm_v1"
+    assert llm.structured_calls == 1
 
 
-def test_safety_conflicting_procedural_request_drops() -> None:
+@pytest.mark.asyncio
+async def test_safety_conflict_clamps_unsafe_procedural_policy() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
             rule="Don't ask me if I'm safe.",
@@ -276,11 +269,20 @@ def test_safety_conflicting_procedural_request_drops() -> None:
         session_id="session-1",
         turn_index=2,
     )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "model incorrectly treated the request as a durable preference",
+            "confidence": "high",
+            "safety_conflict": True,
+        }
+    )
 
-    decision = procedural_hard_policy_guard(candidate)
+    decision = await decide_procedural_candidate_llm_primary(candidate, llm_client=llm)
 
-    assert decision is not None
     assert decision.action == "drop"
+    assert decision.policy_version == "phase1_v1"
+    assert llm.structured_calls == 1
 
 
 @pytest.mark.asyncio
