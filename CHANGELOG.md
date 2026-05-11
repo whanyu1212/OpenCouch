@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-05-11 — Text and Voice Dogfooding Scripts
+
+### Local dogfooding
+- Added `scripts/voice_agent.sh`, a dedicated LiveKit voice-agent launcher that starts the Dockerized Postgres service by default and then runs `agent.voice.agent`; it defaults to `start` but forwards LiveKit agent commands such as `console`, `console --text`, and `connect --room <name>`
+- Added voice-script flags for common dogfooding configuration without requiring manual environment exports: `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres`
+- Kept `scripts/cli_dogfood.sh` as the text-agent wrapper, so local users can run the text and voice agents independently while the web UI is being reworked
+
+### LiveKit text-mode verification
+- Fixed the LiveKit local text console path so typed turns go through the same OpenCouch pre-turn policy hook as spoken turns, including crisis classification, turn policy, and exercise-consent state
+- Verified live text-mode box-breathing entry against Postgres: direct typed consent now grants `grounding_box_breathing`, starts `VoiceExerciseTask`, and begins from the first catalog exercise step
+- Removed the duplicate post-exercise completion check-in after handoff back to the therapeutic agent
+
+### Validation
+- Focused LiveKit voice tests passed (`67 passed`)
+- `scripts/voice_agent.sh --help`, unknown-option handling, shell syntax, and pre-commit passed for the new script
+
 ## 2026-05-08 — Turn Dispatch + Grounded Tool Simplification
 
 This entry continues the graph-slimming pass by collapsing safe-turn routing

@@ -19,7 +19,7 @@
 > OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
 
 > [!WARNING]
-> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
+> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/cli_dogfood.sh`](scripts/cli_dogfood.sh) to start the text agent and [`scripts/voice_agent.sh`](scripts/voice_agent.sh) to start the LiveKit voice agent. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
 
 ---
 
@@ -147,7 +147,7 @@ docker compose up --build
 This starts:
 - PostgreSQL + pgvector for runtime persistence: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
 - backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
-- LiveKit voice worker: `python -m voice.livekit.agent start`
+- LiveKit voice worker: `python -m agent.voice.agent start`
 - Next.js web UI in production mode: [localhost:3000](http://localhost:3000)
 
 The first run can take a while. Docker needs to pull base images, install backend dependencies, build the production web bundle, and warm the voice worker dependencies. Later runs should be much faster because Docker reuses image layers and dependency caches unless the lockfiles or Dockerfiles change.
@@ -194,7 +194,7 @@ Open [localhost:3000](http://localhost:3000) in your browser.
 Optional terminal 3 — LiveKit voice worker:
 ```bash
 cd apps/backend
-uv run python -m voice.livekit.agent start
+uv run python -m agent.voice.agent start
 ```
 
 ### CLI
@@ -221,6 +221,16 @@ For everyday persistent-mode dogfooding, [`scripts/cli_dogfood.sh`](scripts/cli_
 ```
 
 This assumes `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and `OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch` are set in your `.env` (see [Environment](#environment)). Use the raw `uv run python -m opencouch_cli ...` invocations above when you want guest mode, deterministic mode, or the SQLite fallback without starting Postgres.
+
+For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice worker independently from the text agent:
+
+```bash
+./scripts/voice_agent.sh --user-id dogfood start
+./scripts/voice_agent.sh --user-id dogfood console --text
+./scripts/voice_agent.sh --memory-mode incognito console
+```
+
+The voice wrapper supports `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres` before the forwarded LiveKit command.
 
 ### Telegram Gateway
 Run the standalone Telegram gateway. It does not require the FastAPI server.
@@ -459,6 +469,7 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of **May 2026**:
 
+- **May 2026 — Text and voice dogfooding scripts** — the web UI is temporarily broken during the app-shell refactor, so local dogfooding now has separate script entrypoints: `scripts/cli_dogfood.sh` for the text agent and `scripts/voice_agent.sh` for the LiveKit voice agent. The voice script starts Postgres by default, forwards LiveKit commands, and exposes flags for user id, thread id, memory mode, backend, database URL, and skipping Postgres.
 - **May 2026 — Turn dispatch & grounded tools cleanup** — safe-turn routing now uses one typed `turn_dispatch` node for memory control, grounded lookup, or therapeutic support instead of separate regex/pattern gate nodes. Grounded lookup and web search were consolidated into structured provider-native search helpers with explicit source lists, crisis-location classification, and `location_refused` handling. Scripted and live grounded-tool quality evals pass `11/11`.
 - **May 2026 — Therapeutic dispatch & state-surface cleanup** — the therapeutic router collapsed to an LLM-primary policy (~821 LOC removed across four deleted dispatch modules) with a small deterministic exercise-state bookkeeping layer. Three carrying-cost-only output channels (`response_style_type`, `response_style_source`, `response_kind`) were removed end-to-end across the agent, public API, frontend, and docs, with the public `AgentOutput.response_type` now derived once from the crisis assessment rather than written by five separate nodes. 1025/1025 backend tests pass.
 - **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose. A `scripts/cli_dogfood.sh` helper ensures Postgres is up before launching the CLI, and `get_settings()` now fails fast with an actionable error when the Postgres backend is selected without `OPENCOUCH_MEMORY_DATABASE_URL`.
