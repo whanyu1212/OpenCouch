@@ -6,13 +6,15 @@ It owns:
 - long-term memory storage abstractions
 - retrieval and ranking
 - procedural-profile reads and writes
-- extraction / summarization / control prompt builders
+- extraction and summarization prompt builders
 - write-policy, dedup, and reconciliation helpers
 - per-turn write orchestration and session-end commit
-- user-facing memory controls (recall toggle, save preferences, forget)
+- memory helpers used by user-facing memory controls
 - memory-layer data models and small utility helpers
 
 It does **not** own always-on audit persistence.
+It also does not own the memory-control gate that handles user-facing
+commands such as recall toggles, saved preferences, and forget requests.
 
 Those backends live in [agent/audit](../audit):
 - crisis log backends
@@ -45,9 +47,9 @@ There are 3 main memory shapes:
 
 ### Storage
 
-- [store.py](./store.py): `MemoryStore` protocol, `StoreRecord`, in-memory `OpenCouchMemoryStore`, namespace conventions, search thresholds.
-- [postgres_store.py](./postgres_store.py): primary durable Postgres implementation (default backend).
-- [sqlite_store.py](./sqlite_store.py): SQLite fallback backend, selectable via `OPENCOUCH_PERSISTENCE_BACKEND=sqlite`.
+- [store/](./store): `MemoryStore` protocol, `StoreRecord`, in-memory `OpenCouchMemoryStore`, namespace conventions, and search thresholds.
+- [store/postgres.py](./store/postgres.py): primary durable Postgres implementation (default backend).
+- [store/sqlite.py](./store/sqlite.py): SQLite fallback backend, selectable via `OPENCOUCH_PERSISTENCE_BACKEND=sqlite`.
 - [modes.py](./modes.py): `MemoryMode` enum used by the runtime to choose in-memory vs durable behavior.
 
 ### Retrieval
@@ -59,22 +61,22 @@ There are 3 main memory shapes:
 
 ### Write Pipeline
 
+- [extraction_service.py](./extraction_service.py): LLM-driven semantic and procedural extraction services used by thin graph nodes.
 - [turn_write_service.py](./turn_write_service.py): `TurnWriteService` — per-turn orchestration that maps extracted candidates through policy → dedup → store writes.
 - [session_commit_service.py](./session_commit_service.py): session-end commit of buffered candidates.
 - [semantic_writes.py](./semantic_writes.py): batch semantic-write helper (`apply_semantic_writes_batch`) shared by turn and session-end paths.
 - [dedup.py](./dedup.py): hot-path semantic near-duplicate detection.
 - [reconciliation.py](./reconciliation.py): conservative merge / replace / skip planning for semantic and procedural writes.
 
-### Policy & Heuristics
+### Policy Layer
 
 The [policy/](./policy) subpackage owns the decision layer between extracted candidates and persisted writes:
 
-- [policy/candidates.py](./policy/candidates.py): candidate objects for semantic / procedural writes plus `SessionMemoryBuffer`.
-- [policy/write.py](./policy/write.py): LLM-primary write policy with hard local safety / storage guards.
-- [policy/semantic.py](./policy/semantic.py): semantic heuristics such as durability markers and negative-self-belief detection.
+- [policy/candidates.py](./policy/candidates.py): candidate objects for semantic / procedural writes plus `SessionMemoryBuffer`; held candidates carry the policy decision that held them.
+- [policy/write.py](./policy/write.py): LLM-primary write-timing policy for semantic / procedural candidates, with narrow post-policy safety / storage clamps.
+- [policy/semantic.py](./policy/semantic.py): semantic policy constants for session-only categories.
 - [policy/small_talk.py](./policy/small_talk.py): pre-extractor filter for turns that should not produce memory writes.
 - [policy/turn_routing.py](./policy/turn_routing.py): `should_skip_memory_extraction`, `get_session_turn_index`.
-- [policy/constants.py](./policy/constants.py): procedural request classification markers and helpers.
 
 ### Procedural Profile
 
@@ -84,15 +86,6 @@ The [policy/](./policy) subpackage owns the decision layer between extracted can
 
 - [episodic.py](./episodic.py): episodic session-arc helpers used at session-end summarization.
 
-### User Controls
-
-The [user_controls/](./user_controls) subpackage owns user-facing memory commands:
-
-- [user_controls/router.py](./user_controls/router.py): typed action models (discriminated union) and CLI / API routing.
-- [user_controls/service.py](./user_controls/service.py): `apply_memory_action` dispatch (`match` / `case` over `TypedMemoryAction`).
-- [user_controls/operations.py](./user_controls/operations.py): individual operation handlers (list, status, set_recall, save_preference, forget, confirm, cancel).
-- [user_controls/patterns.py](./user_controls/patterns.py): regex / phrase patterns for natural-language memory commands.
-
 ### Prompt Builders
 
 The [prompts/](./prompts) subpackage groups all memory-layer prompts:
@@ -100,7 +93,10 @@ The [prompts/](./prompts) subpackage groups all memory-layer prompts:
 - [prompts/extraction.py](./prompts/extraction.py): semantic extraction prompts.
 - [prompts/procedural.py](./prompts/procedural.py): procedural-rule extraction prompts.
 - [prompts/summarization.py](./prompts/summarization.py): session summarization prompts.
-- [prompts/control.py](./prompts/control.py): user-control intent classification prompts.
+
+### Working-Memory Rendering
+
+- [entries.py](./entries.py): structured working-memory entries and rendering helpers for prompts / diagnostics.
 
 ### Utilities
 
@@ -113,7 +109,6 @@ The [prompts/](./prompts) subpackage groups all memory-layer prompts:
   - `semantic.py`
   - `episodic.py`
   - `procedural.py`
-  - `audit.py` compatibility re-exports from `agent.audit.models`
   - `therapeutic.py`
   - `primitives.py`
 
@@ -122,7 +117,7 @@ The [prompts/](./prompts) subpackage groups all memory-layer prompts:
 If you are trying to understand a specific behavior, start here:
 
 - "How is memory stored?"
-  Start with [store.py](./store.py), then [postgres_store.py](./postgres_store.py). For SQLite-fallback behavior, see [sqlite_store.py](./sqlite_store.py).
+  Start with [store/](./store), then [store/postgres.py](./store/postgres.py). For SQLite-fallback behavior, see [store/sqlite.py](./store/sqlite.py).
 
 - "How does retrieval work?"
   Start with [retrieval.py](./retrieval.py), then [embeddings.py](./embeddings.py), then [text_tokens.py](./text_tokens.py).
@@ -136,11 +131,11 @@ If you are trying to understand a specific behavior, start here:
 - "What runs on every turn vs at session end?"
   Start with [turn_write_service.py](./turn_write_service.py) and [session_commit_service.py](./session_commit_service.py).
 
-- "What prompt is used for extraction, summarization, or user controls?"
+- "What prompt is used for extraction or summarization?"
   Start in [prompts/](./prompts).
 
 - "How does the user toggle recall or save a preference?"
-  Start with [user_controls/router.py](./user_controls/router.py).
+  Start with [agent/gates/memory_control](../gates/memory_control).
 
 - "Where did the crisis log / session feedback code go?"
   Go to [agent/audit](../audit).
@@ -151,6 +146,7 @@ This package is mostly infrastructure. The main runtime integration points are o
 
 - [agent/persistence.py](../persistence.py): chooses memory store implementation and owns lifecycle.
 - [agent/runtime/backends.py](../runtime/backends.py): selects Postgres vs SQLite vs in-memory based on settings.
+- [agent/gates/memory_control](../gates/memory_control): handles user-facing memory commands.
 - [agent/nodes/](../nodes): extraction, commit, summarization, and memory-loading nodes call into this package.
 - [agent/graph.py](../graph.py): wires the nodes into the workflow.
 
