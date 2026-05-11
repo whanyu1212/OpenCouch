@@ -58,8 +58,8 @@ A capability qualifies as a **tool** when:
 2. It can **fail and must degrade gracefully** without blocking the
    turn.
 3. It has **conditional invocation** — a node decides at runtime
-   whether to call it (often guarded by a regex gate one node
-   upstream).
+   whether to call it, usually from structured LLM routing plus local
+   validation.
 
 If a capability is used on every turn (like the memory store) or
 fails hard when unavailable (like the database), it's a dependency,
@@ -81,8 +81,9 @@ producing user-facing content, it's a gate, not a tool.
    node owns (query string, status code, found-data list).
 5. Add a `STAGE_LABELS` entry in `agent/models.py` so streaming
    surfaces show a friendly stage name.
-6. Add unit tests for the parsing helpers. LLM-calling code paths
-   belong in dogfood scripts, not the unit test suite.
+6. Add focused tests for the routing contract and failure/status
+   behavior. LLM-calling code paths belong in live evals, not the
+   unit test suite.
 
 ## Related
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Group
@@ -220,6 +221,24 @@ def test_render_header_uses_prominent_title_panel_and_session_metadata(capsys) -
     assert "[/bold primary]" not in out
 
 
+def test_render_header_shows_thread_scoped_owner_for_persistent_mode(capsys) -> None:
+    """Persistent sessions without --user-id should make owner scope visible."""
+
+    from opencouch_cli.app import render_header
+
+    render_header(
+        "hybrid",
+        "thread-a",
+        "persistent",
+        user_id=None,
+        response_model_tier="fast",
+    )
+    out = capsys.readouterr().out
+
+    assert "owner" in out
+    assert "thread-scoped" in out
+
+
 @pytest.mark.parametrize(
     ("backend", "expected"),
     [
@@ -262,6 +281,8 @@ def test_render_status_guest_mode_hides_sqlite_path(capsys) -> None:
     assert "memory mode" in out
     assert "guest" in out
     assert "ephemeral" in out
+    assert "owner id" in out
+    assert "none (guest mode)" in out
     assert "sqlite path" not in out
 
 
@@ -279,6 +300,8 @@ def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
 
     assert "persistence" in out
     assert "sqlite" in out
+    assert "owner id" in out
+    assert "thread-scoped" in out
     assert "sqlite path" in out
 
 
@@ -299,6 +322,7 @@ def test_help_command_registry_contains_current_public_commands() -> None:
     assert "/response-tier <fast|quality>" in displays
     assert "/trace on|off|once" in displays
     assert "/debug state" in displays
+    assert "/end [new [thread-id]]" in displays
     assert "/exit" in displays
     assert len(displays) == len(set(displays))
 
@@ -1001,8 +1025,110 @@ async def test_chat_loop_waits_for_runtime_entry_before_first_prompt(
 
 
 @pytest.mark.asyncio
-async def test_chat_loop_finalizes_active_sessions_on_eof(monkeypatch) -> None:
-    """Raw CLI shutdown should still flush active sessions before runtime close."""
+async def test_chat_loop_guest_mode_uses_ephemeral_sqlite_runtime(monkeypatch) -> None:
+    """Guest mode should not require the configured Postgres backend."""
+
+    runtime = _FakeChatLoopRuntime()
+    captured: dict[str, object] = {}
+
+    def _runtime_factory(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return runtime
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="postgres",
+            memory_database_url="postgresql://opencouch:opencouch@localhost/opencouch",
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr("opencouch_cli.app.PersistentAgentRuntime", _runtime_factory)
+    monkeypatch.setattr(
+        "opencouch_cli.app.read_user_input",
+        lambda state: (_ for _ in ()).throw(EOFError),
+    )
+    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+
+    exit_code = await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id="alice",
+        sqlite_path="/tmp/persistent.sqlite3",
+        memory_mode="guest",
+    )
+
+    assert exit_code == 0
+    kwargs = captured["kwargs"]
+    assert captured["args"] == (":memory:",)
+    assert kwargs["memory_backend"] == "sqlite"
+    assert kwargs["thread_persistence_backend"] == "sqlite"
+    assert kwargs["crisis_log_persistence_backend"] == "sqlite"
+    assert kwargs["session_feedback_persistence_backend"] == "sqlite"
+    assert kwargs["memory_database_url"] is None
+    assert kwargs["thread_database_url"] is None
+    assert kwargs["crisis_log_database_url"] is None
+    assert kwargs["session_feedback_database_url"] is None
+    assert kwargs["finalize_active_sessions_on_close"] is False
+    assert runtime.finalize_calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_renders_postgres_startup_hint(monkeypatch) -> None:
+    """Persistent mode should explain how to recover when Postgres is down."""
+
+    from psycopg import OperationalError as PostgresOperationalError
+
+    class _FailingRuntime(_FakeChatLoopRuntime):
+        async def __aenter__(self):
+            raise PostgresOperationalError("connection failed")
+
+    messages: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="postgres",
+            memory_database_url="postgresql://opencouch:opencouch@localhost/opencouch",
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: _FailingRuntime(),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    exit_code = await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id="alice",
+        sqlite_path="/tmp/persistent.sqlite3",
+        memory_mode="persistent",
+    )
+
+    assert exit_code == 2
+    assert len(messages) == 1
+    assert messages[0][0] == "danger"
+    assert "Postgres persistence is configured" in messages[0][1]
+    assert "docker compose -f compose.yml up -d postgres --wait" in messages[0][1]
+    assert "./scripts/cli_dogfood.sh" in messages[0][1]
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_does_not_sweep_active_sessions_on_eof(monkeypatch) -> None:
+    """Raw CLI shutdown should not sweep unrelated active sessions."""
 
     runtime = _FakeChatLoopRuntime()
 
@@ -1035,7 +1161,7 @@ async def test_chat_loop_finalizes_active_sessions_on_eof(monkeypatch) -> None:
         memory_mode="persistent",
     )
 
-    assert runtime.finalize_calls == [None]
+    assert runtime.finalize_calls == []
 
 
 @pytest.mark.asyncio
@@ -1080,7 +1206,7 @@ async def test_chat_loop_prompts_again_before_turn_tail_finishes(monkeypatch) ->
     )
 
     assert order.index("prompt2_started") < order.index("done_yielded")
-    assert runtime.finalize_calls == [None]
+    assert runtime.finalize_calls == []
 
 
 @pytest.mark.asyncio
@@ -1124,7 +1250,7 @@ async def test_chat_loop_passes_response_tier_client_to_runtime(monkeypatch) -> 
         memory_mode="persistent",
     )
 
-    assert runtime.finalize_calls == [control_client]
+    assert runtime.finalize_calls == []
 
 
 @pytest.mark.asyncio
@@ -1148,6 +1274,65 @@ async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
     assert runtime.end_session_calls == [session.thread_id]
     # No feedback prompted (stubbed to None) → no record written
     assert runtime.record_feedback_calls == []
+
+
+@pytest.mark.asyncio
+async def test_end_new_saves_current_session_and_continues_on_fresh_thread(
+    monkeypatch,
+) -> None:
+    """/end new should summarize the current thread and keep the CLI open."""
+
+    _patch_feedback_prompt_skip(monkeypatch)
+    events: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_header",
+        lambda mode, thread_id, memory_mode, **kwargs: events.append(
+            ("header", f"{mode}:{thread_id}:{memory_mode}")
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": events.append(("info", f"{style}:{message}")),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/end new thread-c", session, runtime)
+
+    assert should_continue is True
+    assert runtime.end_session_calls == ["thread-a"]
+    assert session.thread_id == "thread-c"
+    assert session.history == []
+    assert session.last_context is None
+    assert ("header", "deterministic:thread-c:persistent") in events
+    assert any("Saved session thread-a" in message for _kind, message in events)
+    assert any("thread-scoped" in message for _kind, message in events)
+
+
+@pytest.mark.asyncio
+async def test_end_new_rejects_existing_thread_before_summarizing(monkeypatch) -> None:
+    """/end new should not save/end when the target thread already exists."""
+
+    _patch_feedback_prompt_skip(monkeypatch)
+    messages: list[str] = []
+    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append(message),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    should_continue = await handle_command("/end new thread-b", session, runtime)
+
+    assert should_continue is True
+    assert session.thread_id == "thread-a"
+    assert runtime.end_session_calls == []
+    assert any("already exists" in message for message in messages)
 
 
 @pytest.mark.asyncio
@@ -2492,6 +2677,38 @@ class TestRenderContext:
         assert "exercise" in out
         assert "box_breathing" in out
         assert "step 3" in out
+
+    def test_shows_turn_lifecycle_memory_reference_and_lookup_state(
+        self, capsys
+    ) -> None:
+        """Context view should expose current routing/debug state."""
+
+        from opencouch_cli.app import render_context
+
+        state = {
+            "session_progress": {"turn_count": 4},
+            "session_memory": {"summary": "", "current_goal": None},
+            "procedural_profile": {},
+            "working_memory": [],
+            "turn_lifecycle": {
+                "active_flow": "guided_exercise",
+                "action": "preserve",
+            },
+            "memory_reference": {"mode": "explicit"},
+            "grounded_lookup": {
+                "status": "answered",
+                "query": "Singapore therapy directories",
+            },
+        }
+        render_context(state)  # type: ignore[arg-type]
+        out = capsys.readouterr().out
+
+        assert "turn_lifecycle" in out
+        assert "guided_exercise / preserve" in out
+        assert "memory_reference" in out
+        assert "explicit" in out
+        assert "grounded_lookup" in out
+        assert "Singapore therapy directories" in out
 
     def test_omits_exercise_row_when_inactive(self, capsys) -> None:
         """No exercise_type → exercise row is absent (avoid clutter).

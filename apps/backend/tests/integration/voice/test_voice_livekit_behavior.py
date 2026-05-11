@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -39,6 +40,7 @@ from livekit.agents.types import (
     NotGivenOr,
 )
 
+from agent.models import CrisisAssessment
 from agent.memory.procedural_profile import (
     aadd_procedural_rule,
     aget_procedural_profile,
@@ -46,9 +48,12 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.store import OpenCouchMemoryStore
-from agent.voice.agent import CrisisAgent, TherapeuticAgent
+from agent.therapeutic.exercises.registry import EXERCISE_BOX_BREATHING
+from agent.voice.agent import OpenCouchAgentSession
+from agent.voice.agents import CrisisAgent, TherapeuticAgent
 from agent.voice.session_data import SessionData
 from agent.voice.config import build_voice_system_prompt
+from agent.voice.turn_policy import VoiceTurnPolicyDecision
 
 
 class FakeLLMResponse(BaseModel):
@@ -200,6 +205,7 @@ class FakeLookupLLM:
     def __init__(self, responses: list[str | Exception]) -> None:
         self.responses = list(responses)
         self.calls: list[dict[str, object]] = []
+        self.structured_calls: list[dict[str, object]] = []
 
     async def generate_text(
         self,
@@ -230,6 +236,136 @@ class FakeLookupLLM:
         if isinstance(response, Exception):
             raise response
         return response
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ):
+        """Return default structured voice control decisions for behavior tests."""
+
+        self.structured_calls.append(
+            {
+                "prompt": prompt,
+                "response_schema": response_schema.__name__,
+                "system_instruction": system_instruction,
+                "use_search": use_search,
+            }
+        )
+        if response_schema.__name__ == "CrisisAssessmentSchema":
+            level = 2 if "i want to die" in prompt.casefold() else 0
+            return response_schema(
+                level=level,
+                confidence="high",
+                reason=(
+                    "Explicit self-harm ideation."
+                    if level >= 2
+                    else "No crisis signal."
+                ),
+                needs_crisis_response=level >= 2,
+                needs_clarification=False,
+            )
+        if response_schema.__name__ == "LookupPreflightDecision":
+            return response_schema(
+                status="search",
+                search_query="voice behavior lookup",
+                answer="",
+                reasoning="Searchable voice behavior test request.",
+            )
+        if response_schema.__name__ == "GroundedLookupResult":
+            response = self.responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "system_instruction": system_instruction,
+                    "use_search": use_search,
+                }
+            )
+            return response_schema(
+                status="answered",
+                answer=response,
+                sources=_extract_test_sources(response),
+                source_quality="reputable",
+                reasoning="Scripted grounded lookup result.",
+            )
+        if response_schema.__name__ == "CrisisLocationDecision":
+            response = self.responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "system_instruction": system_instruction,
+                    "use_search": use_search,
+                }
+            )
+            location = response.strip()
+            return response_schema(
+                status="provided" if location else "not_provided",
+                location=location,
+                reasoning="Scripted location extraction result.",
+            )
+        if response_schema.__name__ == "CrisisResourceLookupResult":
+            response = self.responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "system_instruction": system_instruction,
+                    "use_search": use_search,
+                }
+            )
+            return response_schema(
+                status="found",
+                resources=_parse_test_crisis_resources(response),
+                reasoning="Scripted crisis resource lookup result.",
+            )
+        return response_schema(
+            session_intent="vent",
+            guidance_permission="not_yet",
+            process_stage="hold",
+            therapeutic_approach="motivational_interviewing",
+            active_target="",
+            primary_emotion="",
+            hot_thought="",
+            pattern="",
+            user_goal="feel heard",
+            exercise_consent="none",
+            exercise_type=None,
+            turn_guidance="Stay close and respond conversationally.",
+            reason="Default safe voice test policy.",
+            confidence="medium",
+        )
+
+
+def _extract_test_sources(text: str) -> list[str]:
+    _, _, suffix = text.partition("Sources:")
+    if not suffix.strip():
+        return ["test-source"]
+    return [line.strip(" -") for line in suffix.splitlines() if line.strip(" -")]
+
+
+def _parse_test_crisis_resources(text: str) -> list[dict[str, str]]:
+    resources: list[dict[str, str]] = []
+    for line in text.splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 3:
+            continue
+        resources.append(
+            {
+                "name": parts[0],
+                "phone": parts[1],
+                "url": parts[2],
+                "region": "Singapore",
+            }
+        )
+    return resources
 
 
 def _tool_call(name: str, arguments: str = "{}") -> FunctionToolCall:
@@ -299,6 +435,7 @@ def _userdata(store: OpenCouchMemoryStore) -> SessionData:
         user_id="voice-user-1",
         thread_id="voice-behavior-eval",
         memory_store=store,
+        llm_client=FakeLookupLLM([]),
     )
 
 
@@ -492,45 +629,87 @@ async def test_livekit_behavior_generic_anxiety_does_not_call_exercise_tool() ->
 
 
 @pytest.mark.asyncio
-async def test_livekit_behavior_crisis_tool_handoffs_to_crisis_agent() -> None:
-    """The crisis tool should produce a LiveKit handoff event."""
+async def test_livekit_text_run_applies_policy_before_realtime_reply() -> None:
+    """Local console text runs should not bypass OpenCouch pre-turn policy."""
+
+    class _SafeCrisisService:
+        async def assess_turn(self, state, *, llm_client):
+            return SimpleNamespace(
+                assessment=CrisisAssessment(
+                    level=0,
+                    confidence="high",
+                    reason="No crisis signal.",
+                    needs_crisis_response=False,
+                    needs_clarification=False,
+                )
+            )
+
+    class _GrantBoxBreathingPolicy:
+        async def plan_turn(self, **kwargs):
+            return VoiceTurnPolicyDecision(
+                session_intent="regulate",
+                guidance_permission="granted",
+                process_stage="ground",
+                therapeutic_approach="pfa",
+                active_target="post-work tension",
+                primary_emotion="tense",
+                hot_thought="",
+                pattern="",
+                user_goal="settle down",
+                exercise_consent="granted",
+                exercise_type=EXERCISE_BOX_BREATHING,
+                turn_guidance="Start the requested box breathing exercise.",
+                reason="The user directly requested box breathing.",
+                confidence="high",
+            )
 
     store = OpenCouchMemoryStore()
-    crisis_on_enter_instruction = (
-        "The user may be in crisis. Acknowledge what they "
-        "said with empathy and provide crisis resources (988 for US/Canada). "
-        "Do not lecture. Just be present. Keep it to two or three sentences."
-    )
+    userdata = _userdata(store)
     fake_llm = FakeLLM(
         fake_responses=[
             FakeLLMResponse(
-                input="I want to die.",
-                tool_calls=[
-                    _tool_call("crisis_check", '{"concern": "I want to die."}')
-                ],
-            ),
-            FakeLLMResponse(
-                input="Transferring to crisis support",
-                content="I'm going to stay with you as we focus on immediate safety.",
-            ),
-            FakeLLMResponse(
-                input=crisis_on_enter_instruction,
-                content=(
-                    "I'm really glad you told me. If you're in immediate danger, "
-                    "call emergency services now; if you're in the US or Canada, "
-                    "call or text 988."
-                ),
-            ),
+                input="Can we do box breathing now?",
+                content="Let's begin with a slow inhale.",
+            )
         ]
     )
-    userdata = _userdata(store)
+    agent = TherapeuticAgent(
+        instructions=build_voice_system_prompt(),
+        crisis_risk_service=_SafeCrisisService(),
+        turn_policy_service=_GrantBoxBreathingPolicy(),
+    )
 
-    async with AgentSession(llm=fake_llm, userdata=userdata) as session:
-        await session.start(_agent())
-        result = await session.run(user_input="I want to die.")
+    async with OpenCouchAgentSession(llm=fake_llm, userdata=userdata) as session:
+        await session.start(agent)
+        result = await session.run(user_input="Can we do box breathing now?")
 
-    result.expect.contains_function_call(name="crisis_check")
-    result.expect.contains_agent_handoff(new_agent_type=CrisisAgent)
+    assert result.done()
+    assert userdata.last_input_modality == "text"
+    assert userdata.turn_index == 1
+    assert userdata.exercise_consent_turn_index == 1
+    assert userdata.recommended_exercise_type == EXERCISE_BOX_BREATHING
+
+
+@pytest.mark.asyncio
+async def test_livekit_behavior_crisis_gate_switches_to_crisis_agent() -> None:
+    """The real voice crisis gate should switch to the crisis agent."""
+
+    updates: list[object] = []
+    userdata = _userdata(OpenCouchMemoryStore())
+    fake_session = SimpleNamespace(
+        userdata=userdata,
+        update_agent=lambda agent: updates.append(agent),
+    )
+    agent = _agent()
+    agent._activity = SimpleNamespace(session=fake_session)
+
+    turn_ctx = ChatContext()
+    new_message = ChatContext().add_message(role="user", content="I want to die.")
+
+    await agent.on_user_turn_completed(turn_ctx, new_message)
+
+    assert len(updates) == 1
+    assert isinstance(updates[0], CrisisAgent)
     assert userdata.crisis_level == 2
     assert userdata.max_crisis_level == 2
 
@@ -547,9 +726,9 @@ async def test_livekit_behavior_crisis_agent_looks_up_local_resources() -> None:
         ]
     )
     crisis_on_enter_instruction = (
-        "The user may be in crisis. Acknowledge what they "
-        "said with empathy and provide crisis resources (988 for US/Canada). "
-        "Do not lecture. Just be present. Keep it to two or three sentences."
+        "The user may be in crisis. Acknowledge the immediate "
+        "risk plainly and warmly. Give 988 for US/Canada if relevant. Keep "
+        "your voice steady and stay with them; do not sound like a policy notice."
     )
     fake_llm = FakeLLM(
         fake_responses=[

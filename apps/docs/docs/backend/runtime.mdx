@@ -26,7 +26,7 @@ turn and restores it via reducers on the next.
 :::
 
 :::note Voice has its own seam
-The LiveKit voice runtime (`voice/livekit/agent.py`) lazy-creates
+The LiveKit voice runtime (`agent/voice/agent.py`) lazy-creates
 **one shared `PersistentAgentRuntime` per worker process**, so it
 shares the configured memory store, crisis log, and embedding provider
 with text mode. But voice does **not** drive turns

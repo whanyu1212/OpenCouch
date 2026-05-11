@@ -69,10 +69,8 @@ The dispatcher picks exactly one therapeutic response style per turn:
 | `guided_exercise` | User requests a structured exercise ([13 exercises](/docs/agent/guided-exercises)) |
 | `closing` | User signals wind-down ("I should go", "thanks, this helped") |
 
-The dispatcher is **LLM-primary** with deterministic regex overrides
-for unambiguous exercise opt-out (`"never mind"`, `"quit the
-exercise"`) and a regex fallback for the no-LLM path. When a guided
-exercise is active, the dispatcher preserves the pinned
+The dispatcher is **LLM-owned** with local validation around active
+exercise state. When a guided exercise is active, the dispatcher preserves the pinned
 `exercise_therapeutic_approach` for exercise continuations and narrow
 clarifying turns. Psychoeducation side-turns keep the exercise active, but may
 use a fresh top-level approach for the explanation.
@@ -89,12 +87,11 @@ gate, `turn_dispatch_node` routes explicit saved-memory commands to
 `grounded_answer_node`, and ordinary support to memory loading plus the
 therapeutic subgraph.
 
-**Routing is LLM-primary, deterministic-bounded.** The dispatcher
-calls the LLM classifier first; deterministic regex only fires for
-high-precision overrides (clear exercise exit) or as a no-LLM
-fallback. The crisis gate uses the same shape: deterministic override
-for imminent-risk and idiomatic-safe patterns, LLM as primary for
-everything else, regex ladder as fallback.
+**Routing is LLM-owned, locally validated.** Classifiers own natural
+language decisions; plain services enforce schema validity, active-flow
+consistency, confirmation gates, and truth-table normalization. Missing
+or failing LLM calls retry or surface instead of silently degrading to
+regex.
 
 **Post-response memory evaluation.** Semantic and procedural extractors
 run after graph finalization as runtime-managed side effects. Some

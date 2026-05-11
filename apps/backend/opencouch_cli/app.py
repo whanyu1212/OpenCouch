@@ -58,6 +58,8 @@ from typing import Literal
 from urllib.parse import urlencode
 from uuid import uuid4
 
+from psycopg import OperationalError as PostgresOperationalError
+
 from agent.memory.models import FeedbackLabel, FeedbackSource, StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.reconciliation import filter_active_semantic_records
@@ -249,6 +251,76 @@ class RunnerSession:
         """
 
         return self.user_id or self.thread_id
+
+
+def _owner_scope_display(session: RunnerSession) -> str:
+    """Return a compact owner-scope label for status surfaces.
+
+    Args:
+        session (RunnerSession): Current CLI session state.
+
+    Returns:
+        str: User-facing owner scope label.
+    """
+
+    if session.memory_mode == "guest":
+        return "none (guest mode)"
+    if session.user_id:
+        return f"{session.user_id} (from --user-id)"
+    return f"{session.thread_id} (thread-scoped)"
+
+
+def _thread_scoped_memory_hint(session: RunnerSession) -> str | None:
+    """Return the cross-thread recall hint for thread-scoped memory.
+
+    Args:
+        session (RunnerSession): Current CLI session state.
+
+    Returns:
+        str | None: Hint text when useful, otherwise None.
+    """
+
+    if session.memory_mode != "persistent" or session.user_id:
+        return None
+    return (
+        "This is a thread-scoped memory session. For cross-thread recall while "
+        "dogfooding, restart with --user-id <name>."
+    )
+
+
+def _render_persistence_startup_error(
+    *,
+    backend: PersistenceBackend,
+    exc: BaseException,
+) -> None:
+    """Render an actionable persistence startup failure.
+
+    Args:
+        backend (PersistenceBackend): Configured persistence backend.
+        exc (BaseException): Startup exception raised by the runtime.
+
+    Returns:
+        None.
+    """
+
+    if backend == "postgres":
+        render_info(
+            "Postgres persistence is configured, but the database is not "
+            "reachable. Start it from the repo root with:\n\n"
+            "  docker compose -f compose.yml up -d postgres --wait\n\n"
+            "For normal text-agent dogfooding, prefer:\n\n"
+            "  ./scripts/cli_dogfood.sh --memory-mode persistent "
+            "--user-id dogfood --response-model-tier quality\n\n"
+            "For a no-database smoke test, use --memory-mode guest or set "
+            "OPENCOUCH_PERSISTENCE_BACKEND=sqlite.",
+            style="danger",
+        )
+        return
+
+    render_info(
+        f"Could not open the {backend} persistence backend: {exc}",
+        style="danger",
+    )
 
 
 def _prompt_toolbar_state(
@@ -599,6 +671,8 @@ def render_header(
     ]
     if user_id:
         identity_parts.append(f"[muted]owner[/muted] [info]{user_id}[/info]")
+    elif memory_mode == "persistent":
+        identity_parts.append("[muted]owner[/muted] [warning]thread-scoped[/warning]")
     console.print(Text.from_markup("   " + "  [panel]·[/panel]  ".join(identity_parts)))
 
     exit_hint = Text()
@@ -1147,10 +1221,32 @@ def render_context(state: AgentState | None) -> None:
     exercise_state = state.get("exercise_state", {})
     session_memory = state.get("session_memory", {})
     procedural_profile = state.get("procedural_profile", {})
+    turn_lifecycle = state.get("turn_lifecycle", {})
+    memory_reference = state.get("memory_reference", {})
+    grounded_lookup = state.get("grounded_lookup", {})
     table = Table(show_header=False, box=box.SIMPLE)
     table.add_column(style="hint", no_wrap=True)
     table.add_column(style="info")
     table.add_row("turn_count", str(session_progress.get("turn_count", 0)))
+
+    if isinstance(turn_lifecycle, dict):
+        active_flow = turn_lifecycle.get("active_flow", "none")
+        action = turn_lifecycle.get("action", "none")
+        table.add_row("turn_lifecycle", f"{active_flow} / {action}")
+
+    if isinstance(memory_reference, dict):
+        reference_mode = str(memory_reference.get("mode") or "none")
+        if reference_mode != "none":
+            table.add_row("memory_reference", reference_mode)
+
+    if isinstance(grounded_lookup, dict):
+        lookup_status = str(grounded_lookup.get("status") or "not_attempted")
+        lookup_query = str(grounded_lookup.get("query") or "")
+        if lookup_status != "not_attempted" or lookup_query:
+            lookup_display = lookup_status
+            if lookup_query:
+                lookup_display = f"{lookup_status} · {lookup_query}"
+            table.add_row("grounded_lookup", lookup_display)
 
     # Keep each memory entry on its own wrapped line for terminal readability.
     working_memory = format_working_memory_entries(state.get("working_memory") or [])
@@ -2887,6 +2983,7 @@ def render_status(session: RunnerSession) -> None:
     table.add_column(style="hint", no_wrap=True)
     table.add_column(style="info")
     table.add_row("thread id", session.thread_id)
+    table.add_row("owner id", _owner_scope_display(session))
     table.add_row("memory mode", session.memory_mode)
     if session.memory_mode == "guest":
         table.add_row("persistence", "ephemeral")
@@ -3265,6 +3362,7 @@ async def _summarize_and_render(
     runtime: PersistentAgentRuntime,
     *,
     source: FeedbackSource,
+    final_message: str | None = None,
 ) -> None:
     """End-session orchestration: capture feedback, then summarize.
 
@@ -3289,6 +3387,8 @@ async def _summarize_and_render(
         session: Active CLI session.
         runtime: Persistent runtime backing the active thread.
         source: Feedback source label for any captured feedback.
+        final_message: Optional success message rendered after summarization.
+            When None, uses the default closing copy.
 
     Returns:
         None.
@@ -3321,11 +3421,14 @@ async def _summarize_and_render(
     if stored_arc is not None:
         render_session_summary(stored_arc)
 
-    render_info(
-        "Take care. We can pick this back up whenever you want. "
-        f"(Thread: {session.thread_id})",
-        style="success",
-    )
+    message = final_message
+    if message is None:
+        message = (
+            "Take care. We can pick this back up whenever you want. "
+            f"(Thread: {session.thread_id})"
+        )
+    if message:
+        render_info(message, style="success")
 
 
 async def handle_command(
@@ -3370,6 +3473,60 @@ async def handle_command(
         return False
 
     if command == "/end":
+        if args:
+            if args[0] != "new" or len(args) > 2:
+                render_info("Usage: /end [new [thread-id]]", style="warning")
+                return True
+
+            next_thread_id = args[1] if len(args) == 2 else generate_thread_id()
+            if next_thread_id == session.thread_id:
+                render_info(
+                    "The next thread id is already active. Choose a different id.",
+                    style="warning",
+                )
+                return True
+            if await runtime.get_state(next_thread_id) is not None:
+                render_info(
+                    f"Thread {next_thread_id} already exists. Use /resume "
+                    f"{next_thread_id} or choose another id.",
+                    style="warning",
+                )
+                return True
+
+            previous_thread_id = session.thread_id
+            await _summarize_and_render(
+                session,
+                runtime,
+                source="cli_end",
+                final_message=f"Saved session {previous_thread_id}.",
+            )
+            if not await switch_thread(
+                session,
+                runtime,
+                thread_id=next_thread_id,
+                require_existing=False,
+            ):
+                render_info(
+                    f"Session saved, but could not start thread {next_thread_id}.",
+                    style="warning",
+                )
+                return True
+            render_header(
+                session.resolved_mode,
+                session.thread_id,
+                session.memory_mode,
+                user_id=session.user_id,
+                response_model_tier=session.response_model_tier,
+            )
+            render_info(
+                f"Started new thread {session.thread_id}.",
+                style="success",
+            )
+            hint = _thread_scoped_memory_hint(session)
+            if hint:
+                render_info(hint, style="warning")
+            return True
+
         # Explicit end command means full closing flow without save confirmation.
         await _summarize_and_render(session, runtime, source="cli_end")
         return False
@@ -3607,6 +3764,9 @@ async def handle_command(
             user_id=session.user_id,
         )
         render_info(f"Started new thread {session.thread_id}.", style="success")
+        hint = _thread_scoped_memory_hint(session)
+        if hint:
+            render_info(hint, style="warning")
         return True
 
     if command == "/reset":
@@ -3703,7 +3863,7 @@ async def chat_loop(
     memory_mode: str,
     memory_sqlite_path: str = str(DEFAULT_MEMORY_DB_PATH),
     crisis_log_sqlite_path: str = str(DEFAULT_CRISIS_LOG_DB_PATH),
-) -> None:
+) -> int:
     """Run the interactive CLI loop.
 
     Args:
@@ -3725,7 +3885,7 @@ async def chat_loop(
             Same persistence semantics as the memory path.
 
     Returns:
-        None.
+        Process exit code.
     """
 
     settings = get_settings()
@@ -3741,6 +3901,10 @@ async def chat_loop(
         MemoryMode.INCOGNITO if memory_mode == "guest" else MemoryMode.LOCAL
     )
     is_guest_mode = runtime_memory_mode == MemoryMode.INCOGNITO
+    runtime_persistence_backend: PersistenceBackend = (
+        "sqlite" if is_guest_mode else settings.persistence_backend
+    )
+    runtime_database_url = None if is_guest_mode else settings.memory_database_url
     # In guest mode, --user-id is meaningless (no long-term storage to
     # namespace). We don't reject it at the CLI layer because that would
     # require a pre-parse check, but we do drop it from the session so
@@ -3761,29 +3925,37 @@ async def chat_loop(
     )
 
     async with AsyncExitStack() as stack:
-        with console.status(
-            "[accent]preparing session — warming up models and memory...[/accent]",
-            spinner="dots",
-        ):
-            runtime = await stack.enter_async_context(
-                PersistentAgentRuntime(
-                    sqlite_path,
-                    memory_mode=runtime_memory_mode,
-                    memory_backend=settings.persistence_backend,
-                    memory_database_url=settings.memory_database_url,
-                    thread_persistence_backend=settings.persistence_backend,
-                    thread_database_url=settings.memory_database_url,
-                    crisis_log_persistence_backend=settings.persistence_backend,
-                    crisis_log_database_url=settings.memory_database_url,
-                    session_feedback_persistence_backend=settings.persistence_backend,
-                    session_feedback_database_url=settings.memory_database_url,
-                    memory_sqlite_path=memory_sqlite_path,
-                    crisis_log_sqlite_path=crisis_log_sqlite_path,
-                    default_llm_client=session.llm_client,
+        try:
+            with console.status(
+                "[accent]preparing session — warming up models and memory...[/accent]",
+                spinner="dots",
+            ):
+                runtime = await stack.enter_async_context(
+                    PersistentAgentRuntime(
+                        session.sqlite_path,
+                        memory_mode=runtime_memory_mode,
+                        memory_backend=runtime_persistence_backend,
+                        memory_database_url=runtime_database_url,
+                        thread_persistence_backend=runtime_persistence_backend,
+                        thread_database_url=runtime_database_url,
+                        crisis_log_persistence_backend=runtime_persistence_backend,
+                        crisis_log_database_url=runtime_database_url,
+                        session_feedback_persistence_backend=runtime_persistence_backend,
+                        session_feedback_database_url=runtime_database_url,
+                        memory_sqlite_path=memory_sqlite_path,
+                        crisis_log_sqlite_path=crisis_log_sqlite_path,
+                        default_llm_client=session.llm_client,
+                        finalize_active_sessions_on_close=False,
+                    )
                 )
+                session.history = await runtime.get_history(thread_id)
+                session.last_context = await runtime.get_state(thread_id)
+        except PostgresOperationalError as exc:
+            _render_persistence_startup_error(
+                backend=settings.persistence_backend,
+                exc=exc,
             )
-            session.history = await runtime.get_history(thread_id)
-            session.last_context = await runtime.get_state(thread_id)
+            return 2
 
         pending_tail_task: asyncio.Task[AgentOutput] | None = None
 
@@ -3817,8 +3989,12 @@ async def chat_loop(
                 render_onboarding()
                 session.show_onboarding = False
             render_info(
-                "Session ready. Models, graph, and memory are warm.", style="success"
+                "Session ready. Models, graph, and memory are warm.",
+                style="success",
             )
+            hint = _thread_scoped_memory_hint(session)
+            if hint:
+                render_info(hint, style="warning")
             if session.history:
                 render_info(
                     f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
@@ -4007,7 +4183,7 @@ async def chat_loop(
                     session.history = await runtime.get_history(session.thread_id)
         finally:
             await _finalize_pending_turn()
-            await runtime.finalize_active_sessions(llm_client=session.llm_client)
+    return 0
 
 
 def main() -> int:
@@ -4034,7 +4210,7 @@ def main() -> int:
     memory_sqlite_path = str(Path(args.memory_sqlite_path).expanduser())
     crisis_log_sqlite_path = str(Path(args.crisis_log_sqlite_path).expanduser())
     memory_mode = resolve_memory_mode(args.memory_mode)
-    asyncio.run(
+    return asyncio.run(
         chat_loop(
             args.mode,
             thread_id=thread_id,
@@ -4046,7 +4222,6 @@ def main() -> int:
             crisis_log_sqlite_path=crisis_log_sqlite_path,
         )
     )
-    return 0
 
 
 def _run_voice_mode(args) -> int:

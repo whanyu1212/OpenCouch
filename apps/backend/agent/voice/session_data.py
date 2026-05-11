@@ -93,6 +93,12 @@ class SessionData:
     # Used to diversify generic "help me calm down" requests.
     recent_exercise_types: list[str] = field(default_factory=list)
 
+    # Current-turn policy state written by the LLM-backed voice turn planner.
+    turn_index: int = 0
+    exercise_consent_turn_index: int | None = None
+    exercise_consent_reason: str = ""
+    recommended_exercise_type: str | None = None
+
     # Whether the latest user turn arrived as spoken audio or typed text.
     # Used to keep voice sessions on voice-friendly exercises while still
     # allowing the larger exercise registry for text turns.
@@ -102,7 +108,7 @@ class SessionData:
     started_at: str = ""
 
     # ── Crisis tracking ─────────────────────────────────────────
-    # Updated by the crisis_check tool or the keyword safety net.
+    # Updated by the LLM-backed voice crisis gate.
     # 0 = no concern, 1 = mild, 2 = moderate, 3 = severe.
     crisis_level: int = 0
     max_crisis_level: int = 0

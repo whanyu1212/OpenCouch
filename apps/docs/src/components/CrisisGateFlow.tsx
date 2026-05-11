@@ -5,33 +5,25 @@ import styles from './CrisisGateFlow.module.css';
    CrisisGateFlow — Interactive walkthrough of the crisis gate.
 
    Each example input triggers a precomputed trace through the
-   three-tier classifier:
+   two-step classifier:
 
-     1. Deterministic overrides (imminent_risk / idiomatic_safe / safety_denial)
-     2. LLM classifier (structured output, primary path)
-     3. Deterministic regex ladder (fallback when LLM unavailable)
+     1. LLM classifier (structured output)
+     2. Truth-table normalization
 
-   …followed by the truth-table normalization step. The right panel
-   shows the resulting state delta (level, route, classifier_path,
-   override_kind, response_style).
+   The right panel shows the resulting state delta (level, route,
+   classifier_path, override_kind, response_style).
 
    This is documentation, not a live classifier — every trace is
    hand-authored to mirror what `agent/nodes/crisis_gate.py` and
-   `agent/safety/crisis_rules.py` would actually emit.
+   `agent/gates/safety/service.py` would actually emit.
    ================================================================ */
 
-type ClassifierPath =
-  | 'override'
-  | 'llm_primary'
-  | 'llm_fallback'
-  | 'deterministic';
+type ClassifierPath = 'llm_primary';
 
-type OverrideOutcome = 'imminent_risk' | 'idiomatic_safe' | 'safety_denial' | 'none';
+type OverrideOutcome = 'none';
 
 type Stage =
-  | { id: 'override'; status: 'firing' | 'pass' | 'matched'; matchKind?: OverrideOutcome; note: string }
   | { id: 'llm'; status: 'firing' | 'success' | 'failed' | 'skipped'; rawLevel?: 0 | 1 | 2 | 3; note: string }
-  | { id: 'regex'; status: 'firing' | 'matched' | 'skipped'; rawLevel?: 0 | 1 | 2 | 3; note: string }
   | { id: 'normalize'; status: 'firing' | 'done'; level: 0 | 1 | 2 | 3; note: string };
 
 interface FinalState {
@@ -60,26 +52,16 @@ const TRACES: Trace[] = [
   {
     id: 'imminent',
     label: 'Imminent risk',
-    blurb: 'Plan + means + timing. The deterministic override fires before any LLM call.',
+    blurb: 'Plan + means + timing. The LLM classifier returns level 3.',
     message:
       "I have the pills set aside. I'm planning to take them tonight.",
     stages: [
       {
-        id: 'override',
-        status: 'matched',
-        matchKind: 'imminent_risk',
-        note:
-          'IMMINENT_PATTERNS matched: plan ("set aside") + means ("pills") + timing ("tonight"). Deterministic L3, no network call.',
-      },
-      {
         id: 'llm',
-        status: 'skipped',
-        note: 'Skipped — override already produced a verdict.',
-      },
-      {
-        id: 'regex',
-        status: 'skipped',
-        note: 'Skipped — only used when no LLM is configured or the LLM call fails.',
+        status: 'success',
+        rawLevel: 3,
+        note:
+          'Structured output: level=3, confidence=high, reason="plan, means, and timing are present".',
       },
       {
         id: 'normalize',
@@ -92,8 +74,8 @@ const TRACES: Trace[] = [
     final: {
       level: 3,
       route: 'crisis',
-      classifierPath: 'override',
-      overrideKind: 'imminent_risk',
+      classifierPath: 'llm_primary',
+      overrideKind: 'none',
       llmFailureOccurred: false,
       responseStyle: 'safety_check',
       pipeline:
@@ -107,23 +89,11 @@ const TRACES: Trace[] = [
     message: 'I keep thinking about ending things. I just want it to stop.',
     stages: [
       {
-        id: 'override',
-        status: 'pass',
-        matchKind: 'none',
-        note:
-          'No imminent-risk plan markers, no idiomatic-safe phrasing, no safety-denial framing. Pass through to the LLM.',
-      },
-      {
         id: 'llm',
         status: 'success',
         rawLevel: 2,
         note:
           'Structured output: level=2, confidence=high, reason="user describes wanting suicide without explicit plan".',
-      },
-      {
-        id: 'regex',
-        status: 'skipped',
-        note: 'Skipped — LLM call succeeded.',
       },
       {
         id: 'normalize',
@@ -152,22 +122,11 @@ const TRACES: Trace[] = [
       "Sometimes I wonder if anyone would even notice if I wasn't here.",
     stages: [
       {
-        id: 'override',
-        status: 'pass',
-        matchKind: 'none',
-        note: 'No deterministic patterns match.',
-      },
-      {
         id: 'llm',
         status: 'success',
         rawLevel: 1,
         note:
           'Structured output: level=1, confidence=medium, reason="ambiguous absence-as-relief framing".',
-      },
-      {
-        id: 'regex',
-        status: 'skipped',
-        note: 'Skipped — LLM call succeeded.',
       },
       {
         id: 'normalize',
@@ -190,26 +149,15 @@ const TRACES: Trace[] = [
   {
     id: 'idiomatic_safe',
     label: 'Idiomatic safe',
-    blurb: '"Killing me" as a colloquialism. The override pre-empts the LLM.',
+    blurb: '"Killing me" as a colloquialism. The LLM classifies it as level 0.',
     message: "Work has been killing me lately, I'm dead tired.",
     stages: [
       {
-        id: 'override',
-        status: 'matched',
-        matchKind: 'idiomatic_safe',
-        note:
-          'IDIOMATIC_SAFE_PATTERNS matched: "killing me" (work context) + "dead tired" (idiom). Forced level=0.',
-      },
-      {
         id: 'llm',
-        status: 'skipped',
+        status: 'success',
+        rawLevel: 0,
         note:
-          'Skipped — even capable LLMs occasionally false-positive on these idioms; the override prevents that.',
-      },
-      {
-        id: 'regex',
-        status: 'skipped',
-        note: 'Skipped.',
+          'Structured output: level=0, confidence=high, reason="idiomatic work stress phrase without self-harm intent".',
       },
       {
         id: 'normalize',
@@ -222,52 +170,9 @@ const TRACES: Trace[] = [
     final: {
       level: 0,
       route: 'therapeutic',
-      classifierPath: 'override',
-      overrideKind: 'idiomatic_safe',
-      llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
-    },
-  },
-  {
-    id: 'llm_fail',
-    label: 'LLM failure → fallback',
-    blurb: 'Provider outage. The deterministic regex ladder catches the safety-relevant pattern.',
-    message: 'I cannot do this anymore.',
-    stages: [
-      {
-        id: 'override',
-        status: 'pass',
-        matchKind: 'none',
-        note: 'No override patterns match.',
-      },
-      {
-        id: 'llm',
-        status: 'failed',
-        note:
-          'Structured-output call raised: provider timeout. crisis_llm_failure_occurred set in audit; no level produced.',
-      },
-      {
-        id: 'regex',
-        status: 'matched',
-        rawLevel: 1,
-        note:
-          'AMBIGUOUS_PATTERNS matched "i can\'t do this anymore" → level=1. Degraded coverage but the safety floor holds.',
-      },
-      {
-        id: 'normalize',
-        status: 'done',
-        level: 1,
-        note:
-          'Truth table: level=1 → needs_clarification=true. classifier_path=llm_fallback so dashboards can track failure rate.',
-      },
-    ],
-    final: {
-      level: 1,
-      route: 'therapeutic',
-      classifierPath: 'llm_fallback',
+      classifierPath: 'llm_primary',
       overrideKind: 'none',
-      llmFailureOccurred: true,
+      llmFailureOccurred: false,
       responseStyle: '(picked downstream by therapeutic dispatcher)',
       pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
     },
@@ -275,25 +180,15 @@ const TRACES: Trace[] = [
   {
     id: 'safety_denial',
     label: 'Safety denial',
-    blurb: 'After a safety check, the user de-escalates. The override pulls the level back down.',
+    blurb: 'After a safety check, the user de-escalates. Recent history helps the LLM classify level 0.',
     message: "No, I'm safe. I was just venting.",
     stages: [
       {
-        id: 'override',
-        status: 'matched',
-        matchKind: 'safety_denial',
-        note:
-          'Previous assistant turn was a safety_check, current turn matches SAFETY_DENIAL_PATTERNS ("I\'m safe", "just venting"). Forced level=0.',
-      },
-      {
         id: 'llm',
-        status: 'skipped',
-        note: 'Skipped — denial after a safety check is the override\'s purpose.',
-      },
-      {
-        id: 'regex',
-        status: 'skipped',
-        note: 'Skipped.',
+        status: 'success',
+        rawLevel: 0,
+        note:
+          'Structured output: level=0, confidence=medium, reason="user denies immediate safety risk after a safety check".',
       },
       {
         id: 'normalize',
@@ -306,8 +201,8 @@ const TRACES: Trace[] = [
     final: {
       level: 0,
       route: 'therapeutic',
-      classifierPath: 'override',
-      overrideKind: 'safety_denial',
+      classifierPath: 'llm_primary',
+      overrideKind: 'none',
       llmFailureOccurred: false,
       responseStyle: '(picked downstream by therapeutic dispatcher)',
       pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
@@ -318,9 +213,7 @@ const TRACES: Trace[] = [
 /* ── Animation timing ──────────────────────────────────────────── */
 
 const STAGE_DWELL_MS: Record<Stage['id'], number> = {
-  override: 1100,
   llm: 1300,
-  regex: 1100,
   normalize: 1300,
 };
 
@@ -440,46 +333,23 @@ export default function CrisisGateFlow(): React.JSX.Element {
             <p className={styles.messageBody}>{trace.message}</p>
           </div>
 
-          {/* Tier 1: Override */}
+          {/* Tier 1: LLM classifier */}
           <Tier
             number="01"
-            title="Deterministic overrides"
-            subtitle="agent/safety/crisis_rules.py · detect_crisis_override()"
-            data={renderedStages[0]}
-            kind="override"
-          />
-
-          {/* Branch indicator */}
-          <BranchArrow stage={renderedStages[0]} kind="override" />
-
-          {/* Tier 2: LLM classifier */}
-          <Tier
-            number="02"
-            title="LLM classifier (primary)"
+            title="LLM classifier"
             subtitle="generate_structured(CrisisAssessmentSchema)"
-            data={renderedStages[1]}
+            data={renderedStages[0]}
             kind="llm"
           />
 
-          <BranchArrow stage={renderedStages[1]} kind="llm" />
+          <BranchArrow stage={renderedStages[0]} kind="llm" />
 
-          {/* Tier 3: Regex ladder */}
+          {/* Tier 2: Normalize */}
           <Tier
-            number="03"
-            title="Regex ladder (fallback)"
-            subtitle="agent/safety/crisis_rules.py · pattern tuples"
-            data={renderedStages[2]}
-            kind="regex"
-          />
-
-          <BranchArrow stage={renderedStages[2]} kind="regex" />
-
-          {/* Tier 4: Normalize */}
-          <Tier
-            number="04"
+            number="02"
             title="Truth-table normalization"
             subtitle="enforce_crisis_truth_table(assessment)"
-            data={renderedStages[3]}
+            data={renderedStages[1]}
             kind="normalize"
           />
         </div>
@@ -600,17 +470,14 @@ function BranchArrow({
 /* ── State panel ───────────────────────────────────────────────── */
 
 function StatePanel({ trace, stageIdx, phase }: { trace: Trace; stageIdx: number; phase: Phase }) {
-  // Until the override stage settles we don't know any verdict.
-  const overrideSettled = phase !== 'idle' && (stageIdx > 0 || phase === 'done');
-  const llmSettled = phase !== 'idle' && (stageIdx > 1 || phase === 'done');
-  const regexSettled = phase !== 'idle' && (stageIdx > 2 || phase === 'done');
+  const llmSettled = phase !== 'idle' && (stageIdx > 0 || phase === 'done');
   const normalized = phase === 'done';
 
   const { final } = trace;
 
-  // Build progressively-revealed state values. Some keys land
-  // earlier than others — `crisis_audit.crisis_override_kind` is
-  // known after stage 0, `level` only after normalize.
+  // Build progressively-revealed state values. Classifier metadata is
+  // known after the LLM step, while route-level fields land after
+  // normalization.
   return (
     <div className={styles.statePanel}>
       <div className={styles.statePanelHeader}>
@@ -645,25 +512,21 @@ function StatePanel({ trace, stageIdx, phase }: { trace: Trace; stageIdx: number
         <StateLine
           label="crisis_audit.crisis_classifier_path"
           value={
-            overrideSettled || phase === 'done'
+            llmSettled || phase === 'done'
               ? final.classifierPath
               : null
           }
-          comment="written for every turn — drives fallback-rate dashboards"
+          comment="written for every completed crisis-gate turn"
         />
         <StateLine
           label="crisis_audit.crisis_override_kind"
-          value={overrideSettled ? final.overrideKind : null}
-          comment="imminent_risk · idiomatic_safe · safety_denial · none"
+          value={llmSettled ? final.overrideKind : null}
+          comment="always none in the LLM-only gate"
         />
         <StateLine
           label="crisis_audit.crisis_llm_failure_occurred"
-          value={
-            llmSettled || regexSettled
-              ? String(final.llmFailureOccurred)
-              : null
-          }
-          comment="true when the LLM call raised; surfaces in the audit log"
+          value={llmSettled ? String(final.llmFailureOccurred) : null}
+          comment="failed LLM calls retry or surface instead of writing fallback state"
         />
         <div className={styles.stateDivider} />
         <div className={styles.pipelineRow}>
@@ -701,23 +564,12 @@ function StateLine({ label, value, comment }: {
 
 function stageTone(stage: Stage): 'crisis' | 'safe' | 'pending' | 'fail' | 'neutral' {
   switch (stage.id) {
-    case 'override':
-      if (stage.status === 'matched') {
-        return stage.matchKind === 'imminent_risk' ? 'crisis' : 'safe';
-      }
-      return 'neutral';
     case 'llm':
       if (stage.status === 'success') {
         if (stage.rawLevel != null && stage.rawLevel >= 2) return 'crisis';
         return stage.rawLevel === 0 ? 'safe' : 'neutral';
       }
       if (stage.status === 'failed') return 'fail';
-      return 'pending';
-    case 'regex':
-      if (stage.status === 'matched') {
-        if (stage.rawLevel != null && stage.rawLevel >= 2) return 'crisis';
-        return 'neutral';
-      }
       return 'pending';
     case 'normalize':
       return stage.level >= 2 ? 'crisis' : stage.level === 0 ? 'safe' : 'neutral';
@@ -726,15 +578,9 @@ function stageTone(stage: Stage): 'crisis' | 'safe' | 'pending' | 'fail' | 'neut
 
 function stageVerdict(stage: Stage): string {
   switch (stage.id) {
-    case 'override':
-      if (stage.status === 'matched') return `matched · ${stage.matchKind}`;
-      return 'no match';
     case 'llm':
       if (stage.status === 'success') return `level=${stage.rawLevel}`;
-      if (stage.status === 'failed') return 'failed → fallback';
-      return 'skipped';
-    case 'regex':
-      if (stage.status === 'matched') return `level=${stage.rawLevel}`;
+      if (stage.status === 'failed') return 'failed';
       return 'skipped';
     case 'normalize':
       return `level=${stage.level} (final)`;
@@ -743,14 +589,9 @@ function stageVerdict(stage: Stage): string {
 
 function branchLabelFor(stage: Stage): string {
   switch (stage.id) {
-    case 'override':
-      return stage.status === 'matched' ? 'short-circuit to normalize' : 'no override → try LLM';
     case 'llm':
       if (stage.status === 'success') return 'LLM verdict → normalize';
-      if (stage.status === 'failed') return 'LLM failed → regex fallback';
-      return 'skipped';
-    case 'regex':
-      if (stage.status === 'matched') return 'fallback verdict → normalize';
+      if (stage.status === 'failed') return 'LLM failed → retry/error';
       return 'skipped';
     case 'normalize':
       return 'enforce truth table';

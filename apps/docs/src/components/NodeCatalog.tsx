@@ -51,7 +51,7 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: false,
     description:
-      'Hard safety boundary. Runs BEFORE memory retrieval. LLM-primary classification: (1) deterministic override (imminent risk, idiomatic-safe, safety denial), (2) LLM structured classifier as the primary path, (3) deterministic regex ladder as fallback, (4) truth-table normalization. Returns Command(goto=...) that routes between the crisis and operational/therapeutic branches.',
+      'Hard safety boundary. Runs BEFORE memory retrieval. LLM-only structured classifier plus local truth-table normalization. Provider failures retry or surface rather than falling back to regex. Returns Command(goto=...) that routes between the crisis and operational/therapeutic branches.',
     file: 'agent/nodes/crisis_gate.py',
     fn: 'run_crisis_gate_node',
   },

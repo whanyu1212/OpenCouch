@@ -38,7 +38,7 @@ WORKDIR /workspace/apps/backend
 
 ENV PATH="/opt/opencouch-backend-venv/bin:$PATH"
 
-CMD ["python", "-m", "voice.livekit.agent", "start"]
+CMD ["python", "-m", "agent.voice.agent", "start"]
 
 FROM base AS prod
 

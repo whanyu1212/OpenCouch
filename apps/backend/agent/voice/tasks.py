@@ -1,6 +1,6 @@
 """LiveKit AgentTask for structured therapeutic exercises.
 
-GroundingTask wraps the shared therapeutic exercise registry into a LiveKit
+VoiceExerciseTask wraps the shared therapeutic exercise registry into a LiveKit
 AgentTask that can be ``await``ed from a ``@function_tool`` on the
 TherapeuticAgent.
 
@@ -14,7 +14,7 @@ Usage from TherapeuticAgent::
 
     @function_tool()
     async def start_grounding_exercise(self, context: RunContext, exercise_type: str):
-        result = await GroundingTask(exercise_type=exercise_type)
+        result = await VoiceExerciseTask(exercise_type=exercise_type)
         return f"Exercise finished: {result}"
 """
 
@@ -45,7 +45,7 @@ TEXT_EXERCISES: set[str] = {definition.id for definition in iter_exercise_defini
 
 @dataclass
 class ExerciseResult:
-    """Result returned when a GroundingTask completes."""
+    """Result returned when a VoiceExerciseTask completes."""
 
     exercise_type: str
     display_name: str
@@ -153,7 +153,7 @@ EXERCISE PLAN:
 Start with Step 1 now."""
 
 
-class GroundingTask(AgentTask[ExerciseResult]):
+class VoiceExerciseTask(AgentTask[ExerciseResult]):
     """A bounded voice exercise that returns to the parent agent on completion.
 
     Args:
@@ -187,13 +187,17 @@ class GroundingTask(AgentTask[ExerciseResult]):
 
     async def on_enter(self) -> None:
         logger.info(
-            "GroundingTask: starting exercise=%s steps=%d",
+            "VoiceExerciseTask: starting exercise=%s steps=%d",
             self._exercise_type,
             self._total_steps,
         )
+        first_step = self._steps[0]
         self.session.generate_reply(
-            instructions=f"Guide the user into Step 1 of {self._display_name}. "
-            "Use warm, spoken language. Do not say 'Step 1' literally. "
+            instructions=f"Guide the user into {self._display_name} using this "
+            f"first instruction: {first_step.instruction} "
+            "Rephrase it naturally, but do not add a different warmup, "
+            "pre-step, or breathing action before this instruction. "
+            "Do not say 'Step 1' literally. "
             "If the step asks the user to do an action, end by asking them "
             "to tell you when they have done it."
         )
@@ -210,7 +214,7 @@ class GroundingTask(AgentTask[ExerciseResult]):
 
         if self._current_step >= self._total_steps:
             logger.info(
-                "GroundingTask: exercise completed exercise=%s",
+                "VoiceExerciseTask: exercise completed exercise=%s",
                 self._exercise_type,
             )
             self.complete(
@@ -256,7 +260,7 @@ class GroundingTask(AgentTask[ExerciseResult]):
         or indicates the exercise is not helping.
         """
         logger.info(
-            "GroundingTask: user exited exercise=%s at step=%d/%d",
+            "VoiceExerciseTask: user exited exercise=%s at step=%d/%d",
             self._exercise_type,
             self._current_step + 1,
             self._total_steps,

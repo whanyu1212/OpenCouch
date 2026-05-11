@@ -43,7 +43,7 @@ Two axes, selected independently per turn by the LLM dispatcher:
 
 | Axis | What it is | How many | Selected by |
 |---|---|---|---|
-| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | LLM structured-output classifier; deterministic regex only for explicit exercise opt-out and as a no-LLM fallback |
+| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | LLM structured-output classifier with local active-flow validation |
 | **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | LLM dispatcher, alongside the response style |
 
 **Response styles** shape *what* the agent does this turn.
@@ -104,5 +104,5 @@ the agent stays inside the therapeutic branch** but uses the
 before any therapeutic work. Memory retrieval still runs.
 
 See [Crisis Gate](/docs/philosophy/crisis-gate) for the full
-detection architecture (LLM classifier + deterministic overrides +
-regex fallback + audit log).
+detection architecture (LLM classifier + truth-table normalization +
+audit log).

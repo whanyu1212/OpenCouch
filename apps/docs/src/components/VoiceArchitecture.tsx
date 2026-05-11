@@ -8,7 +8,7 @@ import s from './VoiceArchitecture.module.css';
 
    Three labeled sections stacked vertically:
      1. Room transport — Browser → LiveKit room → Worker
-     2. Session core   — TherapeuticAgent ⇄ CrisisAgent (+ GroundingTask)
+     2. Session core   — TherapeuticAgent ⇄ CrisisAgent (+ VoiceExerciseTask)
      3. Shared state   — SessionData · PersistentAgentRuntime
 
    No animation. Site-native white card aesthetic.
@@ -27,7 +27,7 @@ export default function VoiceArchitecture(): React.JSX.Element {
           <Arrow label="participant token" />
           <Box title="LiveKit room" sub="audio I/O · agent dispatch" emphasis />
           <Arrow label="dispatch agent" />
-          <Box title="Worker" sub="voice/livekit/agent.py" />
+          <Box title="Worker" sub="agent/voice/agent.py" />
         </div>
       </Section>
 
@@ -47,20 +47,19 @@ export default function VoiceArchitecture(): React.JSX.Element {
             </header>
             <p className={s.agentSub}>
               Holds the thread. <code>on_user_turn_completed</code> runs the
-              safety net + selective recall after every turn.
+              LLM crisis gate, turn policy, and selective recall after each turn.
             </p>
             <ul className={s.agentList}>
               <li><code>start_grounding_exercise</code></li>
-              <li><code>save_insight</code> · memory tools</li>
+              <li>memory control tools</li>
               <li><code>answer_grounded_factual_lookup</code></li>
-              <li><code>crisis_check</code></li>
             </ul>
           </article>
 
           {/* Handoff column */}
           <div className={s.handoffCol}>
             <span className={[s.handoff, s.handoffOut].join(' ')}>
-              <span className={s.handoffLabel}>crisis_check</span>
+              <span className={s.handoffLabel}>LLM crisis gate</span>
               <span className={s.handoffArrow} aria-hidden>{'\u27F6'}</span>
             </span>
             <span className={[s.handoff, s.handoffIn].join(' ')}>
@@ -77,7 +76,7 @@ export default function VoiceArchitecture(): React.JSX.Element {
             </header>
             <p className={s.agentSub}>
               Acknowledge · resources · stay present. Restores
-              <code> therapeutic_instructions</code> on de-escalate.
+              the therapeutic agent on de-escalate.
             </p>
             <ul className={s.agentList}>
               <li><code>provide_crisis_resources</code></li>
@@ -91,10 +90,10 @@ export default function VoiceArchitecture(): React.JSX.Element {
             <article className={s.taskCard}>
               <header className={s.agentHead}>
                 <span className={s.agentKicker}>bounded task</span>
-                <h4 className={s.agentTitle}>GroundingTask</h4>
+                <h4 className={s.agentTitle}>VoiceExerciseTask</h4>
               </header>
               <p className={s.agentSub}>
-                10 voice-safe exercises. Owns the loop until the user
+                10 voice-allowlisted exercises. Owns the loop until the user
                 completes or exits.
               </p>
             </article>
@@ -125,6 +124,9 @@ export default function VoiceArchitecture(): React.JSX.Element {
                 'memory_mode',
                 'crisis_level',
                 'max_crisis_level',
+                'turn_index',
+                'exercise_consent_turn_index',
+                'recommended_exercise_type',
                 'proactive_recall_enabled',
                 'pending_memory_delete',
                 'therapeutic_instructions',
@@ -142,7 +144,8 @@ export default function VoiceArchitecture(): React.JSX.Element {
               <h4 className={s.agentTitle}>PersistentAgentRuntime</h4>
             </header>
             <p className={s.agentSub}>
-              One per worker process. SQLite-backed. Survives across rooms.
+              One per worker process. Postgres-first with SQLite fallback.
+              Survives across rooms.
             </p>
             <div className={s.fieldGrid}>
               {[

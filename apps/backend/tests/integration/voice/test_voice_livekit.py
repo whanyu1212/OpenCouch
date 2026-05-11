@@ -15,9 +15,10 @@ pytest.importorskip(
     reason="LiveKit agent tests require the optional voice extra.",
 )
 
-from livekit.agents import ChatContext
+from livekit.agents import ChatContext, StopResponse
 
 import main
+from agent.models import CrisisAssessment
 from agent.memory.modes import MemoryMode
 from agent.memory.procedural_profile import (
     aadd_procedural_rule,
@@ -35,48 +36,46 @@ from agent.therapeutic.exercises.registry import (
     EXERCISE_THOUGHT_RECORD,
     EXERCISE_VALUES_COMPASS,
 )
-from agent.voice.agent import (
+from agent.voice.agents import (
     CrisisAgent,
-    HoldSpaceAgent,
-    UnderstandingAgent,
-    ReflectiveAgent,
-    TechniqueAgent,
     TherapeuticAgent,
-    _assess_therapeutic_process_state,
-    _build_therapeutic_process_guidance,
-    _build_therapeutic_agent,
+    build_therapeutic_agent,
     _compose_therapeutic_agent_instructions,
-    _close_runtime,
-    _copy_handoff_chat_ctx,
-    _copy_therapeutic_handoff_chat_ctx,
-    _resolve_livekit_session_metadata,
-    _should_finalize_transcript_on_shutdown,
-    _build_realtime_model,
-    _therapeutic_agent_kind_for_state,
-    _build_turn_handling,
-    _serialize_session_history,
-    _load_procedural_memory,
-    _load_semantic_facts,
-    _load_turn_relevant_semantic_facts,
+    copy_dialogue_chat_ctx,
 )
-import agent.voice.agent as livekit_agent_module
+import agent.voice.agents as livekit_agents_module
+from agent.voice.agent import _handle_text_input
+import agent.voice.memory_context as memory_context_module
 import agent.voice.routes as livekit_api_module
+import agent.voice.session_bootstrap as livekit_bootstrap_module
 from agent.voice.activity import VOICE_ACTIVITY_TOPIC
+from agent.voice.memory_context import VoiceMemoryContextService
+from agent.voice.session_bootstrap import (
+    build_realtime_model,
+    build_turn_handling,
+    close_runtime,
+    resolve_livekit_session_metadata,
+    should_finalize_transcript_on_shutdown,
+)
 from agent.voice.session_data import SessionData, TherapeuticProcessState
 from agent.voice.finalization_status import (
     VoiceFinalizationStatus,
     get_voice_finalization_status,
     set_voice_finalization_status,
 )
-from agent.voice.tasks import _build_exercise_instructions, _resolve_exercise
+from agent.voice.tasks import (
+    VoiceExerciseTask,
+    _build_exercise_instructions,
+    _resolve_exercise,
+)
+from agent.voice.transcript_finalizer import serialize_session_history
+from agent.voice.turn_policy import VoiceTurnPolicyDecision, VoiceTurnPolicyService
 from agent.voice.tools import (
     answer_grounded_factual_lookup,
     cancel_memory_deletion,
     confirm_memory_deletion,
-    crisis_check,
     prepare_memory_deletion,
     provide_crisis_resources,
-    save_insight,
     set_proactive_memory_recall,
     show_memory_status,
     show_saved_memory,
@@ -125,6 +124,114 @@ class _FakeLookupLLM:
         if isinstance(response, Exception):
             raise response
         return response
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ):
+        schema_name = response_schema.__name__
+        if schema_name == "LookupPreflightDecision":
+            return response_schema(
+                status="search",
+                search_query="voice test lookup",
+                answer="",
+                reasoning="Searchable voice lookup test request.",
+            )
+
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system_instruction": system_instruction,
+                "use_search": use_search,
+            }
+        )
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+
+        if schema_name == "GroundedLookupResult":
+            return response_schema(
+                status="answered",
+                answer=response,
+                sources=_extract_test_sources(response),
+                source_quality="reputable",
+                reasoning="Scripted grounded lookup result.",
+            )
+        if schema_name == "CrisisLocationDecision":
+            location = response.strip()
+            return response_schema(
+                status="provided" if location else "not_provided",
+                location=location,
+                reasoning="Scripted location extraction result.",
+            )
+        if schema_name == "CrisisResourceLookupResult":
+            return response_schema(
+                status="found",
+                resources=_parse_test_crisis_resources(response),
+                reasoning="Scripted crisis resource lookup result.",
+            )
+        raise AssertionError(f"Unexpected response schema: {schema_name}")
+
+
+def _extract_test_sources(text: str) -> list[str]:
+    _, _, suffix = text.partition("Sources:")
+    if not suffix.strip():
+        return ["test-source"]
+    return [line.strip(" -") for line in suffix.splitlines() if line.strip(" -")]
+
+
+def _parse_test_crisis_resources(text: str) -> list[dict[str, str]]:
+    resources: list[dict[str, str]] = []
+    for line in text.splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 3:
+            continue
+        resources.append(
+            {
+                "name": parts[0],
+                "phone": parts[1],
+                "url": parts[2],
+                "region": "Singapore",
+            }
+        )
+    return resources
+
+
+class _FakeStructuredLLM:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, object]] = []
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "response_schema": response_schema,
+                "system_instruction": system_instruction,
+                "use_search": use_search,
+            }
+        )
+        return response_schema(**self.payload)
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        raise NotImplementedError
 
 
 class _FakeLocalParticipant:
@@ -187,67 +294,6 @@ def _published_voice_activities(
             payload = payload.decode("utf-8")
         events.append(json.loads(payload))
     return events
-
-
-@pytest.mark.asyncio
-async def test_save_insight_disallows_interruptions_before_writing() -> None:
-    """Durable writes should disable barge-in interruptions."""
-
-    store = _FakeMemoryStore()
-    participant = _FakeLocalParticipant()
-    interrupted: list[str] = []
-    context = SimpleNamespace(
-        userdata=SessionData(
-            user_id="user-1",
-            thread_id="thread-1",
-            memory_store=store,
-        ),
-        session=_fake_voice_activity_session(participant),
-        disallow_interruptions=lambda: interrupted.append("blocked"),
-    )
-
-    result = await save_insight(context, fact="I like green tea at night.")
-
-    assert result == (
-        "Saved for future conversations. Do not narrate the save unless "
-        "the user asked you to."
-    )
-    assert interrupted == ["blocked"]
-    assert len(store.put_calls) == 1
-    assert store.put_calls[0]["namespace"] == ("user-1", "semantic")
-    assert _published_voice_activities(participant)[0] | {
-        "timestamp": "ignored",
-    } == {
-        "type": "voice_activity",
-        "activity": "memory_saved",
-        "status": "completed",
-        "label": "Memory saved",
-        "detail": "Saved for future sessions.",
-        "timestamp": "ignored",
-    }
-
-
-@pytest.mark.asyncio
-async def test_save_insight_skips_guest_mode_memory_writes() -> None:
-    """Guest-mode voice sessions should not write durable memory."""
-
-    store = _FakeMemoryStore()
-    interrupted: list[str] = []
-    context = SimpleNamespace(
-        userdata=SessionData(
-            user_id="user-1",
-            thread_id="thread-1",
-            memory_store=store,
-            memory_mode=MemoryMode.INCOGNITO,
-        ),
-        disallow_interruptions=lambda: interrupted.append("blocked"),
-    )
-
-    result = await save_insight(context, fact="I like green tea at night.")
-
-    assert result == "Memory is disabled in guest mode."
-    assert interrupted == []
-    assert store.put_calls == []
 
 
 async def _seed_voice_memory(store: OpenCouchMemoryStore) -> None:
@@ -514,48 +560,6 @@ async def test_provide_crisis_resources_asks_for_location_without_guessing() -> 
     assert [call["use_search"] for call in llm.calls] == [False]
 
 
-@pytest.mark.asyncio
-async def test_crisis_check_tracks_peak_level_and_trims_handoff_context() -> None:
-    """Crisis handoff should retain conversation turns but not prior instructions."""
-
-    chat_ctx = ChatContext()
-    chat_ctx.add_message(role="system", content="You are the therapeutic agent.")
-    chat_ctx.add_message(
-        role="system",
-        content="Relevant background from prior sessions.",
-        extra={"source": "semantic_memory_injection"},
-    )
-    chat_ctx.add_message(role="user", content="I want to die.")
-    chat_ctx.add_message(role="assistant", content="   ")
-    chat_ctx.items.append(SimpleNamespace(type="function_call", name="crisis_check"))
-    chat_ctx.items.append(
-        SimpleNamespace(
-            type="function_call_output",
-            name="crisis_check",
-            output="Transferring to crisis support",
-        )
-    )
-
-    userdata = SessionData()
-    context = SimpleNamespace(
-        userdata=userdata,
-        session=SimpleNamespace(
-            current_agent=SimpleNamespace(chat_ctx=chat_ctx),
-        ),
-    )
-
-    next_agent, message = await crisis_check(context, concern="I want to die.")
-
-    assert isinstance(next_agent, CrisisAgent)
-    assert message == "Transferring to crisis support"
-    assert userdata.crisis_level == 2
-    assert userdata.max_crisis_level == 2
-    assert [
-        getattr(item.role, "value", item.role) for item in next_agent.chat_ctx.items
-    ] == ["user"]
-    assert next_agent.chat_ctx.items[0].text_content == "I want to die."
-
-
 def test_serialize_session_history_keeps_only_dialogue_messages() -> None:
     """Persisted transcripts should exclude non-dialogue context items."""
 
@@ -565,7 +569,7 @@ def test_serialize_session_history_keeps_only_dialogue_messages() -> None:
     chat_ctx.add_message(role="assistant", content="That sounds exhausting.")
     chat_ctx.add_message(role="assistant", content="   ")
 
-    transcript = _serialize_session_history(chat_ctx)
+    transcript = serialize_session_history(chat_ctx)
 
     assert transcript == [
         {"role": "user", "content": "I feel overwhelmed today."},
@@ -753,8 +757,13 @@ async def test_livekit_semantic_memory_load_filters_inactive_records() -> None:
         ]
     )
 
-    startup_facts = await _load_semantic_facts(store, "user-1", MemoryMode.LOCAL)
-    turn_facts = await _load_turn_relevant_semantic_facts(
+    service = VoiceMemoryContextService()
+    startup_facts = await service.load_semantic_facts(
+        store,
+        user_id="user-1",
+        mode=MemoryMode.LOCAL,
+    )
+    turn_facts = await service.load_turn_relevant_semantic_facts(
         store,
         user_id="user-1",
         mode=MemoryMode.LOCAL,
@@ -780,12 +789,15 @@ async def test_livekit_procedural_memory_load_returns_recall_toggle(
             proactive_recall_enabled=True,
         )
 
-    monkeypatch.setattr(livekit_agent_module, "aget_procedural_profile", _fake_profile)
+    monkeypatch.setattr(memory_context_module, "aget_procedural_profile", _fake_profile)
 
-    rules, proactive_recall_enabled = await _load_procedural_memory(
+    (
+        rules,
+        proactive_recall_enabled,
+    ) = await VoiceMemoryContextService().load_procedural_memory(
         _FakeMemoryStore(),
-        "user-1",
-        MemoryMode.LOCAL,
+        user_id="user-1",
+        mode=MemoryMode.LOCAL,
     )
 
     assert rules == ["Use shorter replies."]
@@ -882,18 +894,16 @@ def test_resolve_livekit_session_metadata_uses_env_for_local_dev_defaults(
     monkeypatch.setenv("OPENCOUCH_VOICE_USER_ID", "hy")
     monkeypatch.setenv("OPENCOUCH_VOICE_THREAD_ID", "voice-dogfood")
 
-    user_id, thread_id, transcription_language, assistant_voice, memory_mode = (
-        _resolve_livekit_session_metadata(
-            job_metadata=None,
-            participant_metadata=None,
-        )
+    metadata = resolve_livekit_session_metadata(
+        job_metadata=None,
+        participant_metadata=None,
     )
 
-    assert user_id == "hy"
-    assert thread_id == "voice-dogfood"
-    assert transcription_language == "en"
-    assert assistant_voice == "marin"
-    assert memory_mode == MemoryMode.LOCAL
+    assert metadata.user_id == "hy"
+    assert metadata.thread_id == "voice-dogfood"
+    assert metadata.transcription_language == "en"
+    assert metadata.assistant_voice == "marin"
+    assert metadata.memory_mode == MemoryMode.LOCAL
 
 
 def test_resolve_livekit_session_metadata_prefers_metadata_over_env(
@@ -904,34 +914,32 @@ def test_resolve_livekit_session_metadata_prefers_metadata_over_env(
     monkeypatch.setenv("OPENCOUCH_VOICE_USER_ID", "hy")
     monkeypatch.setenv("OPENCOUCH_VOICE_THREAD_ID", "voice-dogfood")
 
-    user_id, thread_id, transcription_language, assistant_voice, memory_mode = (
-        _resolve_livekit_session_metadata(
-            job_metadata=json.dumps(
-                {
-                    "user_id": "browser-user",
-                    "thread_id": "thread-from-job",
-                    "transcription_language": "es",
-                    "assistant_voice": "sage",
-                    "memory_mode": "persistent",
-                }
-            ),
-            participant_metadata=json.dumps(
-                {
-                    "user_id": "participant-user",
-                    "thread_id": "thread-from-participant",
-                    "transcription_language": "",
-                    "assistant_voice": "verse",
-                    "memory_mode": "guest",
-                }
-            ),
-        )
+    metadata = resolve_livekit_session_metadata(
+        job_metadata=json.dumps(
+            {
+                "user_id": "browser-user",
+                "thread_id": "thread-from-job",
+                "transcription_language": "es",
+                "assistant_voice": "sage",
+                "memory_mode": "persistent",
+            }
+        ),
+        participant_metadata=json.dumps(
+            {
+                "user_id": "participant-user",
+                "thread_id": "thread-from-participant",
+                "transcription_language": "",
+                "assistant_voice": "verse",
+                "memory_mode": "guest",
+            }
+        ),
     )
 
-    assert user_id == "participant-user"
-    assert thread_id == "thread-from-participant"
-    assert transcription_language is None
-    assert assistant_voice == "verse"
-    assert memory_mode == MemoryMode.INCOGNITO
+    assert metadata.user_id == "participant-user"
+    assert metadata.thread_id == "thread-from-participant"
+    assert metadata.transcription_language is None
+    assert metadata.assistant_voice == "verse"
+    assert metadata.memory_mode == MemoryMode.INCOGNITO
 
 
 def test_resolve_livekit_session_metadata_ignores_blank_env_values(
@@ -942,18 +950,16 @@ def test_resolve_livekit_session_metadata_ignores_blank_env_values(
     monkeypatch.setenv("OPENCOUCH_VOICE_USER_ID", "   ")
     monkeypatch.setenv("OPENCOUCH_VOICE_THREAD_ID", "")
 
-    user_id, thread_id, transcription_language, assistant_voice, memory_mode = (
-        _resolve_livekit_session_metadata(
-            job_metadata=None,
-            participant_metadata=None,
-        )
+    metadata = resolve_livekit_session_metadata(
+        job_metadata=None,
+        participant_metadata=None,
     )
 
-    assert user_id == "voice-user"
-    assert thread_id.startswith("voice-")
-    assert transcription_language == "en"
-    assert assistant_voice == "marin"
-    assert memory_mode == MemoryMode.LOCAL
+    assert metadata.user_id == "voice-user"
+    assert metadata.thread_id.startswith("voice-")
+    assert metadata.transcription_language == "en"
+    assert metadata.assistant_voice == "marin"
+    assert metadata.memory_mode == MemoryMode.LOCAL
 
 
 def test_resolve_exercise_rejects_free_text_requests() -> None:
@@ -990,6 +996,28 @@ def test_resolve_exercise_keeps_voice_turns_on_voice_safe_subset() -> None:
             EXERCISE_THOUGHT_RECORD,
             input_modality="voice",
         )
+
+
+@pytest.mark.asyncio
+async def test_voice_exercise_task_on_enter_anchors_first_catalog_step() -> None:
+    """Exercise entry should start from the catalog step, not an invented warmup."""
+
+    generated: list[str] = []
+    task = VoiceExerciseTask(
+        exercise_type=EXERCISE_BOX_BREATHING,
+        input_modality="text",
+    )
+    task._activity = SimpleNamespace(
+        session=SimpleNamespace(
+            generate_reply=lambda **kwargs: generated.append(kwargs["instructions"])
+        )
+    )
+
+    await task.on_enter()
+
+    assert len(generated) == 1
+    assert "Breathe in slowly through your nose" in generated[0]
+    assert "do not add a different warmup" in generated[0]
 
 
 @pytest.mark.parametrize(
@@ -1044,8 +1072,8 @@ def test_livekit_realtime_session_uses_openai_turn_detection(
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    model = _build_realtime_model()
-    turn_handling = _build_turn_handling()
+    model = build_realtime_model()
+    turn_handling = build_turn_handling()
 
     assert model._opts.turn_detection is None
     assert model._opts.voice == "marin"
@@ -1066,7 +1094,7 @@ def test_livekit_realtime_session_can_auto_detect_transcription_language(
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    model = _build_realtime_model(transcription_language=None)
+    model = build_realtime_model(transcription_language=None)
 
     assert model._opts.input_audio_transcription.language is None
 
@@ -1078,7 +1106,7 @@ def test_livekit_realtime_session_uses_selected_assistant_voice(
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
-    model = _build_realtime_model(assistant_voice="sage")
+    model = build_realtime_model(assistant_voice="sage")
 
     assert model._opts.voice == "sage"
 
@@ -1118,186 +1146,97 @@ def test_build_voice_system_prompt_respects_recall_toggle() -> None:
     assert "you may briefly reference it" in on_prompt
 
 
-def test_therapeutic_process_state_holds_space_for_generic_distress() -> None:
-    """Generic distress should default to hold-space rather than guidance."""
-
-    state = _assess_therapeutic_process_state(
-        turn_ctx=ChatContext(),
-        user_text="I feel really overwhelmed and everything feels like too much.",
-        previous=TherapeuticProcessState(),
-    )
-
-    assert state.session_intent in {"vent", "regulate"}
-    assert state.guidance_permission == "not_yet"
-    assert state.process_stage == "hold"
-    guidance = _build_therapeutic_process_guidance(state)
-    assert "stay close without becoming passive" in guidance.lower()
-    assert "has not yet invited directive guidance" in guidance
-
-
-def test_therapeutic_process_state_orients_when_vent_has_enough_context() -> None:
-    """Detailed venting should not remain pure passive holding forever."""
-
-    state = _assess_therapeutic_process_state(
-        turn_ctx=ChatContext(),
-        user_text=(
-            "I've been pushing through work for months because everyone depends "
-            "on me, and now even small requests from my boss make me feel trapped."
-        ),
-        previous=TherapeuticProcessState(),
-    )
-
-    assert state.session_intent == "vent"
-    assert state.guidance_permission == "not_yet"
-    assert state.process_stage in {"orient", "identify"}
-    guidance = _build_therapeutic_process_guidance(state)
-    assert "choose one place to start" in guidance or "let them correct it" in guidance
-
-
-def test_therapeutic_process_state_persists_guidance_permission() -> None:
-    """Once invited, active guidance should carry across follow-up detail."""
-
-    previous = TherapeuticProcessState(guidance_permission="granted")
-
-    state = _assess_therapeutic_process_state(
-        turn_ctx=ChatContext(),
-        user_text="It started after I took on two extra projects and stopped sleeping well.",
-        previous=previous,
-    )
-
-    assert state.guidance_permission == "granted"
-    assert state.session_intent == "work"
-    assert state.process_stage == "orient"
-
-
-def test_therapeutic_process_state_respects_guidance_withdrawal() -> None:
-    """A user can return the voice agent to listening mode."""
-
-    previous = TherapeuticProcessState(guidance_permission="granted")
-
-    state = _assess_therapeutic_process_state(
-        turn_ctx=ChatContext(),
-        user_text="I don't want advice right now, can you just listen?",
-        previous=previous,
-    )
-
-    assert state.guidance_permission == "not_yet"
-    assert state.session_intent == "vent"
-    assert state.process_stage == "hold"
-
-
-def test_therapeutic_process_state_moves_into_examine_when_guidance_is_requested() -> (
-    None
-):
-    """Explicit guidance on a hot thought should move into active work."""
-
-    turn_ctx = ChatContext()
-    turn_ctx.add_message(
-        role="assistant",
-        content="We can look at that thought together if you want.",
-    )
-
-    state = _assess_therapeutic_process_state(
-        turn_ctx=turn_ctx,
-        user_text="Yes, please help me figure out why I keep thinking I'm going to ruin everything.",
-        previous=TherapeuticProcessState(),
-    )
-
-    assert state.guidance_permission == "granted"
-    assert state.session_intent in {"understand", "work", "reflect"}
-    assert state.process_stage in {"identify", "examine"}
-    assert state.formulation.hot_thought
-    guidance = _build_therapeutic_process_guidance(state)
-    assert "The user has given permission for more active guidance." in guidance
-
-
-def test_therapeutic_agent_specialization_blocks_discourage_passivity() -> None:
-    """Voice specialization prompts should permit useful forward movement."""
-
-    hold_prompt = _compose_therapeutic_agent_instructions(
-        base_instructions="base",
-        agent_kind="hold_space",
-    )
-    technique_prompt = _compose_therapeutic_agent_instructions(
-        base_instructions="base",
-        agent_kind="technique",
-    )
-
-    assert "do not simply echo the user" in hold_prompt
-    assert "one gentle direction or question, not a plan" in hold_prompt
-    assert "conversational micro-steps before formal exercises" in technique_prompt
-
-
-def test_therapeutic_agent_kind_router_matches_process_stage() -> None:
-    """Controller stages should map to the intended specialized agent."""
-
-    hold_state = TherapeuticProcessState(process_stage="hold")
-    reflect_state = TherapeuticProcessState(process_stage="identify")
-    understand_state = TherapeuticProcessState(process_stage="examine")
-    technique_state = TherapeuticProcessState(
-        process_stage="ground",
-        session_intent="work",
-        guidance_permission="granted",
-    )
-
-    assert _therapeutic_agent_kind_for_state(hold_state) == "hold_space"
-    assert _therapeutic_agent_kind_for_state(reflect_state) == "reflective"
-    assert _therapeutic_agent_kind_for_state(understand_state) == "understanding"
-    assert _therapeutic_agent_kind_for_state(technique_state) == "technique"
-
-
-def test_copy_therapeutic_handoff_chat_ctx_preserves_whitelisted_system_context() -> (
-    None
-):
-    """Therapeutic handoffs should keep dialogue and controller/memory notes only."""
+@pytest.mark.asyncio
+async def test_voice_turn_policy_service_maps_structured_decision_to_state() -> None:
+    """Voice turn policy should be LLM-owned rather than regex-derived."""
 
     chat_ctx = ChatContext()
-    chat_ctx.add_message(role="system", content="Base therapeutic instructions.")
-    chat_ctx.add_message(role="user", content="I keep doing this.")
-    chat_ctx.add_message(role="assistant", content="")
     chat_ctx.add_message(
-        role="system",
-        content="Therapeutic controller state for this turn:",
-        extra={"source": "therapeutic_process_controller"},
+        role="assistant",
+        content="Would you like me to guide you through a breathing exercise?",
     )
-    chat_ctx.add_message(
-        role="system",
-        content="Relevant background from prior sessions.",
-        extra={"source": "semantic_memory_injection"},
+    llm = _FakeStructuredLLM(
+        {
+            "session_intent": "regulate",
+            "guidance_permission": "granted",
+            "process_stage": "ground",
+            "therapeutic_approach": "pfa",
+            "active_target": "settle the immediate overwhelm",
+            "primary_emotion": "anxious",
+            "hot_thought": "",
+            "pattern": "",
+            "user_goal": "try a breathing exercise",
+            "exercise_consent": "granted",
+            "exercise_type": EXERCISE_BOX_BREATHING,
+            "turn_guidance": "Begin the agreed breathing exercise.",
+            "reason": "The user clearly agreed to the offered exercise.",
+            "confidence": "high",
+        }
     )
-    chat_ctx.items.append(SimpleNamespace(type="function_call", name="show_memory"))
-    chat_ctx.items.append(
-        SimpleNamespace(
-            type="function_call_output",
-            name="show_memory",
-            output="Saved facts...",
+
+    decision = await VoiceTurnPolicyService().plan_turn(
+        user_text="Yes, let's do that.",
+        chat_ctx=chat_ctx,
+        previous_state=TherapeuticProcessState(),
+        supported_exercise_ids=(EXERCISE_BOX_BREATHING,),
+        recent_exercise_types=[],
+        llm_client=llm,
+    )
+
+    state = decision.to_process_state()
+    assert state.session_intent == "regulate"
+    assert state.guidance_permission == "granted"
+    assert state.process_stage == "ground"
+    assert decision.exercise_consent == "granted"
+    assert decision.exercise_type == EXERCISE_BOX_BREATHING
+    assert "Hard rule" in llm.calls[0]["system_instruction"]
+    assert "exercise_consent=granted" in llm.calls[0]["system_instruction"]
+    assert "Current user message" in llm.calls[0]["prompt"]
+    assert "Can we do box breathing now?" in llm.calls[0]["prompt"]
+    assert (
+        "direct exercise request MUST be treated as consent" in llm.calls[0]["prompt"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_voice_turn_policy_rejects_granted_consent_without_supported_exercise() -> (
+    None
+):
+    """Exercise consent must still pass local capability validation."""
+
+    llm = _FakeStructuredLLM(
+        {
+            "session_intent": "regulate",
+            "guidance_permission": "granted",
+            "process_stage": "ground",
+            "therapeutic_approach": "pfa",
+            "exercise_consent": "granted",
+            "exercise_type": "unsupported_exercise",
+            "turn_guidance": "Start the exercise.",
+            "reason": "The user agreed.",
+            "confidence": "high",
+        }
+    )
+
+    with pytest.raises(ValueError, match="supported exercise_type"):
+        await VoiceTurnPolicyService().plan_turn(
+            user_text="yes",
+            chat_ctx=ChatContext(),
+            previous_state=TherapeuticProcessState(),
+            supported_exercise_ids=(EXERCISE_BOX_BREATHING,),
+            recent_exercise_types=[],
+            llm_client=llm,
         )
-    )
 
-    copied = _copy_therapeutic_handoff_chat_ctx(chat_ctx)
 
-    assert copied is not None
-    contents = [
-        (getattr(item.role, "value", item.role), item.text_content, item.extra)
-        for item in copied.items
-        if item.type == "message"
-    ]
-    assert ("user", "I keep doing this.", {}) in contents
-    assert any(
-        role == "system"
-        and text == "Therapeutic controller state for this turn:"
-        and extra.get("source") == "therapeutic_process_controller"
-        for role, text, extra in contents
-    )
-    assert any(
-        role == "system"
-        and text == "Relevant background from prior sessions."
-        and extra.get("source") == "semantic_memory_injection"
-        for role, text, extra in contents
-    )
-    assert not any(text == "Base therapeutic instructions." for _, text, _ in contents)
-    assert not any(text == "" for _, text, _ in contents)
-    assert not any(item.type != "message" for item in copied.items)
+def test_therapeutic_agent_instructions_keep_policy_as_turn_guidance() -> None:
+    """Phase-specific behavior should live in turn guidance, not subclasses."""
+
+    prompt = _compose_therapeutic_agent_instructions(base_instructions="base")
+
+    assert "Structured exercises" in prompt
+    assert "private turn policy" in prompt
+    assert "Let turn guidance decide" in prompt
 
 
 def test_copy_handoff_chat_ctx_carries_dialogue_only() -> None:
@@ -1318,7 +1257,7 @@ def test_copy_handoff_chat_ctx_carries_dialogue_only() -> None:
         SimpleNamespace(type="function_call_output", name="tool", output="output")
     )
 
-    copied = _copy_handoff_chat_ctx(chat_ctx)
+    copied = copy_dialogue_chat_ctx(chat_ctx)
 
     assert copied is not None
     assert [
@@ -1330,24 +1269,12 @@ def test_copy_handoff_chat_ctx_carries_dialogue_only() -> None:
     ]
 
 
-def test_build_therapeutic_agent_returns_specialized_agent_class() -> None:
-    """Specialized agent builder should pick the matching subclass."""
+def test_build_therapeutic_agent_returns_single_agent_class() -> None:
+    """Therapeutic phase changes should not create extra LiveKit subagents."""
 
     assert isinstance(
-        _build_therapeutic_agent(agent_kind="hold_space", instructions="base"),
-        HoldSpaceAgent,
-    )
-    assert isinstance(
-        _build_therapeutic_agent(agent_kind="reflective", instructions="base"),
-        ReflectiveAgent,
-    )
-    assert isinstance(
-        _build_therapeutic_agent(agent_kind="understanding", instructions="base"),
-        UnderstandingAgent,
-    )
-    assert isinstance(
-        _build_therapeutic_agent(agent_kind="technique", instructions="base"),
-        TechniqueAgent,
+        build_therapeutic_agent(instructions="base"),
+        TherapeuticAgent,
     )
 
 
@@ -1378,7 +1305,7 @@ async def test_crisis_de_escalation_drops_crisis_system_and_tool_artifacts() -> 
 
     next_agent, message = await crisis_agent.de_escalate(context)
 
-    assert isinstance(next_agent, HoldSpaceAgent)
+    assert isinstance(next_agent, TherapeuticAgent)
     assert message == (
         "The user has de-escalated. Transitioning back to supportive conversation."
     )
@@ -1395,14 +1322,13 @@ async def test_crisis_de_escalation_drops_crisis_system_and_tool_artifacts() -> 
 def test_build_therapeutic_agent_preserves_greeting_delay() -> None:
     """Room-start greetings should be able to wait for remote audio attach."""
 
-    agent = _build_therapeutic_agent(
-        agent_kind="hold_space",
+    agent = build_therapeutic_agent(
         instructions="base",
         greet_on_enter=True,
         greet_delay_seconds=0.6,
     )
 
-    assert isinstance(agent, HoldSpaceAgent)
+    assert isinstance(agent, TherapeuticAgent)
     assert agent._greet_on_enter is True
     assert agent._greet_delay_seconds == pytest.approx(0.6)
 
@@ -1416,7 +1342,7 @@ async def test_therapeutic_agent_on_enter_skips_greeting_when_disabled() -> None
     async def _generate_reply(**kwargs) -> None:
         generated.append(kwargs["instructions"])
 
-    agent = HoldSpaceAgent(instructions="base instructions", greet_on_enter=False)
+    agent = TherapeuticAgent(instructions="base instructions", greet_on_enter=False)
     agent._activity = SimpleNamespace(
         session=SimpleNamespace(generate_reply=_generate_reply)
     )
@@ -1435,7 +1361,7 @@ async def test_therapeutic_agent_on_enter_generates_greeting_when_enabled() -> N
     async def _generate_reply(**kwargs) -> None:
         generated.append(kwargs["instructions"])
 
-    agent = HoldSpaceAgent(instructions="base instructions", greet_on_enter=True)
+    agent = TherapeuticAgent(instructions="base instructions", greet_on_enter=True)
     agent._activity = SimpleNamespace(
         session=SimpleNamespace(generate_reply=_generate_reply)
     )
@@ -1447,18 +1373,161 @@ async def test_therapeutic_agent_on_enter_generates_greeting_when_enabled() -> N
 
 
 @pytest.mark.asyncio
-async def test_on_user_turn_completed_switches_to_understanding_agent() -> None:
-    """The shared therapeutic hook should hand off when the phase changes."""
+async def test_text_input_callback_runs_pre_turn_hook_before_reply() -> None:
+    """Typed LiveKit turns should use the same crisis and policy hook as voice."""
+
+    hook_calls: list[dict[str, object]] = []
+    generated: list[dict[str, object]] = []
+    interrupts: list[bool] = []
+
+    class _FakeAgent:
+        def __init__(self) -> None:
+            self.chat_ctx = ChatContext()
+
+        async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+            hook_calls.append(
+                {
+                    "turn_ctx": turn_ctx,
+                    "new_message": new_message,
+                }
+            )
+            turn_ctx.add_message(
+                role="system",
+                content="Policy guidance generated for this typed turn.",
+                extra={"source": "voice_turn_policy"},
+            )
+
+    class _FakeTextSession:
+        def __init__(self) -> None:
+            self.userdata = SessionData()
+            self.agent = _FakeAgent()
+
+        @property
+        def current_agent(self):
+            return self.agent
+
+        async def interrupt(self, *, force: bool = False) -> None:
+            interrupts.append(True)
+
+        def generate_reply(self, **kwargs) -> None:
+            generated.append(kwargs)
+
+    session = _FakeTextSession()
+
+    await _handle_text_input(
+        session,
+        SimpleNamespace(text="  Can we do box breathing now?  "),
+    )
+
+    assert interrupts == [True]
+    assert session.userdata.last_input_modality == "text"
+    assert len(hook_calls) == 1
+    assert hook_calls[0]["new_message"].text_content == "Can we do box breathing now?"
+    assert len(generated) == 1
+    assert generated[0]["user_input"] is hook_calls[0]["new_message"]
+    assert generated[0]["chat_ctx"] is hook_calls[0]["turn_ctx"]
+    assert generated[0]["input_modality"] == "text"
+    assert any(
+        item.type == "message"
+        and getattr(item.role, "value", item.role) == "system"
+        and (item.extra or {}).get("source") == "voice_turn_policy"
+        for item in generated[0]["chat_ctx"].items
+    )
+
+
+@pytest.mark.asyncio
+async def test_text_input_callback_skips_reply_after_agent_handoff() -> None:
+    """A text-triggered crisis handoff should not also generate a normal reply."""
+
+    generated: list[dict[str, object]] = []
+
+    class _NextAgent:
+        chat_ctx = ChatContext()
+
+    class _FakeAgent:
+        def __init__(self, session) -> None:
+            self.chat_ctx = ChatContext()
+            self.session = session
+
+        async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+            self.session.agent = _NextAgent()
+
+    class _FakeTextSession:
+        def __init__(self) -> None:
+            self.userdata = SessionData()
+            self.agent = _FakeAgent(self)
+
+        @property
+        def current_agent(self):
+            return self.agent
+
+        async def interrupt(self, *, force: bool = False) -> None:
+            return None
+
+        def generate_reply(self, **kwargs) -> None:
+            generated.append(kwargs)
+
+    session = _FakeTextSession()
+
+    await _handle_text_input(session, SimpleNamespace(text="I want to die."))
+
+    assert generated == []
+
+
+@pytest.mark.asyncio
+async def test_on_user_turn_completed_adds_policy_guidance_without_subagent_handoff() -> (
+    None
+):
+    """The shared therapeutic hook should use policy guidance, not phase handoffs."""
 
     updates: list[TherapeuticAgent] = []
+
+    class _FakeCrisisService:
+        async def assess_turn(self, state, *, llm_client):
+            return SimpleNamespace(
+                assessment=CrisisAssessment(
+                    level=0,
+                    confidence="high",
+                    reason="No crisis signal.",
+                    needs_crisis_response=False,
+                    needs_clarification=False,
+                )
+            )
+
+    class _FakePolicyService:
+        async def plan_turn(self, **kwargs):
+            return VoiceTurnPolicyDecision(
+                **{
+                    "session_intent": "understand",
+                    "guidance_permission": "granted",
+                    "process_stage": "examine",
+                    "therapeutic_approach": "cbt",
+                    "active_target": "fear of ruining everything",
+                    "primary_emotion": "anxious",
+                    "hot_thought": "I'm going to ruin everything",
+                    "pattern": "",
+                    "user_goal": "understand the thought",
+                    "exercise_consent": "none",
+                    "exercise_type": None,
+                    "turn_guidance": "Help the user examine one thought conversationally.",
+                    "reason": "The user asked for active help understanding a thought.",
+                    "confidence": "high",
+                }
+            )
+
     userdata = SessionData(
         therapeutic_instructions="base instructions",
+        llm_client=object(),
     )
     fake_session = SimpleNamespace(
         userdata=userdata,
         update_agent=lambda agent: updates.append(agent),
     )
-    agent = HoldSpaceAgent(instructions="base instructions")
+    agent = TherapeuticAgent(
+        instructions="base instructions",
+        turn_policy_service=_FakePolicyService(),
+        crisis_risk_service=_FakeCrisisService(),
+    )
     agent._activity = SimpleNamespace(session=fake_session)
 
     turn_ctx = ChatContext()
@@ -1470,8 +1539,57 @@ async def test_on_user_turn_completed_switches_to_understanding_agent() -> None:
     await agent.on_user_turn_completed(turn_ctx, new_message)
 
     assert userdata.therapeutic_state.process_stage == "examine"
+    assert updates == []
+    assert any(
+        item.type == "message"
+        and getattr(item.role, "value", item.role) == "system"
+        and (item.extra or {}).get("source") == "voice_turn_policy"
+        for item in turn_ctx.items
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_user_turn_completed_handoffs_to_crisis_agent_on_level_two() -> None:
+    """Only crisis should create a LiveKit agent handoff from the therapeutic agent."""
+
+    class _FakeCrisisService:
+        async def assess_turn(self, state, *, llm_client):
+            return SimpleNamespace(
+                assessment=CrisisAssessment(
+                    level=2,
+                    confidence="high",
+                    reason="Explicit self-harm ideation.",
+                    needs_crisis_response=True,
+                    needs_clarification=False,
+                )
+            )
+
+    updates: list[object] = []
+    userdata = SessionData(llm_client=object())
+    fake_session = SimpleNamespace(
+        userdata=userdata,
+        update_agent=lambda agent: updates.append(agent),
+    )
+    agent = TherapeuticAgent(
+        instructions="base instructions",
+        crisis_risk_service=_FakeCrisisService(),
+    )
+    agent._activity = SimpleNamespace(session=fake_session)
+
+    turn_ctx = ChatContext()
+    turn_ctx.add_message(role="user", content="I feel hopeless.")
+    new_message = ChatContext().add_message(role="user", content="I want to die.")
+
+    await agent.on_user_turn_completed(turn_ctx, new_message)
+
+    assert userdata.crisis_level == 2
+    assert userdata.max_crisis_level == 2
     assert len(updates) == 1
-    assert isinstance(updates[0], UnderstandingAgent)
+    assert isinstance(updates[0], CrisisAgent)
+    assert [
+        (getattr(item.role, "value", item.role), item.text_content)
+        for item in updates[0].chat_ctx.items
+    ] == [("user", "I feel hopeless."), ("user", "I want to die.")]
 
 
 @pytest.mark.asyncio
@@ -1480,11 +1598,13 @@ async def test_start_grounding_exercise_blocks_without_explicit_consent(
 ) -> None:
     """Generic distress alone should not trigger a structured exercise."""
 
-    async def _unexpected_grounding_task(**kwargs):
-        raise AssertionError("GroundingTask should not run without consent")
+    async def _unexpected_voice_exercise_task(**kwargs):
+        raise AssertionError("VoiceExerciseTask should not run without consent")
 
     monkeypatch.setattr(
-        livekit_agent_module, "GroundingTask", _unexpected_grounding_task
+        livekit_agents_module,
+        "VoiceExerciseTask",
+        _unexpected_voice_exercise_task,
     )
 
     chat_ctx = ChatContext()
@@ -1505,14 +1625,14 @@ async def test_start_grounding_exercise_blocks_without_explicit_consent(
 
 
 @pytest.mark.asyncio
-async def test_start_grounding_exercise_allows_explicit_yes_after_offer(
+async def test_start_grounding_exercise_allows_current_turn_policy_consent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A clear yes after an exercise offer should pass the guardrail."""
+    """A current-turn policy grant should pass the exercise guardrail."""
 
     carried_roles_and_text: list[tuple[str, str]] = []
 
-    async def _fake_grounding_task(**kwargs):
+    async def _fake_voice_exercise_task(**kwargs):
         carried_ctx = kwargs["chat_ctx"]
         carried_roles_and_text.extend(
             [
@@ -1528,7 +1648,11 @@ async def test_start_grounding_exercise_allows_explicit_yes_after_offer(
             outcome="completed",
         )
 
-    monkeypatch.setattr(livekit_agent_module, "GroundingTask", _fake_grounding_task)
+    monkeypatch.setattr(
+        livekit_agents_module,
+        "VoiceExerciseTask",
+        _fake_voice_exercise_task,
+    )
 
     chat_ctx = ChatContext()
     chat_ctx.add_message(role="system", content="Base therapeutic instructions.")
@@ -1540,17 +1664,23 @@ async def test_start_grounding_exercise_allows_explicit_yes_after_offer(
     chat_ctx.add_message(role="user", content="Yes, let's try that.")
     agent = TherapeuticAgent(instructions="test", chat_ctx=chat_ctx)
     participant = _FakeLocalParticipant()
+    userdata = SessionData(
+        turn_index=1,
+        exercise_consent_turn_index=1,
+        recommended_exercise_type=EXERCISE_BOX_BREATHING,
+    )
     context = SimpleNamespace(
-        userdata=SessionData(),
+        userdata=userdata,
         session=_fake_voice_activity_session(participant),
     )
 
-    result = await agent.start_grounding_exercise(
-        context,
-        exercise_type=EXERCISE_BOX_BREATHING,
-    )
+    with pytest.raises(StopResponse):
+        await agent.start_grounding_exercise(
+            context,
+            exercise_type=EXERCISE_BOX_BREATHING,
+        )
 
-    assert "The user just finished Box breathing" in result
+    assert userdata.recent_exercise_types == [EXERCISE_BOX_BREATHING]
     assert carried_roles_and_text == [
         (
             "assistant",
@@ -1568,36 +1698,29 @@ async def test_start_grounding_exercise_allows_explicit_yes_after_offer(
 
 
 @pytest.mark.asyncio
-async def test_start_grounding_exercise_allows_relaxation_choice_after_offer(
+async def test_start_grounding_exercise_requires_matching_recommended_exercise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A relaxation-technique choice after an offer should not re-ask consent."""
+    """A policy-recommended exercise should not silently switch to another id."""
 
-    async def _fake_grounding_task(**kwargs):
-        assert kwargs["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
-        return SimpleNamespace(
-            exercise_type=EXERCISE_MUSCLE_RELAXATION,
-            display_name="Muscle relaxation",
-            steps_completed=5,
-            total_steps=5,
-            outcome="completed",
-        )
+    async def _unexpected_voice_exercise_task(**kwargs):
+        raise AssertionError("VoiceExerciseTask should not run on id mismatch")
 
-    monkeypatch.setattr(livekit_agent_module, "GroundingTask", _fake_grounding_task)
+    monkeypatch.setattr(
+        livekit_agents_module,
+        "VoiceExerciseTask",
+        _unexpected_voice_exercise_task,
+    )
 
     chat_ctx = ChatContext()
-    chat_ctx.add_message(
-        role="assistant",
-        content=(
-            "Would you like me to walk you through a simple muscle relaxation "
-            "technique?"
-        ),
-    )
-    chat_ctx.add_message(role="user", content="Maybe a relaxation technique?")
     agent = TherapeuticAgent(instructions="test", chat_ctx=chat_ctx)
     participant = _FakeLocalParticipant()
     context = SimpleNamespace(
-        userdata=SessionData(),
+        userdata=SessionData(
+            turn_index=2,
+            exercise_consent_turn_index=2,
+            recommended_exercise_type=EXERCISE_BOX_BREATHING,
+        ),
         session=_fake_voice_activity_session(participant),
     )
 
@@ -1606,16 +1729,16 @@ async def test_start_grounding_exercise_allows_relaxation_choice_after_offer(
         exercise_type=EXERCISE_MUSCLE_RELAXATION,
     )
 
-    assert "The user just finished Muscle relaxation" in result
+    assert "Do not start a structured exercise yet." in result
 
 
 @pytest.mark.asyncio
-async def test_start_grounding_exercise_allows_yes_after_muscle_relaxation_offer(
+async def test_start_grounding_exercise_allows_any_supported_id_when_policy_does_not_recommend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bare yes should count after a muscle relaxation technique offer."""
+    """The policy can grant generic exercise consent without forcing one id."""
 
-    async def _fake_grounding_task(**kwargs):
+    async def _fake_voice_exercise_task(**kwargs):
         assert kwargs["exercise_type"] == EXERCISE_MUSCLE_RELAXATION
         return SimpleNamespace(
             exercise_type=EXERCISE_MUSCLE_RELAXATION,
@@ -1625,29 +1748,31 @@ async def test_start_grounding_exercise_allows_yes_after_muscle_relaxation_offer
             outcome="completed",
         )
 
-    monkeypatch.setattr(livekit_agent_module, "GroundingTask", _fake_grounding_task)
+    monkeypatch.setattr(
+        livekit_agents_module,
+        "VoiceExerciseTask",
+        _fake_voice_exercise_task,
+    )
 
     chat_ctx = ChatContext()
-    chat_ctx.add_message(
-        role="assistant",
-        content=(
-            "Do you feel ready to try a short muscle relaxation technique with me?"
-        ),
-    )
-    chat_ctx.add_message(role="user", content="Yes.")
     agent = TherapeuticAgent(instructions="test", chat_ctx=chat_ctx)
     participant = _FakeLocalParticipant()
     context = SimpleNamespace(
-        userdata=SessionData(),
+        userdata=SessionData(
+            turn_index=3,
+            exercise_consent_turn_index=3,
+            recommended_exercise_type=None,
+        ),
         session=_fake_voice_activity_session(participant),
     )
 
-    result = await agent.start_grounding_exercise(
-        context,
-        exercise_type=EXERCISE_MUSCLE_RELAXATION,
-    )
+    with pytest.raises(StopResponse):
+        await agent.start_grounding_exercise(
+            context,
+            exercise_type=EXERCISE_MUSCLE_RELAXATION,
+        )
 
-    assert "The user just finished Muscle relaxation" in result
+    assert context.userdata.recent_exercise_types == [EXERCISE_MUSCLE_RELAXATION]
 
 
 def test_console_shutdown_skips_transcript_finalization_by_default(
@@ -1657,8 +1782,8 @@ def test_console_shutdown_skips_transcript_finalization_by_default(
 
     monkeypatch.delenv("OPENCOUCH_VOICE_CONSOLE_FINALIZE_ON_EXIT", raising=False)
 
-    assert _should_finalize_transcript_on_shutdown(is_fake_job=True) is False
-    assert _should_finalize_transcript_on_shutdown(is_fake_job=False) is True
+    assert should_finalize_transcript_on_shutdown(is_fake_job=True) is False
+    assert should_finalize_transcript_on_shutdown(is_fake_job=False) is True
 
 
 def test_console_shutdown_can_opt_back_into_transcript_finalization(
@@ -1668,7 +1793,7 @@ def test_console_shutdown_can_opt_back_into_transcript_finalization(
 
     monkeypatch.setenv("OPENCOUCH_VOICE_CONSOLE_FINALIZE_ON_EXIT", "true")
 
-    assert _should_finalize_transcript_on_shutdown(is_fake_job=True) is True
+    assert should_finalize_transcript_on_shutdown(is_fake_job=True) is True
 
 
 @pytest.mark.asyncio
@@ -1685,11 +1810,11 @@ async def test_close_runtime_closes_and_clears_cached_singleton(
             self.exit_calls.append((exc_type, exc, tb))
 
     fake_runtime = _FakeRuntime()
-    monkeypatch.setattr(livekit_agent_module, "_runtime", fake_runtime)
-    monkeypatch.setattr(livekit_agent_module, "_llm_client", object())
+    monkeypatch.setattr(livekit_bootstrap_module, "_runtime", fake_runtime)
+    monkeypatch.setattr(livekit_bootstrap_module, "_llm_client", object())
 
-    await _close_runtime()
+    await close_runtime()
 
     assert fake_runtime.exit_calls == [(None, None, None)]
-    assert livekit_agent_module._runtime is None
-    assert livekit_agent_module._llm_client is None
+    assert livekit_bootstrap_module._runtime is None
+    assert livekit_bootstrap_module._llm_client is None

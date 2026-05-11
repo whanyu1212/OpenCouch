@@ -14,7 +14,7 @@ export default function TurnPipeline() {
         <Node
           num="1"
           label="crisis_gate_node"
-          desc="Every message — no exceptions. LLM-primary classifier with deterministic overrides and regex fallback."
+          desc="Every message — no exceptions. LLM-only classifier with local truth-table normalization."
           accent="var(--gate-color)"
         />
         <span className={styles.routeTag}>Command(goto=...) routes to one branch:</span>

@@ -105,11 +105,11 @@ const TOOLS: Tool[] = [
     pipeline: [
       {
         id: 'detect_intent',
-        label: 'Gate detection',
-        systemPrompt: '(deterministic regex — no LLM)',
+        label: 'Turn dispatch',
+        systemPrompt: 'LLM structured routing decision',
         temperature: 0,
         useSearch: false,
-        onFailure: 'falls through to load_memory_node + therapeutic subgraph',
+        onFailure: 'graph retry/error; no silent regex fallback',
         produces: 'state.grounded_lookup.query (str) when matched',
       },
       {

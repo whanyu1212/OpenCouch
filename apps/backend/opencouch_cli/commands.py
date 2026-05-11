@@ -316,6 +316,14 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         ("/end",),
         "End the session; summarize it and save the arc to episodic memory.",
         "session",
+        usage="/end [new [thread-id]]",
+    ),
+    SlashCommand(
+        ("/end", "new"),
+        "Save the current session and continue in a fresh thread.",
+        "session",
+        usage="/end new [thread-id]",
+        show_in_help=False,
     ),
     SlashCommand(
         ("/exit",),
