@@ -1086,6 +1086,12 @@ def _grade_step(
             state.get("working_memory_count"),
             expected,
         )
+        _grade_minimum(
+            failures,
+            label=f"{label}.working_memory_count",
+            actual=state.get("working_memory_count"),
+            expected=expected.get("working_memory_count_min"),
+        )
         _grade_mapping_expectation(
             failures,
             label=f"{label}.exercise_state",

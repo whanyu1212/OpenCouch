@@ -88,6 +88,17 @@ RRF_K = 60
 # store.py.
 EMBEDDING_MATCH_THRESHOLD = 0.5
 
+# Secondary lexical path for wordy queries against compact records.
+#
+# Query recall alone penalizes natural questions such as "who did I say I
+# reach out to when panic starts?" because the denominator is the whole
+# question. If two or more query terms cover a meaningful share of a short
+# memory record, the record is usually relevant even when query recall is just
+# below SEARCH_MATCH_THRESHOLD.
+SHORT_RECORD_MIN_SHARED_TOKENS = 2
+SHORT_RECORD_MIN_RECORD_RECALL = 0.4
+_PRIMARY_TEXT_FIELDS = ("evidence_quote", "summary", "text", "content")
+
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute the cosine similarity between two equal-length vectors.
@@ -173,6 +184,24 @@ def _record_haystack(record: "StoreRecord") -> str:
     return " ".join(str(value) for value in record.value.values() if value is not None)
 
 
+def _record_primary_text(record: "StoreRecord") -> str:
+    """Return the compact text field that best represents a memory record.
+
+    Args:
+        record (StoreRecord): Store record to inspect.
+
+    Returns:
+        str: Primary searchable text, or the full haystack when no known
+        primary text field exists.
+    """
+
+    for field in _PRIMARY_TEXT_FIELDS:
+        value = record.value.get(field)
+        if isinstance(value, str) and value.strip():
+            return value
+    return _record_haystack(record)
+
+
 def lexical_rank(
     candidates: Sequence[IndexedRecord],
     *,
@@ -199,16 +228,30 @@ def lexical_rank(
     query_token_count = len(query_tokens)
     ranked: list[ScoredRecord] = []
     for candidate in candidates:
-        haystack_tokens = tokenize(_record_haystack(candidate.record))
+        haystack = _record_haystack(candidate.record)
+        haystack_tokens = tokenize(haystack)
         if not haystack_tokens:
             continue
-        overlap = len(query_tokens & haystack_tokens)
-        recall = overlap / query_token_count
-        if recall >= match_threshold:
+        meaningful_primary_tokens = tokenize_meaningful(
+            _record_primary_text(candidate.record)
+        )
+        overlap = query_tokens & haystack_tokens
+        query_recall = len(overlap) / query_token_count
+        record_overlap = query_tokens & meaningful_primary_tokens
+        record_recall = (
+            len(record_overlap) / len(meaningful_primary_tokens)
+            if meaningful_primary_tokens
+            else 0.0
+        )
+        if query_recall >= match_threshold or (
+            len(record_overlap) >= SHORT_RECORD_MIN_SHARED_TOKENS
+            and record_recall >= SHORT_RECORD_MIN_RECORD_RECALL
+        ):
+            score = query_recall if query_recall >= match_threshold else record_recall
             ranked.append(
                 ScoredRecord(
                     record=candidate.record,
-                    score=recall,
+                    score=score,
                     insertion_index=candidate.insertion_index,
                 )
             )

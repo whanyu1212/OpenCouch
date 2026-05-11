@@ -98,7 +98,11 @@ Evals are split by purpose:
   focused runtime datasets such as `memory_lifecycle_trajectory_v1.json` for
   write, recall, correction, deletion, and fresh-thread absence checks, and
   `memory_cross_feature_trajectory_v1.json` for memory behavior while guided
-  exercise or grounded lookup flows are active.
+  exercise or grounded lookup flows are active. Use
+  `memory_recall_robustness_v1.json` for indirect recall phrasing,
+  correction/current-fact recall, and no-memory or unrelated-memory boundaries.
+  Use `memory_episodic_recall_robustness_v1.json` for session-summary catch-up,
+  query-driven episodic recall, and mixed semantic plus episodic continuity.
 - `runtime_recovery_trajectory_eval.py`: Postgres-first runtime recovery checks
   for thread-lock serialization, cross-thread isolation, interrupted mutation
   recovery, rotation-required leases, foreign mutation markers, and
@@ -148,6 +152,8 @@ apps/backend/.venv/bin/python -m eval.runners.memory_extraction_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_stress_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_lifecycle_trajectory_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_cross_feature_trajectory_v1.json --mode live --judge-mode live
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_recall_robustness_v1.json --mode live --judge-mode live
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_episodic_recall_robustness_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
 ```
 
@@ -242,6 +248,12 @@ Current coverage:
 - focused memory lifecycle trajectories for fresh-thread write/recall,
   correction, deletion, and cross-feature behavior during guided exercise,
   memory-control, and grounded lookup side turns
+- focused memory recall robustness trajectories for indirect support-person
+  recall, support-plan recall without exact naming, correction/current-memory
+  recall, no-memory transparency, and unrelated-memory hygiene
+- focused episodic recall robustness trajectories for latest-session catch-up,
+  older-session query recall after an opening turn, no-session transparency,
+  unrelated-session hygiene, and combined semantic plus episodic recall
 - runtime recovery trajectories for same-thread concurrency serialization,
   cross-thread isolation, failed-turn interruption, foreign mutation markers,
   rotation-required session leases, explicit recovery, and auto-finalization

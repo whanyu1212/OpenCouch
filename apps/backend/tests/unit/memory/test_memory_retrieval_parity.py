@@ -69,6 +69,116 @@ async def test_asearch_similar_degrades_to_lexical_when_no_query_embedding(
     [_make_memory_store, _make_sqlite_store],
     ids=["memory", "sqlite"],
 )
+async def test_asearch_similar_recalls_short_record_from_wordy_query(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    namespace = ("user-1", "semantic")
+
+    try:
+        await store.aput(
+            namespace,
+            "fact-sarah",
+            {
+                "id": "fact-sarah",
+                "category": "relationship",
+                "subject": {"type": "User", "identifier": "user-1"},
+                "predicate": "KNOWS",
+                "object": {"type": "Person", "identifier": "Sarah"},
+                "evidence_quote": "My sister Sarah helps when panic starts.",
+                "confidence": "high",
+                "source_session_id": "seed-session",
+                "source_turn_index": 0,
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_referenced_at": "2026-01-01T00:00:00Z",
+                "dormant_at": None,
+                "superseded_by": None,
+                "user_visible": True,
+                "write_reason": "seeded test fact",
+            },
+        )
+
+        results = await store.asearch_similar(
+            namespace,
+            query_text=(
+                "I'm getting that panic feeling again. "
+                "Who did I say I reach out to when panic starts?"
+            ),
+            query_embedding=None,
+            limit=10,
+        )
+
+        assert [record.key for record in results] == ["fact-sarah"]
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory",
+    [_make_memory_store, _make_sqlite_store],
+    ids=["memory", "sqlite"],
+)
+async def test_asearch_similar_recalls_episodic_summary_from_reminder_query(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    namespace = ("user-1", "episodic")
+
+    try:
+        await store.aput(
+            namespace,
+            "episode-presentation",
+            {
+                "id": "episode-presentation",
+                "owner_id": "user-1",
+                "session_id": "presentation-session",
+                "started_at": "2026-01-01T00:00:00Z",
+                "ended_at": "2026-01-01T00:30:00Z",
+                "duration_seconds": 1800,
+                "turn_count": 8,
+                "primary_themes": [
+                    "presentation anxiety",
+                    "catastrophic predictions",
+                ],
+                "summary": (
+                    "The user practiced a short presentation run and identified "
+                    "a catastrophic prediction about freezing."
+                ),
+                "mood_arc": {"opened": "tense", "closed": "steadier"},
+                "open_loops": [],
+                "resolved_threads": [],
+                "approach_used": "cbt",
+                "approach_context": None,
+                "created_at": "2026-01-01T00:30:00Z",
+                "last_referenced_at": "2026-01-01T00:30:00Z",
+                "user_visible": True,
+                "write_reason": "seeded test episode",
+                "crisis_level_max": 0,
+            },
+        )
+
+        results = await store.asearch_similar(
+            namespace,
+            query_text=(
+                "Before I present again, remind me what we worked out about "
+                "freezing during the presentation."
+            ),
+            query_embedding=None,
+            limit=10,
+        )
+
+        assert [record.key for record in results] == ["episode-presentation"]
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory",
+    [_make_memory_store, _make_sqlite_store],
+    ids=["memory", "sqlite"],
+)
 async def test_asearch_similar_returns_dense_hits_when_lexical_path_misses(
     store_factory: StoreFactory,
 ) -> None:

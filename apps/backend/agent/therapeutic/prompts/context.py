@@ -108,7 +108,12 @@ def _format_recall_toggle_constraint(state: AgentState) -> str:
             "\n\n═══ Memory reference guidance (proactive recall: ON) ═══\n"
             "You may reference relevant past memories when it adds value "
             "to the current moment, but do so sparingly and never for "
-            "emotionally charged topics without strong contextual fit."
+            "emotionally charged topics without strong contextual fit.\n"
+            "If the user explicitly asks what helped, what you worked out, "
+            "or what to continue from a past session, answer from the "
+            "retrieved context and include one small concrete continuation "
+            "step. Do not stop at a recap when the user is asking for "
+            "support or coaching."
         )
 
     # Recall OFF (default): silent-shaping constraint.
