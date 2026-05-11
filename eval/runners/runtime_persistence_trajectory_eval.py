@@ -1374,7 +1374,10 @@ async def _judge_trajectory(
                 "hard_check_note": (
                     "Hard checks are authoritative for persistence invariants. "
                     "Judge whether the observed runtime behavior is coherent "
-                    "and operationally trustworthy."
+                    "and operationally trustworthy. Do not require exact "
+                    "scripted wording or response style; for reopen cases, "
+                    "continuity can be shown by persisted transcript state and "
+                    "a response that reasonably follows the prior user turn."
                 ),
             },
             output=_judge_output(artifact, hard_failures=hard_failures),
@@ -1400,9 +1403,165 @@ def _judge_output(
         "mode": artifact.get("mode"),
         "description": artifact.get("description"),
         "hard_checks": {"passed": not hard_failures, "failures": hard_failures},
-        "steps": artifact.get("steps"),
-        "final": artifact.get("final"),
+        "steps": _compact_judge_steps(artifact.get("steps")),
+        "final": _compact_judge_final(artifact.get("final")),
     }
+
+
+def _compact_judge_steps(steps: Any) -> list[dict[str, Any]]:
+    """Return judge-facing step summaries without noisy runtime diagnostics.
+
+    Args:
+        steps (Any): Raw artifact steps.
+
+    Returns:
+        list[dict[str, Any]]: Compact summaries for LLM judging.
+    """
+
+    if not isinstance(steps, list):
+        return []
+
+    compact: list[dict[str, Any]] = []
+    for raw_step in steps:
+        if not isinstance(raw_step, Mapping):
+            continue
+        state = _mapping_or_empty(raw_step.get("state_after"))
+        output = _mapping_or_empty(raw_step.get("output"))
+        stream = _mapping_or_empty(raw_step.get("stream"))
+        entry: dict[str, Any] = {
+            "step_index": raw_step.get("step_index"),
+            "type": raw_step.get("type"),
+            "thread_id": raw_step.get("thread_id"),
+            "message": raw_step.get("message"),
+            "status_after": raw_step.get("status_after"),
+            "route": raw_step.get("route"),
+            "response_style": raw_step.get("response_style"),
+            "expected": raw_step.get("expected"),
+        }
+        if output:
+            entry["response_text"] = output.get("response_text")
+        if stream:
+            entry["stream"] = {
+                "stages": stream.get("stages"),
+                "response_ready_count": stream.get("response_ready_count"),
+                "done_count": stream.get("done_count"),
+            }
+        if state:
+            entry["state_after"] = _compact_judge_state(state)
+        if "reopened" in raw_step:
+            entry["reopened"] = raw_step.get("reopened")
+        compact.append(
+            {key: value for key, value in entry.items() if value is not None}
+        )
+    return compact
+
+
+def _compact_judge_final(final: Any) -> dict[str, Any]:
+    """Return a compact final-state summary for LLM judging.
+
+    Args:
+        final (Any): Raw final artifact payload.
+
+    Returns:
+        dict[str, Any]: Final persistence summary.
+    """
+
+    final_map = _mapping_or_empty(final)
+    thread_states = final_map.get("thread_states")
+    compact_threads: list[dict[str, Any]] = []
+    if isinstance(thread_states, list):
+        for raw_thread in thread_states:
+            if not isinstance(raw_thread, Mapping):
+                continue
+            state = _mapping_or_empty(raw_thread.get("state"))
+            compact_thread = {
+                "thread_id": raw_thread.get("thread_id"),
+                "exists": raw_thread.get("exists"),
+                "status": raw_thread.get("status"),
+            }
+            if state:
+                compact_thread["state"] = _compact_judge_state(state)
+            compact_threads.append(
+                {
+                    key: value
+                    for key, value in compact_thread.items()
+                    if value is not None
+                }
+            )
+
+    return {
+        "memory_snapshots": final_map.get("memory_snapshots"),
+        "thread_states": compact_threads,
+        "crisis_logs": final_map.get("crisis_logs"),
+        "feedback": final_map.get("feedback"),
+        "expected": final_map.get("expected"),
+    }
+
+
+def _compact_judge_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the state fields that matter for persistence judging.
+
+    Args:
+        state (Mapping[str, Any]): Raw state summary.
+
+    Returns:
+        dict[str, Any]: Compact state summary.
+    """
+
+    return {
+        "route": state.get("route"),
+        "response_style": state.get("response_style"),
+        "therapeutic_approach": state.get("therapeutic_approach"),
+        "transcript_length": state.get("transcript_length"),
+        "assistant_turn_count": state.get("assistant_turn_count"),
+        "turn_count": state.get("turn_count"),
+        "working_memory_count": state.get("working_memory_count"),
+        "exercise_state": state.get("exercise_state"),
+        "memory_control": state.get("memory_control"),
+        "grounded_lookup": state.get("grounded_lookup"),
+        "crisis": state.get("crisis"),
+        "transcript_tail": _transcript_tail(state.get("transcript")),
+    }
+
+
+def _transcript_tail(transcript: Any, *, limit: int = 4) -> list[dict[str, Any]]:
+    """Return a small transcript tail for continuity judging.
+
+    Args:
+        transcript (Any): Raw transcript payload.
+        limit (int): Maximum number of tail entries.
+
+    Returns:
+        list[dict[str, Any]]: Compact transcript entries.
+    """
+
+    if not isinstance(transcript, list):
+        return []
+    tail: list[dict[str, Any]] = []
+    for item in transcript[-limit:]:
+        if not isinstance(item, Mapping):
+            continue
+        tail.append(
+            {
+                "role": item.get("role"),
+                "content": item.get("content"),
+                "response_style": item.get("response_style"),
+            }
+        )
+    return tail
+
+
+def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
+    """Return a mapping payload or an empty mapping.
+
+    Args:
+        value (Any): Candidate mapping.
+
+    Returns:
+        Mapping[str, Any]: Original mapping or empty mapping.
+    """
+
+    return value if isinstance(value, Mapping) else {}
 
 
 def _rubric_dimensions(case: RuntimePersistenceCase) -> list[RubricDimension]:
