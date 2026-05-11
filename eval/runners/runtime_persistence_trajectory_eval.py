@@ -968,6 +968,7 @@ def _state_summary(state: Mapping[str, Any] | None) -> dict[str, Any]:
         "exercise_state": _jsonify(state.get("exercise_state") or {}),
         "memory_control": _jsonify(state.get("memory_control") or {}),
         "grounded_lookup": _jsonify(state.get("grounded_lookup") or {}),
+        "turn_lifecycle": _jsonify(state.get("turn_lifecycle") or {}),
         "crisis": _jsonify(state.get("crisis")),
         "diagnostics": _jsonify(state.get("diagnostics") or {}),
     }
@@ -1096,6 +1097,18 @@ def _grade_step(
             label=f"{label}.memory_control",
             actual=state.get("memory_control"),
             expected=expected.get("memory_control"),
+        )
+        _grade_mapping_expectation(
+            failures,
+            label=f"{label}.grounded_lookup",
+            actual=state.get("grounded_lookup"),
+            expected=expected.get("grounded_lookup"),
+        )
+        _grade_mapping_expectation(
+            failures,
+            label=f"{label}.turn_lifecycle",
+            actual=state.get("turn_lifecycle"),
+            expected=expected.get("turn_lifecycle"),
         )
         _grade_text_collection(
             failures,
@@ -1575,6 +1588,7 @@ def _compact_judge_state(state: Mapping[str, Any]) -> dict[str, Any]:
         "exercise_state": state.get("exercise_state"),
         "memory_control": state.get("memory_control"),
         "grounded_lookup": state.get("grounded_lookup"),
+        "turn_lifecycle": state.get("turn_lifecycle"),
         "crisis": state.get("crisis"),
         "transcript_tail": _transcript_tail(state.get("transcript")),
     }

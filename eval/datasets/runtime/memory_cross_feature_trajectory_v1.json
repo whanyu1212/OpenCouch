@@ -1,0 +1,697 @@
+{
+  "name": "memory_cross_feature_trajectory_v1",
+  "description": "Runtime trajectories for memory lifecycle behavior while another user-facing flow is active.",
+  "cases": [
+    {
+      "id": "memory-list-preserves-active-exercise",
+      "description": "Inspecting saved memory during a guided exercise should preserve the exercise and allow the next exercise step to continue.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-sarah-support",
+                  "category": "relationship",
+                  "predicate": "KNOWS",
+                  "object_type": "Person",
+                  "object_identifier": "Sarah",
+                  "evidence_quote": "My sister Sarah helps when panic starts."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-memory-list",
+          "user_id": "{run_id}-user",
+          "message": "Can we do box breathing?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a guided exercise.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Box breathing is a structured grounding exercise.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_box_breathing",
+            "response_text": "Let's begin box breathing. Inhale slowly for four.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "status_after": "active",
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 0,
+              "exercise_step_id": "inhale"
+            },
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-memory-list",
+          "user_id": "{run_id}-user",
+          "message": "Before we continue, what do you have saved about me?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe memory inspection request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user asks to inspect saved memory without ending the exercise.",
+              "confidence": "high",
+              "memory_action_type": "list",
+              "active_flow_action": "preserve"
+            }
+          },
+          "expected": {
+            "route": "memory_control",
+            "response_style": "memory_control",
+            "status_after": "active",
+            "response_text_contains": ["Sarah"],
+            "memory_control": {
+              "pending_action": null
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 0,
+              "exercise_step_id": "inhale"
+            },
+            "turn_lifecycle": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-memory-list",
+          "user_id": "{run_id}-user",
+          "message": "Back to the exercise. I did the inhale.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise continuation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user returns to and completes the active exercise step.",
+              "confidence": "high",
+              "active_flow_action": "continue"
+            },
+            "step_state": "complete",
+            "response_text": "Good. Hold that breath gently for four.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "status_after": "active",
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 1,
+              "exercise_step_id": "hold_full"
+            },
+            "turn_lifecycle": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
+            },
+            "transcript_length": 6,
+            "turn_count": 3
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "active_facts_contain": ["Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-exercise-memory-list",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 6,
+            "turn_count": 3,
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 1,
+              "exercise_step_id": "hold_full"
+            }
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "exercise_continuity",
+            "question": "Does the memory inspection side turn preserve the active exercise and allow the next exercise response to continue from the same step?",
+            "weight": 1.2
+          },
+          {
+            "name": "memory_transparency",
+            "question": "Does the memory inspection expose saved memory without editing or losing the Sarah support fact?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "memory-delete-clears-active-exercise-and-stays-absent",
+      "description": "Deleting saved memory during a guided exercise should clear the exercise, require confirmation, and prevent later recall.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-sarah-support",
+                  "category": "relationship",
+                  "predicate": "KNOWS",
+                  "object_type": "Person",
+                  "object_identifier": "Sarah",
+                  "evidence_quote": "My sister Sarah helps when panic starts."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-delete",
+          "user_id": "{run_id}-user",
+          "message": "Can we do box breathing?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a guided exercise.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Box breathing is a structured grounding exercise.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_box_breathing",
+            "response_text": "Let's begin box breathing. Inhale slowly for four.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "status_after": "active",
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 0,
+              "exercise_step_id": "inhale"
+            },
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-delete",
+          "user_id": "{run_id}-user",
+          "message": "Delete saved fact 1 about Sarah before we keep going.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe memory deletion request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user asks to delete saved memory during the exercise.",
+              "confidence": "high",
+              "memory_action_type": "forget_by_index",
+              "target_kind": "fact",
+              "target_index": 1,
+              "active_flow_action": "clear"
+            }
+          },
+          "expected": {
+            "route": "memory_control",
+            "response_style": "memory_control",
+            "status_after": "active",
+            "response_text_contains": ["Sarah"],
+            "memory_control": {
+              "pending_action": {
+                "type": "delete",
+                "target": {
+                  "kind": "fact"
+                }
+              }
+            },
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null,
+              "exercise_version": null,
+              "exercise_therapeutic_approach": null
+            },
+            "turn_lifecycle": {
+              "active_flow": "guided_exercise",
+              "action": "clear"
+            },
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-delete",
+          "user_id": "{run_id}-user",
+          "message": "Yes, delete that saved fact.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe deletion confirmation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "memory_control",
+              "reasoning": "The user confirms the pending saved-memory deletion.",
+              "confidence": "high",
+              "memory_action_type": "confirm_pending",
+              "active_flow_action": "continue"
+            }
+          },
+          "expected": {
+            "route": "memory_control",
+            "response_style": "memory_control",
+            "status_after": "active",
+            "response_text_contains": ["Deleted"],
+            "memory_control": {
+              "pending_action": null
+            },
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null
+            },
+            "turn_lifecycle": {
+              "active_flow": "pending_memory_action",
+              "action": "continue"
+            },
+            "transcript_length": 6,
+            "turn_count": 3
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-fresh-after-delete",
+          "user_id": "{run_id}-user",
+          "message": "Panic is back. Help me choose one support step.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "reasoning": "Brief practical support fits.",
+              "confidence": "high"
+            },
+            "response_text": "Choose one immediate support step: slow your exhale, put both feet on the floor, and contact someone you trust if that helps.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "working_memory_count": 0,
+            "working_memory_not_contains": ["Sarah"],
+            "semantic_hits": 0,
+            "response_text_not_contains": ["Sarah"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "active_facts_absent": ["Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-exercise-delete",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 6,
+            "turn_count": 3,
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null
+            }
+          },
+          {
+            "thread_id": "{run_id}-fresh-after-delete",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "delete_confirmation",
+            "question": "Does the trajectory require confirmation before deleting saved memory?",
+            "weight": 1.1
+          },
+          {
+            "name": "active_flow_cleanup",
+            "question": "Does the memory deletion clear the active exercise instead of leaving stale exercise state?",
+            "weight": 1.2
+          },
+          {
+            "name": "deleted_memory_absence",
+            "question": "After deletion, does the fresh support turn avoid recalling the deleted Sarah memory?",
+            "weight": 1.2
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounded-lookup-preserves-active-exercise-and-memory",
+      "description": "A grounded lookup side turn during a guided exercise should preserve exercise state and leave durable memory unchanged.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "memory_seed": {
+        "owners": [
+          {
+            "owner_id": "{run_id}-user",
+            "seed": {
+              "semantic_facts": [
+                {
+                  "id": "fact-sarah-support",
+                  "category": "relationship",
+                  "predicate": "KNOWS",
+                  "object_type": "Person",
+                  "object_identifier": "Sarah",
+                  "evidence_quote": "My sister Sarah helps when panic starts."
+                }
+              ],
+              "proactive_recall_enabled": true
+            }
+          }
+        ]
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-grounded",
+          "user_id": "{run_id}-user",
+          "message": "Can we do box breathing?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for a guided exercise.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Box breathing is a structured grounding exercise.",
+              "confidence": "high"
+            },
+            "exercise_selection": "grounding_box_breathing",
+            "response_text": "Let's begin box breathing. Inhale slowly for four.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "status_after": "active",
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 0,
+              "exercise_step_id": "inhale"
+            },
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-grounded",
+          "user_id": "{run_id}-user",
+          "message": "Before we continue, look up official resources about panic attacks.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe grounded lookup request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "grounded_lookup",
+              "reasoning": "The user asks for official external resources without ending the exercise.",
+              "confidence": "high",
+              "query": "official panic attack resources",
+              "active_flow_action": "preserve"
+            }
+          },
+          "expected": {
+            "route": "grounded_lookup",
+            "response_style": "grounded_lookup",
+            "status_after": "active",
+            "response_text_contains": ["Sources"],
+            "grounded_lookup": {
+              "status": "answered"
+            },
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 0,
+              "exercise_step_id": "inhale"
+            },
+            "turn_lifecycle": {
+              "active_flow": "guided_exercise",
+              "action": "preserve"
+            },
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-exercise-grounded",
+          "user_id": "{run_id}-user",
+          "message": "I did the inhale.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe exercise continuation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user completes the active exercise step.",
+              "confidence": "high",
+              "active_flow_action": "continue"
+            },
+            "step_state": "complete",
+            "response_text": "Good. Hold that breath gently for four.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "status_after": "active",
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 1,
+              "exercise_step_id": "hold_full"
+            },
+            "turn_lifecycle": {
+              "active_flow": "guided_exercise",
+              "action": "continue"
+            },
+            "transcript_length": 6,
+            "turn_count": 3
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "active_facts_contain": ["Sarah"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-exercise-grounded",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 6,
+            "turn_count": 3,
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 1,
+              "exercise_step_id": "hold_full"
+            }
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "lookup_side_turn",
+            "question": "Does the grounded lookup answer the resource request without ending or advancing the active exercise?",
+            "weight": 1.2
+          },
+          {
+            "name": "memory_stability",
+            "question": "Does the side lookup leave durable memory unchanged?",
+            "weight": 1.0
+          }
+        ]
+      }
+    }
+  ]
+}

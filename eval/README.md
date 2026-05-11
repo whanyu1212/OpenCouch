@@ -96,7 +96,9 @@ Evals are split by purpose:
   logs, feedback, and incognito isolation. Defaults to Postgres; use
   `--backend sqlite` only for fallback compatibility coverage. It also accepts
   focused runtime datasets such as `memory_lifecycle_trajectory_v1.json` for
-  write, recall, correction, deletion, and fresh-thread absence checks.
+  write, recall, correction, deletion, and fresh-thread absence checks, and
+  `memory_cross_feature_trajectory_v1.json` for memory behavior while guided
+  exercise or grounded lookup flows are active.
 - `runtime_recovery_trajectory_eval.py`: Postgres-first runtime recovery checks
   for thread-lock serialization, cross-thread isolation, interrupted mutation
   recovery, rotation-required leases, foreign mutation markers, and
@@ -145,6 +147,7 @@ apps/backend/.venv/bin/python -m eval.runners.memory_write_policy_eval
 apps/backend/.venv/bin/python -m eval.runners.memory_extraction_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_stress_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_lifecycle_trajectory_v1.json --mode live --judge-mode live
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_cross_feature_trajectory_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
 ```
 
@@ -236,6 +239,9 @@ Current coverage:
   background extraction drain, cross-thread/user memory scoping, streaming
   single-write behavior, session finalization cleanup, crisis-log persistence,
   feedback persistence, and incognito non-persistence
+- focused memory lifecycle trajectories for fresh-thread write/recall,
+  correction, deletion, and cross-feature behavior during guided exercise,
+  memory-control, and grounded lookup side turns
 - runtime recovery trajectories for same-thread concurrency serialization,
   cross-thread isolation, failed-turn interruption, foreign mutation markers,
   rotation-required session leases, explicit recovery, and auto-finalization
