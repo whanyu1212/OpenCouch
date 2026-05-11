@@ -435,6 +435,7 @@ class TestSingleRuleWrite:
         delta = await run_extract_procedural_rules_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["diagnostics"]["procedural_writes"] == 1
+        assert fake.reconciliation_calls == 1
         profile = await aget_procedural_profile(store, user_id="alice")
         assert len(profile.rules) == 1
         assert profile.rules[0].rule == "You've said meditation makes you more anxious."
@@ -480,6 +481,7 @@ class TestSingleRuleWrite:
 
         assert delta["diagnostics"]["procedural_writes"] == 0
         assert delta["diagnostics"]["procedural_write_skips"] == 1
+        assert fake.reconciliation_calls == 1
         profile = await aget_procedural_profile(store, user_id="alice")
         assert len(profile.rules) == 1
         assert profile.rules[0].rule == "Suggest meditation when it seems useful."

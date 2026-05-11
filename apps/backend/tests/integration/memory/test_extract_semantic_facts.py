@@ -962,6 +962,7 @@ class TestExtractFactsNodeUnit:
         delta = await run_extract_semantic_facts_node(state, runtime)  # type: ignore[arg-type]
 
         assert delta["diagnostics"]["semantic_writes"] == 1
+        assert fake.semantic_reconciliation_calls == 1
         assert await store.arecord_count(("user-1", "semantic")) == 2
         records = await store.asearch(("user-1", "semantic"), query=None, limit=10)
         stale = next(record for record in records if record.key == "fact-old")
@@ -1021,6 +1022,7 @@ class TestExtractFactsNodeUnit:
 
         assert delta["diagnostics"]["semantic_writes"] == 0
         assert delta["diagnostics"]["semantic_write_skips"] == 1
+        assert fake.semantic_reconciliation_calls == 1
         assert await store.arecord_count(("user-1", "semantic")) == 1
         stale = await store.aget(("user-1", "semantic"), "fact-old")
         assert stale is not None

@@ -5,15 +5,16 @@ miss, round-trip serialization, additive helpers (``aadd_procedural_rule``,
 ``aset_proactive_recall``), and the convenience readers used by prompt
 builders.
 
-These are shape-only unit tests — no LLM calls, no pydantic validation
-errors, no concurrency edge cases. The goal is to lock in the API
-contract of the helpers so the Stage B writer node and Stage D prompt
-builders can import them with confidence.
+These are shape-only unit tests — no live LLM calls, no pydantic validation
+errors. The goal is to lock in the API contract of the helpers so the
+writer services and prompt builders can import them with confidence.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 import pytest
 
@@ -27,10 +28,12 @@ from agent.memory.procedural_profile import (
     aget_proactive_recall,
     aput_procedural_profile,
     aset_proactive_recall,
+    aupsert_procedural_rule,
     build_procedural_rule,
     procedural_namespace,
 )
 from agent.memory.store import OpenCouchMemoryStore
+from llm.base import BaseLLMClient, StructuredResponseT
 
 
 class _BlockingFirstProceduralPutStore(OpenCouchMemoryStore):
@@ -67,6 +70,43 @@ class _BlockingFirstProceduralPutStore(OpenCouchMemoryStore):
             embedding=embedding,
             embedding_model=embedding_model,
         )
+
+
+class _FakeProceduralReconciliationLLM(BaseLLMClient):
+    """Fake structured client for procedural reconciliation tests."""
+
+    def __init__(self, decision: dict[str, Any]) -> None:
+        self.decision = decision
+        self.structured_calls = 0
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        return "unused"
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+    ) -> StructuredResponseT:
+        if response_schema.__name__ != "ProceduralReconciliationDecision":
+            raise RuntimeError(f"unexpected schema {response_schema.__name__}")
+        self.structured_calls += 1
+        return cast(StructuredResponseT, response_schema(**self.decision))
 
 
 # ─── Namespace + key constants ────────────────────────────────────────────
@@ -268,8 +308,30 @@ async def test_aadd_rule_preserves_existing_rules() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aadd_rule_replaces_weaker_overlapping_rule() -> None:
-    """A stronger replacement should overwrite weaker overlapping wording."""
+async def test_aadd_rule_without_llm_skips_exact_duplicate_rule_text() -> None:
+    """No-LLM additive writes only skip exact duplicate rule text."""
+
+    store = OpenCouchMemoryStore()
+    first = build_procedural_rule(
+        rule_text="You prefer short replies.",
+        evidence=["Please keep it short."],
+    )
+    duplicate = build_procedural_rule(
+        rule_text="You prefer short replies.",
+        evidence=["Keep replies brief."],
+    )
+
+    await aadd_procedural_rule(store, user_id="alice", rule=first)
+    await aadd_procedural_rule(store, user_id="alice", rule=duplicate)
+
+    reloaded = await aget_procedural_profile(store, user_id="alice")
+    assert len(reloaded.rules) == 1
+    assert reloaded.rules[0].id == first.id
+
+
+@pytest.mark.asyncio
+async def test_aupsert_rule_replaces_weaker_rule_with_llm() -> None:
+    """A stronger replacement should use LLM reconciliation."""
 
     store = OpenCouchMemoryStore()
     original = build_procedural_rule(
@@ -280,11 +342,26 @@ async def test_aadd_rule_replaces_weaker_overlapping_rule() -> None:
         rule_text="You prefer short, direct replies without extra validation.",
         evidence=["Please be short and direct."],
     )
+    llm = _FakeProceduralReconciliationLLM(
+        {
+            "action": "replace",
+            "replace_indexes": [0],
+            "reason": "new rule is clearer and more specific",
+            "confidence": "high",
+        }
+    )
 
     await aadd_procedural_rule(store, user_id="alice", rule=original)
-    await aadd_procedural_rule(store, user_id="alice", rule=replacement)
+    result = await aupsert_procedural_rule(
+        store,
+        user_id="alice",
+        rule=replacement,
+        llm_client=llm,
+    )
 
     reloaded = await aget_procedural_profile(store, user_id="alice")
+    assert result.action == "replaced"
+    assert llm.structured_calls == 1
     assert len(reloaded.rules) == 1
     assert (
         reloaded.rules[0].rule
@@ -298,8 +375,8 @@ async def test_aadd_rule_replaces_weaker_overlapping_rule() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aadd_rule_replaces_conflicting_existing_rule() -> None:
-    """A newer conflicting rule should replace the stale older one."""
+async def test_aupsert_rule_replaces_conflicting_existing_rule_with_llm() -> None:
+    """A newer conflicting rule should use LLM reconciliation."""
 
     store = OpenCouchMemoryStore()
     original = build_procedural_rule(
@@ -310,11 +387,26 @@ async def test_aadd_rule_replaces_conflicting_existing_rule() -> None:
         rule_text="Don't suggest meditation again.",
         evidence=["Please don't suggest meditation again."],
     )
+    llm = _FakeProceduralReconciliationLLM(
+        {
+            "action": "replace",
+            "replace_indexes": [0],
+            "reason": "new rule conflicts with older meditation guidance",
+            "confidence": "high",
+        }
+    )
 
     await aadd_procedural_rule(store, user_id="alice", rule=original)
-    await aadd_procedural_rule(store, user_id="alice", rule=replacement)
+    result = await aupsert_procedural_rule(
+        store,
+        user_id="alice",
+        rule=replacement,
+        llm_client=llm,
+    )
 
     reloaded = await aget_procedural_profile(store, user_id="alice")
+    assert result.action == "replaced"
+    assert llm.structured_calls == 1
     assert len(reloaded.rules) == 1
     assert reloaded.rules[0].rule == "Don't suggest meditation again."
     assert len(reloaded.archived_rules) == 1

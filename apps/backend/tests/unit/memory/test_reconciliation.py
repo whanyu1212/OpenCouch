@@ -13,9 +13,7 @@ from agent.memory.reconciliation import (
     filter_active_semantic_records,
     is_active_semantic_record_value,
     plan_procedural_rule_write_llm_primary,
-    plan_procedural_rule_write,
     plan_semantic_write_llm_primary,
-    plan_semantic_write,
 )
 from agent.memory.store import StoreRecord
 from llm.base import BaseLLMClient, StructuredResponseT
@@ -102,7 +100,33 @@ def _store_record(fact: SemanticFact) -> StoreRecord:
     )
 
 
-def test_same_identifier_reconciles_to_bump() -> None:
+@pytest.mark.asyncio
+async def test_exact_duplicate_semantic_fact_bumps_without_llm() -> None:
+    existing = _store_record(
+        _semantic_fact(
+            fact_id="fact-old",
+            object_identifier="Sarah",
+            evidence_quote="I have a sister named Sarah.",
+        )
+    )
+    new_fact = _semantic_fact(
+        fact_id="fact-new",
+        object_identifier="Sarah",
+        evidence_quote="I have a sister named Sarah.",
+    )
+
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=None,
+    )
+
+    assert plan.bump_record is existing
+    assert plan.supersede_records == []
+
+
+@pytest.mark.asyncio
+async def test_same_identifier_changed_evidence_uses_llm() -> None:
     existing = _store_record(
         _semantic_fact(
             fact_id="fact-old",
@@ -115,14 +139,28 @@ def test_same_identifier_reconciles_to_bump() -> None:
         object_identifier="Sarah",
         evidence_quote="My sister Sarah came over this weekend.",
     )
+    llm = _FakeReconciliationLLM(
+        {
+            "action": "bump",
+            "record_indexes": [0],
+            "reason": "same durable relationship with refreshed evidence",
+            "confidence": "high",
+        }
+    )
 
-    plan = plan_semantic_write(new_fact, [existing])
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=llm,
+    )
 
+    assert llm.structured_calls == 1
     assert plan.bump_record is existing
     assert plan.supersede_records == []
 
 
-def test_more_specific_identifier_supersedes_generic_representation() -> None:
+@pytest.mark.asyncio
+async def test_more_specific_identifier_supersedes_via_llm() -> None:
     existing = _store_record(
         _semantic_fact(
             fact_id="fact-old",
@@ -135,14 +173,28 @@ def test_more_specific_identifier_supersedes_generic_representation() -> None:
         object_identifier="my sister Sarah",
         evidence_quote="My sister Sarah called last night.",
     )
+    llm = _FakeReconciliationLLM(
+        {
+            "action": "supersede",
+            "record_indexes": [0],
+            "reason": "new fact identifies Sarah more specifically",
+            "confidence": "high",
+        }
+    )
 
-    plan = plan_semantic_write(new_fact, [existing])
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=llm,
+    )
 
+    assert llm.structured_calls == 1
     assert plan.bump_record is None
     assert plan.supersede_records == [existing]
 
 
-def test_correction_marker_supersedes_old_active_fact() -> None:
+@pytest.mark.asyncio
+async def test_semantic_correction_supersedes_via_llm() -> None:
     existing = _store_record(
         _semantic_fact(
             fact_id="fact-old",
@@ -161,9 +213,22 @@ def test_correction_marker_supersedes_old_active_fact() -> None:
     existing.value["category"] = "context"
     existing.value["predicate"] = "EXPERIENCED"
     existing.value["object"]["type"] = "Event"
+    llm = _FakeReconciliationLLM(
+        {
+            "action": "supersede",
+            "record_indexes": [0],
+            "reason": "new living situation replaces the older one",
+            "confidence": "high",
+        }
+    )
 
-    plan = plan_semantic_write(new_fact, [existing])
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=llm,
+    )
 
+    assert llm.structured_calls == 1
     assert plan.bump_record is None
     assert plan.supersede_records == [existing]
 
@@ -191,23 +256,29 @@ def test_inactive_semantic_records_are_filtered() -> None:
     assert filter_active_semantic_records([active, superseded]) == [active]
 
 
-def test_procedural_rule_replaces_weaker_overlapping_rule() -> None:
+@pytest.mark.asyncio
+async def test_exact_duplicate_procedural_rule_skips_without_llm() -> None:
     existing = build_procedural_rule(
         rule_text="You prefer short replies.",
         evidence=["Please keep it short."],
     )
     new_rule = build_procedural_rule(
-        rule_text="You prefer short, direct replies without extra validation.",
-        evidence=["Please be short and direct."],
+        rule_text="You prefer short replies.",
+        evidence=["Keep replies brief."],
     )
 
-    plan = plan_procedural_rule_write(new_rule, [existing])
+    plan = await plan_procedural_rule_write_llm_primary(
+        new_rule,
+        [existing],
+        llm_client=None,
+    )
 
-    assert plan.action == "replace"
-    assert plan.replace_indexes == [0]
+    assert plan.action == "skip"
+    assert plan.replace_indexes == []
 
 
-def test_procedural_rule_replaces_conflicting_old_rule() -> None:
+@pytest.mark.asyncio
+async def test_procedural_rule_replaces_conflicting_old_rule_via_llm() -> None:
     existing = build_procedural_rule(
         rule_text="Suggest meditation when it seems useful.",
         evidence=["Meditation is okay."],
@@ -216,9 +287,22 @@ def test_procedural_rule_replaces_conflicting_old_rule() -> None:
         rule_text="Don't suggest meditation again.",
         evidence=["Please don't suggest meditation again."],
     )
+    llm = _FakeReconciliationLLM(
+        {
+            "action": "replace",
+            "replace_indexes": [0],
+            "reason": "new rule conflicts with older meditation guidance",
+            "confidence": "high",
+        }
+    )
 
-    plan = plan_procedural_rule_write(new_rule, [existing])
+    plan = await plan_procedural_rule_write_llm_primary(
+        new_rule,
+        [existing],
+        llm_client=llm,
+    )
 
+    assert llm.structured_calls == 1
     assert plan.action == "replace"
     assert plan.replace_indexes == [0]
 

@@ -24,30 +24,9 @@ from pydantic import BaseModel, Field
 
 from agent.memory.models import MemoryWrite, ProceduralRule, SemanticFact
 from agent.memory.store import StoreRecord
-from agent.memory.text_tokens import tokenize_meaningful
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
-
-_SEMANTIC_CORRECTION_MARKERS = (
-    "actually",
-    "not anymore",
-    "no longer",
-    "instead",
-    "used to",
-    "turned out",
-)
-
-_PROCEDURAL_NEGATION_MARKERS = (
-    "don't",
-    "dont",
-    "do not",
-    "stop",
-    "avoid",
-    "never",
-    "without",
-    "no longer",
-)
 
 
 @dataclass(slots=True)
@@ -179,145 +158,185 @@ def _normalized_identifier(identifier: str) -> str:
     return " ".join(identifier.lower().split())
 
 
-def _identifier_tokens(identifier: str) -> frozenset[str]:
-    """Tokenize an identifier for overlap checks.
+def _normalized_text(value: str) -> str:
+    """Normalize text for exact duplicate comparison.
 
     Args:
-        identifier (str): Raw identifier text.
+        value (str): Raw text.
 
     Returns:
-        frozenset[str]: Meaningful identifier tokens.
+        str: Lowercase text with normalized whitespace.
     """
 
-    return tokenize_meaningful(identifier)
+    return " ".join(value.lower().split())
 
 
-def _identifier_subset_overlap(left: str, right: str) -> bool:
-    """Return whether one identifier is a token-subset of the other.
+def _record_object_identifier(record: StoreRecord) -> str:
+    """Return a semantic record's object identifier.
 
     Args:
-        left (str): First identifier.
-        right (str): Second identifier.
+        record (StoreRecord): Stored semantic record.
 
     Returns:
-        bool: ``True`` when either token set is a subset of the other.
+        str: Object identifier, or an empty string when absent.
     """
 
-    left_tokens = _identifier_tokens(left)
-    right_tokens = _identifier_tokens(right)
-    if not left_tokens or not right_tokens:
-        return False
-    return left_tokens <= right_tokens or right_tokens <= left_tokens
+    return str(record.value.get("object", {}).get("identifier") or "")
 
 
-def _prefer_new_identifier(new_identifier: str, existing_identifier: str) -> bool:
-    """Return whether the new identifier is more specific than the existing one.
+def _record_evidence_quote(record: StoreRecord) -> str:
+    """Return a semantic record's evidence quote.
 
     Args:
-        new_identifier (str): Candidate replacement identifier.
-        existing_identifier (str): Existing stored identifier.
+        record (StoreRecord): Stored semantic record.
 
     Returns:
-        bool: ``True`` when the new identifier is more specific.
+        str: Evidence quote, or an empty string when absent.
     """
 
-    new_tokens = _identifier_tokens(new_identifier)
-    existing_tokens = _identifier_tokens(existing_identifier)
-    new_specificity = (len(new_tokens), len(new_identifier.strip()))
-    existing_specificity = (len(existing_tokens), len(existing_identifier.strip()))
-    return new_specificity > existing_specificity
+    return str(record.value.get("evidence_quote") or "")
 
 
-def _has_explicit_correction(text: str) -> bool:
-    """Return whether text contains a semantic correction marker.
-
-    Args:
-        text (str): Text to inspect.
-
-    Returns:
-        bool: ``True`` when the text contains a correction marker.
-    """
-
-    lowered = text.lower()
-    return any(marker in lowered for marker in _SEMANTIC_CORRECTION_MARKERS)
-
-
-def _semantic_topic_overlap(fact: SemanticFact, record: StoreRecord) -> int:
-    """Return rough topical overlap between two semantic facts.
+def _find_exact_duplicate_semantic_record(
+    fact: SemanticFact,
+    collision_records: list[StoreRecord],
+) -> StoreRecord | None:
+    """Return the exact duplicate semantic collision, if any.
 
     Args:
         fact (SemanticFact): New semantic fact.
-        record (StoreRecord): Existing stored semantic record.
+        collision_records (list[StoreRecord]): Active same-slot records.
 
     Returns:
-        int: Count of overlapping topical tokens.
+        StoreRecord | None: Existing duplicate record, or ``None``.
     """
 
-    candidate_tokens = tokenize_meaningful(
-        f"{fact.object.identifier} {fact.evidence_quote}"
-    )
-    existing_tokens = tokenize_meaningful(
-        " ".join(
-            [
-                str(record.value.get("object", {}).get("identifier") or ""),
-                str(record.value.get("evidence_quote") or ""),
-            ]
-        )
-    )
-    return len(candidate_tokens & existing_tokens)
+    fact_identifier = _normalized_identifier(fact.object.identifier)
+    fact_evidence = _normalized_text(fact.evidence_quote)
+    for record in collision_records:
+        if (
+            _normalized_identifier(_record_object_identifier(record)) == fact_identifier
+            and _normalized_text(_record_evidence_quote(record)) == fact_evidence
+        ):
+            return record
+    return None
 
 
-def plan_semantic_write(
-    fact: SemanticFact,
-    existing_records: list[StoreRecord],
-) -> SemanticReconciliationPlan:
-    """Return whether a semantic fact should bump, supersede, or coexist.
+def plan_procedural_rule_write_without_llm(
+    new_rule: ProceduralRule,
+    existing_rules: list[ProceduralRule],
+) -> ProceduralReconciliationPlan:
+    """Return append-or-skip for no-LLM procedural writes.
 
     Args:
-        fact (SemanticFact): New semantic fact to reconcile.
-        existing_records (list[StoreRecord]): Existing semantic records.
+        new_rule (ProceduralRule): New procedural rule to reconcile.
+        existing_rules (list[ProceduralRule]): Existing procedural rules.
 
     Returns:
-        SemanticReconciliationPlan: Reconciliation action for the semantic fact.
+        ProceduralReconciliationPlan: ``skip`` for exact duplicate rule text,
+        otherwise ``append``.
     """
 
-    plan = SemanticReconciliationPlan()
-    correction_records: list[StoreRecord] = []
+    new_text = _normalized_text(new_rule.rule)
+    if any(
+        _normalized_text(existing_rule.rule) == new_text
+        for existing_rule in existing_rules
+    ):
+        return ProceduralReconciliationPlan(action="skip")
+    return ProceduralReconciliationPlan(action="append")
 
-    for record in filter_semantic_collision_candidates(fact, existing_records):
-        existing_identifier = str(
-            record.value.get("object", {}).get("identifier") or ""
+
+def _find_exact_duplicate_procedural_rule_index(
+    new_rule: ProceduralRule,
+    existing_rules: list[ProceduralRule],
+) -> int | None:
+    """Return the index of an exact duplicate procedural rule.
+
+    Args:
+        new_rule (ProceduralRule): New procedural rule.
+        existing_rules (list[ProceduralRule]): Existing procedural rules.
+
+    Returns:
+        int | None: Duplicate index, or ``None``.
+    """
+
+    new_text = _normalized_text(new_rule.rule)
+    for index, existing_rule in enumerate(existing_rules):
+        if _normalized_text(existing_rule.rule) == new_text:
+            return index
+    return None
+
+
+def _apply_semantic_reconciliation_decision(
+    decision: SemanticReconciliationDecision,
+    collision_records: list[StoreRecord],
+) -> SemanticReconciliationPlan:
+    """Convert a structured semantic reconciliation decision into a plan.
+
+    Args:
+        decision (SemanticReconciliationDecision): LLM decision.
+        collision_records (list[StoreRecord]): Candidate collision records.
+
+    Returns:
+        SemanticReconciliationPlan: Final semantic reconciliation plan.
+    """
+
+    if decision.confidence == "low" or decision.action == "coexist":
+        return SemanticReconciliationPlan()
+
+    valid_indexes = [
+        index
+        for index in sorted(set(decision.record_indexes))
+        if 0 <= index < len(collision_records)
+    ]
+    if decision.action == "bump":
+        if len(valid_indexes) != 1:
+            raise ValueError("Semantic reconciliation selected invalid bump index.")
+        return SemanticReconciliationPlan(
+            bump_record=collision_records[valid_indexes[0]]
         )
-        if _normalized_identifier(existing_identifier) == _normalized_identifier(
-            fact.object.identifier
-        ):
-            plan.bump_record = record
-            return plan
 
-        if _identifier_subset_overlap(fact.object.identifier, existing_identifier):
-            if _prefer_new_identifier(fact.object.identifier, existing_identifier):
-                plan.supersede_records.append(record)
-                continue
-            plan.bump_record = record
-            return plan
-
-        if (
-            _has_explicit_correction(fact.evidence_quote)
-            and _semantic_topic_overlap(
-                fact,
-                record,
+    if decision.action == "supersede":
+        if not valid_indexes:
+            raise ValueError(
+                "Semantic reconciliation selected no valid supersede records."
             )
-            >= 2
-        ):
-            correction_records.append(record)
-
-    if correction_records:
-        plan.supersede_records.extend(
-            record
-            for record in correction_records
-            if record not in plan.supersede_records
+        return SemanticReconciliationPlan(
+            supersede_records=[collision_records[index] for index in valid_indexes]
         )
-    return plan
+
+    raise ValueError(f"Unsupported semantic reconciliation action: {decision.action}")
+
+
+def _apply_procedural_reconciliation_decision(
+    decision: ProceduralReconciliationDecision,
+    existing_rules: list[ProceduralRule],
+) -> ProceduralReconciliationPlan:
+    """Convert a structured procedural reconciliation decision into a plan.
+
+    Args:
+        decision (ProceduralReconciliationDecision): LLM decision.
+        existing_rules (list[ProceduralRule]): Active existing rules.
+
+    Returns:
+        ProceduralReconciliationPlan: Final procedural reconciliation plan.
+    """
+
+    if decision.confidence == "low":
+        return ProceduralReconciliationPlan(action="append")
+    if decision.action == "append":
+        return ProceduralReconciliationPlan(action="append")
+    if decision.action == "skip":
+        return ProceduralReconciliationPlan(action="skip")
+
+    valid_indexes = [
+        index
+        for index in sorted(set(decision.replace_indexes))
+        if 0 <= index < len(existing_rules)
+    ]
+    if not valid_indexes:
+        raise ValueError("Procedural reconciliation selected no valid replace indexes.")
+    return ProceduralReconciliationPlan(action="replace", replace_indexes=valid_indexes)
 
 
 def _semantic_reconciliation_prompt(
@@ -353,8 +372,16 @@ def _semantic_reconciliation_prompt(
         "- supersede: the new fact corrects or replaces selected older records; "
         "write the new fact and mark selected records dormant.\n"
         "- coexist: the new fact can validly live alongside the old records.\n\n"
+        "Exact duplicates have already been handled before this classifier. "
+        "Same-slot records with changed evidence or identifier must be judged "
+        "from meaning, not string similarity alone.\n\n"
         "Be conservative. Do not supersede unless the new evidence clearly "
         "corrects, replaces, or makes the old record stale.\n\n"
+        "For current-state facts, choose supersede when the new evidence says "
+        "the current situation has changed from an older state, even if the "
+        "older state may have been historically true. Choose coexist when the "
+        "records describe different people, concerns, events, or stable facts "
+        "that can all remain true.\n\n"
         f"New fact: category={fact.category}; predicate={fact.predicate}; "
         f"object={fact.object.type}:{fact.object.identifier}; "
         f"evidence={fact.evidence_quote!r}\n\n"
@@ -392,6 +419,9 @@ def _procedural_reconciliation_prompt(
         "replacement for selected existing rules.\n"
         "- skip: the new rule duplicates existing guidance or is weaker than "
         "what is already stored.\n\n"
+        "Exact duplicate rule text has already been handled before this "
+        "classifier. Judge conflicts, negations, and specificity from meaning, "
+        "not marker words alone.\n\n"
         "Be conservative about replace. Only replace when selected existing "
         "rules are genuinely stale, weaker, or contradictory.\n\n"
         f"New rule: id={new_rule.id!r}; rule={new_rule.rule!r}; "
@@ -435,9 +465,9 @@ async def plan_semantic_write_llm_primary(
     if not collision_records:
         return SemanticReconciliationPlan()
 
-    deterministic = plan_semantic_write(fact, collision_records)
-    if deterministic.bump_record is not None:
-        return deterministic
+    exact_duplicate = _find_exact_duplicate_semantic_record(fact, collision_records)
+    if exact_duplicate is not None:
+        return SemanticReconciliationPlan(bump_record=exact_duplicate)
     if llm_client is None:
         raise RuntimeError("Semantic reconciliation requires an LLM client.")
 
@@ -454,131 +484,7 @@ async def plan_semantic_write_llm_primary(
         )
         raise
 
-    if decision.confidence == "low" or decision.action == "coexist":
-        return SemanticReconciliationPlan()
-
-    valid_indexes = [
-        index
-        for index in sorted(set(decision.record_indexes))
-        if 0 <= index < len(collision_records)
-    ]
-    if decision.action == "bump":
-        if len(valid_indexes) != 1:
-            raise ValueError("Semantic reconciliation selected invalid bump index.")
-        return SemanticReconciliationPlan(
-            bump_record=collision_records[valid_indexes[0]]
-        )
-
-    if decision.action == "supersede":
-        if not valid_indexes:
-            raise ValueError(
-                "Semantic reconciliation selected no valid supersede records."
-            )
-        return SemanticReconciliationPlan(
-            supersede_records=[collision_records[index] for index in valid_indexes]
-        )
-
-    raise ValueError(f"Unsupported semantic reconciliation action: {decision.action}")
-
-
-def _procedural_polarity(text: str) -> Literal["negative", "positive"]:
-    """Return the coarse polarity of a procedural preference.
-
-    Args:
-        text (str): Procedural rule/evidence text.
-
-    Returns:
-        Literal["negative", "positive"]: ``"negative"`` for stop/avoid style
-        requests, otherwise ``"positive"``.
-    """
-
-    lowered = text.lower()
-    if any(marker in lowered for marker in _PROCEDURAL_NEGATION_MARKERS):
-        return "negative"
-    return "positive"
-
-
-def _procedural_rule_signature(rule: ProceduralRule) -> str:
-    """Return one text blob for conflict and dedup checks.
-
-    Args:
-        rule (ProceduralRule): Procedural rule to serialize.
-
-    Returns:
-        str: Combined procedural rule text and evidence.
-    """
-
-    return " ".join([rule.rule, *rule.evidence]).strip()
-
-
-def _prefer_new_rule(new_rule: str, existing_rule: str) -> bool:
-    """Return whether a new rule is more specific than an existing one.
-
-    Args:
-        new_rule (str): Candidate replacement rule text.
-        existing_rule (str): Existing stored rule text.
-
-    Returns:
-        bool: ``True`` when the new rule has more specificity.
-    """
-
-    new_tokens = tokenize_meaningful(new_rule)
-    existing_tokens = tokenize_meaningful(existing_rule)
-    new_specificity = (len(new_tokens), len(new_rule.strip()))
-    existing_specificity = (len(existing_tokens), len(existing_rule.strip()))
-    return new_specificity > existing_specificity
-
-
-def plan_procedural_rule_write(
-    new_rule: ProceduralRule,
-    existing_rules: list[ProceduralRule],
-) -> ProceduralReconciliationPlan:
-    """Return whether a procedural rule should append, replace, or skip.
-
-    Args:
-        new_rule (ProceduralRule): New procedural rule to reconcile.
-        existing_rules (list[ProceduralRule]): Existing procedural rules.
-
-    Returns:
-        ProceduralReconciliationPlan: Reconciliation action for the new rule.
-    """
-
-    new_signature = _procedural_rule_signature(new_rule)
-    new_text = new_signature.lower().strip()
-    new_tokens = tokenize_meaningful(new_signature)
-    new_polarity = _procedural_polarity(new_signature)
-    replace_indexes: list[int] = []
-
-    for index, existing_rule in enumerate(existing_rules):
-        existing_signature = _procedural_rule_signature(existing_rule)
-        existing_text = existing_signature.lower().strip()
-        existing_tokens = tokenize_meaningful(existing_signature)
-
-        if existing_text == new_text:
-            return ProceduralReconciliationPlan(action="skip")
-
-        overlap = len(new_tokens & existing_tokens)
-        subset_overlap = (
-            overlap >= 2
-            and new_tokens
-            and existing_tokens
-            and (new_tokens <= existing_tokens or existing_tokens <= new_tokens)
-        )
-        if subset_overlap:
-            if _prefer_new_rule(new_rule.rule, existing_rule.rule):
-                replace_indexes.append(index)
-                continue
-            return ProceduralReconciliationPlan(action="skip")
-
-        if overlap >= 2 and new_polarity != _procedural_polarity(existing_signature):
-            replace_indexes.append(index)
-
-    if replace_indexes:
-        return ProceduralReconciliationPlan(
-            action="replace",
-            replace_indexes=sorted(set(replace_indexes)),
-        )
-    return ProceduralReconciliationPlan(action="append")
+    return _apply_semantic_reconciliation_decision(decision, collision_records)
 
 
 async def plan_procedural_rule_write_llm_primary(
@@ -601,9 +507,11 @@ async def plan_procedural_rule_write_llm_primary(
     if not existing_rules:
         return ProceduralReconciliationPlan(action="append")
 
-    deterministic = plan_procedural_rule_write(new_rule, existing_rules)
-    if deterministic.action == "skip":
-        return deterministic
+    if (
+        _find_exact_duplicate_procedural_rule_index(new_rule, existing_rules)
+        is not None
+    ):
+        return ProceduralReconciliationPlan(action="skip")
     if llm_client is None:
         raise RuntimeError("Procedural reconciliation requires an LLM client.")
 
@@ -622,18 +530,4 @@ async def plan_procedural_rule_write_llm_primary(
         )
         raise
 
-    if decision.confidence == "low":
-        return ProceduralReconciliationPlan(action="append")
-    if decision.action == "append":
-        return ProceduralReconciliationPlan(action="append")
-    if decision.action == "skip":
-        return ProceduralReconciliationPlan(action="skip")
-
-    valid_indexes = [
-        index
-        for index in sorted(set(decision.replace_indexes))
-        if 0 <= index < len(existing_rules)
-    ]
-    if not valid_indexes:
-        raise ValueError("Procedural reconciliation selected no valid replace indexes.")
-    return ProceduralReconciliationPlan(action="replace", replace_indexes=valid_indexes)
+    return _apply_procedural_reconciliation_decision(decision, existing_rules)

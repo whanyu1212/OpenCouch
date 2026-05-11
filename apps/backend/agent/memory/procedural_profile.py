@@ -33,7 +33,7 @@ Module layout:
 - :func:`aput_procedural_profile` — write; serializes the pydantic
   model to a dict so the store layer stays model-agnostic.
 - :func:`aupsert_procedural_rule` — load → reconcile → put convenience
-  for duplicate and conflict handling.
+  for duplicate handling and LLM-primary conflict reconciliation.
 - :func:`aadd_procedural_rule` — convenience wrapper that routes
   through the upsert helper and returns only the updated profile,
   for callers that don't need the upsert metadata.
@@ -73,8 +73,8 @@ from agent.memory.models import (
 )
 from agent.memory.reconciliation import (
     ProceduralReconciliationPlan,
-    plan_procedural_rule_write,
     plan_procedural_rule_write_llm_primary,
+    plan_procedural_rule_write_without_llm,
 )
 from agent.memory.store import MemoryStore, Namespace
 from llm.base import BaseLLMClient
@@ -321,7 +321,7 @@ async def aupsert_procedural_rule(
     def _mutate(
         profile: ProceduralProfile,
     ) -> tuple[ProceduralUpsertResult, bool]:
-        plan = plan_procedural_rule_write(rule, profile.rules)
+        plan = plan_procedural_rule_write_without_llm(rule, profile.rules)
         return _apply_plan(profile, plan)
 
     return await _mutate_procedural_profile(
