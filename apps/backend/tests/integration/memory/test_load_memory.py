@@ -23,6 +23,7 @@ refactor fixed:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -893,10 +894,11 @@ def _make_episodic_record_value(
     ``stored_arc.model_dump(mode='json')``.
     """
 
+    stored_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return {
         "session_id": session_id,
-        "started_at": "2026-04-09T12:00:00Z",
-        "ended_at": "2026-04-09T12:30:00Z",
+        "started_at": stored_at,
+        "ended_at": stored_at,
         "duration_seconds": 1800,
         "turn_count": 8,
         "primary_themes": primary_themes or ["work stress"],
@@ -907,8 +909,8 @@ def _make_episodic_record_value(
         "crisis_level_max": 0,
         "id": "arc-test",
         "owner_id": "thread-test",
-        "created_at": "2026-04-09T12:30:00Z",
-        "last_referenced_at": "2026-04-09T12:30:00Z",
+        "created_at": stored_at,
+        "last_referenced_at": stored_at,
         "user_visible": True,
     }
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Any
+
 from agent.memory.models import EntityRef, MemoryWrite
 from agent.memory.semantic_writes import (
     apply_semantic_write,
@@ -12,6 +15,44 @@ from agent.memory.semantic_writes import (
     write_new_semantic_fact,
 )
 from agent.memory.store import OpenCouchMemoryStore
+from llm.base import BaseLLMClient, StructuredResponseT
+
+
+class _FakeReconciliationLLM(BaseLLMClient):
+    """Fake semantic reconciliation classifier for unit tests."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        raise AssertionError("Text generation is not used by reconciliation.")
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> StructuredResponseT:
+        response: dict[str, Any] = {
+            "action": "supersede",
+            "record_indexes": [0],
+            "reason": "The new fact is a more specific replacement.",
+            "confidence": "high",
+        }
+        return response_schema(**response)
 
 
 def _memory_write() -> MemoryWrite:
@@ -192,7 +233,7 @@ async def test_apply_semantic_write_supersedes_stale_same_slot_record() -> None:
         owner_id="user-1",
         write=new_write,
         existing_records=existing_records,
-        llm_client=None,
+        llm_client=_FakeReconciliationLLM(),
         write_timing="immediate",
         write_reason="more specific",
         policy_version="test_v1",

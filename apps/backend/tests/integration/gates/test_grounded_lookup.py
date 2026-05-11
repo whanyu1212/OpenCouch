@@ -147,6 +147,7 @@ async def test_turn_dispatch_routes_grounded_lookup_request() -> None:
             "query": "affordable counselling services in Singapore",
             "reasoning": "The user asked for external service information.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 
@@ -178,6 +179,7 @@ async def test_turn_dispatch_routes_subjective_check_to_therapeutic() -> None:
             "route": "therapeutic",
             "reasoning": "The user is asking for subjective support.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 
@@ -198,6 +200,7 @@ async def test_turn_dispatch_requires_grounded_lookup_query() -> None:
             "route": "grounded_lookup",
             "reasoning": "The model selected lookup but omitted the query.",
             "confidence": "high",
+            "active_flow_action": "none",
         }
     )
 

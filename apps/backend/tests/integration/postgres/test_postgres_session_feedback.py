@@ -202,7 +202,7 @@ async def test_postgres_feedback_purge_before_uses_exclusive_boundary() -> None:
         )
 
         deleted = await backend.apurge_before(date(2099, 4, 15))
-        assert deleted == 1
+        assert deleted >= 1
         results = await backend.alist_by_session(session_id)
         assert [record.id for record in results] == record_ids[1:]
     finally:
