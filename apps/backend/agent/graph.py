@@ -153,6 +153,7 @@ def build_initial_state(
         diagnostics={},
         route="",
         turn_lifecycle={"active_flow": "none", "action": "none"},
+        memory_reference={"mode": "none"},
         crisis_audit={},
         grounded_lookup={"query": "", "status": "not_attempted"},
         inferred_location="",

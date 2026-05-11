@@ -33,6 +33,7 @@ from agent.runtime_context import WorkflowContext
 from agent.state import (
     AgentState,
     ExerciseState,
+    MemoryReferenceState,
     ProceduralProfileState,
     SessionMemoryState,
     SessionProgressState,
@@ -91,6 +92,7 @@ class TherapeuticSubgraphInput(TypedDict):
     session_progress: SessionProgressState
     exercise_state: ExerciseState
     turn_lifecycle: TurnLifecycleState
+    memory_reference: MemoryReferenceState
     therapeutic_approach: NotRequired[str | None]
     diagnostics: NotRequired[dict[str, Any]]
 

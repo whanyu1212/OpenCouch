@@ -25,7 +25,8 @@ def _format_working_memory(state: AgentState) -> str:
     snippets = format_working_memory_entries(state.get("working_memory", []))
     if not snippets:
         return ""
-    if not _proactive_recall_enabled(state):
+    explicit_reference = _explicit_memory_reference_requested(state)
+    if not _proactive_recall_enabled(state) and not explicit_reference:
         return (
             "\nPrivate memory context is available for this turn, but proactive "
             "recall is off. Use it only as a silent signal for pacing and "
@@ -33,6 +34,8 @@ def _format_working_memory(state: AgentState) -> str:
             "facts, events, quotes, past sessions, or memories.\n"
         )
     joined = "\n".join(f"- {snippet}" for snippet in snippets)
+    if explicit_reference:
+        return f"\nRelevant context requested by the user:\n{joined}\n"
     return f"\nRelevant context from past sessions:\n{joined}\n"
 
 
@@ -116,6 +119,17 @@ def _format_recall_toggle_constraint(state: AgentState) -> str:
             "support or coaching."
         )
 
+    if _explicit_memory_reference_requested(state):
+        return (
+            "\n\n═══ Memory reference guidance (proactive recall: OFF; explicit "
+            "user request) ═══\n"
+            "The user is explicitly asking to recap or continue from prior "
+            "conversation context. For this turn only, you may answer from "
+            "retrieved context when it is available. Be concrete about what "
+            "was worked out, what helped, or where to continue. Do not mention "
+            "memory storage, retrieval, or internal records."
+        )
+
     # Recall OFF (default): silent-shaping constraint.
     return (
         "\n\n═══ Memory reference guidance (proactive recall: OFF) ═══\n"
@@ -129,6 +143,13 @@ def _format_recall_toggle_constraint(state: AgentState) -> str:
 def _proactive_recall_enabled(state: AgentState) -> bool:
     procedural_profile = state.get("procedural_profile", {}) or {}
     return bool(procedural_profile.get("proactive_recall_enabled", False))
+
+
+def _explicit_memory_reference_requested(state: AgentState) -> bool:
+    memory_reference = state.get("memory_reference", {}) or {}
+    if not isinstance(memory_reference, dict):
+        return False
+    return memory_reference.get("mode") == "explicit"
 
 
 def _has_episodic_context(state: AgentState) -> bool:

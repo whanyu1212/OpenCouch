@@ -47,6 +47,7 @@ def _dispatch_update(
                 "confidence": plan.confidence,
                 "active_flow": plan.active_flow,
                 "active_flow_action": plan.active_flow_action,
+                "memory_reference_mode": plan.memory_reference_mode,
             },
         ),
     }
@@ -57,6 +58,7 @@ def _dispatch_update(
             "active_flow": plan.active_flow,
             "action": plan.active_flow_action,
         },
+        "memory_reference": {"mode": plan.memory_reference_mode},
         "diagnostics": diagnostics,
     }
     active_flow_delta = dict(plan.active_flow_delta)

@@ -103,6 +103,8 @@ Evals are split by purpose:
   correction/current-fact recall, and no-memory or unrelated-memory boundaries.
   Use `memory_episodic_recall_robustness_v1.json` for session-summary catch-up,
   query-driven episodic recall, and mixed semantic plus episodic continuity.
+  Use `session_summary_write_recall_v1.json` for conversation-to-session-arc
+  writes and later recall of generated episodic memory.
 - `runtime_recovery_trajectory_eval.py`: Postgres-first runtime recovery checks
   for thread-lock serialization, cross-thread isolation, interrupted mutation
   recovery, rotation-required leases, foreign mutation markers, and
@@ -154,6 +156,7 @@ apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eva
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_cross_feature_trajectory_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_recall_robustness_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_episodic_recall_robustness_v1.json --mode live --judge-mode live
+apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/session_summary_write_recall_v1.json --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
 ```
 
@@ -254,6 +257,9 @@ Current coverage:
 - focused episodic recall robustness trajectories for latest-session catch-up,
   older-session query recall after an opening turn, no-session transparency,
   unrelated-session hygiene, and combined semantic plus episodic recall
+- focused session-summary write and recall trajectories for generated
+  `StoredSessionArc` quality, thin-session no-write behavior, side-trip
+  summary hygiene, and later recall of finalized episodic memory
 - runtime recovery trajectories for same-thread concurrency serialization,
   cross-thread isolation, failed-turn interruption, foreign mutation markers,
   rotation-required session leases, explicit recovery, and auto-finalization

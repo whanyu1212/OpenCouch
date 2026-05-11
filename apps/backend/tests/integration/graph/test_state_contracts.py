@@ -99,6 +99,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         memory_action_type: str | None = None,
         lookup_query: str | None = None,
         active_flow_action: str = "none",
+        memory_reference_mode: str = "none",
         step_state: str = "hold",
         crisis_level: int = 0,
         stream_text: str = "unused",
@@ -110,6 +111,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         self.memory_action_type = memory_action_type
         self.lookup_query = lookup_query
         self.active_flow_action = active_flow_action
+        self.memory_reference_mode = memory_reference_mode
         self.step_state = step_state
         self.crisis_level = crisis_level
         self.stream_text = stream_text
@@ -170,6 +172,7 @@ class _FakeDispatchLLM(BaseLLMClient):
                 memory_action_type=self.memory_action_type,
                 query=self.lookup_query,
                 active_flow_action=self.active_flow_action,
+                memory_reference_mode=self.memory_reference_mode,
                 reasoning="contract test turn dispatch",
                 confidence="high",
             )
@@ -360,9 +363,33 @@ async def test_turn_dispatch_therapeutic_channel_contract() -> None:
             "turn_lifecycle",
             "memory_control",
             "grounded_lookup",
+            "memory_reference",
             "diagnostics",
         },
     )
+    assert command.update["memory_reference"] == {"mode": "none"}
+
+
+@pytest.mark.asyncio
+async def test_turn_dispatch_marks_explicit_memory_reference_turns() -> None:
+    """Turn dispatch should carry one-turn permission for recall requests."""
+
+    command = await run_turn_dispatch_node(
+        _build_state("What did we work out for the presentation?"),
+        cast(
+            Any,
+            _FakeRuntime(
+                llm_client=_FakeDispatchLLM(
+                    response_style="supportive",
+                    therapeutic_approach="none",
+                    memory_reference_mode="explicit",
+                )
+            ),
+        ),
+    )
+
+    assert command.goto == "load_memory_node"
+    assert command.update["memory_reference"] == {"mode": "explicit"}
 
 
 @pytest.mark.asyncio
@@ -392,6 +419,7 @@ async def test_turn_dispatch_memory_control_channel_contract() -> None:
             "turn_lifecycle",
             "memory_control",
             "grounded_lookup",
+            "memory_reference",
             "diagnostics",
         },
     )
@@ -435,6 +463,7 @@ async def test_turn_dispatch_memory_mutation_clears_exercise_state() -> None:
             "turn_lifecycle",
             "memory_control",
             "grounded_lookup",
+            "memory_reference",
             "diagnostics",
             "exercise_state",
         },
@@ -501,6 +530,7 @@ async def test_turn_dispatch_grounded_lookup_channel_contract() -> None:
             "turn_lifecycle",
             "memory_control",
             "grounded_lookup",
+            "memory_reference",
             "diagnostics",
         },
     )

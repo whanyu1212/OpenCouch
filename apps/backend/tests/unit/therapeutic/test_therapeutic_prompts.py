@@ -59,6 +59,7 @@ def _make_state(
     *,
     rules: list[str] | None = None,
     recall_enabled: bool | None = None,
+    memory_reference_mode: str = "none",
     working_memory: list[Any] | None = None,
     crisis: CrisisAssessment | None = None,
 ) -> AgentState:
@@ -91,6 +92,7 @@ def _make_state(
         "session_memory": session_memory,
         "procedural_profile": procedural_profile,
         "turn_lifecycle": {"active_flow": "none", "action": "none"},
+        "memory_reference": {"mode": memory_reference_mode},
     }
     if crisis is not None:
         state["crisis"] = crisis
@@ -698,3 +700,35 @@ class TestTherapeuticResponsePrompt:
         assert "Private memory context is available" in prompt
         assert "Sarah" not in prompt
         assert "panic starts" not in prompt
+
+    def test_explicit_memory_reference_exposes_retrieved_context_once(self) -> None:
+        """Explicit recall requests can use retrieved context with recall off."""
+
+        state = _make_state(
+            recall_enabled=False,
+            memory_reference_mode="explicit",
+            working_memory=[
+                {
+                    "type": "episodic",
+                    "summary": (
+                        "worked on presentation anxiety and chose a two-minute "
+                        "opening practice."
+                    ),
+                    "primary_themes": ["presentation anxiety"],
+                    "is_catch_up": True,
+                    "approach_used": "cbt",
+                    "approach_context": {
+                        "action_step": "Practice the two-minute opening."
+                    },
+                },
+            ],
+        )
+
+        prompt = build_therapeutic_response_prompt(state, response_style="supportive")
+        assert "Relevant context requested by the user:" in prompt
+        assert "two-minute opening" in prompt
+        assert "Private memory context is available" not in prompt
+
+        system_prompt = build_supportive_system_prompt(state)
+        assert "explicit user request" in system_prompt
+        assert "Be concrete about what was worked out" in system_prompt

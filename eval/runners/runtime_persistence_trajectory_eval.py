@@ -1061,6 +1061,12 @@ def _grade_step(
         artifact.get("stored_arc_exists"),
         expected,
     )
+    _grade_stored_arc(
+        failures,
+        label=f"{label}.stored_arc",
+        actual=artifact.get("stored_arc"),
+        expected=expected.get("stored_arc"),
+    )
 
     state = artifact.get("state_after")
     if isinstance(state, Mapping):
@@ -1396,6 +1402,74 @@ def _grade_mapping_expectation(
             )
 
 
+def _grade_stored_arc(
+    failures: list[str],
+    *,
+    label: str,
+    actual: Any,
+    expected: Any,
+) -> None:
+    if not isinstance(expected, Mapping):
+        return
+    if not isinstance(actual, Mapping):
+        failures.append(f"{label}: expected stored arc, got {actual!r}")
+        return
+
+    for key in (
+        "session_id",
+        "turn_count",
+        "approach_used",
+        "crisis_level_max",
+        "primary_themes",
+        "open_loops",
+        "resolved_threads",
+    ):
+        _expect_equal(failures, label, key, actual.get(key), expected)
+
+    _grade_text_collection(
+        failures,
+        label=f"{label}.summary",
+        values=actual.get("summary"),
+        contains=expected.get("summary_contains"),
+        absent=expected.get("summary_not_contains"),
+    )
+    for key in ("primary_themes", "open_loops", "resolved_threads"):
+        _grade_text_collection(
+            failures,
+            label=f"{label}.{key}",
+            values=actual.get(key),
+            contains=expected.get(f"{key}_contains"),
+            absent=expected.get(f"{key}_not_contains"),
+        )
+
+    _grade_mapping_expectation(
+        failures,
+        label=f"{label}.mood_arc",
+        actual=actual.get("mood_arc"),
+        expected=expected.get("mood_arc"),
+    )
+    _grade_text_collection(
+        failures,
+        label=f"{label}.mood_arc",
+        values=actual.get("mood_arc"),
+        contains=expected.get("mood_arc_contains"),
+        absent=expected.get("mood_arc_not_contains"),
+    )
+    _grade_mapping_expectation(
+        failures,
+        label=f"{label}.approach_context",
+        actual=actual.get("approach_context"),
+        expected=expected.get("approach_context"),
+    )
+    _grade_text_collection(
+        failures,
+        label=f"{label}.approach_context",
+        values=actual.get("approach_context"),
+        contains=expected.get("approach_context_contains"),
+        absent=expected.get("approach_context_not_contains"),
+    )
+
+
 def _grade_text_collection(
     failures: list[str],
     *,
@@ -1523,6 +1597,8 @@ def _compact_judge_steps(steps: Any) -> list[dict[str, Any]]:
             }
         if state:
             entry["state_after"] = _compact_judge_state(state)
+        if "stored_arc" in raw_step:
+            entry["stored_arc"] = raw_step.get("stored_arc")
         if "reopened" in raw_step:
             entry["reopened"] = raw_step.get("reopened")
         compact.append(

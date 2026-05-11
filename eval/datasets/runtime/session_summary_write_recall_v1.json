@@ -1,0 +1,850 @@
+{
+  "name": "session_summary_write_recall_v1",
+  "description": "Postgres-first runtime trajectories for session-end episodic summary writes and later recall.",
+  "cases": [
+    {
+      "id": "cbt-presentation-summary-writes-and-recalls",
+      "description": "A multi-turn CBT-style presentation anxiety session should write a useful episodic arc and recall it in a fresh thread.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-presentation",
+          "user_id": "{run_id}-user",
+          "message": "I have to present to the team tomorrow, and I'm scared I'll freeze and everyone will think I'm incompetent.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "presentation anxiety without crisis intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support with a catastrophic prediction.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "cbt",
+              "reasoning": "CBT fits the explicit prediction about freezing.",
+              "confidence": "high"
+            },
+            "response_text": "That freeze prediction sounds loud. Let's make it smaller by testing one piece of it.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local anxiety, no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-presentation",
+          "user_id": "{run_id}-user",
+          "message": "The prediction is: if I stumble once, the whole presentation is ruined. I can try a two-minute opening practice tonight.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe CBT planning",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is examining the prediction and planning a behavioral test.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "cbt",
+              "reasoning": "CBT remains the best fit for testing the prediction.",
+              "confidence": "high"
+            },
+            "response_text": "Good. Keep the test narrow: one two-minute opening, not the whole presentation.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local action step"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-presentation",
+          "user_id": "{run_id}-user",
+          "message": "That helps. I'll practice the two-minute opening and write one cue card before bed.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe action commitment",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user names a concrete action step.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "cbt",
+              "reasoning": "Brief reinforcement of the CBT action step fits.",
+              "confidence": "high"
+            },
+            "response_text": "That's specific enough to be doable: two minutes, one cue card, then stop.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local action step"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 6,
+            "turn_count": 3
+          }
+        },
+        {
+          "type": "end_session",
+          "thread_id": "{run_id}-presentation",
+          "scripted": {
+            "summarization": {
+              "arc": {
+                "session_id": "{run_id}-presentation",
+                "started_at": "2026-05-09T00:00:00Z",
+                "ended_at": "2026-05-09T00:08:00Z",
+                "duration_seconds": 480,
+                "turn_count": 3,
+                "primary_themes": ["presentation anxiety", "catastrophic prediction"],
+                "summary": "The user worked on presentation anxiety and the prediction that one stumble would ruin the whole presentation. They chose a small behavioral test: practice a two-minute opening and write one cue card before bed.",
+                "mood_arc": {
+                  "opened": "anxious",
+                  "closed": "more concrete"
+                },
+                "open_loops": ["practice the two-minute opening before bed"],
+                "resolved_threads": ["turned the freeze prediction into a small test"],
+                "approach_used": "cbt",
+                "approach_context": {
+                  "approach": "cbt",
+                  "thought_examined": "If I stumble once, the whole presentation is ruined.",
+                  "action_step": "Practice a two-minute opening and write one cue card before bed.",
+                  "tool_used": "behavioral_experiment"
+                }
+              },
+              "reason": "captured presentation anxiety CBT arc with one action step"
+            }
+          },
+          "expected": {
+            "stored_arc_exists": true,
+            "status_after": "absent",
+            "stored_arc": {
+              "summary_contains": ["presentation", "two-minute opening"],
+              "summary_not_contains": ["late caffeine", "Tokyo"],
+              "primary_themes_contains": ["presentation"],
+              "approach_used": "cbt",
+              "approach_context": {
+                "approach": "cbt"
+              },
+              "approach_context_contains": ["two-minute"]
+            }
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-presentation-recall",
+          "user_id": "{run_id}-user",
+          "message": "I'm back. What did we work out for the presentation?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe recall request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for therapeutic continuity from a prior session.",
+              "confidence": "high",
+              "active_flow_action": "none",
+              "memory_reference_mode": "explicit"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "cbt",
+              "reasoning": "Recall the prior CBT action step and make it concrete.",
+              "confidence": "high"
+            },
+            "response_text": "You worked out a small presentation test: practice the two-minute opening and write one cue card before bed.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no new durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "working_memory_count_min": 1,
+            "working_memory_contains": ["presentation", "two-minute"],
+            "episodic_hits_min": 1,
+            "response_text_contains": ["two-minute"],
+            "response_text_not_contains": ["late caffeine", "Tokyo"],
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "episodic_count": 1,
+            "sessions_contain": ["presentation", "two-minute"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-presentation",
+            "exists": true,
+            "status": "absent"
+          },
+          {
+            "thread_id": "{run_id}-presentation-recall",
+            "exists": true,
+            "status": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "summary_quality",
+            "question": "Does the stored arc capture the presentation anxiety, freeze/stumble prediction, and concrete two-minute opening/cue-card plan without noisy transcript detail?",
+            "weight": 1.3
+          },
+          {
+            "name": "approach_context",
+            "question": "Does the stored arc use CBT approach context appropriately, including the thought examined and concrete action step?",
+            "weight": 1.0
+          },
+          {
+            "name": "fresh_thread_recall",
+            "question": "Does the fresh-thread response use the generated session arc to answer the user's presentation recall request?",
+            "weight": 1.2
+          }
+        ]
+      }
+    },
+    {
+      "id": "thin-session-does-not-write-arc",
+      "description": "A thin small-talk/capability session should end without writing an episodic arc.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-thin",
+          "user_id": "{run_id}-user",
+          "message": "hi",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe greeting",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "Ordinary greeting.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Light greeting response.",
+              "confidence": "high"
+            },
+            "response_text": "Hi.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-thin",
+          "user_id": "{run_id}-user",
+          "message": "what can you do here?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe capability question",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "Capability question inside ordinary conversation.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "reasoning": "Answer briefly.",
+              "confidence": "high"
+            },
+            "response_text": "I can help you slow down, reflect, or work through a concrete moment.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "no durable fact"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "end_session",
+          "thread_id": "{run_id}-thin",
+          "scripted": {
+            "summarization": {
+              "arc": null,
+              "reason": "only two thin turns, no meaningful emotional arc"
+            }
+          },
+          "expected": {
+            "stored_arc_exists": false,
+            "status_after": "absent"
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "episodic_count": 0
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-thin",
+            "exists": true,
+            "status": "absent"
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "no_false_memory",
+            "question": "Does the runtime correctly avoid writing an episodic memory for a thin session with no substantive emotional arc?",
+            "weight": 1.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "panic-grounding-summary-writes-coping-context",
+      "description": "A concrete panic grounding session should write a useful coping-oriented episodic summary.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-panic-grounding",
+          "user_id": "{run_id}-user",
+          "message": "Panic hit after the meeting and I need to steady myself.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "panic support request without self-harm intent",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for grounding support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "reasoning": "PFA fits immediate panic support.",
+              "confidence": "high"
+            },
+            "response_text": "Start by lengthening the exhale and finding both feet on the floor.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local panic"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-panic-grounding",
+          "user_id": "{run_id}-user",
+          "message": "I can feel my feet now. Box breathing might help me keep going.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe grounding progress",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user reports grounding progress.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Box breathing is a concrete regulation skill.",
+              "confidence": "high"
+            },
+            "response_text": "Good. Do one box-breathing round: four in, four hold, four out, four hold.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local coping"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-panic-grounding",
+          "user_id": "{run_id}-user",
+          "message": "The box breathing and a cold drink helped. I want to remember that for next time.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe coping reflection",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user reflects on what helped during panic.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "dbt_skills",
+              "reasoning": "Reinforce the concrete coping context.",
+              "confidence": "high"
+            },
+            "response_text": "Noted for this session: box breathing and a cold drink helped steady the panic.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "held for session summary"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 6,
+            "turn_count": 3
+          }
+        },
+        {
+          "type": "end_session",
+          "thread_id": "{run_id}-panic-grounding",
+          "scripted": {
+            "summarization": {
+              "arc": {
+                "session_id": "{run_id}-panic-grounding",
+                "started_at": "2026-05-09T00:00:00Z",
+                "ended_at": "2026-05-09T00:07:00Z",
+                "duration_seconds": 420,
+                "turn_count": 3,
+                "primary_themes": ["panic", "grounding"],
+                "summary": "The user came in with panic after a meeting and got steadier by feeling their feet, using box breathing, and holding a cold drink.",
+                "mood_arc": {
+                  "opened": "panicked",
+                  "closed": "steadier"
+                },
+                "open_loops": [],
+                "resolved_threads": ["box breathing and a cold drink helped steady panic"],
+                "approach_used": "dbt_skills",
+                "approach_context": {
+                  "approach": "dbt_skills",
+                  "skills_used": ["box breathing"],
+                  "primary_domain": "distress_tolerance"
+                }
+              },
+              "reason": "captured panic grounding session"
+            }
+          },
+          "expected": {
+            "stored_arc_exists": true,
+            "status_after": "absent",
+            "stored_arc": {
+              "summary_contains": ["panic", "box breathing", "cold drink"],
+              "primary_themes_contains": ["panic"],
+              "summary_not_contains": ["presentation", "Tokyo"]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "episodic_count": 1,
+            "sessions_contain": ["panic", "box breathing"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-panic-grounding",
+            "exists": true,
+            "status": "absent"
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "coping_summary_quality",
+            "question": "Does the stored arc capture the panic context and the concrete coping strategies that helped, without bloated turn-by-turn recap?",
+            "weight": 1.3
+          },
+          {
+            "name": "future_recall_value",
+            "question": "Would this summary be useful as later catch-up memory for a future panic support turn?",
+            "weight": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "side-trip-lookup-does-not-dominate-summary",
+      "description": "A grounded lookup side trip inside an emotional session should not dominate the session summary.",
+      "modes": ["scripted", "live"],
+      "runtime": {
+        "memory_mode": "local",
+        "extract_in_foreground": true,
+        "finalize_active_sessions_on_close": false,
+        "speculative_memory_prefetch": false
+      },
+      "steps": [
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-side-trip",
+          "user_id": "{run_id}-user",
+          "message": "I'm stuck about a job offer because I'm afraid my parents will be disappointed if I take it.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe decision stress",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for support with a family-linked decision.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "motivational_interviewing",
+              "reasoning": "MI fits values and ambivalence around a decision.",
+              "confidence": "high"
+            },
+            "response_text": "It sounds like the offer is tangled up with wanting your parents not to feel let down.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local decision stress"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 2,
+            "turn_count": 1
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-side-trip",
+          "user_id": "{run_id}-user",
+          "message": "Before we continue, can you look up the current time in Tokyo?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe factual lookup request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "grounded_lookup",
+              "reasoning": "The user asks for an external current fact.",
+              "confidence": "high",
+              "query": "current time in Tokyo",
+              "active_flow_action": "none"
+            }
+          },
+          "expected": {
+            "route": "grounded_lookup",
+            "response_style": "grounded_lookup",
+            "status_after": "active",
+            "grounded_lookup": {
+              "status": "answered"
+            },
+            "transcript_length": 4,
+            "turn_count": 2
+          }
+        },
+        {
+          "type": "turn",
+          "thread_id": "{run_id}-side-trip",
+          "user_id": "{run_id}-user",
+          "message": "Back to the offer: I want the job, but I'm scared choosing it means disappointing my parents.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe decision stress continuation",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user returns to the emotional decision thread.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "motivational_interviewing",
+              "reasoning": "MI fits ambivalence and values.",
+              "confidence": "high"
+            },
+            "response_text": "There are two real pulls here: wanting the job and wanting to protect the relationship with your parents.",
+            "semantic_extraction": {
+              "facts": [],
+              "reason": "session-local decision stress"
+            },
+            "procedural_extraction": {
+              "rules": [],
+              "reason": "no style rule"
+            }
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "status_after": "active",
+            "transcript_length": 6,
+            "turn_count": 3
+          }
+        },
+        {
+          "type": "end_session",
+          "thread_id": "{run_id}-side-trip",
+          "scripted": {
+            "summarization": {
+              "arc": {
+                "session_id": "{run_id}-side-trip",
+                "started_at": "2026-05-09T00:00:00Z",
+                "ended_at": "2026-05-09T00:09:00Z",
+                "duration_seconds": 540,
+                "turn_count": 3,
+                "primary_themes": ["job decision", "family expectations"],
+                "summary": "The user explored ambivalence about a job offer and fear that taking it would disappoint their parents. The central tension was wanting the job while protecting the relationship with their family.",
+                "mood_arc": {
+                  "opened": "stuck",
+                  "closed": "clearer"
+                },
+                "open_loops": ["deciding how to talk with parents about the job offer"],
+                "resolved_threads": [],
+                "approach_used": "motivational_interviewing",
+                "approach_context": {
+                  "approach": "motivational_interviewing",
+                  "readiness_stage": "contemplation",
+                  "change_talk_themes": ["wants the job"],
+                  "sustain_talk_themes": ["fear of disappointing parents"]
+                }
+              },
+              "reason": "captured job offer ambivalence and family expectations"
+            }
+          },
+          "expected": {
+            "stored_arc_exists": true,
+            "status_after": "absent",
+            "stored_arc": {
+              "summary_contains": ["job offer", "parents"],
+              "summary_not_contains": ["Tokyo", "current time", "Sources"],
+              "open_loops_contains": ["parents"],
+              "approach_context_contains": ["parents"]
+            }
+          }
+        }
+      ],
+      "expected": {
+        "memory_snapshots": [
+          {
+            "owner_id": "{run_id}-user",
+            "episodic_count": 1,
+            "sessions_contain": ["job offer", "parents"],
+            "sessions_absent": ["Tokyo", "current time"]
+          }
+        ],
+        "thread_states": [
+          {
+            "thread_id": "{run_id}-side-trip",
+            "exists": true,
+            "status": "absent"
+          }
+        ]
+      },
+      "rubric": {
+        "min_judge_score": 0.78,
+        "dimensions": [
+          {
+            "name": "emotional_thread_focus",
+            "question": "Does the stored arc focus on the job-offer/family-expectations emotional thread rather than the factual lookup side trip?",
+            "weight": 1.4
+          },
+          {
+            "name": "summary_noise_control",
+            "question": "Does the summary avoid tool mechanics, source text, and unrelated Tokyo-current-time details?",
+            "weight": 1.1
+          }
+        ]
+      }
+    }
+  ]
+}

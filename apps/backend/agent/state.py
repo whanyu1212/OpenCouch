@@ -169,6 +169,18 @@ class TurnLifecycleState(TypedDict):
     action: Literal["none", "continue", "preserve", "resume", "clear"]
 
 
+class MemoryReferenceState(TypedDict):
+    """Current-turn permission to reference retrieved user memories.
+
+    ``turn_dispatch_node`` writes this after classifying the current safe
+    turn. It is distinct from the durable proactive-recall toggle: a user may
+    keep proactive recall off while explicitly asking "what did we work out
+    last time?" for this one turn.
+    """
+
+    mode: Literal["none", "explicit"]
+
+
 class CrisisAuditState(TypedDict):
     """Turn-scoped crisis-classifier provenance.
 
@@ -262,7 +274,8 @@ class AgentPrivateState(TypedDict):
     These fields are available to nodes during graph execution but are not part
     of the public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
     ``turn_lifecycle`` carries current-turn active-flow behavior from dispatch
-    to downstream nodes, ``crisis_audit`` feeds the crisis log, and
+    to downstream nodes, ``memory_reference`` controls one-turn permission to
+    cite retrieved memories, ``crisis_audit`` feeds the crisis log, and
     ``crisis_resource_lookup_node`` writes ``inferred_location`` /
     ``found_resources`` / ``resource_lookup_status`` for crisis-resource lookup
     turns.
@@ -270,6 +283,7 @@ class AgentPrivateState(TypedDict):
 
     route: NotRequired[str]
     turn_lifecycle: NotRequired[TurnLifecycleState]
+    memory_reference: NotRequired[MemoryReferenceState]
     crisis_audit: NotRequired[CrisisAuditState]
     inferred_location: NotRequired[str]
     found_resources: NotRequired[list[dict[str, str]]]

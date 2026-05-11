@@ -21,6 +21,7 @@ from llm.base import BaseLLMClient
 
 
 TurnRoute = Literal["memory_control", "grounded_lookup", "therapeutic"]
+MemoryReferenceMode = Literal["none", "explicit"]
 MemoryControlActionType = Literal[
     "list",
     "status",
@@ -75,6 +76,16 @@ class TurnDispatchDecision(BaseModel):
         default=None,
         description="User preference phrase for save_preference.",
     )
+    memory_reference_mode: MemoryReferenceMode = Field(
+        default="none",
+        description=(
+            "Use explicit only when route=therapeutic and the user asks the "
+            "assistant to answer from prior conversation context, such as what "
+            "was worked out, what helped last time, or where to continue. Use "
+            "none for ordinary topical continuity and for saved-memory "
+            "inspection/modification requests."
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -89,6 +100,7 @@ class TurnDispatchPlan:
     active_flow_delta: dict[str, object] = field(default_factory=dict)
     memory_action: MemoryControlAction | None = None
     grounded_lookup_query: str | None = None
+    memory_reference_mode: MemoryReferenceMode = "none"
 
 
 def build_turn_dispatch_prompt(state: AgentState) -> str:
@@ -143,6 +155,14 @@ def build_turn_dispatch_prompt(state: AgentState) -> str:
         "moves on without clearly confirming or canceling, choose the appropriate "
         "non-memory route.\n"
         "- If unsure, choose therapeutic.\n\n"
+        "Memory reference mode:\n"
+        "- Set memory_reference_mode=explicit only when route=therapeutic and "
+        "the user explicitly asks you to use prior conversation context in the "
+        "reply, e.g. 'what did we work out last time?', 'where did we leave "
+        "off?', or 'what helped when we talked about my presentation?'.\n"
+        "- Do not set explicit for ordinary topical mentions, small talk, current "
+        "emotional support, grounded lookups, or saved-memory inspection/"
+        "modification commands.\n\n"
         "When route=memory_control, set memory_action_type and the required fields:\n"
         "- list/status/confirm_pending/cancel_pending: no extra fields.\n"
         "- set_recall: enabled=true or false.\n"
@@ -293,6 +313,7 @@ def _plan_from_decision(
             active_flow_action=active_flow.action,
             active_flow_delta=active_flow.state_delta,
             memory_action=memory_action,
+            memory_reference_mode="none",
         )
 
     active_flow = resolve_active_flow_decision(
@@ -309,6 +330,7 @@ def _plan_from_decision(
             active_flow_action=active_flow.action,
             active_flow_delta=active_flow.state_delta,
             grounded_lookup_query=_required_text(decision.query, field_name="query"),
+            memory_reference_mode="none",
         )
 
     return TurnDispatchPlan(
@@ -318,6 +340,7 @@ def _plan_from_decision(
         active_flow=active_flow.active_flow,
         active_flow_action=active_flow.action,
         active_flow_delta=active_flow.state_delta,
+        memory_reference_mode=decision.memory_reference_mode,
     )
 
 

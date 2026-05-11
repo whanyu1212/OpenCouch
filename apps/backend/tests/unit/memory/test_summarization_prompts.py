@@ -132,6 +132,14 @@ class TestSummarizationSystemPrompt:
         assert "Language" in prompt
         assert "same language" in prompt.lower()
 
+    def test_system_prompt_tells_model_to_ignore_factual_side_requests(self) -> None:
+        """One-off lookup detours should not become episodic memory."""
+
+        prompt = build_summarization_system_prompt()
+        assert "brief side requests" in prompt
+        assert "factual lookups" in prompt
+        assert "assistant[grounded_lookup]" in prompt
+
 
 # ─── User prompt ──────────────────────────────────────────────────────
 
@@ -240,6 +248,30 @@ class TestSummarizationUserPrompt:
         # We check by counting non-empty role markers in the transcript section.
         user_lines = prompt.count("user:")
         assert user_lines >= 2  # both real messages rendered
+
+    def test_user_prompt_marks_assistant_response_styles(self) -> None:
+        """Summarizer should see grounded lookup turns as side-turn metadata."""
+
+        state = _make_state(
+            transcript=[
+                {"role": "user", "content": "Can you check the current time?"},
+                {
+                    "role": "assistant",
+                    "content": "Sources: official time service",
+                    "response_style": "grounded_lookup",
+                },
+            ]
+        )
+        prompt = build_summarization_user_prompt(
+            state,
+            session_id="session-style",
+            started_at="2026-04-10T12:00:00Z",
+            ended_at="2026-04-10T12:05:00Z",
+            duration_seconds=300,
+            turn_count=1,
+        )
+
+        assert "assistant[grounded_lookup]: Sources: official time service" in prompt
 
 
 # ─── Approach context prompt tests ───────────────────────────────────
