@@ -17,6 +17,8 @@ ALLOWED_THERAPEUTIC_OUTPUT_KEYS = {
     "response_text",
     "response_style",
     "therapeutic_approach",
+    "session_progress",
+    "response_guidance",
     "exercise_state",
     "diagnostics",
 }

@@ -784,9 +784,19 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
         "transcript": _jsonify(transcript),
         "transcript_length": len(transcript) if isinstance(transcript, list) else None,
         "assistant_turn_count": len(assistant_turns),
+        "session_progress": _jsonify(session_progress)
+        if isinstance(session_progress, Mapping)
+        else {},
+        "session_intent": session_progress.get("session_intent")
+        if isinstance(session_progress, Mapping)
+        else None,
+        "session_stage": session_progress.get("session_stage")
+        if isinstance(session_progress, Mapping)
+        else None,
         "turn_count": session_progress.get("turn_count")
         if isinstance(session_progress, Mapping)
         else None,
+        "response_guidance": state.get("response_guidance"),
         "working_memory": _jsonify(state.get("working_memory") or []),
         "working_memory_count": len(state.get("working_memory") or []),
         "session_memory": _jsonify(state.get("session_memory") or {}),
@@ -950,6 +960,9 @@ def _grade_step(
         "response_style",
         "therapeutic_approach",
         "session_action",
+        "session_intent",
+        "session_stage",
+        "response_guidance",
         "transcript_length",
         "assistant_turn_count",
         "turn_count",
@@ -1001,6 +1014,12 @@ def _grade_step(
         text="\n".join(str(text) for text in artifact.get("prompt_texts", [])),
         contains=expected.get("prompt_contains"),
         absent=expected.get("prompt_not_contains"),
+    )
+    _grade_expected_mapping(
+        failures,
+        label=f"{label}.session_progress",
+        actual=artifact.get("session_progress"),
+        expected=expected.get("session_progress"),
     )
     _grade_minimum(
         failures,

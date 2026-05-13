@@ -94,11 +94,43 @@ def _compose_system_prompt_with_state(
 
     rules_block = _format_procedural_rules_block(state)
     recall_block = _format_recall_toggle_constraint(state)
+    session_arc_block = _format_session_arc_response_block(state)
     active_flow_block = _format_active_flow_response_block(state)
     return (
         f"{knowledge}\n\n{instructions}{safety_block}"
-        f"{continuity_block}{rules_block}{recall_block}{active_flow_block}"
+        f"{continuity_block}{rules_block}{recall_block}"
+        f"{session_arc_block}{active_flow_block}"
     )
+
+
+def _format_session_arc_response_block(state: AgentState) -> str:
+    """Return private response guidance from therapeutic dispatch.
+
+    Args:
+        state: Current graph state.
+
+    Returns:
+        str: Optional system-prompt block for session-arc pacing.
+    """
+
+    session_progress = state.get("session_progress", {}) or {}
+    session_intent = session_progress.get("session_intent")
+    session_stage = session_progress.get("session_stage")
+    response_guidance = str(state.get("response_guidance") or "").strip()
+    if not (session_intent or session_stage or response_guidance):
+        return ""
+
+    lines = [
+        "\n\nCurrent session arc guidance:",
+        "- Treat this as private pacing guidance, not text to recite.",
+    ]
+    if session_intent:
+        lines.append(f"- session_intent: {session_intent}")
+    if session_stage:
+        lines.append(f"- session_stage: {session_stage}")
+    if response_guidance:
+        lines.append(f"- response_guidance: {response_guidance}")
+    return "\n".join(lines)
 
 
 def _format_active_flow_response_block(state: AgentState) -> str:

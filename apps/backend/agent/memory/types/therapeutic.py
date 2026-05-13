@@ -29,6 +29,10 @@ TherapeuticApproach = Literal[
     "none",
 ]
 
+SessionIntent = Literal["vent", "understand", "reflect", "work", "regulate", "close"]
+
+SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
+
 ExerciseStartBasis = Literal[
     "explicit_user_request",
     "accepted_assistant_offer",
@@ -41,6 +45,28 @@ class DispatchDecision(BaseModel):
 
     response_style: TherapeuticResponseStyle
     therapeutic_approach: TherapeuticApproach = "none"
+    session_intent: SessionIntent = Field(
+        default="vent",
+        description=(
+            "The user's conversational intent for this turn: vent, understand, "
+            "reflect, work, regulate, or close."
+        ),
+    )
+    session_stage: SessionStage = Field(
+        default="opening",
+        description=(
+            "The session arc stage for shaping the next reply: opening, "
+            "deepening, stabilizing, or closing."
+        ),
+    )
+    response_guidance: str = Field(
+        default="",
+        max_length=900,
+        description=(
+            "Compact private guidance for the next assistant reply. Describe "
+            "the posture and one useful next move; do not script user-visible text."
+        ),
+    )
     exercise_start_basis: ExerciseStartBasis = Field(
         description=(
             "Whether the user explicitly authorized starting a guided exercise "
@@ -57,6 +83,8 @@ class DispatchDecision(BaseModel):
 __all__ = [
     "TherapeuticResponseStyle",
     "TherapeuticApproach",
+    "SessionIntent",
+    "SessionStage",
     "ExerciseStartBasis",
     "DispatchDecision",
 ]

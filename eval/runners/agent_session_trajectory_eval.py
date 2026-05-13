@@ -498,6 +498,10 @@ class AgentSessionTrajectoryEvaluator(BaseEvaluator[AgentSessionCase]):
                             "working_memory_count": len(
                                 state.get("working_memory") or []
                             ),
+                            "session_progress": jsonify(
+                                state.get("session_progress") or {}
+                            ),
+                            "response_guidance": state.get("response_guidance"),
                             "session_memory": jsonify(
                                 state.get("session_memory") or {}
                             ),
@@ -685,6 +689,23 @@ def _grade_turn(
         artifact.get("session_action"),
         expected,
     )
+    session_progress = (
+        artifact.get("session_progress")
+        if isinstance(artifact.get("session_progress"), Mapping)
+        else {}
+    )
+    _expect_equal(
+        failures,
+        f"{label}.session_intent",
+        session_progress.get("session_intent"),
+        expected,
+    )
+    _expect_equal(
+        failures,
+        f"{label}.session_stage",
+        session_progress.get("session_stage"),
+        expected,
+    )
     _grade_text_contains(
         failures,
         label=f"{label}.response_text",
@@ -743,6 +764,12 @@ def _grade_turn(
         label=f"{label}.prompt_text",
         text=prompt_text,
         phrases=expected.get("prompt_contains", []),
+    )
+    _grade_expected_mapping(
+        failures,
+        label=f"{label}.session_progress",
+        actual=artifact.get("session_progress"),
+        expected=expected.get("session_progress"),
     )
     _grade_expected_mapping(
         failures,
@@ -905,6 +932,8 @@ def _judge_output(
                 "response_style": turn.get("response_style"),
                 "therapeutic_approach": turn.get("therapeutic_approach"),
                 "session_action": turn.get("session_action"),
+                "session_progress": turn.get("session_progress"),
+                "response_guidance": turn.get("response_guidance"),
                 "response_text": turn.get("response_text"),
                 "routing": turn.get("routing"),
                 "exercise_state": turn.get("exercise_state"),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent.prompts import load_prompt_source
 from agent.conversation import format_recent_history
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entries
@@ -35,6 +36,7 @@ _TRIGGER_LIST_SENTENCE = (
     f"<!-- triggers:start -->Trigger phrases include: "
     f"{_format_prompt_trigger_phrases()}.<!-- triggers:end -->"
 )
+_SESSION_STAGES = load_prompt_source("session_stages.md")
 
 
 _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
@@ -270,11 +272,27 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
         ),
     ),
     (
+        "session_arc_guidance",
+        (
+            "Also classify the current conversation arc for response shaping. "
+            "This does not change graph routing; it gives the response generator "
+            "private guidance about pacing.\n\n"
+            f"{_SESSION_STAGES}\n\n"
+            "Use these labels:\n"
+            "- session_intent: vent, understand, reflect, work, regulate, close.\n"
+            "- session_stage: opening, deepening, stabilizing, closing.\n"
+            "- response_guidance: one compact private note for the next reply. "
+            "It should name the helpful posture and one next move, not script "
+            "the assistant's exact words.\n\n"
+        ),
+    ),
+    (
         "output_contract",
         (
             "Return your decision in the structured schema. "
             "Always include exercise_start_basis. For non-exercise response "
             "styles, exercise_start_basis should usually be ambiguous_or_none. "
+            "Also include session_intent, session_stage, and response_guidance. "
             "Keep the reasoning to one short sentence — it's for debugging, "
             "not for the user."
         ),
@@ -329,9 +347,21 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
     else:
         exercise_block = ""
 
+    session_progress = state.get("session_progress", {}) or {}
+    prior_intent = session_progress.get("session_intent") or "(not yet set)"
+    prior_stage = session_progress.get("session_stage") or "(not yet set)"
+    turn_count = session_progress.get("turn_count", "?")
+    progress_block = (
+        "Current session progress:\n"
+        f"- turn_count: {turn_count}\n"
+        f"- prior session_intent: {prior_intent}\n"
+        f"- prior session_stage: {prior_stage}\n"
+    )
+
     return (
         f"Recent conversation:\n{history_block}\n\n"
         f"{memory_block}\n"
+        f"{progress_block}\n"
         f"{exercise_block}\n"
         f"Current user message:\nuser: {state['message']}\n\n"
         "Which therapeutic response_style should handle this turn?"

@@ -773,7 +773,13 @@ async def test_dispatch_default_channel_contract() -> None:
 
     _assert_allowed_keys(
         command.update,
-        {"response_style", "therapeutic_approach", "diagnostics"},
+        {
+            "response_style",
+            "therapeutic_approach",
+            "session_progress",
+            "response_guidance",
+            "diagnostics",
+        },
     )
 
 

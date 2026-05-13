@@ -82,6 +82,9 @@ class _FakeDispatchLLM(BaseLLMClient):
         response_style: str = "supportive",
         therapeutic_approach: str = "none",
         exercise_start_basis: str = "ambiguous_or_none",
+        session_intent: str | None = None,
+        session_stage: str | None = None,
+        response_guidance: str | None = None,
         should_raise: bool = False,
         text_should_raise: bool = False,
         crisis_level: int | None = None,
@@ -89,6 +92,9 @@ class _FakeDispatchLLM(BaseLLMClient):
         self.response_style = response_style
         self.therapeutic_approach = therapeutic_approach
         self.exercise_start_basis = exercise_start_basis
+        self.session_intent = session_intent
+        self.session_stage = session_stage
+        self.response_guidance = response_guidance
         self.should_raise = should_raise
         self.text_should_raise = text_should_raise
         self.crisis_level = crisis_level
@@ -172,16 +178,20 @@ class _FakeDispatchLLM(BaseLLMClient):
                 confidence="high",
                 active_flow_action="none",
             )
-        return cast(
-            StructuredResponseT,
-            DispatchDecision(
-                response_style=self.response_style,  # type: ignore[arg-type]
-                therapeutic_approach=self.therapeutic_approach,  # type: ignore[arg-type]
-                exercise_start_basis=self.exercise_start_basis,  # type: ignore[arg-type]
-                reasoning="fake dispatch decision",
-                confidence="high",
-            ),
-        )
+        decision_kwargs = {
+            "response_style": self.response_style,
+            "therapeutic_approach": self.therapeutic_approach,
+            "exercise_start_basis": self.exercise_start_basis,
+            "reasoning": "fake dispatch decision",
+            "confidence": "high",
+        }
+        if self.session_intent is not None:
+            decision_kwargs["session_intent"] = self.session_intent
+        if self.session_stage is not None:
+            decision_kwargs["session_stage"] = self.session_stage
+        if self.response_guidance is not None:
+            decision_kwargs["response_guidance"] = self.response_guidance
+        return cast(StructuredResponseT, DispatchDecision(**decision_kwargs))
 
 
 class _RecordingTextLLM(BaseLLMClient):
@@ -367,6 +377,35 @@ class TestDispatchNode:
         assert trace[-1]["decision"] == "supportive/cbt"
         assert trace[-1]["source"] == "llm_primary"
         assert trace[-1]["reason"] == "fake dispatch decision"
+
+    @pytest.mark.asyncio
+    async def test_llm_primary_writes_session_arc_guidance(self) -> None:
+        """Dispatch writes LLM-provided session arc signals for response prompts."""
+
+        fake = _FakeDispatchLLM(
+            response_style="reflective",
+            therapeutic_approach="cbt",
+            session_intent="understand",
+            session_stage="deepening",
+            response_guidance=(
+                "Name the pattern gently and ask one focused question about "
+                "what keeps it going."
+            ),
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state("I keep shutting down whenever someone pushes me.")
+        state["diagnostics"] = {}
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+        trace = cmd.update["diagnostics"]["routing_trace"]
+
+        assert cmd.update["session_progress"] == {
+            "session_intent": "understand",
+            "session_stage": "deepening",
+        }
+        assert "Name the pattern gently" in cmd.update["response_guidance"]
+        assert trace[-1]["session_intent"] == "understand"
+        assert trace[-1]["session_stage"] == "deepening"
 
     @pytest.mark.asyncio
     async def test_llm_path_routes_to_llm_pick(self) -> None:
