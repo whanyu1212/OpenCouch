@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
+from agent.memory.models import GuidancePermission, SessionIntent, SessionStage
 from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.memory.entries import WorkingMemoryEntry
 
@@ -89,15 +90,21 @@ class ProceduralProfileState(TypedDict):
 
 
 class SessionProgressState(TypedDict):
-    """Session-level counters.
+    """Session-level counters and arc signals.
 
     ``build_initial_state`` seeds ``turn_count`` for each turn, using
     checkpointed state when available. Persistent runtime summaries, feedback
-    records, and memory extractors read ``turn_count`` for provenance.
+    records, and memory extractors read ``turn_count`` for provenance. The
+    therapeutic dispatcher may also write ``session_intent`` and
+    ``session_stage`` to keep response generation aware of the conversation arc
+    without adding graph nodes.
     """
 
     turn_count: int
     is_guest: NotRequired[bool]
+    session_intent: NotRequired[SessionIntent]
+    session_stage: NotRequired[SessionStage]
+    guidance_permission: NotRequired[GuidancePermission]
 
 
 class ExerciseState(TypedDict):
@@ -284,6 +291,7 @@ class AgentPrivateState(TypedDict):
     route: NotRequired[str]
     turn_lifecycle: NotRequired[TurnLifecycleState]
     memory_reference: NotRequired[MemoryReferenceState]
+    response_guidance: NotRequired[str]
     crisis_audit: NotRequired[CrisisAuditState]
     inferred_location: NotRequired[str]
     found_resources: NotRequired[list[dict[str, str]]]

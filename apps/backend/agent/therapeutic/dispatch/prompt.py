@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent.prompts import load_prompt_source
 from agent.conversation import format_recent_history
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entries
@@ -35,6 +36,7 @@ _TRIGGER_LIST_SENTENCE = (
     f"<!-- triggers:start -->Trigger phrases include: "
     f"{_format_prompt_trigger_phrases()}.<!-- triggers:end -->"
 )
+_SESSION_STAGES = load_prompt_source("session_stages.md")
 
 
 _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
@@ -52,7 +54,11 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
             "general capability questions like 'Hi, what can you do for me?' — "
             "these are warm-up signals from someone reaching out for help, not "
             "literal requests for tool documentation. This is the most common "
-            "response style and the right default when in doubt.\n"
+            "response style and the right default when in doubt. Also use "
+            "supportive for repair turns where the user says the assistant "
+            "misunderstood, made assumptions, pushed too hard, was not helpful, "
+            "or was not listening; the reply should own the miss and reset "
+            "rather than defend or explain itself.\n"
             "- reflective: pattern-naming and gentle probing. Use when the user "
             "is describing a recurring pattern, asking 'why does this keep "
             "happening?' type questions, or surfacing a theme. Only pick this "
@@ -270,11 +276,45 @@ _SYSTEM_PROMPT_SECTIONS: tuple[tuple[str, str], ...] = (
         ),
     ),
     (
+        "session_arc_guidance",
+        (
+            "Also classify the current conversation arc for response shaping. "
+            "This does not change graph routing; it gives the response generator "
+            "private guidance about pacing.\n\n"
+            f"{_SESSION_STAGES}\n\n"
+            "Use these labels:\n"
+            "- session_intent: vent, understand, reflect, work, regulate, repair, close.\n"
+            "  - repair: the user is correcting the assistant, saying the "
+            "reply was not helpful, asking the assistant to stop a style of "
+            "response, or naming a rupture such as 'you're not listening', "
+            "'that's not what I meant', 'you're making assumptions', or "
+            "'stop analyzing me'. Usually choose supportive style, "
+            "guidance_permission=not_yet, and response_guidance that says to "
+            "acknowledge the miss, avoid defending, and ask at most one concise "
+            "reset question only if needed.\n"
+            "- session_stage: opening, deepening, stabilizing, closing.\n"
+            "- guidance_permission: unknown, not_yet, granted.\n"
+            "  - unknown: there is not enough signal yet, often greetings or "
+            "very unclear openings.\n"
+            "  - not_yet: the user is mainly venting, grieving, overwhelmed, "
+            "or needs to be heard; avoid advice, exercises, and structured "
+            "problem-solving unless they ask.\n"
+            "  - granted: the user asks for advice, options, next steps, "
+            "structured work, an exercise, or clearly accepts an offered next "
+            "step.\n"
+            "- response_guidance: one compact private note for the next reply. "
+            "It should name the helpful posture and one next move, not script "
+            "the assistant's exact words.\n\n"
+        ),
+    ),
+    (
         "output_contract",
         (
             "Return your decision in the structured schema. "
             "Always include exercise_start_basis. For non-exercise response "
             "styles, exercise_start_basis should usually be ambiguous_or_none. "
+            "Also include session_intent, session_stage, guidance_permission, "
+            "and response_guidance. "
             "Keep the reasoning to one short sentence — it's for debugging, "
             "not for the user."
         ),
@@ -329,9 +369,21 @@ def build_therapeutic_dispatch_prompt(state: AgentState) -> str:
     else:
         exercise_block = ""
 
+    session_progress = state.get("session_progress", {}) or {}
+    prior_intent = session_progress.get("session_intent") or "(not yet set)"
+    prior_stage = session_progress.get("session_stage") or "(not yet set)"
+    turn_count = session_progress.get("turn_count", "?")
+    progress_block = (
+        "Current session progress:\n"
+        f"- turn_count: {turn_count}\n"
+        f"- prior session_intent: {prior_intent}\n"
+        f"- prior session_stage: {prior_stage}\n"
+    )
+
     return (
         f"Recent conversation:\n{history_block}\n\n"
         f"{memory_block}\n"
+        f"{progress_block}\n"
         f"{exercise_block}\n"
         f"Current user message:\nuser: {state['message']}\n\n"
         "Which therapeutic response_style should handle this turn?"

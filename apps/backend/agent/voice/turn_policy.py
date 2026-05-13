@@ -7,11 +7,13 @@ from typing import Literal
 from livekit.agents import ChatContext
 from pydantic import BaseModel, Field
 
-from agent.voice.session_data import (
+from agent.therapeutic_policy import (
     GuidancePermission,
-    ProcessStage,
     SessionIntent,
     TherapeuticApproach,
+)
+from agent.voice.session_data import (
+    ProcessStage,
     TherapeuticFormulation,
     TherapeuticProcessState,
 )
@@ -151,11 +153,17 @@ def build_voice_turn_policy_prompt(
         "recent repeats when practical.\n"
         "- If the user sounds overwhelmed but has not consented to an exercise, "
         "turn_guidance should ask permission or offer a conversational micro-step.\n"
+        "- Use session_intent=repair when the user says the assistant missed "
+        "them, made assumptions, was not helpful, was not listening, or should "
+        "stop a style of response. For repair turns, usually set "
+        "guidance_permission=not_yet and exercise_consent=none. In "
+        "turn_guidance, tell the next reply to own the miss, avoid defending, "
+        "and reset to the user's stated meaning or preference.\n"
         "- Keep turn_guidance compact and usable as a system note for the next "
         "voice reply. It should guide posture and one next move, not produce a "
         "script.\n\n"
         "Labels:\n"
-        "- session_intent: vent, understand, reflect, work, regulate, close.\n"
+        "- session_intent: vent, understand, reflect, work, regulate, repair, close.\n"
         "- guidance_permission: unknown, not_yet, granted.\n"
         "- process_stage: hold, orient, identify, examine, shift, ground.\n"
         "- therapeutic_approach: motivational_interviewing, cbt, act, "

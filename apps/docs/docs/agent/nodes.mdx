@@ -11,7 +11,7 @@ Every graph node, filterable by category or capability. Each card is
 a technical datasheet: what it consumes, what it produces, which
 policies apply, and which file owns the implementation.
 
-Five categories map to distinct responsibilities:
+Four categories map to distinct responsibilities:
 
 - **Safety** — runs before any other branch and cannot be bypassed by
   response style, therapeutic approach, or memory mode (`crisis_gate`,
@@ -21,8 +21,6 @@ Five categories map to distinct responsibilities:
   `therapeutic_subgraph`)
 - **Memory** — retrieval and structured working context
   (`load_memory`)
-- **Extraction** — post-response LLM side effects that run in parallel
-  (`extract_facts`, `extract_procedural`)
 - **Terminal** — transcript finalization, pure state manipulation
   (`finalize_turn`)
 
@@ -45,9 +43,13 @@ crisis_gate
        └─ load_memory → therapeutic_subgraph
 ```
 
-All five "non-therapeutic" branches converge at `finalize_turn_node`,
+All non-therapeutic branches converge at `finalize_turn_node`,
 which always runs and emits the assistant turn into `history` and
 `transcript` via the `operator.add` reducer.
+
+Semantic and procedural extraction are not graph nodes anymore. The
+runtime schedules them after the graph reaches `END`, so memory writes
+do not extend the visible response path.
 
 ## Adding a new node
 
@@ -57,7 +59,10 @@ When you add a node to the graph, think through three things:
 
 **Does it write to a shared state field?** If multiple nodes write to the same field (like `diagnostics`, `session_progress`, or `exercise_state`), the field needs a reducer (`_merge_dicts` for dicts, `operator.add` for lists) in `AgentState`. Without a reducer, nodes will clobber each other's writes.
 
-**Can it run in parallel?** If the node has no ordering dependency with its siblings (the way the two extractors don't), wire it as a fan-out edge from its parent. The reducers handle concurrent writes safely.
+**Can it run in parallel?** If the work has no ordering dependency with
+the graph response path, consider making it a runtime side effect instead
+of adding graph fan-out. Reducers still handle concurrent diagnostic
+writes safely.
 
 **Is it a router or a worker?** Routing nodes return `Command(goto=...)` to short-circuit the pipeline; workers return a state delta and rely on a static edge. Add a router only when there is a real lifecycle boundary.
 

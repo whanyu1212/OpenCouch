@@ -72,6 +72,8 @@ class TherapeuticSubgraphOutput(TypedDict):
     response_style: NotRequired[str]
     session_action: NotRequired[SessionAction]
     therapeutic_approach: NotRequired[str | None]
+    session_progress: NotRequired[SessionProgressState]
+    response_guidance: NotRequired[str]
     exercise_state: NotRequired[ExerciseState]
     diagnostics: NotRequired[dict[str, Any]]
 
@@ -94,6 +96,7 @@ class TherapeuticSubgraphInput(TypedDict):
     turn_lifecycle: TurnLifecycleState
     memory_reference: MemoryReferenceState
     therapeutic_approach: NotRequired[str | None]
+    response_guidance: NotRequired[str]
     diagnostics: NotRequired[dict[str, Any]]
 
 

@@ -106,6 +106,6 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | `agent/nodes/crisis_log.py` | Always-on audit record writer (graph node) |
 | `agent/audit/crisis_log.py` | Backend protocol + in-memory + null implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
-| `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
+| `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
 | `agent/tools/grounded_search.py` | `find_crisis_resources` (called by `crisis_resource_lookup_node`) |

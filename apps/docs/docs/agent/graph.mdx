@@ -13,7 +13,7 @@ Every message follows the same pipeline: safety check first, then a
 safe-turn dispatcher for memory commands or factual lookups, then
 memory retrieval, response generation, and post-response memory
 evaluation. Some memory commits happen immediately; others wait for
-the shared session-end seam.
+the shared session-end path.
 Click any step below to see what it does.
 
 <AgentGraph />
@@ -22,11 +22,12 @@ Click any step below to see what it does.
 
 ## Topology
 
-The parent graph has **9 named nodes** plus the therapeutic subgraph
-(compiled as a single parent-level node) which hides 8 internal nodes
-(dispatcher + 7 response nodes). The crisis gate routes between branches
-via `Command(goto=...)`. `turn_dispatch_node` branches safe turns to
-memory control, grounded lookup, or the therapeutic flow. Post-response
+The parent graph has **10 named nodes**, including the therapeutic
+subgraph compiled as a single parent-level node. That subgraph now hides
+three internal nodes: dispatcher, shared therapeutic response, and guided
+exercise response. The crisis gate routes between branches via
+`Command(goto=...)`. `turn_dispatch_node` branches safe turns to memory
+control, grounded lookup, or the therapeutic flow. Post-response
 extractors run outside LangGraph as runtime-managed side effects.
 
 <GraphTopology />
@@ -51,7 +52,7 @@ finalize_turn_node → END
 ## Node responsibilities
 
 Each node has its own datasheet on the [Nodes page](/docs/agent/nodes) —
-filterable by category (safety, memory, routing, extraction, terminal)
+filterable by category (safety, routing, memory, terminal)
 or capability (LLM, retry, reducer, parallel). Every card shows the
 node's inputs, outputs, skip conditions, and source file.
 
@@ -118,10 +119,11 @@ failures outside the node's error handling.
 message is obviously small talk before making the LLM call.
 Greetings and acknowledgments skip extraction entirely.
 
-**Per-turn diagnostics.** Every node stamps timing and decision
-metadata into `state["diagnostics"]` via the `_merge_dicts` reducer.
-Keys include `load_memory_ms`, `crisis_gate_ms`, `extract_facts_ms`,
-`extract_procedural_ms`, and `turn_total_ms`.
+**Per-turn diagnostics.** Graph nodes and runtime side effects stamp
+timing and decision metadata into `state["diagnostics"]` via the
+`_merge_dicts` reducer. Keys include `load_memory_ms`,
+`crisis_gate_ms`, `extract_facts_ms`, `extract_procedural_ms`, and
+`turn_total_ms`.
 
 ## Runtime context
 
@@ -138,42 +140,41 @@ for the full breakdown.
 |---|---|
 | `agent/graph.py` | `build_agent_workflow()`, `build_initial_state()`, `state_to_output()`, `run_agent()` |
 | `agent/state.py` | `AgentState` TypedDict with reducer annotations and split input/output schemas |
-| `agent/working_memory.py` | `WorkingMemoryEntry` types, factory functions, formatters |
+| `agent/memory/entries.py` | `WorkingMemoryEntry` types, factory functions, formatters |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` with `TherapeuticSubgraphOutput` |
-| `agent/therapeutic/dispatch/` | LLM-primary response-style + therapeutic-approach classification with deterministic overrides/fallbacks |
+| `agent/therapeutic/dispatch/` | LLM-primary response-style + therapeutic-approach planning with local active-flow validation |
 | `agent/therapeutic/prompting/` | Therapeutic prompt composition, instructions, and on-demand working memory formatting |
 | `agent/therapeutic/exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and node implementation |
 | `agent/nodes/load_memory.py` | Retrieval orchestration node backed by `agent/memory/recall.py` |
-| `agent/nodes/crisis_gate.py` | Crisis branch routing backed by `agent/safety/service.py` |
+| `agent/nodes/crisis_gate.py` | Crisis branch routing backed by `agent/gates/safety/service.py` |
 | `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup before crisis response |
 | `agent/nodes/crisis_response.py` | Crisis response generation |
 | `agent/nodes/crisis_log.py` | Always-on audit log writer |
 | `agent/nodes/turn_dispatch.py` | Routes safe turns to memory control, grounded lookup, or therapeutic flow |
 | `agent/nodes/memory_control.py` | Executes memory commands (list, forget, recall toggle, save preference) |
 | `agent/nodes/grounded_answer.py` | Search-grounded factual replies |
-| `agent/nodes/commit_session_memory.py` | Session-end promotion node backed by `agent/memory/session_commit_service.py` |
-| `agent/nodes/summarize_session.py` | Session-end episodic summarization node backed by `agent/memory/episodic.py` |
+| `agent/runtime/turn_extraction.py` | Runtime-owned post-graph semantic/procedural extraction coordinator |
+| `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/session_commit_service.py` |
+| `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/episodic.py` |
 | `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
-| `agent/memory/small_talk_gate.py` | Pre-extractor small-talk heuristic |
+| `agent/memory/policy/small_talk.py` | Pre-extractor small-talk heuristic |
 | `agent/audit/crisis_log.py` | Audit-log backend protocol + in-memory implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
-| `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
+| `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
 | `agent/persistence.py` | `PersistentAgentRuntime` — configured persistent thread state |
 
 ## Adding a new therapeutic response style
 
 1. Create `agent/prompts/sources/response_styles/your_style.md` with the
    response style's knowledge content
-2. Create `agent/therapeutic/your_style.py` with the response node
-   function
-3. Add prompt-source wiring in `agent/therapeutic/prompting/sources.py`
+2. Add prompt-source wiring in `agent/therapeutic/prompting/sources.py`
    and instructions in `agent/therapeutic/prompting/instructions.py`
-4. Register the node in `agent/therapeutic/graph.py`
-   (`subgraph.add_node(...)`)
-5. Update the LLM dispatcher prompt in
+3. Update the shared response node only if the style needs special
+   runtime behavior beyond prompt composition
+4. Update the LLM dispatcher prompt in
    `agent/therapeutic/dispatch/prompt.py` to teach the classifier when to
    pick the new response style
-6. Add or update backend tests for the route and state contract
-7. Add a `STAGE_LABELS` entry in `agent/models.py` if the
+5. Add or update backend tests for the route and state contract
+6. Add a `STAGE_LABELS` entry in `agent/models.py` if the
    node name differs from the stage label vocabulary

@@ -152,7 +152,7 @@ This package is mostly infrastructure. The main runtime integration points are o
 
 ## Persistence Backend
 
-Postgres is the default durable backend (see `core/config.py:DEFAULT_PERSISTENCE_BACKEND`). SQLite remains a supported fallback selectable via `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` for local-only installs without Docker. The in-memory `OpenCouchMemoryStore` is used for `INCOGNITO` mode and tests.
+Postgres is the default durable backend (see `config.py:DEFAULT_PERSISTENCE_BACKEND`). SQLite remains a supported fallback selectable via `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` for local-only installs without Docker. The in-memory `OpenCouchMemoryStore` is used for `INCOGNITO` mode and tests.
 
 ## Practical Boundary
 

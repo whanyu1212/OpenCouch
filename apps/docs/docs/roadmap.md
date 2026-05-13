@@ -13,7 +13,7 @@ What's shipped, what's in progress, and what's planned.
 
 | Feature | What landed |
 |---|---|
-| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and LiveKit voice entrypoint. Lives in `apps/web/`. |
+| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and LiveKit voice entrypoint. Lives in `apps/web/`, but is temporarily behind the backend refactor and is not the primary dogfood path right now. |
 | **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
 | **Voice Chat (LiveKit)** | LiveKit-native worker with WebRTC room transport, `TherapeuticAgent` ↔ `CrisisAgent` handoffs, bounded `VoiceExerciseTask` (10 voice-allowlisted exercises), `@function_tool` declarations, and three-phase memory (startup load / mid-session retrieval / shutdown transcript replay). Lives in `apps/backend/agent/voice/`. |
 | **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /api/threads/{id}/end`. Postgres-first durable backend with incognito-safe in-memory mode and legacy SQLite fallback. |
@@ -21,6 +21,7 @@ What's shipped, what's in progress, and what's planned.
 | **Session Trajectory Eval** | Unified runner for short (inline) and long (checkpoint) trajectory datasets covering approach, boundary enforcement, crisis arcs, closing, venting, and response style transitions. Supports concurrent hybrid execution with `--concurrency`, `--case`, and `--verbose`. |
 | **Crisis Gate — LLM-only** | Crisis classification is a structured LLM call with strict truth-table enforcement. Provider failures surface through retries/errors instead of silently degrading to regex rules. |
 | **Routing — LLM-primary** | Crisis, therapeutic dispatch, grounded lookup, memory-control, guided-exercise selection, and memory write policy use LLM-owned classifiers with local validation and hard confirmation gates where needed. |
+| **Eval Harness** | Rebuilt eval suite with thin base runners, reusable LLM judges, standalone node contracts, parent-graph trajectories, runtime persistence/recovery cases, tool-quality checks, and live Postgres LLM smoke coverage. |
 | **Knowledge Overhaul** | `core_identity.md` defines assistant role, product stance, voice, therapeutic grounding, cultural sensitivity, repair patterns, and boundary-setting voice. `boundaries.md` expands redirection patterns and dependency framing. |
 | **OpenAI Embeddings** | `text-embedding-3-large` as default provider, Gemini as fallback. Hybrid RRF retrieval achieves 14/17 recall@5 vs 6/17 token-only. |
 
@@ -30,9 +31,9 @@ What's shipped, what's in progress, and what's planned.
 
 | Feature | Status | What's left |
 |---|---|---|
-| **Response quality rubric** | Designed, not implemented | LLM-as-judge eval runner to test empathy, tone, banned phrases, question stacking, conciseness. Needs rubric dataset + grading runner. |
-| **Memory integration eval** | Designed, not implemented | Test whether retrieved memory shapes responses. Cross-session continuity, procedural rule enforcement, appropriate recall. |
-| **Session feedback — closing mode** | Designed, not wired | Closing detection is now LLM-primary; feedback prompt needs to fire on natural closings, not just CLI/API end commands. |
+| **Response quality rubric** | Partially implemented | Generic rubric judge and targeted therapeutic/crisis/grounded-tool judges exist. Needs broader response-quality datasets for ordinary support turns and longer dogfood transcripts. |
+| **Memory integration eval** | Broad coverage, still expanding | Runtime and recall trajectories cover semantic, episodic, procedural, correction, deletion, and cross-feature behavior. Remaining work is wider live dogfood coverage and voice parity. |
+| **Session feedback — closing mode** | Closing signal wired, feedback UX pending | Closing detection is LLM-primary and emits `session_action=suggest_end_session`; feedback prompt still needs to fire from natural closings, not just CLI/API end commands. |
 | **Session feedback — voice** | Designed, not wired | Voice disconnect bypasses `end_session()` — needs to either route through the runtime or gain its own feedback hook. |
 
 ---

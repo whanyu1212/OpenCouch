@@ -10,8 +10,13 @@ usage() {
   cat <<'EOF'
 Usage: scripts/voice_agent.sh [options] [livekit-agent-command...]
 
-Starts the standalone LiveKit voice agent. If no command is supplied, runs:
+Starts the standalone LiveKit voice worker or a local console session.
+If no command is supplied, runs worker mode:
   agent.voice.agent start
+
+Worker mode waits for a browser/LiveKit room participant and does not use
+your local microphone. For local mic dogfooding, run:
+  scripts/voice_agent.sh --user-id dogfood console
 
 Options:
   --user-id ID             Set OPENCOUCH_VOICE_USER_ID.
@@ -23,9 +28,10 @@ Options:
   -h, --help               Show this help.
 
 Examples:
-  scripts/voice_agent.sh
+  scripts/voice_agent.sh --user-id dogfood console
   scripts/voice_agent.sh --user-id dogfood console --text
   scripts/voice_agent.sh --memory-mode incognito console
+  scripts/voice_agent.sh --user-id dogfood start
   scripts/voice_agent.sh --no-postgres --backend sqlite console --text
 EOF
 }

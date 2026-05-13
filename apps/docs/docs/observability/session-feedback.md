@@ -101,9 +101,9 @@ unaffected by the feedback write (no status surfaced).
   would call the runtime directly.
 - **Voice disconnect** — the LiveKit voice runtime
   (`agent/voice/`) bypasses `PersistentAgentRuntime.end_session()`
-  and uses its own `runtime.end_transcript_session(...)` seam to
+  and uses its own `runtime.end_transcript_session(...)` path to
   replay the room transcript. Voice feedback would need to be
-  collected through that seam (or a dedicated voice-side prompt)
+  collected through that path (or a dedicated voice-side prompt)
   rather than the text-mode `record_session_feedback()` flow.
 
 ## Inspection
@@ -166,7 +166,7 @@ constraint on the opaque `id`.
 | `agent/audit/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord`, plus crisis-log models |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
 | `agent/audit/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
-| `agent/audit/sqlite/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
+| `agent/audit/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
 | `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |

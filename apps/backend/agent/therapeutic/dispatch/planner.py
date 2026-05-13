@@ -10,6 +10,9 @@ from agent.memory.models import (
     ConfidenceLevel,
     DispatchDecision,
     ExerciseStartBasis,
+    GuidancePermission,
+    SessionIntent,
+    SessionStage,
     TherapeuticApproach,
     TherapeuticResponseStyle,
 )
@@ -42,6 +45,10 @@ class DispatchPlan:
     reason: str = "LLM classifier selected this response."
     confidence: ConfidenceLevel | None = None
     exercise_start_basis: ExerciseStartBasis | None = None
+    session_intent: SessionIntent | None = None
+    session_stage: SessionStage | None = None
+    guidance_permission: GuidancePermission | None = None
+    response_guidance: str = ""
 
 
 async def plan_therapeutic_route(
@@ -93,6 +100,13 @@ async def plan_therapeutic_route(
             source="active_flow",
             reason=f"Turn dispatch marked the active exercise as {active_flow.action}.",
             confidence="high",
+            session_intent="regulate",
+            session_stage="stabilizing",
+            guidance_permission="granted",
+            response_guidance=(
+                "Continue the active guided exercise from its current step; "
+                "keep the reply concrete and paced."
+            ),
         )
 
     if llm_client is None:
@@ -109,6 +123,23 @@ async def plan_therapeutic_route(
     source = "llm_primary"
     reason = decision.reasoning
     exercise_start_basis = decision.exercise_start_basis
+    explicit_fields = set(getattr(decision, "model_fields_set", set()))
+    session_intent = (
+        decision.session_intent if "session_intent" in explicit_fields else None
+    )
+    session_stage = (
+        decision.session_stage if "session_stage" in explicit_fields else None
+    )
+    guidance_permission = (
+        decision.guidance_permission
+        if "guidance_permission" in explicit_fields
+        else None
+    )
+    response_guidance = (
+        decision.response_guidance.strip()
+        if "response_guidance" in explicit_fields
+        else ""
+    )
 
     starts_new_exercise = response_style == "guided_exercise" and (
         not exercise_active or active_flow.action == "clear"
@@ -123,6 +154,11 @@ async def plan_therapeutic_route(
             "Guided exercise requires an explicit user request or acceptance "
             "of a specific assistant offer."
         )
+        response_guidance = (
+            "Do not start a guided exercise yet. Support the emotion briefly "
+            "and, if useful, ask permission before offering a structured exercise."
+        )
+        guidance_permission = "not_yet"
 
     clear_exercise = exercise_active and (
         active_flow.action == "clear"
@@ -148,4 +184,8 @@ async def plan_therapeutic_route(
         reason=reason,
         confidence=decision.confidence,
         exercise_start_basis=exercise_start_basis,
+        session_intent=session_intent,
+        session_stage=session_stage,
+        guidance_permission=guidance_permission,
+        response_guidance=response_guidance,
     )

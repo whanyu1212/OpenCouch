@@ -38,6 +38,7 @@ transcript finalization.
 | `TherapeuticAgent` | Default conversation agent |
 | `CrisisAgent` | Level 2/3 crisis mode with narrower safety posture and tools |
 | `VoiceExerciseTask` | Bounded guided exercise flow |
+| LiveKit `Toolset`s | Memory control, grounded lookup, and crisis-resource capability groups |
 | Plain services | Runtime bootstrap, LLM turn policy, memory context, crisis classification, finalization |
 
 There are exactly two LiveKit agents in v1:
@@ -48,6 +49,18 @@ There are exactly two LiveKit agents in v1:
 Therapeutic modes such as holding, reflecting, understanding, and
 technique are turn-level guidance inside `TherapeuticAgent`, not
 separate LiveKit subagents.
+
+Reusable callable capabilities are grouped as LiveKit `Toolset`s:
+
+- `MemoryControlToolset` for saved-memory inspection, recall toggles,
+  and confirmed deletion.
+- `GroundedLookupToolset` for explicit search-grounded factual lookup.
+- `CrisisResourceToolset` for verified local crisis-resource lookup in
+  `CrisisAgent`.
+
+Lifecycle actions stay on the owning agent rather than inside toolsets:
+`TherapeuticAgent.start_grounding_exercise()` starts `VoiceExerciseTask`,
+and `CrisisAgent.de_escalate()` hands control back to `TherapeuticAgent`.
 
 ---
 
@@ -65,11 +78,18 @@ separate LiveKit subagents.
 5. `opencouch_voice()` connects, resolves metadata, loads startup
    memory, and starts `AgentSession[SessionData]`.
 
-This is the normal browser/frontend path:
+This is the normal browser/frontend path. It waits for a participant in
+a LiveKit room and does not use the terminal microphone:
 
 <TerminalWindow title="LiveKit voice worker">
-{`cd apps/backend
-uv run python -m agent.voice.agent start`}
+{`./scripts/voice_agent.sh start`}
+</TerminalWindow>
+
+For local microphone dogfooding without the browser room, use console
+mode instead:
+
+<TerminalWindow title="Local voice console">
+{`./scripts/voice_agent.sh --user-id dogfood console`}
 </TerminalWindow>
 
 ### Direct-connect flow
@@ -77,8 +97,7 @@ uv run python -m agent.voice.agent start`}
 Use this for manual room testing:
 
 <TerminalWindow title="Direct room join">
-{`cd apps/backend
-uv run python -m agent.voice.agent connect --room my-room`}
+{`./scripts/voice_agent.sh connect --room my-room`}
 </TerminalWindow>
 
 When using direct connect, request the browser token with `dispatch=0`
@@ -189,16 +208,16 @@ Console sessions skip transcript finalization by default unless
 
 | Command | What it does |
 |---|---|
-| `uv run python -m agent.voice.agent dev` | Local development mode |
-| `uv run python -m agent.voice.agent start` | Long-running worker for token-dispatch flows |
-| `uv run python -m agent.voice.agent connect --room <name>` | Direct room join for manual testing |
-| `uv run python -m agent.voice.agent console` | Local console session |
-| `uv run python -m agent.voice.agent console --text` | Text-only console smoke path |
-| `uv run python -m agent.voice.agent download-files` | Pre-download model assets |
+| `./scripts/voice_agent.sh start` | Long-running worker for token-dispatch flows; starts Postgres by default |
+| `./scripts/voice_agent.sh connect --room <name>` | Direct room join for manual testing |
+| `./scripts/voice_agent.sh console` | Local microphone console session |
+| `./scripts/voice_agent.sh console --text` | Text-only console smoke path |
+| `./scripts/voice_agent.sh download-files` | Pre-download model assets |
+| `cd apps/backend && .venv/bin/python -m agent.voice.agent dev` | Direct LiveKit development mode |
 
 The standalone browser test page is served at
-`/api/voice/livekit/test`; the Next.js voice page is the preferred
-dogfood surface.
+`/api/voice/livekit/test`. The wrapper script is the preferred dogfood
+surface while the web UI catches up with the backend refactor.
 
 ---
 

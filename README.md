@@ -54,7 +54,7 @@ Unlike chatting with ChatGPT, Gemini, or Claude on the web, OpenCouch is not a b
 
 Under the hood, the text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing, and local evals plus Opik traces help catch regressions in core routing behavior.
 
-Voice support is experimental and LiveKit-first in the web app. The browser joins a LiveKit room, a LiveKit Agents worker runs the speech loop, and OpenAI Realtime handles the speech-to-speech model interaction. The older direct Realtime harness remains in the backend for experiments.
+Voice support is experimental and LiveKit-native. The browser joins a LiveKit room, a LiveKit Agents worker owns the speech loop, and OpenAI Realtime handles the speech-to-speech model interaction. The voice worker now lives under `agent/voice/` and uses OpenCouch plain services for crisis classification, turn policy, memory context, exercise consent, tools, and transcript finalization.
 
 The project is still pre-beta; a closed beta is planned.
 
@@ -138,7 +138,7 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 Keep real `.env` files local and out of version control.
 
 ### One-command local stack
-Use this for the full local web + voice stack with backend reload, production-mode Next.js, and Dockerized Postgres persistence:
+Use this for the full local backend + web container + voice stack with backend reload, production-mode Next.js, and Dockerized Postgres persistence. The web UI is temporarily behind the backend refactor; use the CLI and voice scripts below for day-to-day dogfooding.
 
 ```bash
 docker compose up --build
@@ -193,8 +193,7 @@ Open [localhost:3000](http://localhost:3000) in your browser.
 
 Optional terminal 3 — LiveKit voice worker:
 ```bash
-cd apps/backend
-uv run python -m agent.voice.agent start
+./scripts/voice_agent.sh start
 ```
 
 ### CLI
@@ -222,15 +221,29 @@ For everyday persistent-mode dogfooding, [`scripts/cli_dogfood.sh`](scripts/cli_
 
 This assumes `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and `OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch` are set in your `.env` (see [Environment](#environment)). Use the raw `uv run python -m opencouch_cli ...` invocations above when you want guest mode, deterministic mode, or the SQLite fallback without starting Postgres.
 
-For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice worker independently from the text agent:
+For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice runtime independently from the text agent. Use `console` for local microphone sessions; this is the normal dogfood path when you want to talk to the voice agent from your laptop.
 
 ```bash
-./scripts/voice_agent.sh --user-id dogfood start
+# Local microphone voice session.
+./scripts/voice_agent.sh --user-id dogfood console
+
+# Same voice runtime, but typed input/output for quick smoke checks.
 ./scripts/voice_agent.sh --user-id dogfood console --text
+
+# Incognito voice session; no durable memory writes.
 ./scripts/voice_agent.sh --memory-mode incognito console
+
+# Worker mode for browser/LiveKit room sessions.
+# This waits for a LiveKit room participant and does not listen to
+# your terminal microphone.
+./scripts/voice_agent.sh --user-id dogfood start
 ```
 
-The voice wrapper supports `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres` before the forwarded LiveKit command.
+If `console` starts but cannot hear you, check macOS microphone
+permission for your terminal app under System Settings → Privacy &
+Security → Microphone. The voice wrapper supports `--user-id`,
+`--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and
+`--no-postgres` before the forwarded LiveKit command.
 
 ### Telegram Gateway
 Run the standalone Telegram gateway. It does not require the FastAPI server.
@@ -286,21 +299,22 @@ flowchart TD
     subgraph SURF ["Runtime Surfaces"]
         CLI["CLI"]:::inputNode
         WEB["Next.js web chat"]:::inputNode
-        VOICE["LiveKit voice"]:::inputNode
+        VOICE["LiveKit voice<br/>separate runtime"]:::inputNode
         TG["Telegram DM gateway<br/>thread rotation"]:::inputNode
         API["FastAPI REST/WebSocket"]:::inputNode
     end
 
-    IN(["User message / transcript"]):::inputNode
+    IN(["Text user message"]):::inputNode
+    VIN(["Voice turn / transcript"]):::inputNode
 
     subgraph GATE ["Safety Gate"]
-        CG{"crisis_gate<br/>rules + LLM classifier"}:::gateNode
+        CG{"crisis_gate<br/>LLM-only classifier"}:::gateNode
     end
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
         TDISP{"turn_dispatch<br/>LLM route plan"}:::safeNode
-        MC[["memory_control<br/>slash + natural language"]]:::safeNode
+        MC[["memory_control<br/>natural-language memory ops"]]:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
         LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
         TDISP ==>|memory control| MC
@@ -332,8 +346,8 @@ flowchart TD
     subgraph POST ["Runtime Memory Side Effects (outside LangGraph)"]
         direction LR
         MX["TurnExtractionCoordinator<br/>background after graph END"]:::sysNode
-        EF["extract_semantic_facts<br/>write policy: commit • hold • drop"]:::sysNode
-        EP["extract_procedural_rules<br/>write policy: commit • hold • drop"]:::sysNode
+        EF["semantic extraction<br/>LLM policy: commit • hold • drop"]:::sysNode
+        EP["procedural extraction<br/>LLM policy: commit • hold • drop"]:::sysNode
         SB[("session buffer<br/>held semantic • procedural")]:::sysNode
         MX -.-> EF
         MX -.-> EP
@@ -355,9 +369,11 @@ flowchart TD
     %% Logic Flows
     CLI ==> IN
     WEB ==> API
-    VOICE ==> API
     API ==> IN
     TG ==> IN
+    VOICE ==> VIN
+    VIN -.->|LiveKit services| DB
+    VIN -.->|disconnect transcript| SE
     IN ==> CG
     CG ==>|Safe| TDISP
     CG -.->|Risk| RL
@@ -400,10 +416,10 @@ OpenCouch/
 │   │   ├── agent/              # Conversation graph, nodes, state, runtime context
 │   │   │   ├── nodes/          # Individual graph nodes
 │   │   │   ├── memory/         # Memory retrieval, deduplication, embeddings
-│   │   │   └── therapeutic/    # Therapeutic subgraph, modes, prompt logic
+│   │   │   ├── therapeutic/    # Therapeutic subgraph, exercises, prompt logic
+│   │   │   └── voice/          # LiveKit voice worker, agents, tasks, tools
 │   │   ├── llm/                # LLM adapters (Gemini, OpenAI, etc.)
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
-│   │   ├── voice/              # LiveKit voice worker + direct Realtime harness
 │   │   ├── channels/           # Telegram gateway and channel adapters
 │   │   ├── api/                # FastAPI REST + WebSocket routes
 │   │   └── tests/              # 1100+ pytest unit/integration tests
@@ -467,19 +483,7 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 ## 📝 Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full history. Recent highlights as of **May 2026**:
-
-- **May 2026 — Text and voice dogfooding scripts** — the web UI is temporarily broken during the app-shell refactor, so local dogfooding now has separate script entrypoints: `scripts/cli_dogfood.sh` for the text agent and `scripts/voice_agent.sh` for the LiveKit voice agent. The voice script starts Postgres by default, forwards LiveKit commands, and exposes flags for user id, thread id, memory mode, backend, database URL, and skipping Postgres.
-- **May 2026 — Turn dispatch & grounded tools cleanup** — safe-turn routing now uses one typed `turn_dispatch` node for memory control, grounded lookup, or therapeutic support instead of separate regex/pattern gate nodes. Grounded lookup and web search were consolidated into structured provider-native search helpers with explicit source lists, crisis-location classification, and `location_refused` handling. Scripted and live grounded-tool quality evals pass `11/11`.
-- **May 2026 — Therapeutic dispatch & state-surface cleanup** — the therapeutic router collapsed to an LLM-primary policy (~821 LOC removed across four deleted dispatch modules) with a small deterministic exercise-state bookkeeping layer. Three carrying-cost-only output channels (`response_style_type`, `response_style_source`, `response_kind`) were removed end-to-end across the agent, public API, frontend, and docs, with the public `AgentOutput.response_type` now derived once from the crisis assessment rather than written by five separate nodes. 1025/1025 backend tests pass.
-- **May 2026 — Postgres-first runtime** — the Docker Compose stack now routes memory, LangGraph checkpoints, active-session state, crisis audit, feedback, and LiveKit voice finalization through Dockerized Postgres, with SQLite kept as a local compatibility fallback outside Compose. A `scripts/cli_dogfood.sh` helper ensures Postgres is up before launching the CLI, and `get_settings()` now fails fast with an actionable error when the Postgres backend is selected without `OPENCOUCH_MEMORY_DATABASE_URL`.
-- **May 2026 — Agent module restructure & service extraction** — large structural cleanup of the agent package (net **−1043 lines across 172 files**): voice and active-session modules pulled into `agent/`, memory store promoted to a backend-aware package, risk-gating subsystems grouped under `agent/gates/`, facade and wrapper modules dissolved, and standalone services extracted for memory control, session finalization, runtime streaming, and turn-extraction coordination. Routing decisions are now typed across the agent router, grounded-lookup router, and memory-control router.
-- **May 2026 — Off-turn memory extraction** — semantic and procedural memory extraction now runs after the user-visible reply has rendered, removing ~250–300ms median (and up to ~800ms p95) of post-turn latency from the perceived response time. Extractor edges and candidate-policy evaluation also run in parallel where safe.
-- **May 2026 — Full local product stack** — the one-command Compose setup runs Postgres, the FastAPI backend, production-mode Next.js web UI, and the LiveKit voice worker together for a closer-to-real local environment.
-- **Apr–May 2026 — Web and voice experience refresh** — chat, memory, state, and voice routes now have stronger session continuity, clearer setup/end-session flows, voice selection, mic warmup states, and route-persistent text streaming.
-- **Apr–May 2026 — Safety, memory, and routing hardening** — crisis routing, grounded lookup, memory control, therapeutic dispatch, guided exercises, extraction policy, and session summarization are backed by deterministic tests and Opik tracing.
-- **Recent — Guided support coverage** — OpenCouch includes 13 state-tracked coping exercises, including grounding, breathing, thought work, and values reflection, with tests covering selection, flow, and memory behavior.
-- **Recent — Channel expansion** — Telegram direct-message support now includes allow-listing, `/end`, markdown rendering, session rotation, startup recovery, and non-blocking maintenance sweeps.
+See [`CHANGELOG.md`](CHANGELOG.md) for project history and release notes.
 
 ---
 

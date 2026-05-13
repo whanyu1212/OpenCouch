@@ -75,8 +75,8 @@ attribute access only.
 | `session_memory_buffer` | `SessionMemoryBuffer \| None` | `None` |
 
 `session_memory_buffer` is set by `PersistentAgentRuntime` so that
-the extractor nodes can park session-end candidates in a per-thread
-buffer that persists across restarts.
+the runtime extraction coordinator can park session-end candidates
+in a per-thread buffer that persists across restarts.
 
 <details>
 <summary>Schema implementation detail</summary>
@@ -104,7 +104,7 @@ therapeutic subgraph completes.
 | File | Defines |
 |---|---|
 | `agent/state.py` | All TypedDict fragments and the `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` schemas |
-| `agent/working_memory.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
+| `agent/memory/entries.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
 | `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ResponseStyleType`, stream events, `STAGE_LABELS` |
 | `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |
 | `agent/graph.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |

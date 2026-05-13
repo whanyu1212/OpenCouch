@@ -29,12 +29,12 @@ const LAYERS: LayerDef[] = [
     label: 'Semantic',
     icon: '\u25C6',
     color: 'semantic',
-    writeHow: 'LLM candidate extraction via extract_semantic_facts_node + deterministic write_policy',
-    writeWhen: 'After every response. Only lower-risk stable facts commit immediately; sensitive or interpretive candidates are buffered for session-end review or require repetition before promotion.',
+    writeHow: 'Runtime LLM candidate extraction + LLM-primary write policy',
+    writeWhen: 'After the graph response. The policy decides commit-now, session-end hold, repetition-gate, or drop; hard local guards enforce storage/safety invariants.',
     readHow: 'Hybrid RRF — embedding cosine + token-recall fused per turn',
     readInto: 'SemanticWorkingMemoryEntry in working_memory',
     outputType: '{ type: "semantic", evidence_quote: "...", category: "...", subject: "...", predicate: "...", object: "..." }',
-    storage: 'One row per active fact, namespaced (owner_id, "semantic"). Dedup bumps matches; superseded facts go dormant. Held candidates live in the persisted active-session buffer until session end. Embedding stored as BLOB. Unicode-aware tokenizer handles CJK, Cyrillic, and accented Latin.',
+    storage: 'One row per active fact, namespaced (owner_id, "semantic"). Exact duplicates bump locally; LLM-primary reconciliation handles supersede/coexist decisions. Held candidates live in the persisted active-session buffer until session end. Unicode-aware tokenizer handles CJK, Cyrillic, and accented Latin.',
     examples: ['[relationship] User WORRIES_ABOUT work — "my boss is terrible"', '[coping_strategy] User USES fluoxetine — "I take fluoxetine daily"'],
   },
   {
@@ -55,8 +55,8 @@ const LAYERS: LayerDef[] = [
     label: 'Procedural',
     icon: '\u25A0',
     color: 'procedural',
-    writeHow: 'LLM candidate extraction via extract_procedural_rules_node + deterministic write_policy',
-    writeWhen: 'Explicit durable instructions can commit immediately. Implicit agent-facing preferences are buffered and may promote later at session end after repeated evidence.',
+    writeHow: 'Runtime LLM candidate extraction + LLM-primary write policy',
+    writeWhen: 'Explicit durable instructions can commit immediately when classified as durable. Implicit agent-facing preferences are buffered and may promote later at session end after repeated evidence.',
     readHow: 'Full rule set loaded every turn — not query-based. Capped at 20 active rules.',
     readInto: 'System prompt suffix (always applied, regardless of recall toggle)',
     outputType: 'ProceduralProfile with rules[] (max 20), archived_rules[], and proactive_recall_enabled',
@@ -128,7 +128,7 @@ export default function MemoryArchitecture(): React.JSX.Element {
         <div className={s.flowDirection}>
           <span className={s.dirLabel}>Write</span>
           <span className={s.dirArrow}>{'\u2193'}</span>
-          <span className={s.dirSub}>after response + shared session-end seam</span>
+          <span className={s.dirSub}>after response + shared session-end path</span>
         </div>
         <div className={s.flowDirection}>
           <span className={s.dirLabel}>Read</span>

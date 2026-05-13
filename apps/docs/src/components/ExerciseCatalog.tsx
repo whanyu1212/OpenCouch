@@ -21,7 +21,7 @@ const EXERCISES: Exercise[] = [
     subtypeLabel: 'Grounding',
     steps: 5,
     completionMode: 'Item count',
-    triggers: ['"ground me"', '"grounding"', 'default fallback'],
+    triggers: ['"ground me"', '"grounding"', 'sensory grounding request'],
     description: 'Sensory anchoring exercise. The user identifies items across five senses to return to the present moment. Steps are independent — order matters less than engagement.',
     stepSummary: ['Name 5 things you can see', 'Name 4 things you can hear', 'Name 3 things you can feel', 'Name 2 things you can smell', 'Name 1 thing you can taste'],
   },

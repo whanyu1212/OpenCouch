@@ -7,6 +7,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.types.primitives import ConfidenceLevel
+from agent.therapeutic_policy import (
+    GuidancePermission,
+    SessionIntent,
+    TherapeuticApproach,
+)
 
 TherapeuticResponseStyle = Literal[
     "supportive",
@@ -18,16 +23,7 @@ TherapeuticResponseStyle = Literal[
     "technique",
 ]
 
-TherapeuticApproach = Literal[
-    "motivational_interviewing",
-    "cbt",
-    "act",
-    "dbt_skills",
-    "grief_support",
-    "interpersonal_therapy",
-    "pfa",
-    "none",
-]
+SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
 ExerciseStartBasis = Literal[
     "explicit_user_request",
@@ -41,6 +37,36 @@ class DispatchDecision(BaseModel):
 
     response_style: TherapeuticResponseStyle
     therapeutic_approach: TherapeuticApproach = "none"
+    session_intent: SessionIntent = Field(
+        default="vent",
+        description=(
+            "The user's conversational intent for this turn: vent, understand, "
+            "reflect, work, regulate, repair, or close."
+        ),
+    )
+    session_stage: SessionStage = Field(
+        default="opening",
+        description=(
+            "The session arc stage for shaping the next reply: opening, "
+            "deepening, stabilizing, or closing."
+        ),
+    )
+    guidance_permission: GuidancePermission = Field(
+        default="unknown",
+        description=(
+            "Whether the user has invited guidance: unknown, not_yet, or granted. "
+            "Use not_yet when the user mainly needs to be heard; use granted when "
+            "they ask for advice, next steps, structured work, or an exercise."
+        ),
+    )
+    response_guidance: str = Field(
+        default="",
+        max_length=900,
+        description=(
+            "Compact private guidance for the next assistant reply. Describe "
+            "the posture and one useful next move; do not script user-visible text."
+        ),
+    )
     exercise_start_basis: ExerciseStartBasis = Field(
         description=(
             "Whether the user explicitly authorized starting a guided exercise "
@@ -57,6 +83,9 @@ class DispatchDecision(BaseModel):
 __all__ = [
     "TherapeuticResponseStyle",
     "TherapeuticApproach",
+    "SessionIntent",
+    "SessionStage",
+    "GuidancePermission",
     "ExerciseStartBasis",
     "DispatchDecision",
 ]

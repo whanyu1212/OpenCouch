@@ -38,9 +38,12 @@ crisis_gate                load_memory
                     ▼
              finalize_turn
                     │
+                 graph END
+                    │
+             runtime extraction
           ┌─────────┴─────────┐
           ▼                   ▼
-    extract_facts       extract_procedural     ← parallel fan-out
+    semantic policy     procedural policy
     · extract_facts_ms  · extract_procedural_ms
     · semantic_writes   · procedural_writes
     · extract_facts_    · extract_procedural_
@@ -51,10 +54,10 @@ crisis_gate                load_memory
               + turn_total_ms (stamped by runtime)
 ```
 
-:::info Parallel extractors, merged diagnostics
-Both extractors write simultaneously after finalize. Because
-`diagnostics` uses a `_merge_dicts` reducer, their keys merge
-without racing — no node needs to know what other nodes wrote.
+:::info Runtime extraction, merged diagnostics
+Semantic and procedural extraction run after the graph response path.
+Because `diagnostics` uses a `_merge_dicts` reducer, their keys merge
+with graph-node timings without either side knowing what the other wrote.
 :::
 
 ---
@@ -112,8 +115,8 @@ multi-mode streaming. The CLI renders a progress spinner while the
 graph is still running:
 
 ```text
-  ⠋ crisis_gate → load_memory → therapeutic → finalize
-    → extract_facts + extract_procedural  ← parallel, order varies
+  ⠋ crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
+    → runtime extraction
 ```
 
 The stream now also has a non-terminal `response_ready` event. That
@@ -161,8 +164,7 @@ consistent text:
 | `memory_profile_save` | saving profile memory |
 | `memory_graph_save` | writing graph memory |
 | `therapeutic` | generating therapeutic reply |
-| `extract_facts` | extracting facts |
-| `extract_procedural` | extracting style rules |
+| `runtime_extraction` | extracting facts and style rules after graph END |
 | `finalize` | finalizing turn |
 | `session_stage` | reading context |
 | `response_generation` | generating |
@@ -177,13 +179,13 @@ render without a mapping update.
 | Key | Node | Value |
 |---|---|---|
 | `crisis_gate_ms` | crisis_gate | Assessment wall-clock time |
-| `crisis_classifier_path` | crisis_gate | `override` / `llm_primary` / `llm_fallback` / `deterministic` |
+| `crisis_classifier_path` | crisis_gate | `llm_primary` |
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
 | `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
-| `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `search_failed` / `no_verified_results` / `not_attempted` |
+| `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `location_refused` / `no_verified_results` / `not_attempted` |
 | `turn_dispatch_ms` | turn_dispatch | Safe-turn routing wall-clock time |
 | `memory_control.action` | turn_dispatch | Detected command kind (or empty when none) |
-| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `search_failed` / `search_unavailable` / `not_attempted` |
+| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |
@@ -192,22 +194,24 @@ render without a mapping update.
 | `procedural_count` | load_memory | Rules loaded from profile |
 | `proactive_recall` | load_memory | Recall toggle state |
 | `retrieval_path` | load_memory | `hybrid_rrf` / `token_recall` / `token_recall_after_embed_error` |
-| `extract_facts_ms` | extract_facts | Extraction wall-clock time |
-| `semantic_writes` | extract_facts | Immediate semantic writes that actually committed on this turn |
-| `semantic_candidates` | extract_facts | Total candidates returned by the LLM |
-| `semantic_commit_now_candidates` | extract_facts | Candidates the policy classified as commit-now |
-| `semantic_session_end_holds` | extract_facts | Semantic candidates held for session-end review |
-| `semantic_repeat_required` | extract_facts | Semantic candidates blocked pending stronger repetition evidence |
-| `semantic_policy_drops` | extract_facts | Semantic candidates dropped by deterministic write policy |
-| `semantic_bumps` | extract_facts | Existing facts bumped (dedup match) |
-| `extract_facts_reason` | extract_facts | Skip reason or extraction outcome |
-| `extract_procedural_ms` | extract_procedural | Extraction wall-clock time |
-| `procedural_writes` | extract_procedural | Immediate procedural rules written |
-| `procedural_candidates` | extract_procedural | Total candidates returned by the LLM |
-| `procedural_commit_now_candidates` | extract_procedural | Candidates the policy classified as commit-now |
-| `procedural_session_end_holds` | extract_procedural | Procedural candidates buffered for session-end promotion |
-| `procedural_policy_drops` | extract_procedural | Procedural candidates dropped by deterministic write policy |
-| `extract_procedural_reason` | extract_procedural | Skip reason or extraction outcome |
+| `extract_facts_ms` | runtime extraction | Semantic extraction wall-clock time |
+| `semantic_writes` | runtime extraction | Immediate semantic writes that actually committed on this turn |
+| `semantic_candidates` | runtime extraction | Total candidates returned by the LLM |
+| `semantic_commit_now_candidates` | runtime extraction | Candidates the policy classified as commit-now |
+| `semantic_session_end_holds` | runtime extraction | Semantic candidates held for session-end review |
+| `semantic_repeat_required` | runtime extraction | Semantic candidates blocked pending stronger repetition evidence |
+| `semantic_policy_drops` | runtime extraction | Semantic candidates dropped by LLM-primary write policy or hard local guards |
+| `semantic_policy_errors` | runtime extraction | Semantic candidates skipped because the write-policy classifier failed |
+| `semantic_bumps` | runtime extraction | Existing facts bumped by exact duplicate handling |
+| `extract_facts_reason` | runtime extraction | Skip reason or extraction outcome |
+| `extract_procedural_ms` | runtime extraction | Procedural extraction wall-clock time |
+| `procedural_writes` | runtime extraction | Immediate procedural rules written |
+| `procedural_candidates` | runtime extraction | Total candidates returned by the LLM |
+| `procedural_commit_now_candidates` | runtime extraction | Candidates the policy classified as commit-now |
+| `procedural_session_end_holds` | runtime extraction | Procedural candidates buffered for session-end promotion |
+| `procedural_policy_drops` | runtime extraction | Procedural candidates dropped by LLM-primary write policy or hard local guards |
+| `procedural_policy_errors` | runtime extraction | Procedural candidates skipped because the write-policy classifier failed |
+| `extract_procedural_reason` | runtime extraction | Skip reason or extraction outcome |
 | `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the graph) |
 
 ---

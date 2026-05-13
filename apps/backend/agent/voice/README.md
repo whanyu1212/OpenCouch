@@ -15,7 +15,7 @@ flowchart TD
     Token --> Dispatch{"dispatch_agent?"}
     Dispatch -->|yes| Room["LiveKit room"]
     Client -->|join with participant token| Room
-    Worker["uv run python -m agent.voice.agent start"] --> Room
+    Worker["scripts/voice_agent.sh start"] --> Room
 
     Room --> Entry["opencouch_voice(ctx)"]
     Entry --> Bootstrap["session_bootstrap: runtime + metadata"]
@@ -47,6 +47,7 @@ flowchart TD
 - `session_bootstrap.py`: runtime singleton, metadata resolution, realtime model setup, and turn handling setup.
 - `transcript_finalizer.py`: idempotent transcript-derived memory persistence on session end.
 - `tools.py`: LiveKit function tools for explicit memory control, grounded lookup, and crisis resource lookup.
+- `toolsets.py`: LiveKit `Toolset` groupings for memory control, grounded lookup, and crisis resources.
 - `routes.py`: FastAPI token and finalization-status routes.
 - `activity.py`: sanitized room-data events for frontend activity indicators.
 
@@ -58,6 +59,16 @@ There are exactly two LiveKit agents in v1:
 - `CrisisAgent`: crisis-only agent with a narrower safety posture and tool surface.
 
 Therapeutic modes such as holding, reflecting, understanding, and technique are not separate agents. They are turn-level guidance produced by `VoiceTurnPolicyService` and injected into the current turn context.
+
+Reusable capabilities are grouped as LiveKit `Toolset`s:
+
+- `MemoryControlToolset`: show saved memory, memory status, recall toggles, and confirmed deletion.
+- `GroundedLookupToolset`: search-grounded factual lookup for explicit lookup requests.
+- `CrisisResourceToolset`: verified local crisis-resource lookup for `CrisisAgent`.
+
+Lifecycle actions stay on the owning agent rather than inside toolsets:
+`TherapeuticAgent.start_grounding_exercise()` starts `VoiceExerciseTask`, and
+`CrisisAgent.de_escalate()` hands control back to `TherapeuticAgent`.
 
 There is one task type:
 

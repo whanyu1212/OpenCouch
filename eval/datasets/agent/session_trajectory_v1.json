@@ -1623,6 +1623,545 @@
       }
     },
     {
+      "id": "session-arc-guidance-shapes-response",
+      "description": "Therapeutic dispatch should write session intent, stage, and private response guidance that reaches the response prompt.",
+      "turns": [
+        {
+          "message": "I don't even know where to start; today was a mess.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "Ordinary distress without self-harm signal.",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is opening with broad distress.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "motivational_interviewing",
+              "session_intent": "vent",
+              "session_stage": "opening",
+              "guidance_permission": "not_yet",
+              "response_guidance": "Hold the opening gently, validate the broad stress, and invite one workable focus.",
+              "reasoning": "Opening support should help the user arrive without pressure.",
+              "confidence": "high"
+            },
+            "response_text": "That sounds like a lot to carry at once. We can start anywhere that feels easiest."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "therapeutic_approach": "motivational_interviewing",
+            "session_intent": "vent",
+            "session_stage": "opening",
+            "guidance_permission": "not_yet",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/motivational_interviewing",
+            "prompt_contains": [
+              "Current session arc guidance:",
+              "session_intent: vent",
+              "session_stage: opening",
+              "guidance_permission: not_yet",
+              "Hold the opening gently"
+            ],
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "The same thing keeps happening: I shut down when my manager questions me.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "Pattern exploration without self-harm signal.",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is describing a recurring pattern.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "reflective",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "cbt",
+              "session_intent": "understand",
+              "session_stage": "deepening",
+              "guidance_permission": "not_yet",
+              "response_guidance": "Name the shutdown pattern gently and ask one focused question about what the manager's question signals to the user.",
+              "reasoning": "The user named a repeated shutdown pattern.",
+              "confidence": "high"
+            },
+            "response_text": "There may be a shutdown loop here: being questioned starts to feel like being judged. What does your mind say it means in that moment?"
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "reflective",
+            "therapeutic_approach": "cbt",
+            "session_intent": "understand",
+            "session_stage": "deepening",
+            "guidance_permission": "not_yet",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "reflective/cbt",
+            "prompt_contains": [
+              "session_intent: understand",
+              "session_stage: deepening",
+              "guidance_permission: not_yet",
+              "Name the shutdown pattern gently"
+            ],
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "last_assistant_response_style": "reflective"
+          }
+        },
+        {
+          "message": "Can you help me figure out what to say to him tomorrow?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "Practical support request without self-harm signal.",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for help with a next step.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "technique",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "interpersonal_therapy",
+              "session_intent": "work",
+              "session_stage": "deepening",
+              "guidance_permission": "granted",
+              "response_guidance": "Use collaborative structure to help the user draft one clear, grounded message.",
+              "reasoning": "The user explicitly asks for help planning what to say.",
+              "confidence": "high"
+            },
+            "response_text": "Yes. Let's make it simple: one sentence that names the issue and one sentence that asks for what you need."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "technique",
+            "therapeutic_approach": "interpersonal_therapy",
+            "session_intent": "work",
+            "session_stage": "deepening",
+            "guidance_permission": "granted",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "technique/interpersonal_therapy",
+            "prompt_contains": [
+              "session_intent: work",
+              "session_stage: deepening",
+              "guidance_permission: granted",
+              "The user has invited guidance",
+              "Use collaborative structure"
+            ],
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 6,
+            "last_assistant_response_style": "technique"
+          }
+        }
+      ],
+      "expected": {
+        "route_sequence": [
+          "therapeutic",
+          "therapeutic",
+          "therapeutic"
+        ],
+        "factual_tool_calls": 0,
+        "crisis_resource_tool_calls": 0,
+        "crisis_log_count": 0,
+        "final_transcript_length": 6
+      }
+    },
+    {
+      "id": "slow-burn-crisis-escalates-after-clarification",
+      "description": "A session with cumulative distress should first ask a safety clarification for ambiguous warning signs, then route to crisis when the user confirms explicit ideation.",
+      "turns": [
+        {
+          "message": "I feel numb and disconnected from everyone lately.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "Low mood and disconnection without self-harm signal.",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is asking for ordinary emotional support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "session_intent": "vent",
+              "session_stage": "opening",
+              "response_guidance": "Offer steady support and invite the user to name what feels most present.",
+              "reasoning": "Opening support fits disconnection.",
+              "confidence": "high"
+            },
+            "response_text": "That disconnected feeling can be really isolating. We can stay with what feels most present first."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "therapeutic_approach": "pfa",
+            "session_intent": "vent",
+            "session_stage": "opening",
+            "safety_decision": "normal",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/pfa",
+            "crisis": {
+              "level": 0,
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "I feel like a burden and I don't see the point anymore.",
+          "scripted": {
+            "crisis": {
+              "level": 1,
+              "confidence": "medium",
+              "reason": "Ambiguous warning signs require safety clarification.",
+              "needs_crisis_response": false,
+              "needs_clarification": true
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user needs support with a safety clarification.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "session_intent": "regulate",
+              "session_stage": "stabilizing",
+              "response_guidance": "Ask one direct safety question before ordinary support continues.",
+              "reasoning": "Ambiguous risk needs a safety check.",
+              "confidence": "high"
+            },
+            "response_text": "I'm really glad you said that. Are you having thoughts of hurting yourself or ending your life right now?"
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "therapeutic_approach": "pfa",
+            "session_intent": "regulate",
+            "session_stage": "stabilizing",
+            "safety_decision": "check",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/pfa",
+            "crisis": {
+              "level": 1,
+              "needs_crisis_response": false,
+              "needs_clarification": true
+            },
+            "prompt_contains": [
+              "Safety-check override",
+              "Ask one direct safety question"
+            ],
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "Yes. I don't want to be alive anymore, but I don't have a plan.",
+          "scripted": {
+            "crisis": {
+              "level": 2,
+              "confidence": "high",
+              "reason": "Explicit suicidal ideation without imminent plan.",
+              "needs_crisis_response": true,
+              "needs_clarification": false
+            },
+            "response_text": "I'm really glad you told me. Please reach out to emergency support or someone nearby who can stay with you while this is intense."
+          },
+          "expected": {
+            "route": "crisis",
+            "response_style": "crisis_response",
+            "safety_decision": "crisis",
+            "structured_calls": {
+              "CrisisAssessmentSchema": 1,
+              "TurnDispatchDecision": 0,
+              "DispatchDecision": 0
+            },
+            "crisis": {
+              "level": 2,
+              "needs_crisis_response": true,
+              "needs_clarification": false
+            },
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 1,
+            "crisis_log_count": 1,
+            "transcript_length": 6,
+            "last_assistant_response_style": "crisis_response"
+          }
+        }
+      ],
+      "expected": {
+        "route_sequence": [
+          "therapeutic",
+          "therapeutic",
+          "crisis"
+        ],
+        "factual_tool_calls": 0,
+        "crisis_resource_tool_calls": 1,
+        "crisis_log_count": 1,
+        "final_transcript_length": 6,
+        "final_crisis": {
+          "level": 2,
+          "needs_crisis_response": true
+        }
+      }
+    },
+    {
+      "id": "repair-after-misattuned-advice",
+      "description": "When the user says the assistant was not helpful, the therapeutic branch should shift into repair without adding graph nodes.",
+      "turns": [
+        {
+          "message": "I'm overwhelmed about work and I mostly just need to say it out loud.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe emotional support request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user wants emotional support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "session_intent": "vent",
+              "session_stage": "opening",
+              "guidance_permission": "not_yet",
+              "response_guidance": "Stay with the feeling and do not problem-solve yet.",
+              "reasoning": "The user asks to be heard.",
+              "confidence": "high"
+            },
+            "response_text": "That sounds like a lot to hold. We can keep this simple and stay with what feels loudest right now."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "therapeutic_approach": "pfa",
+            "session_intent": "vent",
+            "session_stage": "opening",
+            "guidance_permission": "not_yet",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/pfa",
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "That's not helpful. You're making assumptions; I just wanted you to listen.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe repair feedback",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user is correcting the assistant and asking for repair.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "none",
+              "session_intent": "repair",
+              "session_stage": "stabilizing",
+              "guidance_permission": "not_yet",
+              "response_guidance": "Own the miss, do not defend, and reset to listening.",
+              "reasoning": "The user names a rupture and asks to be heard.",
+              "confidence": "high"
+            },
+            "response_text": "You're right. I moved away from what you asked for. I'll slow down and just listen to what this has been like for you."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "therapeutic_approach": "none",
+            "session_intent": "repair",
+            "session_stage": "stabilizing",
+            "guidance_permission": "not_yet",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive",
+            "prompt_contains": [
+              "Repair turn",
+              "Do not defend",
+              "Own the miss, do not defend, and reset to listening."
+            ],
+            "response_text_contains": [
+              "You're right",
+              "listen"
+            ],
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "last_assistant_response_style": "supportive"
+          }
+        }
+      ],
+      "expected": {
+        "route_sequence": [
+          "therapeutic",
+          "therapeutic"
+        ],
+        "factual_tool_calls": 0,
+        "crisis_resource_tool_calls": 0,
+        "crisis_log_count": 0,
+        "final_transcript_length": 4
+      }
+    },
+    {
+      "id": "support-then-resource-lookup",
+      "description": "A session can move from ordinary support into source-backed resource seeking without changing the graph topology.",
+      "turns": [
+        {
+          "message": "I've been anxious at night and I don't really know what I need yet.",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe anxiety support request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user wants support.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "supportive",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "pfa",
+              "session_intent": "vent",
+              "session_stage": "opening",
+              "guidance_permission": "not_yet",
+              "response_guidance": "Validate and keep the next move low-pressure.",
+              "reasoning": "The user is opening with distress.",
+              "confidence": "high"
+            },
+            "response_text": "That sounds tiring, especially when it shows up at night. We can take it slowly and stay with what feels most present."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "supportive",
+            "therapeutic_approach": "pfa",
+            "session_intent": "vent",
+            "session_stage": "opening",
+            "guidance_permission": "not_yet",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "supportive/pfa",
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 2,
+            "last_assistant_response_style": "supportive"
+          }
+        },
+        {
+          "message": "Can you find official anxiety worksheets or toolkits I can read?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "safe resource lookup request",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "grounded_lookup",
+              "reasoning": "The user asks for external official worksheets and toolkits.",
+              "confidence": "high",
+              "query": "official anxiety worksheets toolkits",
+              "active_flow_action": "none"
+            }
+          },
+          "expected": {
+            "route": "grounded_lookup",
+            "response_style": "grounded_lookup",
+            "turn_dispatch_decision": "grounded_lookup",
+            "grounded_lookup": {
+              "status": "answered"
+            },
+            "factual_tool_calls": 1,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 4,
+            "last_assistant_response_style": "grounded_lookup"
+          }
+        }
+      ],
+      "expected": {
+        "route_sequence": [
+          "therapeutic",
+          "grounded_lookup"
+        ],
+        "factual_tool_calls": 1,
+        "crisis_resource_tool_calls": 0,
+        "crisis_log_count": 0,
+        "final_transcript_length": 4,
+        "final_grounded_lookup": {
+          "status": "answered"
+        }
+      }
+    },
+    {
       "id": "live-exercise-side-requests-resume",
       "description": "Live LLM trajectory for an active guided exercise interrupted by support and lookup side turns, then resumed.",
       "modes": [

@@ -23,17 +23,10 @@ from agent.voice.config import build_voice_system_prompt
 from agent.voice.memory_context import VoiceMemoryContextService
 from agent.voice.session_data import SessionData
 from agent.voice.tasks import VoiceExerciseTask, supported_exercise_ids
-from agent.voice.tools import (
-    answer_grounded_factual_lookup,
-    cancel_memory_deletion,
-    confirm_memory_deletion,
-    prepare_indexed_memory_deletion,
-    prepare_memory_deletion,
-    provide_crisis_resources,
-    select_memory_deletion_candidate,
-    set_proactive_memory_recall,
-    show_memory_status,
-    show_saved_memory,
+from agent.voice.toolsets import (
+    CrisisResourceToolset,
+    GroundedLookupToolset,
+    MemoryControlToolset,
 )
 from agent.voice.turn_policy import VoiceTurnPolicyService
 
@@ -157,10 +150,22 @@ def _state_for_current_turn(
     )
 
 
-def _build_policy_guidance_message(decision_reason: str, turn_guidance: str) -> str:
+def _build_policy_guidance_message(
+    *,
+    session_intent: str,
+    guidance_permission: str,
+    process_stage: str,
+    therapeutic_approach: str,
+    decision_reason: str,
+    turn_guidance: str,
+) -> str:
     return (
         "Voice turn policy for the next reply:\n"
-        f"{turn_guidance.strip()}\n\n"
+        f"- session_intent: {session_intent}\n"
+        f"- guidance_permission: {guidance_permission}\n"
+        f"- process_stage: {process_stage}\n"
+        f"- therapeutic_approach: {therapeutic_approach}\n"
+        f"- turn_guidance: {turn_guidance.strip()}\n\n"
         "Policy note: use this as private guidance, not as text to recite.\n"
         f"Reason: {decision_reason.strip()}"
     )
@@ -228,15 +233,8 @@ class TherapeuticAgent(Agent):
             ),
             chat_ctx=chat_ctx,
             tools=[
-                show_saved_memory,
-                show_memory_status,
-                set_proactive_memory_recall,
-                prepare_memory_deletion,
-                prepare_indexed_memory_deletion,
-                select_memory_deletion_candidate,
-                confirm_memory_deletion,
-                cancel_memory_deletion,
-                answer_grounded_factual_lookup,
+                MemoryControlToolset(),
+                GroundedLookupToolset(),
             ],
         )
 
@@ -416,6 +414,10 @@ class TherapeuticAgent(Agent):
         turn_ctx.add_message(
             role="system",
             content=_build_policy_guidance_message(
+                session_intent=decision.session_intent,
+                guidance_permission=decision.guidance_permission,
+                process_stage=decision.process_stage,
+                therapeutic_approach=decision.therapeutic_approach,
                 decision_reason=decision.reason,
                 turn_guidance=decision.turn_guidance,
             ),
@@ -424,6 +426,10 @@ class TherapeuticAgent(Agent):
                 "confidence": decision.confidence,
                 "exercise_consent": decision.exercise_consent,
                 "exercise_type": decision.exercise_type,
+                "session_intent": decision.session_intent,
+                "guidance_permission": decision.guidance_permission,
+                "process_stage": decision.process_stage,
+                "therapeutic_approach": decision.therapeutic_approach,
             },
         )
 
@@ -447,7 +453,7 @@ class CrisisAgent(Agent):
         super().__init__(
             instructions=_CRISIS_INSTRUCTIONS,
             chat_ctx=chat_ctx,
-            tools=[provide_crisis_resources],
+            tools=[CrisisResourceToolset()],
         )
 
     async def on_enter(self) -> None:

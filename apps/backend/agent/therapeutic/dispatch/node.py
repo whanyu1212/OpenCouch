@@ -32,22 +32,32 @@ from agent.therapeutic.exercises.state import clear_exercise_delta
 _CLOSING_SESSION_ACTION = "suggest_end_session"
 
 
-def _style_update(response_style: str, approach: str) -> dict:
+def _style_update(plan: DispatchPlan) -> dict:
     """Build the selected-style state delta.
 
     Args:
-        response_style: Therapeutic response style selected for this turn.
-        approach: Therapeutic approach selected for this turn.
+        plan: Therapeutic dispatch plan selected for this turn.
 
     Returns:
-        State delta carrying the selected response style and therapeutic approach.
+        State delta carrying routing, session-arc, and response-guidance fields.
     """
 
     update = {
-        "response_style": response_style,
-        "therapeutic_approach": approach,
+        "response_style": plan.response_style,
+        "therapeutic_approach": plan.therapeutic_approach,
     }
-    if response_style == "closing":
+    session_progress = {}
+    if plan.session_intent:
+        session_progress["session_intent"] = plan.session_intent
+    if plan.session_stage:
+        session_progress["session_stage"] = plan.session_stage
+    if plan.guidance_permission:
+        session_progress["guidance_permission"] = plan.guidance_permission
+    if session_progress:
+        update["session_progress"] = session_progress
+    if plan.response_guidance.strip():
+        update["response_guidance"] = plan.response_guidance.strip()
+    if plan.response_style == "closing":
         update["session_action"] = _CLOSING_SESSION_ACTION
     return update
 
@@ -68,11 +78,11 @@ def _to_command(
 
     update = (
         {
-            **_style_update(plan.response_style, plan.therapeutic_approach),
+            **_style_update(plan),
             **clear_exercise_delta(state),
         }
         if plan.clear_exercise
-        else _style_update(plan.response_style, plan.therapeutic_approach)
+        else _style_update(plan)
     )
     if "diagnostics" in state:
         decision = plan.response_style
@@ -87,6 +97,9 @@ def _to_command(
                 "reason": plan.reason,
                 "confidence": plan.confidence,
                 "exercise_start_basis": plan.exercise_start_basis,
+                "session_intent": plan.session_intent,
+                "session_stage": plan.session_stage,
+                "guidance_permission": plan.guidance_permission,
             },
         )
     return Command(

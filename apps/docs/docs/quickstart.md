@@ -113,37 +113,50 @@ Open `http://localhost:3000`. The web app talks to
 `http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` in
 `apps/web/.env.local` if the API runs somewhere else.
 
+:::warning Web UI is temporarily behind the backend
+The backend text and voice agents are the current dogfooding surfaces
+while the app shell catches up with the agent refactor. Use the CLI
+and voice scripts below when you want the most reliable local path.
+:::
+
 ## Voice Mode
 
-The current browser voice path is LiveKit-first. Start the API server,
-then run the LiveKit worker:
+The current browser voice path is LiveKit-native. For standalone
+dogfooding, use the wrapper script from the repository root; it starts
+Dockerized Postgres by default and forwards LiveKit worker commands.
+Use `console` for a local microphone session; `start` is worker mode
+for a browser/LiveKit room and does not listen to your terminal
+microphone:
 
 <TerminalWindow title="bash — LiveKit voice">
-{`# Terminal 1: API server
-cd apps/backend
-uv run uvicorn main:app --port 8000 --reload
+{`./scripts/voice_agent.sh --user-id dogfood console
+./scripts/voice_agent.sh --user-id dogfood console --text
+./scripts/voice_agent.sh --memory-mode incognito console
 
-# Terminal 2: LiveKit worker
-cd apps/backend
-uv run python -m agent.voice.agent start`}
+# Worker mode for browser/LiveKit room sessions.
+./scripts/voice_agent.sh --user-id dogfood start`}
 </TerminalWindow>
 
-For prompt and tool smoke tests without a browser room:
+If you want to run the worker directly from `apps/backend`, the
+underlying commands are:
 
 <TerminalWindow title="bash — voice console">
 {`cd apps/backend
 
-# Spoken, uses your mic
-uv run python -m agent.voice.agent console
+# Long-running token-dispatch worker
+.venv/bin/python -m agent.voice.agent start
+
+# Spoken console, uses your mic
+.venv/bin/python -m agent.voice.agent console
 
 # Text-only
-uv run python -m agent.voice.agent console --text`}
+.venv/bin/python -m agent.voice.agent console --text`}
 </TerminalWindow>
 
 The standalone LiveKit test page is still available from the backend
-at `/api/voice/livekit/test`; the Next.js voice page is the preferred
-dogfood surface. See [Voice (LiveKit)](/docs/voice) for the full
-architecture.
+at `/api/voice/livekit/test`. The wrapper script is the preferred
+voice dogfood surface while the web UI catches up with the backend
+refactor. See [Voice (LiveKit)](/docs/voice) for the full architecture.
 
 ## Telegram Gateway
 

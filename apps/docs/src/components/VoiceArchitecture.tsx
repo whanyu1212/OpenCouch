@@ -51,8 +51,8 @@ export default function VoiceArchitecture(): React.JSX.Element {
             </p>
             <ul className={s.agentList}>
               <li><code>start_grounding_exercise</code></li>
-              <li>memory control tools</li>
-              <li><code>answer_grounded_factual_lookup</code></li>
+              <li><code>MemoryControlToolset</code></li>
+              <li><code>GroundedLookupToolset</code></li>
             </ul>
           </article>
 
@@ -79,7 +79,7 @@ export default function VoiceArchitecture(): React.JSX.Element {
               the therapeutic agent on de-escalate.
             </p>
             <ul className={s.agentList}>
-              <li><code>provide_crisis_resources</code></li>
+              <li><code>CrisisResourceToolset</code></li>
               <li>verified hotlines · location-aware</li>
             </ul>
           </article>

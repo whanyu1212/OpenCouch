@@ -58,11 +58,10 @@ long-term memory.
 | `/api/voice/livekit/token` | `POST` | Create a LiveKit participant token and optional agent dispatch config |
 | `/api/voice/livekit/finalization-status/{thread_id}` | `GET` | Poll disconnect-time memory finalization status |
 | `/api/voice/livekit/test` | `GET` | Serve the standalone LiveKit browser test page |
-| `/api/voice/test` | `GET` | Legacy direct Realtime browser test page |
-| `/api/voice/session` | WebSocket | Legacy direct Realtime voice session |
 
-Prefer the LiveKit routes for current browser voice work. The legacy
-direct Realtime routes remain useful for experiments and debugging.
+Voice is LiveKit-native. The worker lives under `agent/voice/`; the
+FastAPI routes only mint room tokens, expose a standalone LiveKit test
+page, and report transcript-finalization status after disconnect.
 
 ## Client contracts
 

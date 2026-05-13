@@ -40,6 +40,9 @@ from agent.memory.types.semantic import (
 from agent.memory.types.therapeutic import (
     DispatchDecision,
     ExerciseStartBasis,
+    GuidancePermission,
+    SessionIntent,
+    SessionStage,
     TherapeuticApproach,
     TherapeuticResponseStyle,
 )
@@ -73,6 +76,9 @@ __all__ = [
     "ProceduralRuleDraft",
     "ProceduralExtractionResult",
     "TherapeuticResponseStyle",
+    "SessionIntent",
+    "SessionStage",
+    "GuidancePermission",
     "ExerciseStartBasis",
     "DispatchDecision",
 ]

@@ -16,6 +16,7 @@ from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.turn_dispatch import run_turn_dispatch_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+from agent.turn_dispatch import build_turn_dispatch_prompt
 from agent.tools.grounded_search import answer_factual_lookup
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -191,6 +192,19 @@ async def test_turn_dispatch_routes_subjective_check_to_therapeutic() -> None:
     assert command.goto == "load_memory_node"
     update = cast(dict[str, Any], command.update)
     assert update["grounded_lookup"] == {"query": "", "status": "not_attempted"}
+
+
+def test_turn_dispatch_prompt_names_resource_seeking_boundary() -> None:
+    """Resource-seeking mental-health asks should be a first-class lookup boundary."""
+
+    prompt = build_turn_dispatch_prompt(
+        _state("Can you find credible anxiety worksheets from an official source?")
+    )
+
+    assert "look up worksheets" in prompt
+    assert "credible articles" in prompt
+    assert "Do not route these to therapeutic" in prompt
+    assert "in-the-moment help" in prompt
 
 
 @pytest.mark.asyncio

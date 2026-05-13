@@ -15,9 +15,9 @@ recall toggles.
 | `crisis_log.py` | Defines `CrisisLogBackend` plus in-memory and null crisis-log implementations. Used by tests, incognito mode, and explicit fixtures. |
 | `postgres_crisis_log.py` | Primary Postgres implementation of `CrisisLogBackend` for durable local/runtime deployments. |
 | `postgres_session_feedback.py` | Primary Postgres implementation of `SessionFeedbackBackend` for durable local/runtime deployments. |
-| `legacy/sqlite_crisis_log.py` | Legacy SQLite implementation of `CrisisLogBackend` for compatibility fallback and migration coverage. |
+| `sqlite_crisis_log.py` | Legacy SQLite implementation of `CrisisLogBackend` for compatibility fallback and migration coverage. |
 | `session_feedback.py` | Defines `SessionFeedbackBackend` plus in-memory and null feedback implementations. Used for end-of-session thumbs feedback. |
-| `legacy/sqlite_session_feedback.py` | Legacy SQLite implementation of `SessionFeedbackBackend` for compatibility fallback and migration coverage. |
+| `sqlite_session_feedback.py` | Legacy SQLite implementation of `SessionFeedbackBackend` for compatibility fallback and migration coverage. |
 
 ## Graph Significance
 
