@@ -30,11 +30,7 @@
 - [🚀 Quick Start](#-quick-start)
   - [Prerequisites](#prerequisites)
   - [Environment](#environment)
-  - [One-command local stack](#one-command-local-stack)
-  - [Manual web stack](#manual-web-stack)
-  - [CLI](#cli)
-  - [Telegram Gateway](#telegram-gateway)
-  - [Documentation Site](#documentation-site)
+  - [Local run commands](#local-run-commands)
 - [🧠 Architecture](#-architecture)
   - [Supported Interfaces](#supported-interfaces)
 - [📁 Project Structure](#-project-structure)
@@ -63,7 +59,7 @@ The project is still pre-beta; a closed beta is planned.
 - **Safety First:** Built-in safety routing evaluates every turn before responding, backed by a durable crisis-audit log.
 - **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
 - **Voice Support:** Browser voice sessions via LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
-- **Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
+- **Optional Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
 - **Tracing & Regression Checks:** Backend tests, live-provider checks, and Opik traces for regression tracking.
 
 ## Screenshots
@@ -87,7 +83,7 @@ The project is still pre-beta; a closed beta is planned.
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Docker Desktop running for the one-command local stack.
+- Docker Desktop running for the Compose stack.
 - `uv` and `pnpm` for manual backend/web development.
 - Provider keys only for real model runs. Deterministic CLI and many local checks can run without external API keys.
 
@@ -117,7 +113,7 @@ OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
 ```
 
-Voice and Telegram need extra configuration:
+Voice needs extra configuration for browser or LiveKit console sessions:
 
 ```env
 # Web voice via LiveKit + OpenAI Realtime model.
@@ -125,7 +121,12 @@ LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 OPENAI_API_KEY=...
+```
 
+<details>
+<summary><b>Optional: Telegram Gateway Environment</b></summary>
+
+```env
 # Telegram gateway.
 OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
 OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
@@ -135,93 +136,59 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
 
 </details>
 
+</details>
+
 Keep real `.env` files local and out of version control.
 
-### One-command local stack
-Use this for the full local backend + web container + voice stack with backend reload, production-mode Next.js, and Dockerized Postgres persistence. The web UI is temporarily behind the backend refactor; use the CLI and voice scripts below for day-to-day dogfooding.
+### Local run commands
+
+The most reliable dogfood paths are `scripts/cli_dogfood.sh` for text and `scripts/voice_agent.sh` for local voice. Compose starts the browser stack: Postgres, backend API, LiveKit voice worker, and web.
+
+<details>
+<summary><b>View commands for Compose, CLI, voice, web, Telegram, and docs</b></summary>
+
+#### Compose stack
 
 ```bash
-docker compose up --build
+# Start the full stack with logs attached.
+docker compose -f compose.yml up
+
+# Start in the background.
+docker compose -f compose.yml up -d
+
+# Rebuild images, then start.
+docker compose -f compose.yml up --build
+
+# Rebuild only the web container after frontend edits.
+docker compose -f compose.yml up --build web
+
+# Follow API + voice logs after background start.
+docker compose -f compose.yml logs -f api voice-agent
+
+# Stop the stack.
+docker compose -f compose.yml down
 ```
 
-This starts:
-- PostgreSQL + pgvector for runtime persistence: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
-- backend API: [localhost:8080/api/health](http://localhost:8080/api/health)
-- LiveKit voice worker: `python -m agent.voice.agent start`
-- Next.js web UI in production mode: [localhost:3000](http://localhost:3000)
+Local URLs: web at [localhost:3000](http://localhost:3000), API at [localhost:8080](http://localhost:8080), health at [localhost:8080/api/health](http://localhost:8080/api/health), and Postgres at `postgresql://opencouch:opencouch@localhost:5432/opencouch`.
 
-The first run can take a while. Docker needs to pull base images, install backend dependencies, build the production web bundle, and warm the voice worker dependencies. Later runs should be much faster because Docker reuses image layers and dependency caches unless the lockfiles or Dockerfiles change.
+Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Browser voice needs `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY`. Inside Compose, API and voice use the in-network Postgres URL automatically.
 
-The Compose stack reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local` when present. For browser voice, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY` before starting the stack.
-
-Inside Compose, the API and voice worker default to `OPENCOUCH_PERSISTENCE_BACKEND=postgres`. That routes memory, LangGraph checkpoints, active-session state, crisis audit, session feedback, and LiveKit voice finalization status through the shared Postgres service. The backend default is also Postgres outside Compose, so you must export `OPENCOUCH_MEMORY_DATABASE_URL` (and friends) — or set `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` to opt into the SQLite fallback for local-only installs without Docker.
-
-For text-only development without LiveKit credentials, start just the API, Postgres, and production-mode web UI:
+#### Text CLI
 
 ```bash
-docker compose up --build postgres api web
-```
+# Preferred persistent dogfood command.
+./scripts/cli_dogfood.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
 
-The Compose web service runs `next build` + `next start`, so frontend source edits require rebuilding the `web` service:
-
-```bash
-docker compose up --build web
-```
-
-Stop everything with:
-
-```bash
-docker compose down
-```
-
-### Manual web stack
-Use this when you want each process in its own terminal. The manual stack uses port `8000` for the API because the web client defaults to `http://localhost:8000/api`; the Compose stack uses container-friendly port `8080` and sets `NEXT_PUBLIC_API_URL` for the web container.
-
-Terminal 1 — API server:
-```bash
+# Raw backend CLI commands.
 cd apps/backend
-uv run uvicorn main:app --port 8000 --reload
-```
-
-Terminal 2 — frontend:
-```bash
-pnpm install
-pnpm --dir apps/web dev
-```
-
-Open [localhost:3000](http://localhost:3000) in your browser.
-
-Optional terminal 3 — LiveKit voice worker:
-```bash
-./scripts/voice_agent.sh start
-```
-
-### CLI
-The CLI is the fastest way to interact with the backend locally.
-
-```bash
-cd apps/backend && uv sync
-
-# Deterministic text mode: no API key needed.
 uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread-id scratch
-
-# Full text mode with persistent memory.
 uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
-
-# Voice mode: requires LiveKit env vars plus OPENAI_API_KEY.
 uv run python -m opencouch_cli --voice
 ```
 
-For everyday persistent-mode dogfooding, [`scripts/cli_dogfood.sh`](scripts/cli_dogfood.sh) wraps the two prerequisites into one command: it ensures the Dockerized Postgres service is up (via `docker compose up -d postgres --wait`) and then launches the CLI from `apps/backend`. Any flags are forwarded to the CLI:
+`scripts/cli_dogfood.sh` starts Dockerized Postgres first and forwards flags to `opencouch_cli`.
 
-```bash
-./scripts/cli_dogfood.sh
-./scripts/cli_dogfood.sh --memory-mode persistent --user-id alice --thread-id s1
-```
-
-This assumes `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and `OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch` are set in your `.env` (see [Environment](#environment)). Use the raw `uv run python -m opencouch_cli ...` invocations above when you want guest mode, deterministic mode, or the SQLite fallback without starting Postgres.
-
-For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice runtime independently from the text agent. Use `console` for local microphone sessions; this is the normal dogfood path when you want to talk to the voice agent from your laptop.
+#### Voice
 
 ```bash
 # Local microphone voice session.
@@ -239,14 +206,24 @@ For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.
 ./scripts/voice_agent.sh --user-id dogfood start
 ```
 
-If `console` starts but cannot hear you, check macOS microphone
-permission for your terminal app under System Settings → Privacy &
-Security → Microphone. The voice wrapper supports `--user-id`,
-`--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and
-`--no-postgres` before the forwarded LiveKit command.
+`scripts/voice_agent.sh` starts Postgres by default and forwards flags to `agent.voice.agent`. If `console` starts but cannot hear you, check macOS microphone permission for your terminal app under System Settings → Privacy & Security → Microphone.
 
-### Telegram Gateway
-Run the standalone Telegram gateway. It does not require the FastAPI server.
+#### Manual web stack
+
+Use this when you want each process in its own terminal. The manual stack uses port `8000` for the API because the web client defaults to `http://localhost:8000/api`.
+
+```bash
+# Terminal 1: API server.
+cd apps/backend && uv run uvicorn main:app --port 8000 --reload
+
+# Terminal 2: frontend, from the repo root.
+pnpm install && pnpm --dir apps/web dev
+
+# Optional terminal 3: LiveKit voice worker.
+./scripts/voice_agent.sh start
+```
+
+#### Optional Telegram gateway
 
 ```bash
 cd apps/backend
@@ -257,20 +234,18 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER="fast" \
 uv run python -m channels.gateway telegram
 ```
 
-See [`apps/backend/README.md`](apps/backend/README.md) for backend-specific commands.
+#### Documentation site
 
-### Documentation Site
-
-> **For developers and contributors only.** The hosted docs are available at the link below — running locally is only needed if you're editing documentation.
-
-The official documentation is live at: **[https://whanyu1212.github.io/OpenCouch/](https://whanyu1212.github.io/OpenCouch/)**
-
-To run the Docusaurus-powered docs site locally:
+The official documentation is live at [whanyu1212.github.io/OpenCouch](https://whanyu1212.github.io/OpenCouch/). Run the docs site locally only when editing documentation:
 
 ```bash
 cd apps/docs
 pnpm install && npx docusaurus start --port 3001
 ```
+
+</details>
+
+See [`apps/backend/README.md`](apps/backend/README.md) for backend-specific commands.
 
 ---
 
@@ -283,7 +258,7 @@ Before response generation, each turn runs through safety routing. Memory writes
 - **CLI:** Local text and voice harness for development and testing.
 - **Web chat:** Next.js text UI backed by FastAPI REST and WebSocket streaming routes.
 - **Web voice:** LiveKit browser sessions with a LiveKit Agents worker and OpenAI Realtime model.
-- **Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
+- **Optional Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
 - **Backend API:** FastAPI route layer used by the web UI and other clients.
 
 ```mermaid
@@ -299,8 +274,8 @@ flowchart TD
     subgraph SURF ["Runtime Surfaces"]
         CLI["CLI"]:::inputNode
         WEB["Next.js web chat"]:::inputNode
-        VOICE["LiveKit voice<br/>separate runtime"]:::inputNode
-        TG["Telegram DM gateway<br/>thread rotation"]:::inputNode
+        VOICE["LiveKit voice<br/>separate Agents runtime"]:::inputNode
+        TG["Optional Telegram DM gateway<br/>thread rotation"]:::inputNode
         API["FastAPI REST/WebSocket"]:::inputNode
     end
 
@@ -313,10 +288,10 @@ flowchart TD
 
     subgraph SAFE ["Therapeutic Branch"]
         direction TB
-        TDISP{"turn_dispatch<br/>LLM route plan"}:::safeNode
+        TDISP{"turn_dispatch<br/>LLM route + active-flow lifecycle"}:::safeNode
         MC[["memory_control<br/>natural-language memory ops"]]:::safeNode
         GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
-        LM["load_memory<br/>semantic • episodic • procedural"]:::safeNode
+        LM["load_memory<br/>awaits recall / prefetch"]:::safeNode
         TDISP ==>|memory control| MC
         TDISP ==>|lookup| GA
         TDISP ==>|support| LM
@@ -343,12 +318,14 @@ flowchart TD
 
     FT{{"finalize_turn<br/>checkpoint reply • set route"}}:::sysNode
 
-    subgraph POST ["Runtime Memory Side Effects (outside LangGraph)"]
+    subgraph POST ["Runtime Memory Work (outside LangGraph)"]
         direction LR
-        MX["TurnExtractionCoordinator<br/>background after graph END"]:::sysNode
-        EF["semantic extraction<br/>LLM policy: commit • hold • drop"]:::sysNode
-        EP["procedural extraction<br/>LLM policy: commit • hold • drop"]:::sysNode
-        SB[("session buffer<br/>held semantic • procedural")]:::sysNode
+        MP["memory prefetch<br/>turn-start speculation"]:::sysNode
+        MX["TurnExtractionCoordinator<br/>background after graph END<br/>drain before next turn/session end"]:::sysNode
+        EF["semantic extraction + write policy<br/>commit_now • session_end • repeat/drop"]:::sysNode
+        EP["procedural extraction + write policy<br/>commit_now • session_end • drop"]:::sysNode
+        SB[("session buffer<br/>held semantic/procedural candidates")]:::sysNode
+        MP -.-> LM
         MX -.-> EF
         MX -.-> EP
         EF -.->|hold| SB
@@ -372,9 +349,10 @@ flowchart TD
     API ==> IN
     TG ==> IN
     VOICE ==> VIN
-    VIN -.->|LiveKit services| DB
-    VIN -.->|disconnect transcript| SE
+    VIN -.->|startup/mid-session memory| DB
+    VIN -.->|disconnect transcript finalization| SE
     IN ==> CG
+    IN -.->|runtime context| MP
     CG ==>|Safe| TDISP
     CG -.->|Risk| RL
     MC ==> FT
@@ -386,6 +364,7 @@ flowchart TD
     FT -.->|runtime schedules| MX
     EF -.->|immediate writes| DB
     EP -.->|immediate writes| DB
+    MX -.->|persist active-session buffer| DB
     SB -.->|held candidates| CM
     CM -.->|promoted / reconciled writes| DB
     SS -.->|episodic arc| DB

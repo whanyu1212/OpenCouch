@@ -15,8 +15,8 @@ x-backend-service: &backend-service
     - path: apps/backend/.env.local
       required: false
   environment:
-    OPENCOUCH_PERSISTENCE_BACKEND: ${OPENCOUCH_PERSISTENCE_BACKEND:-postgres}
-    OPENCOUCH_MEMORY_DATABASE_URL: ${OPENCOUCH_MEMORY_DATABASE_URL:-postgresql://opencouch:opencouch@postgres:5432/opencouch}
+    OPENCOUCH_PERSISTENCE_BACKEND: postgres
+    OPENCOUCH_MEMORY_DATABASE_URL: postgresql://opencouch:opencouch@postgres:5432/opencouch
   volumes:
     - .:/workspace
     - backend-cache:/root/.cache
