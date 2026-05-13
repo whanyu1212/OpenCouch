@@ -35,12 +35,13 @@ export default function TurnPipeline() {
         <div className={styles.branchCard + ' ' + styles.safeCard}>
           <div className={styles.branchTitle}>
             <span className={styles.branchDot} style={{ background: 'var(--safe-color)' }} />
-            therapeutic path
+            safe-turn path
           </div>
           <Node num="2b" label="turn_dispatch_node" desc="LLM routes safe turns to memory control, grounded lookup, or therapeutic flow" accent="var(--safe-color)" compact />
+          <Node num="3b" label="memory_control_node" desc="Operational memory replies for list/status/forget/recall/preference turns" accent="var(--safe-color)" compact />
           <Node num="3b" label="grounded_answer_node" desc="Search-grounded answer for explicit factual lookup turns" accent="var(--safe-color)" compact />
-          <Node num="4b" label="load_memory_node" desc="Hybrid RRF retrieval across 3 namespaces" accent="var(--safe-color)" compact />
-          <Node num="5b" label="therapeutic_subgraph" desc="LLM dispatcher → 1 of 7 response styles × 7 approaches" accent="var(--safe-color)" compact />
+          <Node num="4b" label="load_memory_node" desc="Hybrid RRF retrieval across 3 namespaces for ordinary support" accent="var(--safe-color)" compact />
+          <Node num="5b" label="therapeutic_subgraph" desc="LLM dispatcher → shared response node or guided exercise node" accent="var(--safe-color)" compact />
         </div>
       </div>
 
@@ -49,10 +50,10 @@ export default function TurnPipeline() {
         <div className={styles.sectionHeader}>both paths converge</div>
         <Node num="6" label="finalize_turn_node" desc="Append response to transcript via operator.add reducer. No I/O — no retry. Stream emits response_ready here." accent="var(--oc-accent)" />
         <div className={styles.parallelGroup}>
-          <div className={styles.parallelTag}>parallel fan-out</div>
+          <div className={styles.parallelTag}>runtime side effects after graph END</div>
           <div className={styles.parallelNodes}>
-            <Node num="7" label="extract_semantic_facts_node" desc="Candidate extraction → deterministic write policy → commit-now / hold / require-repetition / drop" accent="var(--oc-accent)" compact />
-            <Node num="7" label="extract_procedural_rules_node" desc="Style rules → immediate commit (explicit) or session-end hold (implicit). Safety-conflict requests dropped." accent="var(--oc-accent)" compact />
+            <Node num="7" label="semantic extraction" desc="Candidate extraction → LLM-primary write policy → commit-now / hold / require-repetition / drop" accent="var(--oc-accent)" compact />
+            <Node num="7" label="procedural extraction" desc="Style rules → immediate commit or session-end hold. Safety-conflict requests dropped." accent="var(--oc-accent)" compact />
           </div>
         </div>
       </div>

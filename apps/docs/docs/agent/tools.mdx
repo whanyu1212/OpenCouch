@@ -19,9 +19,9 @@ means provider-native web search, used in two distinct places:
   "search for the latest guidelines on…").
 
 Tools are deliberately scarce because every external call is a safety
-surface and adds tail latency. New capabilities go behind a dedicated
-node + gate rather than being wired into the LLM as a generic
-function-calling tool.
+surface and adds tail latency. New safe-turn capabilities should go
+through the existing `turn_dispatch_node` route plan plus a dedicated
+worker node when they represent a real lifecycle boundary.
 
 Unlike most LangGraph tutorials, tools here are **not registered
 with the graph as `@tool`-decorated functions**. Instead, a node
@@ -32,9 +32,9 @@ calls the tool function directly when its condition is met. Benefits:
 - **Provider-native grounding.** Web search uses Google Search
   (Gemini) or `web_search` (OpenAI) via `use_search=True` on
   `generate_text()`, not a custom tool attachment.
-- **Graceful degradation by construction.** A tool failure returns
-  empty results plus a status code; the caller decides whether to
-  continue without them.
+- **Explicit failure semantics.** Missing LLM clients and provider
+  failures retry or surface at the node boundary; verified-but-empty
+  results return explicit status values so callers do not guess.
 
 <ToolRegistry />
 
@@ -69,14 +69,16 @@ producing user-facing content, it's a gate, not a tool.
 ## Adding a new tool
 
 1. Create `agent/tools/your_tool.py` with the tool function.
-   Accept the state and the injected deps it needs; return
-   structured data plus a status literal. Never raise — return
-   empty/default values on any failure and log a warning.
+   Accept the state and the injected deps it needs; return structured
+   data plus a status literal for verified empty/no-result cases.
+   Provider errors should surface to the node retry policy unless the
+   feature has an explicit product reason to continue without the tool.
 2. Export it from `agent/tools/__init__.py`.
-3. Add a routing gate (`agent/nodes/<feature>_gate_node.py`) that
-   detects when to invoke the tool, plus a worker node
+3. Extend `turn_dispatch_node` when the capability is a safe-turn route,
+   or add a dedicated `Command`-returning router only if the capability
+   introduces a true lifecycle boundary. Add a worker node
    (`agent/nodes/<feature>_node.py`) that calls the tool and writes
-   `response_text`. Register both in `build_agent_workflow()`.
+   `response_text`, then register it in `build_agent_workflow()`.
 4. Extend `AgentPrivateState` with any new turn-scoped fields the
    node owns (query string, status code, found-data list).
 5. Add a `STAGE_LABELS` entry in `agent/models.py` so streaming

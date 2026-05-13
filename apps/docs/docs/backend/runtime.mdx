@@ -11,7 +11,7 @@ import RuntimeLayers from '@site/src/components/RuntimeLayers';
 Two text-runtime layers, one pipeline. The stateless layer is for
 single-turn requests. The persistent layer adds thread-aware
 checkpointing, candidate buffering, an inactivity sweeper, and the
-shared session-end seam (`/end`, timeout, shutdown, API end-session).
+shared session-end path (`/end`, timeout, shutdown, API end-session).
 
 ---
 
@@ -25,14 +25,14 @@ persistent layer saves state through the configured backend after each
 turn and restores it via reducers on the next.
 :::
 
-:::note Voice has its own seam
+:::note Voice has its own finalization path
 The LiveKit voice runtime (`agent/voice/agent.py`) lazy-creates
 **one shared `PersistentAgentRuntime` per worker process**, so it
 shares the configured memory store, crisis log, and embedding provider
 with text mode. But voice does **not** drive turns
 through `run_turn` / `run_turn_stream`. On disconnect it
 serializes the room transcript and hands it to
-`runtime.end_transcript_session(...)` — a separate seam from
+`runtime.end_transcript_session(...)` — a separate path from
 text-mode `/end`. The 20-min inactivity sweeper and session-end
 candidate buffering described below are therefore text-only;
 voice has its own shutdown persistence path.
@@ -68,10 +68,10 @@ persistent turn.
 | `procedural_profile` | `_merge_dicts` | Procedural rules + recall toggle merge |
 | `exercise_state` | `_merge_dicts` | Active exercise continuity; `exercise_therapeutic_approach` pins the approach used when guidance resumes |
 | `memory_control` | `_merge_dicts` | `pending_action` carries destructive deletes across turns |
-| `diagnostics` | `_merge_dicts` | Parallel extractors write independently; gate timings, retrieval path, and write counts merge |
+| `diagnostics` | `_merge_dicts` | Graph nodes and runtime side effects write independently; gate timings, retrieval path, and write counts merge |
 
 **Non-reducer fields** (`crisis`, `crisis_audit`, `route`,
-`response_text`, `response_style*`, `therapeutic_approach`, the
+`response_text`, `response_style`, `therapeutic_approach`, the
 turn-scoped lookup fields) are overwritten fresh each turn — they
 describe a single turn's decisions and replies.
 
@@ -198,7 +198,7 @@ skipped.
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
-| `agent/audit/sqlite/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
+| `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
 | `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_session_feedback.py` | Primary Postgres feedback store |
-| `agent/audit/sqlite/sqlite_session_feedback.py` | SQLite feedback fallback backend |
+| `agent/audit/sqlite_session_feedback.py` | SQLite feedback fallback backend |

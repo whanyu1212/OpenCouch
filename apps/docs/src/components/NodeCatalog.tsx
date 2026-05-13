@@ -14,7 +14,7 @@ import s from './NodeCatalog.module.css';
    Filterable by category and capability.
    ================================================================ */
 
-type Category = 'SAFETY' | 'MEMORY' | 'ROUTING' | 'EXTRACTION' | 'TERMINAL';
+type Category = 'SAFETY' | 'MEMORY' | 'ROUTING' | 'TERMINAL';
 
 interface NodeSpec {
   id: string;
@@ -67,8 +67,8 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: false,
     description:
-      'Crisis branch only. Extracts the user\'s region from recent context with a cheap LLM call, then performs a search-grounded lookup for verified hotlines. Failures degrade to empty results so the crisis response is never blocked by a third-party outage.',
-    skipConditions: ['no llm_client (returns empty resources)'],
+      'Crisis branch only. Classifies whether the user provided or refused location, then performs a search-grounded lookup for verified hotlines. No-location and no-verified-result cases return explicit statuses; missing LLM clients or provider failures retry or surface.',
+    skipConditions: ['user did not provide location', 'user refused location'],
     file: 'agent/nodes/crisis_resource_lookup.py',
     fn: 'run_crisis_resource_lookup_node',
   },
@@ -84,7 +84,7 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: false,
     description:
-      'Generates the crisis reply with safety-overlay framing and any resources surfaced by crisis_resource_lookup_node. Streams chunks via get_stream_writer(). Falls back to a deterministic, escalation-aware reply on LLM failure.',
+      'Generates the crisis reply with safety-overlay framing and any resources surfaced by crisis_resource_lookup_node. Streams chunks via get_stream_writer(). Provider failures retry or surface instead of returning canned crisis text.',
     file: 'agent/nodes/crisis_response.py',
     fn: 'run_crisis_response_node',
   },
@@ -149,8 +149,8 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: false,
     description:
-      'Answers explicit factual lookup requests with provider-native search grounding (use_search=True). Status field reports answered, no_verified_answer, search_failed, or search_unavailable. Never invents facts — surfaces "I cannot verify that" when the result looks unverified.',
-    skipConditions: ['no llm_client (returns search_unavailable)'],
+      'Answers explicit factual lookup requests with provider-native search grounding (use_search=True). Status field reports answered or no_verified_answer. Never invents facts — surfaces "I cannot verify that" when the result looks unverified.',
+    skipConditions: ['missing grounded_lookup.query raises before answering'],
     file: 'agent/nodes/grounded_answer.py',
     fn: 'run_grounded_answer_node',
   },
@@ -183,7 +183,7 @@ const NODES: NodeSpec[] = [
     parallel: false,
     subgraph: true,
     description:
-      'Compiled subgraph with dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing). Uses a narrow TherapeuticSubgraphOutput to restrict what flows back to the parent, preventing reducer double-counting on transcript/history. Each child node has its own RetryPolicy.',
+      'Compiled subgraph with dispatcher, one shared therapeutic response node, and one guided-exercise response node. Uses a narrow TherapeuticSubgraphOutput to restrict what flows back to the parent, preventing reducer double-counting on transcript/history. Each child node has its own RetryPolicy.',
     file: 'agent/therapeutic/graph.py',
     fn: 'build_therapeutic_subgraph',
   },
@@ -203,53 +203,6 @@ const NODES: NodeSpec[] = [
       'Appends the assistant reply as a single-element delta. The operator.add reducer on transcript/history handles accumulation. Stamps response_style onto the assistant turn for round-trip persistence. Returns empty delta for blank/whitespace responses to keep the transcript clean. No I/O, so no retry.',
     file: 'agent/nodes/finalize_turn.py',
     fn: 'run_finalize_turn_node',
-  },
-  {
-    id: 'extract_facts',
-    name: 'extract_semantic_facts_node',
-    category: 'EXTRACTION',
-    order: 12,
-    inputs: ['state.message', 'state.response_text'],
-    outputs: ['memory_store / session buffer (side effect)', 'state.diagnostics'],
-    retry: true,
-    llm: true,
-    reducer: '_merge_dicts',
-    parallel: true,
-    subgraph: false,
-    description:
-      'LLM structured-output call that extracts semantic candidates, then runs deterministic write policy. Low-risk stable facts (relationship/preference/coping_strategy/goal) commit immediately; sensitive or interpretive candidates (loss/trigger, negative self-belief) are held for session end or repetition-gated. Runs in parallel with extract_procedural_rules_node.',
-    skipConditions: [
-      'route in {crisis, memory_control, grounded_lookup}',
-      'no llm_client',
-      'incognito mode',
-      'small-talk gate triggered',
-      'early-turn negative self-belief',
-    ],
-    file: 'agent/nodes/extract_facts.py',
-    fn: 'run_extract_semantic_facts_node',
-  },
-  {
-    id: 'extract_procedural',
-    name: 'extract_procedural_rules_node',
-    category: 'EXTRACTION',
-    order: 13,
-    inputs: ['state.message', 'state.response_text'],
-    outputs: ['procedural profile / session buffer (side effect)', 'state.diagnostics'],
-    retry: true,
-    llm: true,
-    reducer: '_merge_dicts',
-    parallel: true,
-    subgraph: false,
-    description:
-      'LLM structured-output call that extracts procedural candidates, then runs deterministic write policy. Explicit durable instructions ("please keep replies short") commit immediately; implicit or turn-scoped preferences are held or dropped. Safety-conflict requests ("skip the safety check") are always dropped. Same parallel lane as extract_semantic_facts_node.',
-    skipConditions: [
-      'route in {crisis, memory_control, grounded_lookup}',
-      'no llm_client',
-      'incognito mode',
-      'small-talk gate triggered',
-    ],
-    file: 'agent/nodes/extract_procedural_rules.py',
-    fn: 'run_extract_procedural_rules_node',
   },
 ];
 
@@ -272,11 +225,6 @@ const CATEGORY_META: Record<
     blurb: 'Dispatches to the right response pathway.',
     hue: 'routing',
   },
-  EXTRACTION: {
-    label: 'Extraction',
-    blurb: 'Post-response LLM side effects. Parallel fan-out.',
-    hue: 'extraction',
-  },
   TERMINAL: {
     label: 'Terminal',
     blurb: 'Transcript finalization. Pure state, no I/O.',
@@ -291,7 +239,6 @@ const FILTERS: { key: FilterKey; label: string; kind: 'category' | 'capability' 
   { key: 'SAFETY', label: 'Safety', kind: 'category' },
   { key: 'MEMORY', label: 'Memory', kind: 'category' },
   { key: 'ROUTING', label: 'Routing', kind: 'category' },
-  { key: 'EXTRACTION', label: 'Extraction', kind: 'category' },
   { key: 'TERMINAL', label: 'Terminal', kind: 'category' },
   { key: 'llm', label: 'LLM calls', kind: 'capability' },
   { key: 'retry', label: 'RetryPolicy', kind: 'capability' },

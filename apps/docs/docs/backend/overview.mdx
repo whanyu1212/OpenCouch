@@ -8,9 +8,10 @@ import PromptLayersVisual from '@site/src/components/PromptLayers';
 
 # Architecture
 
-Single Python backend. Explicit LangGraph agent graph. Three memory
-layers backed by SQLite. Shared runtime for CLI, API, web text, and
-Telegram; separate LiveKit runtime for voice.
+Single Python backend. Explicit LangGraph text-agent graph. Three memory
+layers backed by Postgres-first durable persistence with a legacy SQLite
+fallback. Shared runtime for CLI, API, web text, and Telegram; separate
+LiveKit runtime for voice.
 
 ---
 
@@ -80,16 +81,17 @@ composition logic.
 |---|---|
 | `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
 | `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `turn_dispatch`, `memory_control`, `grounded_answer`, `load_memory`, etc.) |
-| `agent/therapeutic/` | Subgraph: dispatcher, 7 response-style nodes, exercise registry/state machine, and prompt builders |
-| `agent/memory/` | Store protocol, embeddings, retrieval, dedup, write policy, reconciliation, procedural profile, and service-backed memory logic (`load_memory_service`, `episodic_service`, `session_commit_service`, `orchestration`, `backstops`) |
-| `agent/audit/` | Always-on safety records — crisis log, session feedback (in-memory + SQLite backends, models) |
-| `agent/safety/` | Deterministic crisis override layer plus service-backed crisis classification/routing helpers |
+| `agent/therapeutic/` | Subgraph: LLM-primary dispatcher, shared therapeutic response node, guided-exercise node, exercise registry/state machine, and prompt builders |
+| `agent/memory/` | Store protocol, Postgres/SQLite backends, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
+| `agent/audit/` | Always-on safety records — crisis log and session feedback with in-memory, Postgres, and SQLite backends |
+| `agent/gates/safety/` | LLM-only crisis classification, prompts, and truth-table normalization |
+| `agent/gates/memory_control/` | User-facing memory-control actions and operations |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
 | `agent/tools/` | `find_crisis_resources` (grounded search for hotlines), `answer_factual_lookup` (factual search grounding) |
-| `services/llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
+| `llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |
 | `channels/` | Standalone channel adapters, currently Telegram DM polling |
-| `voice/` | LiveKit-Agents voice runtime (`agent/voice/agent.py`) — worker process, agent handoffs, bounded tasks, room transport |
+| `agent/voice/` | LiveKit-Agents voice runtime — worker process, agent handoffs, bounded tasks, room transport, and transcript finalization |
 | `api/` | FastAPI routes (chat, threads, memory, voice token/finalization) |
 | `tests/` | Pytest suites for nodes, memory, retrieval, dispatcher, persistence |
 

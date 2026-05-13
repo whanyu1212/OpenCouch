@@ -68,8 +68,7 @@ separate LiveKit subagents.
 This is the normal browser/frontend path:
 
 <TerminalWindow title="LiveKit voice worker">
-{`cd apps/backend
-uv run python -m agent.voice.agent start`}
+{`./scripts/voice_agent.sh start`}
 </TerminalWindow>
 
 ### Direct-connect flow
@@ -77,8 +76,7 @@ uv run python -m agent.voice.agent start`}
 Use this for manual room testing:
 
 <TerminalWindow title="Direct room join">
-{`cd apps/backend
-uv run python -m agent.voice.agent connect --room my-room`}
+{`./scripts/voice_agent.sh connect --room my-room`}
 </TerminalWindow>
 
 When using direct connect, request the browser token with `dispatch=0`
@@ -189,16 +187,16 @@ Console sessions skip transcript finalization by default unless
 
 | Command | What it does |
 |---|---|
-| `uv run python -m agent.voice.agent dev` | Local development mode |
-| `uv run python -m agent.voice.agent start` | Long-running worker for token-dispatch flows |
-| `uv run python -m agent.voice.agent connect --room <name>` | Direct room join for manual testing |
-| `uv run python -m agent.voice.agent console` | Local console session |
-| `uv run python -m agent.voice.agent console --text` | Text-only console smoke path |
-| `uv run python -m agent.voice.agent download-files` | Pre-download model assets |
+| `./scripts/voice_agent.sh start` | Long-running worker for token-dispatch flows; starts Postgres by default |
+| `./scripts/voice_agent.sh connect --room <name>` | Direct room join for manual testing |
+| `./scripts/voice_agent.sh console` | Local console session |
+| `./scripts/voice_agent.sh console --text` | Text-only console smoke path |
+| `./scripts/voice_agent.sh download-files` | Pre-download model assets |
+| `cd apps/backend && .venv/bin/python -m agent.voice.agent dev` | Direct LiveKit development mode |
 
 The standalone browser test page is served at
-`/api/voice/livekit/test`; the Next.js voice page is the preferred
-dogfood surface.
+`/api/voice/livekit/test`. The wrapper script is the preferred dogfood
+surface while the web UI catches up with the backend refactor.
 
 ---
 

@@ -15,7 +15,7 @@ flowchart TD
     Token --> Dispatch{"dispatch_agent?"}
     Dispatch -->|yes| Room["LiveKit room"]
     Client -->|join with participant token| Room
-    Worker["uv run python -m agent.voice.agent start"] --> Room
+    Worker["scripts/voice_agent.sh start"] --> Room
 
     Room --> Entry["opencouch_voice(ctx)"]
     Entry --> Bootstrap["session_bootstrap: runtime + metadata"]

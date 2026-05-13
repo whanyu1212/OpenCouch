@@ -81,8 +81,8 @@ const GROUPS: GroupDef[] = [
     blurb: 'Set by crisis_gate_node on every turn; consumed by crisis_log_node.',
     fields: [
       { name: 'crisis', type: 'CrisisAssessment', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: 'level (0–3), confidence, reason, needs_crisis_response, needs_clarification.' },
-      { name: 'crisis_audit', type: 'CrisisAuditState', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: 'Classifier provenance: override_kind, classifier_path (deterministic / llm_primary / llm_fallback / override), llm_failure_occurred. Read by crisis_log_node.' },
-      { name: 'route', type: 'str', setBy: 'crisis_gate + downstream gates', lifecycle: 'turn', desc: '"crisis" / "therapeutic" / "memory_control" / "grounded_lookup". Drives extractor skip logic.' },
+      { name: 'crisis_audit', type: 'CrisisAuditState', setBy: 'crisis_gate_node', lifecycle: 'turn', desc: 'Classifier provenance: override_kind, classifier_path (llm_primary), llm_failure_occurred. Read by crisis_log_node.' },
+      { name: 'route', type: 'str', setBy: 'crisis_gate + turn_dispatch', lifecycle: 'turn', desc: '"crisis" / "therapeutic" / "memory_control" / "grounded_lookup". Drives extractor skip logic.' },
     ],
   },
   {
@@ -103,21 +103,21 @@ const GROUPS: GroupDef[] = [
     fields: [
       { name: 'memory_control.action', type: 'dict', setBy: 'turn_dispatch_node', lifecycle: 'turn', desc: 'Detected memory command (kind, args). Consumed by memory_control_node.' },
       { name: 'grounded_lookup.query', type: 'str', setBy: 'turn_dispatch_node', lifecycle: 'turn', desc: 'Factual query extracted by dispatch. Consumed by grounded_answer_node.' },
-      { name: 'grounded_lookup.status', type: 'str', setBy: 'grounded_answer_node', lifecycle: 'turn', desc: 'answered · no_verified_answer · search_failed · search_unavailable · not_attempted' },
+      { name: 'grounded_lookup.status', type: 'str', setBy: 'grounded_answer_node', lifecycle: 'turn', desc: 'answered · no_verified_answer · not_attempted' },
       { name: 'inferred_location', type: 'str', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'Region extracted from recent context for hotline lookup.' },
       { name: 'found_resources', type: 'list[dict]', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'Verified hotlines (name / phone / website / region). Empty on failure or missing location.' },
-      { name: 'resource_lookup_status', type: 'str', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'found · no_location · search_failed · no_verified_results · not_attempted' },
+      { name: 'resource_lookup_status', type: 'str', setBy: 'crisis_resource_lookup_node', lifecycle: 'turn', desc: 'found · no_location · location_refused · no_verified_results · not_attempted' },
     ],
   },
   {
     id: 'diagnostics',
     label: 'Diagnostics',
-    blurb: 'Per-turn observability. _merge_dicts lets every node write its own keys without racing.',
+    blurb: 'Per-turn observability. _merge_dicts lets graph nodes and runtime services write their own keys without racing.',
     fields: [
-      { name: 'diagnostics', type: 'Annotated[dict, _merge_dicts]', setBy: 'all I/O nodes', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Timing and write-count metadata. Parallel extractors write simultaneously without coordination.' },
+      { name: 'diagnostics', type: 'Annotated[dict, _merge_dicts]', setBy: 'graph nodes + runtime side effects', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Timing and write-count metadata. Runtime extraction can merge diagnostics after the graph finishes.' },
       { name: 'diagnostics.crisis_gate_ms · crisis_classifier_path', type: 'float · str', setBy: 'crisis_gate_node', lifecycle: 'reducer', desc: 'Time spent classifying + which path decided it.' },
       { name: 'diagnostics.load_memory_ms · retrieval_path', type: 'float · str', setBy: 'load_memory_node', lifecycle: 'reducer', desc: 'Retrieval time + which path ran (hybrid_rrf / token_recall / token_recall_after_embed_error).' },
-      { name: 'diagnostics.extract_facts_ms · extract_procedural_ms', type: 'float · float', setBy: 'extractor nodes', lifecycle: 'reducer', desc: 'Extraction LLM + policy time per parallel lane.' },
+      { name: 'diagnostics.extract_facts_ms · extract_procedural_ms', type: 'float · float', setBy: 'runtime extraction', lifecycle: 'reducer', desc: 'Extraction LLM + LLM-primary policy time per lane.' },
       { name: 'diagnostics.turn_total_ms', type: 'float', setBy: 'runtime', lifecycle: 'reducer', desc: 'Total turn wall-clock, stamped outside the graph.' },
     ],
   },

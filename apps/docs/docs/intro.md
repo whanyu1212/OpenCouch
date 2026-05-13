@@ -22,20 +22,20 @@ some pages may lag briefly after larger refactors or dogfood changes.
 ## How a turn flows
 
 Every message passes through the same pipeline. Safety runs first.
-Then a sequence of operational gates short-circuits the turn for
-explicit memory commands and factual lookup requests; everything
-else loads memory and routes through the therapeutic subgraph.
-After the reply is sealed, two extractor lanes fan out in parallel
-to evaluate what (if anything) is worth remembering.
+Then one LLM-primary turn dispatcher short-circuits the turn for
+explicit memory commands or factual lookup requests; everything else
+loads memory and routes through the therapeutic subgraph. After the
+reply is sealed, the runtime schedules off-graph extraction work to
+evaluate what, if anything, is worth remembering.
 
 <FlowVisualizer />
 
 The therapeutic path can end in one of four ways:
 
 - **Memory command** (`"forget that"`, `"recall off"`,
-  `"remember that I prefer…"`) → `memory_control_node` runs
-  deterministically and replies with a confirmation. No memory
-  retrieval, no LLM.
+  `"remember that I prefer…"`) → `memory_control_node` executes the
+  action selected by `turn_dispatch_node` and replies operationally.
+  No memory retrieval and no therapeutic response generation.
 - **Factual lookup** (`"verify…"`, `"look up the latest…"`) →
   `grounded_answer_node` runs a search-grounded LLM call and
   replies with sources. No therapeutic framing.
@@ -73,7 +73,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       <strong>Safety first</strong>
     </div>
-    <p>LLM-primary crisis gate runs before anything else, with deterministic overrides for imminent risk and idiomatic-safe phrases. Region-aware hotline lookup overlays verified resources onto crisis replies. Always-on audit log even in incognito.</p>
+    <p>LLM-only crisis gate runs before anything else, with local truth-table normalization for levels 0-3. Region-aware hotline lookup overlays verified resources onto crisis replies. Always-on audit log even in incognito.</p>
   </div>
 
   <div className="doc-card">
@@ -89,7 +89,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
       <strong>Persistent memory</strong>
     </div>
-    <p>Semantic facts, episodic session arcs, and procedural style rules — extracted with structured LLM output, gated by deterministic write policy, retrieved via hybrid search with Reciprocal Rank Fusion.</p>
+    <p>Semantic facts, episodic session arcs, and procedural style rules — extracted with structured LLM output, classified by LLM-primary write policy with hard local safety/storage guards, and retrieved via hybrid search with Reciprocal Rank Fusion.</p>
   </div>
 </div>
 
@@ -119,7 +119,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       <strong>Observability</strong>
     </div>
-    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions. Every node writes diagnostics through a <code>_merge_dicts</code> reducer; Opik captures the full trace.</p>
+    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions, and runtime side-effect counters. Graph nodes and runtime services merge diagnostics through the same structured channel; Opik captures the full trace.</p>
   </div>
 
   <div className="doc-card">
@@ -127,7 +127,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       <strong>Cost &amp; latency levers</strong>
     </div>
-    <p>Pre-extractor small-talk gate skips most acknowledgment turns. Two extractor lanes fan out in parallel after the reply, so memory writes don't block the next user turn. Stream emits <code>response_ready</code> as soon as <code>finalize_turn_node</code> seals the reply — clients can render before the post-response tail finishes.</p>
+    <p>Pre-extractor small-talk checks skip most acknowledgment turns. The runtime schedules memory extraction after the graph reaches <code>END</code>, so memory writes do not block the visible reply. Stream emits <code>response_ready</code> as soon as <code>finalize_turn_node</code> seals the reply.</p>
   </div>
 
   <div className="doc-card">
@@ -143,7 +143,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       <strong>Session continuity</strong>
     </div>
-    <p>20-minute inactivity sweeper auto-finalizes idle sessions through the same end-session seam as <code>/end</code>. Held memory candidates persist across restarts via an active-session SQLite table — delayed promotion never silently disappears.</p>
+    <p>20-minute inactivity sweeper auto-finalizes idle sessions through the same end-session path as <code>/end</code>. Held memory candidates persist across restarts via the active-session backend — delayed promotion does not silently disappear.</p>
   </div>
 </div>
 

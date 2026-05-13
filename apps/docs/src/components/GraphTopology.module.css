@@ -439,6 +439,26 @@
   width: 100%;
 }
 
+.routeOptions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.routeOptions .node {
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+@media (max-width: 580px) {
+  .routeOptions {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Parallel zone ───────────────────────────────────────────────── */
 
 .parallelZone {

@@ -50,7 +50,7 @@ const TOOLS: Tool[] = [
     triggerCondition: 'crisis gate routes to the crisis branch AND llm_client is available',
     providers: ['gemini', 'openai'],
     description:
-      'Surfaces verified crisis hotlines local to the user. Runs as the first node on the crisis branch — before crisis_response_node — so any resources land in the same reply. Uses provider-native web search grounding (Google Search for Gemini, web_search tool for OpenAI), not a custom tool attachment. The call graph chains two deterministic LLM calls: first extract the user\'s location from the conversation, then search for resources with grounding enabled.',
+      'Surfaces verified crisis hotlines local to the user. Runs as the first node on the crisis branch — before crisis_response_node — so any resources land in the same reply. Uses provider-native web search grounding (Google Search for Gemini, web_search tool for OpenAI), not a custom tool attachment. The call graph chains two structured LLM calls: first classify location availability from the conversation, then search for resources with grounding enabled.',
     pipeline: [
       {
         id: 'extract_location',
@@ -59,8 +59,8 @@ const TOOLS: Tool[] = [
           'Extract location information from mental health support conversations. Return only the location mentioned, or empty string if none.',
         temperature: 0,
         useSearch: false,
-        onFailure: 'returns empty location, pipeline aborts, resources=[]',
-        produces: 'str — e.g. "Singapore", "UK", ""',
+        onFailure: 'provider error retries/surfaces; no_location and location_refused are explicit statuses',
+        produces: 'provided/refused/not_provided + optional location',
       },
       {
         id: 'lookup_resources',
@@ -69,17 +69,8 @@ const TOOLS: Tool[] = [
           'You are a factual assistant helping to find official crisis support resources. Use your web search capability to find verified hotlines. Format: - Name | Phone | Website',
         temperature: 0,
         useSearch: true,
-        onFailure: 'logs warning, returns empty list',
-        produces: 'str — pipe-separated or markdown-bold lines',
-      },
-      {
-        id: 'parse_resources',
-        label: 'Parse + normalize',
-        systemPrompt: '(deterministic — no LLM)',
-        temperature: 0,
-        useSearch: false,
-        onFailure: 'drops unparseable rows, keeps valid ones',
-        produces: 'list[dict] with name/phone/url/region (max 5)',
+        onFailure: 'provider error retries/surfaces; no verified results returns an empty list status',
+        produces: 'structured list with name/phone/url/region (max 5)',
       },
     ],
     outputFields: [
@@ -88,10 +79,10 @@ const TOOLS: Tool[] = [
       'state.resource_lookup_status',
     ],
     gracefulDegradation:
-      'Any stage failure returns empty results with a status code (no_location / search_failed / no_verified_results). The crisis response proceeds without resources rather than blocking on a third-party outage.',
+      'No-location, location-refused, and no-verified-result cases return explicit statuses. Missing LLM configuration or provider failures retry or surface through the graph instead of silently continuing.',
     file: 'agent/tools/grounded_search.py',
     fn: 'find_crisis_resources',
-    tests: 'tests/unit/tools/test_grounded_search_parser.py (parser tests)',
+    tests: 'tests/unit/tools/test_grounded_search_crisis_resources.py',
   },
   {
     id: 'grounded_lookup',
@@ -101,7 +92,7 @@ const TOOLS: Tool[] = [
     triggerCondition: 'turn_dispatch_node routes an explicit factual lookup request AND llm_client is available',
     providers: ['gemini', 'openai'],
     description:
-      'Answers explicit, non-therapeutic factual lookup requests ("look up the eligibility for…", "search for the latest guidelines on…", "verify whether X is true"). Uses provider-native search grounding via use_search=True. Returns ("answer", status) where status reports whether the answer is verified, unverified, or whether the search failed. The therapeutic subgraph never runs on these turns — the user gets a single grounded reply with sources.',
+      'Answers explicit, non-therapeutic factual lookup requests ("look up the eligibility for…", "search for the latest guidelines on…", "verify whether X is true"). Uses provider-native search grounding via use_search=True. Returns ("answer", status) where status reports whether the answer is verified or not verified. The therapeutic subgraph never runs on these turns — the user gets a single grounded reply with sources.',
     pipeline: [
       {
         id: 'detect_intent',
@@ -119,13 +110,13 @@ const TOOLS: Tool[] = [
           'Answer factual lookup requests using web search/grounding. Prefer official, primary, or otherwise reputable sources. Never invent facts, contact details, eligibility rules, prices, dates, or source names. If you cannot verify the answer, say so clearly. Include a short Sources: list when available.',
         temperature: 0,
         useSearch: true,
-        onFailure: 'returns ("", "search_failed")',
+        onFailure: 'provider error retries/surfaces; weak or missing sources return no_verified_answer',
         produces: 'str — concise answer with Sources: section',
       },
       {
         id: 'verify',
         label: 'Verification check',
-        systemPrompt: '(deterministic — checks for "could not verify" markers)',
+        systemPrompt: '(local normalization — no user-facing claims added)',
         temperature: 0,
         useSearch: false,
         onFailure: 'flags answer as no_verified_answer',
@@ -137,7 +128,7 @@ const TOOLS: Tool[] = [
       'state.grounded_lookup.status',
     ],
     gracefulDegradation:
-      'On any failure the user receives an explicit "I couldn\'t verify that" reply rather than an invented answer. The status field (answered / no_verified_answer / search_failed / search_unavailable) drives observability.',
+      'Weak or missing sources produce an explicit "I couldn\'t verify that" reply rather than an invented answer. Missing LLM configuration or provider failures retry or surface. The status field (answered / no_verified_answer) drives observability.',
     file: 'agent/tools/grounded_search.py',
     fn: 'answer_factual_lookup',
   },

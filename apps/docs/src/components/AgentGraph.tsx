@@ -48,13 +48,27 @@ const STEPS: StepDef[] = [
     branch: {
       condition: 'needs_crisis_response',
       targetA: 'crisis_response → crisis_log → finalize',
-      targetB: 'turn_dispatch → load_memory → therapeutic_subgraph → finalize',
+      targetB: 'turn_dispatch → memory_control | grounded_answer | therapeutic',
       crisis: true,
     },
     detail: {
       what: 'Hard safety boundary. Runs BEFORE memory retrieval — there is no path that loads context without first passing the safety check. Returns a Command(goto=...) that routes the turn.',
       how: 'LLM-only classifier returns a structured CrisisAssessment with level 0–3. Local normalization enforces needs_crisis_response for levels 2–3 and needs_clarification for level 1; provider failures retry or surface instead of falling back to regex.',
       emits: 'state.crisis + state.routing.route ("crisis" | "therapeutic")',
+    },
+  },
+  {
+    id: 'turn_dispatch',
+    label: 'turn_dispatch_node',
+    sub: 'LLM route plan for safe turns',
+    badges: [
+      { label: 'LLM structured output', llm: true },
+      { label: 'retry', retry: true },
+    ],
+    detail: {
+      what: 'Safe-turn router. Routes explicit saved-memory commands to memory_control_node, factual lookup requests to grounded_answer_node, and ordinary support to load_memory_node.',
+      how: 'LLM-primary structured decision with local validation for active-flow actions, memory-control payloads, grounded lookup queries, and explicit memory-reference mode.',
+      emits: 'state.route + state.memory_control.action + state.grounded_lookup.query + Command(goto=...)',
     },
   },
   {
@@ -74,13 +88,13 @@ const STEPS: StepDef[] = [
   {
     id: 'therapeutic',
     label: 'therapeutic_subgraph',
-    sub: 'Dispatcher picks one of 7 response styles, response node generates reply',
+    sub: 'Dispatcher routes to shared response or guided exercise node',
     badges: [
       { label: 'subgraph' },
       { label: 'all nodes retry', retry: true },
     ],
     detail: {
-      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher + 7 response style nodes (supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing). Uses a narrow output schema (TherapeuticSubgraphOutput) so only routing, response, and exercise state flow back to the parent — preventing reducer double-counting on history/transcript.',
+      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher, one shared therapeutic response node, and one guided-exercise response node. Uses a narrow output schema so only response, approach, session action, diagnostics, and exercise state flow back to the parent.',
       how: 'Dispatcher is LLM-owned: the model picks response_style + therapeutic_approach, with local validation around active exercise state. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
       emits: 'response_style + response_text + therapeutic_approach + exercise_state',
     },
@@ -101,8 +115,8 @@ const STEPS: StepDef[] = [
   },
   {
     id: 'extractors',
-    label: 'extract_facts + extract_procedural',
-    sub: 'Parallel fan-out — both run simultaneously after finalize',
+    label: 'runtime extraction',
+    sub: 'Off-graph side effect after response finalization',
     badges: [
       { label: 'parallel', parallel: true },
       { label: 'LLM structured output', llm: true },
@@ -110,8 +124,8 @@ const STEPS: StepDef[] = [
       { label: 'diagnostics reducer', reducer: true },
     ],
     detail: {
-      what: 'Two independent post-response memory lanes fan out in parallel from finalize_turn_node. Each lane first extracts candidates with structured LLM output, then runs deterministic write policy. Low-risk items may commit immediately; sensitive or implicit items can be buffered for session end or dropped. Both are gated by a small-talk check and both write to diagnostics via the _merge_dicts reducer.',
-      how: 'Gating: crisis path → skip, no LLM → skip, incognito → skip, small talk → skip. Otherwise: structured-output extraction, policy decision, then immediate commit vs persisted active-session buffer vs drop. Session-end promotion later runs outside the per-turn graph via summarize_session + commit_session_memory. Diagnostics record timing + write counts + skip reason. Parallel execution still saves tail latency when extraction is active.',
+      what: 'After the graph reaches END, the runtime schedules semantic and procedural extraction. Each lane extracts candidates with structured LLM output, then runs LLM-primary write policy with hard local safety/storage guards.',
+      how: 'Gating: crisis path -> skip, no LLM -> skip/error by path, incognito -> skip, small talk -> skip. Otherwise: structured-output extraction, policy decision, then immediate commit vs persisted active-session buffer vs drop. Session-end promotion later runs via runtime session finalization. Diagnostics record timing, write counts, policy drops, and policy errors.',
       emits: 'state.diagnostics (extract_facts_ms, extract_procedural_ms, etc.)',
     },
   },
@@ -121,7 +135,7 @@ const STEPS: StepDef[] = [
     sub: 'Normalized public response returned to the API layer',
     detail: {
       what: 'state_to_output extracts the public response shape from the final state. The checkpoint stores the full accumulated state for the next turn — including the reducer-merged transcript, diagnostics, and progress.',
-      how: 'Extracts response_text, crisis assessment, response_style, diagnostics (including turn_total_ms stamped by the runtime).',
+      how: 'Extracts response_text, crisis assessment, response_style, therapeutic_approach, session_action, and diagnostics. Public response_type is derived from crisis.level.',
       emits: 'AgentOutput',
     },
   },
@@ -135,7 +149,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     detail: {
       what: 'Default — user sharing feelings, seeking support, or greeting. Three sub-strategies: hold_space (venting), strengths_based (progress), supportive_guidance (validate + next step).',
       how: 'Reachable from all routing layers. Most common response style.',
-      emits: 'response.kind = THERAPEUTIC',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
@@ -143,7 +157,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     detail: {
       what: 'User describing a recurring pattern they\'ve already named. Reflects on themes, connections, cycles.',
       how: 'Picked by the LLM dispatcher when the user is already naming a pattern.',
-      emits: 'response.kind = THERAPEUTIC',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
@@ -151,7 +165,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     detail: {
       what: 'Ambiguous or very short message — agent needs context before responding.',
       how: 'Picked by the LLM dispatcher when the next useful move is one small clarifying question.',
-      emits: 'response.kind = THERAPEUTIC',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
@@ -159,7 +173,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     detail: {
       what: 'User describes a reaction AND seeks understanding. Brief normalizing explanation, permission before explaining, pivot back to experience.',
       how: 'LLM classifier picks this for "why do I feel..." patterns.',
-      emits: 'response.kind = THERAPEUTIC',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
@@ -225,7 +239,7 @@ export default function AgentGraph() {
 
   return (
     <div className={styles.root}>
-      <p className={styles.hint}>Click any step to expand. The pipeline shows the v0.9+ safety-first topology with parallel post-response memory evaluation.</p>
+      <p className={styles.hint}>Click any step to expand. The pipeline shows the safety-first topology with runtime-owned post-response memory evaluation.</p>
 
       <div className={styles.pipeline}>
         {STEPS.map((step) => {

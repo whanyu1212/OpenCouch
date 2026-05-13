@@ -65,16 +65,17 @@ skip directly to response generation. Prompt hardening reduces this
 risk but cannot eliminate it — especially under adversarial input or
 model version changes.
 
-### 2. Extraction always follows the response
+### 2. Extraction is scheduled only after the response path finishes
 
 ```python
-workflow.add_edge("finalize_turn_node", "extract_semantic_facts_node")
-workflow.add_edge("finalize_turn_node", "extract_procedural_rules_node")
+workflow.add_edge("finalize_turn_node", END)
+# PersistentAgentRuntime schedules TurnExtractionCoordinator after graph END.
 ```
 
 The response must be finalized (appended to transcript) before
-extractors see it. Extractors run as guaranteed side-effect nodes
-that cannot be skipped or reordered.
+extractors see it. Extraction is now runtime-owned rather than a graph
+fan-out, but the ordering guarantee is the same: memory writes never
+run before the user-visible reply is sealed.
 
 **In a ReAct loop**, extraction is typically a cleanup step that
 could be skipped for latency, or run before the response is
@@ -82,9 +83,10 @@ complete, corrupting the memory with in-progress reasoning.
 
 ### 3. Tool invocation is positional, not emergent
 
-The web search for crisis resources is called *inside*
-`crisis_response_node` — deterministically, at a fixed point in the
-code. It's not an LLM-generated tool call that might be hallucinated,
+The web search for crisis resources is called from
+`crisis_resource_lookup_node`, and factual lookup is called from
+`grounded_answer_node`. Both are fixed graph positions chosen by
+typed routing, not emergent ReAct tool calls that can be hallucinated,
 omitted, or sequenced incorrectly.
 
 ```python

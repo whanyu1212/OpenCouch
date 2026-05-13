@@ -12,13 +12,13 @@ const preGate: FlowNode[] = [
   {id: 'gate', label: 'Crisis Gate', variant: 'danger'},
 ];
 
-// Therapeutic branch — three operational gates run before memory loads.
+// Safe branch — one turn dispatcher runs before memory loads.
 // Most turns end up at the therapeutic subgraph; memory commands
 // ("forget #3", "recall off") and factual lookups ("look up the
 // crisis line for X") short-circuit to dedicated reply nodes.
 const safePath: FlowNode[] = [
-  {id: 'mem_gate', label: 'Memory Control Gate', variant: 'default'},
-  {id: 'lookup_gate', label: 'Grounded Lookup Gate', variant: 'default'},
+  {id: 'turn_dispatch', label: 'Turn Dispatch', variant: 'default'},
+  {id: 'memory_control', label: 'Memory Control / Grounded Lookup', variant: 'default'},
   {id: 'load', label: 'Load Memory', variant: 'warm'},
   {id: 'therapy', label: 'Therapeutic Subgraph', variant: 'safe'},
 ];
@@ -33,7 +33,7 @@ const crisisPath: FlowNode[] = [
 
 const postMerge: FlowNode[] = [
   {id: 'finalize', label: 'Finalize Turn', variant: 'default'},
-  {id: 'extract', label: 'Extract Facts & Rules', variant: 'warm'},
+  {id: 'extract', label: 'Runtime Extract Facts & Rules', variant: 'warm'},
 ];
 
 function Node({label, variant = 'default'}: {label: string; variant?: FlowNode['variant']}): JSX.Element {
