@@ -706,6 +706,12 @@ def _grade_turn(
         session_progress.get("session_stage"),
         expected,
     )
+    _expect_equal(
+        failures,
+        f"{label}.guidance_permission",
+        session_progress.get("guidance_permission"),
+        expected,
+    )
     _grade_text_contains(
         failures,
         label=f"{label}.response_text",

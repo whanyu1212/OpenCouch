@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.memory.models import SessionIntent, SessionStage
+from agent.memory.models import GuidancePermission, SessionIntent, SessionStage
 from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.memory.entries import WorkingMemoryEntry
 
@@ -104,6 +104,7 @@ class SessionProgressState(TypedDict):
     is_guest: NotRequired[bool]
     session_intent: NotRequired[SessionIntent]
     session_stage: NotRequired[SessionStage]
+    guidance_permission: NotRequired[GuidancePermission]
 
 
 class ExerciseState(TypedDict):

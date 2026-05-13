@@ -33,6 +33,8 @@ SessionIntent = Literal["vent", "understand", "reflect", "work", "regulate", "cl
 
 SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
+GuidancePermission = Literal["unknown", "not_yet", "granted"]
+
 ExerciseStartBasis = Literal[
     "explicit_user_request",
     "accepted_assistant_offer",
@@ -57,6 +59,14 @@ class DispatchDecision(BaseModel):
         description=(
             "The session arc stage for shaping the next reply: opening, "
             "deepening, stabilizing, or closing."
+        ),
+    )
+    guidance_permission: GuidancePermission = Field(
+        default="unknown",
+        description=(
+            "Whether the user has invited guidance: unknown, not_yet, or granted. "
+            "Use not_yet when the user mainly needs to be heard; use granted when "
+            "they ask for advice, next steps, structured work, or an exercise."
         ),
     )
     response_guidance: str = Field(
@@ -85,6 +95,7 @@ __all__ = [
     "TherapeuticApproach",
     "SessionIntent",
     "SessionStage",
+    "GuidancePermission",
     "ExerciseStartBasis",
     "DispatchDecision",
 ]

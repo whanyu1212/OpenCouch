@@ -116,8 +116,11 @@ def _format_session_arc_response_block(state: AgentState) -> str:
     session_progress = state.get("session_progress", {}) or {}
     session_intent = session_progress.get("session_intent")
     session_stage = session_progress.get("session_stage")
+    guidance_permission = session_progress.get("guidance_permission")
     response_guidance = str(state.get("response_guidance") or "").strip()
-    if not (session_intent or session_stage or response_guidance):
+    if not (
+        session_intent or session_stage or guidance_permission or response_guidance
+    ):
         return ""
 
     lines = [
@@ -128,6 +131,23 @@ def _format_session_arc_response_block(state: AgentState) -> str:
         lines.append(f"- session_intent: {session_intent}")
     if session_stage:
         lines.append(f"- session_stage: {session_stage}")
+    if guidance_permission:
+        lines.append(f"- guidance_permission: {guidance_permission}")
+        if guidance_permission == "not_yet":
+            lines.append(
+                "- Respect the user's pacing: validate and reflect before "
+                "offering advice, exercises, or structured problem-solving."
+            )
+        elif guidance_permission == "granted":
+            lines.append(
+                "- The user has invited guidance; use structure when it fits "
+                "the selected response style."
+            )
+        elif guidance_permission == "unknown":
+            lines.append(
+                "- Do not assume the user wants coaching yet; keep the next "
+                "move light and collaborative."
+            )
     if response_guidance:
         lines.append(f"- response_guidance: {response_guidance}")
     return "\n".join(lines)

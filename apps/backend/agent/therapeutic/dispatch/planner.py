@@ -10,6 +10,7 @@ from agent.memory.models import (
     ConfidenceLevel,
     DispatchDecision,
     ExerciseStartBasis,
+    GuidancePermission,
     SessionIntent,
     SessionStage,
     TherapeuticApproach,
@@ -46,6 +47,7 @@ class DispatchPlan:
     exercise_start_basis: ExerciseStartBasis | None = None
     session_intent: SessionIntent | None = None
     session_stage: SessionStage | None = None
+    guidance_permission: GuidancePermission | None = None
     response_guidance: str = ""
 
 
@@ -100,6 +102,7 @@ async def plan_therapeutic_route(
             confidence="high",
             session_intent="regulate",
             session_stage="stabilizing",
+            guidance_permission="granted",
             response_guidance=(
                 "Continue the active guided exercise from its current step; "
                 "keep the reply concrete and paced."
@@ -127,6 +130,11 @@ async def plan_therapeutic_route(
     session_stage = (
         decision.session_stage if "session_stage" in explicit_fields else None
     )
+    guidance_permission = (
+        decision.guidance_permission
+        if "guidance_permission" in explicit_fields
+        else None
+    )
     response_guidance = (
         decision.response_guidance.strip()
         if "response_guidance" in explicit_fields
@@ -150,6 +158,7 @@ async def plan_therapeutic_route(
             "Do not start a guided exercise yet. Support the emotion briefly "
             "and, if useful, ask permission before offering a structured exercise."
         )
+        guidance_permission = "not_yet"
 
     clear_exercise = exercise_active and (
         active_flow.action == "clear"
@@ -177,5 +186,6 @@ async def plan_therapeutic_route(
         exercise_start_basis=exercise_start_basis,
         session_intent=session_intent,
         session_stage=session_stage,
+        guidance_permission=guidance_permission,
         response_guidance=response_guidance,
     )

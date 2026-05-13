@@ -1648,6 +1648,7 @@
               "therapeutic_approach": "motivational_interviewing",
               "session_intent": "vent",
               "session_stage": "opening",
+              "guidance_permission": "not_yet",
               "response_guidance": "Hold the opening gently, validate the broad stress, and invite one workable focus.",
               "reasoning": "Opening support should help the user arrive without pressure.",
               "confidence": "high"
@@ -1660,12 +1661,14 @@
             "therapeutic_approach": "motivational_interviewing",
             "session_intent": "vent",
             "session_stage": "opening",
+            "guidance_permission": "not_yet",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "supportive/motivational_interviewing",
             "prompt_contains": [
               "Current session arc guidance:",
               "session_intent: vent",
               "session_stage: opening",
+              "guidance_permission: not_yet",
               "Hold the opening gently"
             ],
             "factual_tool_calls": 0,
@@ -1697,6 +1700,7 @@
               "therapeutic_approach": "cbt",
               "session_intent": "understand",
               "session_stage": "deepening",
+              "guidance_permission": "not_yet",
               "response_guidance": "Name the shutdown pattern gently and ask one focused question about what the manager's question signals to the user.",
               "reasoning": "The user named a repeated shutdown pattern.",
               "confidence": "high"
@@ -1709,11 +1713,13 @@
             "therapeutic_approach": "cbt",
             "session_intent": "understand",
             "session_stage": "deepening",
+            "guidance_permission": "not_yet",
             "turn_dispatch_decision": "therapeutic",
             "therapeutic_dispatch_decision": "reflective/cbt",
             "prompt_contains": [
               "session_intent: understand",
               "session_stage: deepening",
+              "guidance_permission: not_yet",
               "Name the shutdown pattern gently"
             ],
             "factual_tool_calls": 0,
@@ -1722,17 +1728,70 @@
             "transcript_length": 4,
             "last_assistant_response_style": "reflective"
           }
+        },
+        {
+          "message": "Can you help me figure out what to say to him tomorrow?",
+          "scripted": {
+            "crisis": {
+              "level": 0,
+              "confidence": "high",
+              "reason": "Practical support request without self-harm signal.",
+              "needs_crisis_response": false,
+              "needs_clarification": false
+            },
+            "turn_dispatch": {
+              "route": "therapeutic",
+              "reasoning": "The user asks for help with a next step.",
+              "confidence": "high",
+              "active_flow_action": "none"
+            },
+            "therapeutic_dispatch": {
+              "response_style": "technique",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "interpersonal_therapy",
+              "session_intent": "work",
+              "session_stage": "deepening",
+              "guidance_permission": "granted",
+              "response_guidance": "Use collaborative structure to help the user draft one clear, grounded message.",
+              "reasoning": "The user explicitly asks for help planning what to say.",
+              "confidence": "high"
+            },
+            "response_text": "Yes. Let's make it simple: one sentence that names the issue and one sentence that asks for what you need."
+          },
+          "expected": {
+            "route": "therapeutic",
+            "response_style": "technique",
+            "therapeutic_approach": "interpersonal_therapy",
+            "session_intent": "work",
+            "session_stage": "deepening",
+            "guidance_permission": "granted",
+            "turn_dispatch_decision": "therapeutic",
+            "therapeutic_dispatch_decision": "technique/interpersonal_therapy",
+            "prompt_contains": [
+              "session_intent: work",
+              "session_stage: deepening",
+              "guidance_permission: granted",
+              "The user has invited guidance",
+              "Use collaborative structure"
+            ],
+            "factual_tool_calls": 0,
+            "crisis_resource_tool_calls": 0,
+            "crisis_log_count": 0,
+            "transcript_length": 6,
+            "last_assistant_response_style": "technique"
+          }
         }
       ],
       "expected": {
         "route_sequence": [
+          "therapeutic",
           "therapeutic",
           "therapeutic"
         ],
         "factual_tool_calls": 0,
         "crisis_resource_tool_calls": 0,
         "crisis_log_count": 0,
-        "final_transcript_length": 4
+        "final_transcript_length": 6
       }
     },
     {

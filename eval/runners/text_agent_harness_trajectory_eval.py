@@ -793,6 +793,9 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
         "session_stage": session_progress.get("session_stage")
         if isinstance(session_progress, Mapping)
         else None,
+        "guidance_permission": session_progress.get("guidance_permission")
+        if isinstance(session_progress, Mapping)
+        else None,
         "turn_count": session_progress.get("turn_count")
         if isinstance(session_progress, Mapping)
         else None,
@@ -962,6 +965,7 @@ def _grade_step(
         "session_action",
         "session_intent",
         "session_stage",
+        "guidance_permission",
         "response_guidance",
         "transcript_length",
         "assistant_turn_count",

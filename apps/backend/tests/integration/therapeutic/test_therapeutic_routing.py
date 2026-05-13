@@ -84,6 +84,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         exercise_start_basis: str = "ambiguous_or_none",
         session_intent: str | None = None,
         session_stage: str | None = None,
+        guidance_permission: str | None = None,
         response_guidance: str | None = None,
         should_raise: bool = False,
         text_should_raise: bool = False,
@@ -94,6 +95,7 @@ class _FakeDispatchLLM(BaseLLMClient):
         self.exercise_start_basis = exercise_start_basis
         self.session_intent = session_intent
         self.session_stage = session_stage
+        self.guidance_permission = guidance_permission
         self.response_guidance = response_guidance
         self.should_raise = should_raise
         self.text_should_raise = text_should_raise
@@ -189,6 +191,8 @@ class _FakeDispatchLLM(BaseLLMClient):
             decision_kwargs["session_intent"] = self.session_intent
         if self.session_stage is not None:
             decision_kwargs["session_stage"] = self.session_stage
+        if self.guidance_permission is not None:
+            decision_kwargs["guidance_permission"] = self.guidance_permission
         if self.response_guidance is not None:
             decision_kwargs["response_guidance"] = self.response_guidance
         return cast(StructuredResponseT, DispatchDecision(**decision_kwargs))
@@ -387,6 +391,7 @@ class TestDispatchNode:
             therapeutic_approach="cbt",
             session_intent="understand",
             session_stage="deepening",
+            guidance_permission="not_yet",
             response_guidance=(
                 "Name the pattern gently and ask one focused question about "
                 "what keeps it going."
@@ -402,10 +407,12 @@ class TestDispatchNode:
         assert cmd.update["session_progress"] == {
             "session_intent": "understand",
             "session_stage": "deepening",
+            "guidance_permission": "not_yet",
         }
         assert "Name the pattern gently" in cmd.update["response_guidance"]
         assert trace[-1]["session_intent"] == "understand"
         assert trace[-1]["session_stage"] == "deepening"
+        assert trace[-1]["guidance_permission"] == "not_yet"
 
     @pytest.mark.asyncio
     async def test_llm_path_routes_to_llm_pick(self) -> None:

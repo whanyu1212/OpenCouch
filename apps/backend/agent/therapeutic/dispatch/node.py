@@ -51,6 +51,8 @@ def _style_update(plan: DispatchPlan) -> dict:
         session_progress["session_intent"] = plan.session_intent
     if plan.session_stage:
         session_progress["session_stage"] = plan.session_stage
+    if plan.guidance_permission:
+        session_progress["guidance_permission"] = plan.guidance_permission
     if session_progress:
         update["session_progress"] = session_progress
     if plan.response_guidance.strip():
@@ -97,6 +99,7 @@ def _to_command(
                 "exercise_start_basis": plan.exercise_start_basis,
                 "session_intent": plan.session_intent,
                 "session_stage": plan.session_stage,
+                "guidance_permission": plan.guidance_permission,
             },
         )
     return Command(
