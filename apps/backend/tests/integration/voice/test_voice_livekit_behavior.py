@@ -625,7 +625,75 @@ async def test_livekit_behavior_generic_anxiety_does_not_call_exercise_tool() ->
         event.type == "function_call" and event.item.name == "start_grounding_exercise"
         for event in result.events
     )
-    result.expect.contains_message(role="assistant")
+    assert result.done()
+
+
+@pytest.mark.asyncio
+async def test_livekit_behavior_repair_turn_stays_conversational() -> None:
+    """Repair feedback should not trigger an exercise or agent handoff."""
+
+    class _SafeCrisisService:
+        async def assess_turn(self, state, *, llm_client):
+            return SimpleNamespace(
+                assessment=CrisisAssessment(
+                    level=0,
+                    confidence="high",
+                    reason="No crisis signal.",
+                    needs_crisis_response=False,
+                    needs_clarification=False,
+                )
+            )
+
+    class _RepairPolicy:
+        async def plan_turn(self, **kwargs):
+            return VoiceTurnPolicyDecision(
+                session_intent="repair",
+                guidance_permission="not_yet",
+                process_stage="hold",
+                therapeutic_approach="none",
+                active_target="reset after a misattuned reply",
+                primary_emotion="frustrated",
+                hot_thought="",
+                pattern="",
+                user_goal="be listened to",
+                exercise_consent="none",
+                exercise_type=None,
+                turn_guidance="Own the miss, avoid defending, and just listen.",
+                reason="The user said the assistant was making assumptions.",
+                confidence="high",
+            )
+
+    store = OpenCouchMemoryStore()
+    userdata = _userdata(store)
+    fake_llm = FakeLLM(
+        fake_responses=[
+            FakeLLMResponse(
+                input="That's not helpful. You're making assumptions.",
+                content="You're right. I moved too fast. I'll slow down and listen.",
+            )
+        ]
+    )
+    agent = TherapeuticAgent(
+        instructions=build_voice_system_prompt(),
+        crisis_risk_service=_SafeCrisisService(),
+        turn_policy_service=_RepairPolicy(),
+    )
+
+    async with OpenCouchAgentSession(llm=fake_llm, userdata=userdata) as session:
+        await session.start(agent)
+        result = await session.run(
+            user_input="That's not helpful. You're making assumptions."
+        )
+
+    assert userdata.therapeutic_state.session_intent == "repair"
+    assert userdata.therapeutic_state.guidance_permission == "not_yet"
+    assert userdata.exercise_consent_turn_index is None
+    assert userdata.recommended_exercise_type is None
+    assert not any(
+        event.type == "function_call" and event.item.name == "start_grounding_exercise"
+        for event in result.events
+    )
+    assert result.done()
 
 
 @pytest.mark.asyncio

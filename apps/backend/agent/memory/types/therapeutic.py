@@ -7,6 +7,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.types.primitives import ConfidenceLevel
+from agent.therapeutic_policy import (
+    GuidancePermission,
+    SessionIntent,
+    TherapeuticApproach,
+)
 
 TherapeuticResponseStyle = Literal[
     "supportive",
@@ -18,30 +23,7 @@ TherapeuticResponseStyle = Literal[
     "technique",
 ]
 
-TherapeuticApproach = Literal[
-    "motivational_interviewing",
-    "cbt",
-    "act",
-    "dbt_skills",
-    "grief_support",
-    "interpersonal_therapy",
-    "pfa",
-    "none",
-]
-
-SessionIntent = Literal[
-    "vent",
-    "understand",
-    "reflect",
-    "work",
-    "regulate",
-    "repair",
-    "close",
-]
-
 SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
-
-GuidancePermission = Literal["unknown", "not_yet", "granted"]
 
 ExerciseStartBasis = Literal[
     "explicit_user_request",

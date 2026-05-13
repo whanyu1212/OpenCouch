@@ -75,7 +75,11 @@ from agent.voice.toolsets import (
     MemoryControlToolset,
 )
 from agent.voice.transcript_finalizer import serialize_session_history
-from agent.voice.turn_policy import VoiceTurnPolicyDecision, VoiceTurnPolicyService
+from agent.voice.turn_policy import (
+    VoiceTurnPolicyDecision,
+    VoiceTurnPolicyService,
+    build_voice_turn_policy_prompt,
+)
 from agent.voice.tools import (
     answer_grounded_factual_lookup,
     cancel_memory_deletion,
@@ -1251,6 +1255,68 @@ async def test_voice_turn_policy_rejects_granted_consent_without_supported_exerc
         )
 
 
+def test_voice_turn_policy_prompt_includes_repair_boundary() -> None:
+    """Voice policy should use the same repair intent as text."""
+
+    prompt = build_voice_turn_policy_prompt(
+        user_text="That's not helpful. You're making assumptions.",
+        chat_ctx=ChatContext(),
+        previous_state=TherapeuticProcessState(),
+        supported_exercise_ids=(EXERCISE_BOX_BREATHING,),
+        recent_exercise_types=[],
+    )
+
+    assert "session_intent=repair" in prompt
+    assert "was not helpful" in prompt
+    assert "guidance_permission=not_yet" in prompt
+    assert "exercise_consent=none" in prompt
+    assert "avoid defending" in prompt
+    assert (
+        "session_intent: vent, understand, reflect, work, regulate, repair, close"
+        in prompt
+    )
+
+
+@pytest.mark.asyncio
+async def test_voice_turn_policy_accepts_repair_decision_without_exercise() -> None:
+    """A repair turn should update voice process state without exercise consent."""
+
+    llm = _FakeStructuredLLM(
+        {
+            "session_intent": "repair",
+            "guidance_permission": "not_yet",
+            "process_stage": "hold",
+            "therapeutic_approach": "none",
+            "active_target": "reset after a misattuned reply",
+            "primary_emotion": "frustrated",
+            "hot_thought": "",
+            "pattern": "",
+            "user_goal": "be listened to",
+            "exercise_consent": "none",
+            "exercise_type": EXERCISE_BOX_BREATHING,
+            "turn_guidance": "Own the miss, avoid defending, and listen.",
+            "reason": "The user said the assistant made assumptions.",
+            "confidence": "high",
+        }
+    )
+
+    decision = await VoiceTurnPolicyService().plan_turn(
+        user_text="That's not helpful. You're making assumptions.",
+        chat_ctx=ChatContext(),
+        previous_state=TherapeuticProcessState(),
+        supported_exercise_ids=(EXERCISE_BOX_BREATHING,),
+        recent_exercise_types=[],
+        llm_client=llm,
+    )
+
+    state = decision.to_process_state()
+    assert state.session_intent == "repair"
+    assert state.guidance_permission == "not_yet"
+    assert state.therapeutic_approach == "none"
+    assert decision.exercise_consent == "none"
+    assert decision.exercise_type is None
+
+
 def test_therapeutic_agent_instructions_keep_policy_as_turn_guidance() -> None:
     """Phase-specific behavior should live in turn guidance, not subclasses."""
 
@@ -1633,6 +1699,22 @@ async def test_on_user_turn_completed_adds_policy_guidance_without_subagent_hand
 
     assert userdata.therapeutic_state.process_stage == "examine"
     assert updates == []
+    policy_messages = [
+        item
+        for item in turn_ctx.items
+        if item.type == "message"
+        and getattr(item.role, "value", item.role) == "system"
+        and (item.extra or {}).get("source") == "voice_turn_policy"
+    ]
+    assert policy_messages
+    policy_message = policy_messages[-1]
+    assert "session_intent: understand" in policy_message.text_content
+    assert "guidance_permission: granted" in policy_message.text_content
+    assert "process_stage: examine" in policy_message.text_content
+    assert policy_message.extra["session_intent"] == "understand"
+    assert policy_message.extra["guidance_permission"] == "granted"
+    assert policy_message.extra["process_stage"] == "examine"
+    assert policy_message.extra["therapeutic_approach"] == "cbt"
     assert any(
         item.type == "message"
         and getattr(item.role, "value", item.role) == "system"

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-05-13 — Therapeutic Repair, Resource Routing, and Voice Policy Alignment
+
+### Therapeutic text behavior
+- Added `repair` as a first-class therapeutic session intent for turns where the user says the assistant missed them, made assumptions, was not helpful, or should stop a response style
+- Updated therapeutic dispatch and response prompts so repair turns own the miss, avoid defending, and reset to the user's stated meaning or preference instead of adding advice or structure
+- Tightened turn dispatch for resource-seeking requests so worksheets, official guidance, credible articles, books, toolkits, directories, and named-resource asks route to grounded lookup while in-the-moment support stays therapeutic
+
+### Text and voice alignment
+- Added shared therapeutic policy labels for text and voice (`SessionIntent`, `GuidancePermission`, and `TherapeuticApproach`) to reduce semantic drift between runtimes
+- Updated LiveKit voice turn policy to understand `repair` and to emit policy metadata (`session_intent`, `guidance_permission`, `process_stage`, and `therapeutic_approach`) in the private guidance message
+- Added drift tests and voice repair coverage so text and voice stay aligned without merging their runtime architectures
+
+### Documentation and validation
+- Trimmed the root README changelog section down to a single link so the README stays focused on essential project docs
+- Verified the routing and alignment changes with targeted pytest suites, scripted evals, live turn-dispatch evals, live session trajectory evals, live grounded-tool quality evals, and pre-commit
+
 ## 2026-05-11 — Text and Voice Dogfooding Scripts
 
 ### Local dogfooding

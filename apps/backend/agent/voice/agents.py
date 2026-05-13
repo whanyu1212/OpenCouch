@@ -150,10 +150,22 @@ def _state_for_current_turn(
     )
 
 
-def _build_policy_guidance_message(decision_reason: str, turn_guidance: str) -> str:
+def _build_policy_guidance_message(
+    *,
+    session_intent: str,
+    guidance_permission: str,
+    process_stage: str,
+    therapeutic_approach: str,
+    decision_reason: str,
+    turn_guidance: str,
+) -> str:
     return (
         "Voice turn policy for the next reply:\n"
-        f"{turn_guidance.strip()}\n\n"
+        f"- session_intent: {session_intent}\n"
+        f"- guidance_permission: {guidance_permission}\n"
+        f"- process_stage: {process_stage}\n"
+        f"- therapeutic_approach: {therapeutic_approach}\n"
+        f"- turn_guidance: {turn_guidance.strip()}\n\n"
         "Policy note: use this as private guidance, not as text to recite.\n"
         f"Reason: {decision_reason.strip()}"
     )
@@ -402,6 +414,10 @@ class TherapeuticAgent(Agent):
         turn_ctx.add_message(
             role="system",
             content=_build_policy_guidance_message(
+                session_intent=decision.session_intent,
+                guidance_permission=decision.guidance_permission,
+                process_stage=decision.process_stage,
+                therapeutic_approach=decision.therapeutic_approach,
                 decision_reason=decision.reason,
                 turn_guidance=decision.turn_guidance,
             ),
@@ -410,6 +426,10 @@ class TherapeuticAgent(Agent):
                 "confidence": decision.confidence,
                 "exercise_consent": decision.exercise_consent,
                 "exercise_type": decision.exercise_type,
+                "session_intent": decision.session_intent,
+                "guidance_permission": decision.guidance_permission,
+                "process_stage": decision.process_stage,
+                "therapeutic_approach": decision.therapeutic_approach,
             },
         )
 
