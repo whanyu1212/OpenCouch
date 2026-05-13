@@ -16,6 +16,7 @@ pytest.importorskip(
 )
 
 from livekit.agents import ChatContext, StopResponse
+from livekit.agents.llm import Toolset
 
 import main
 from agent.models import CrisisAssessment
@@ -67,6 +68,11 @@ from agent.voice.tasks import (
     VoiceExerciseTask,
     _build_exercise_instructions,
     _resolve_exercise,
+)
+from agent.voice.toolsets import (
+    CrisisResourceToolset,
+    GroundedLookupToolset,
+    MemoryControlToolset,
 )
 from agent.voice.transcript_finalizer import serialize_session_history
 from agent.voice.turn_policy import VoiceTurnPolicyDecision, VoiceTurnPolicyService
@@ -175,6 +181,22 @@ class _FakeLookupLLM:
                 reasoning="Scripted crisis resource lookup result.",
             )
         raise AssertionError(f"Unexpected response schema: {schema_name}")
+
+
+def _flatten_tool_ids(tools) -> list[str]:
+    ids: list[str] = []
+    for tool in tools:
+        if isinstance(tool, Toolset):
+            ids.extend(_flatten_tool_ids(tool.tools))
+        else:
+            ids.append(tool.id)
+    return ids
+
+
+def _single_toolset(agent, toolset_type):
+    matches = [tool for tool in agent.tools if isinstance(tool, toolset_type)]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def _extract_test_sources(text: str) -> list[str]:
@@ -1276,6 +1298,77 @@ def test_build_therapeutic_agent_returns_single_agent_class() -> None:
         build_therapeutic_agent(instructions="base"),
         TherapeuticAgent,
     )
+
+
+def test_therapeutic_agent_groups_voice_capabilities_as_toolsets() -> None:
+    """Voice tool grouping should preserve the LLM-visible tool surface."""
+
+    agent = TherapeuticAgent(instructions="base")
+    memory_toolset = _single_toolset(agent, MemoryControlToolset)
+    grounded_toolset = _single_toolset(agent, GroundedLookupToolset)
+
+    assert memory_toolset.id == "memory_control"
+    assert [tool.id for tool in memory_toolset.tools] == [
+        "show_saved_memory",
+        "show_memory_status",
+        "set_proactive_memory_recall",
+        "prepare_memory_deletion",
+        "prepare_indexed_memory_deletion",
+        "select_memory_deletion_candidate",
+        "confirm_memory_deletion",
+        "cancel_memory_deletion",
+    ]
+    assert grounded_toolset.id == "grounded_lookup"
+    assert [tool.id for tool in grounded_toolset.tools] == [
+        "answer_grounded_factual_lookup"
+    ]
+    assert [tool.id for tool in agent.tools] == [
+        "memory_control",
+        "grounded_lookup",
+        "start_grounding_exercise",
+    ]
+    assert _flatten_tool_ids(agent.tools) == [
+        "show_saved_memory",
+        "show_memory_status",
+        "set_proactive_memory_recall",
+        "prepare_memory_deletion",
+        "prepare_indexed_memory_deletion",
+        "select_memory_deletion_candidate",
+        "confirm_memory_deletion",
+        "cancel_memory_deletion",
+        "answer_grounded_factual_lookup",
+        "start_grounding_exercise",
+    ]
+
+
+def test_crisis_agent_groups_resource_lookup_as_toolset() -> None:
+    """Crisis resource lookup should be grouped without hiding de-escalation."""
+
+    agent = CrisisAgent()
+    crisis_toolset = _single_toolset(agent, CrisisResourceToolset)
+
+    assert crisis_toolset.id == "crisis_resources"
+    assert [tool.id for tool in crisis_toolset.tools] == ["provide_crisis_resources"]
+    assert [tool.id for tool in agent.tools] == [
+        "crisis_resources",
+        "de_escalate",
+    ]
+    assert _flatten_tool_ids(agent.tools) == [
+        "provide_crisis_resources",
+        "de_escalate",
+    ]
+
+
+def test_voice_tool_names_are_unique_after_toolset_flattening() -> None:
+    """LiveKit requires unique tool names across nested toolsets."""
+
+    therapeutic_tool_ids = _flatten_tool_ids(
+        TherapeuticAgent(instructions="base").tools
+    )
+    crisis_tool_ids = _flatten_tool_ids(CrisisAgent().tools)
+
+    assert len(therapeutic_tool_ids) == len(set(therapeutic_tool_ids))
+    assert len(crisis_tool_ids) == len(set(crisis_tool_ids))
 
 
 @pytest.mark.asyncio

@@ -23,17 +23,10 @@ from agent.voice.config import build_voice_system_prompt
 from agent.voice.memory_context import VoiceMemoryContextService
 from agent.voice.session_data import SessionData
 from agent.voice.tasks import VoiceExerciseTask, supported_exercise_ids
-from agent.voice.tools import (
-    answer_grounded_factual_lookup,
-    cancel_memory_deletion,
-    confirm_memory_deletion,
-    prepare_indexed_memory_deletion,
-    prepare_memory_deletion,
-    provide_crisis_resources,
-    select_memory_deletion_candidate,
-    set_proactive_memory_recall,
-    show_memory_status,
-    show_saved_memory,
+from agent.voice.toolsets import (
+    CrisisResourceToolset,
+    GroundedLookupToolset,
+    MemoryControlToolset,
 )
 from agent.voice.turn_policy import VoiceTurnPolicyService
 
@@ -228,15 +221,8 @@ class TherapeuticAgent(Agent):
             ),
             chat_ctx=chat_ctx,
             tools=[
-                show_saved_memory,
-                show_memory_status,
-                set_proactive_memory_recall,
-                prepare_memory_deletion,
-                prepare_indexed_memory_deletion,
-                select_memory_deletion_candidate,
-                confirm_memory_deletion,
-                cancel_memory_deletion,
-                answer_grounded_factual_lookup,
+                MemoryControlToolset(),
+                GroundedLookupToolset(),
             ],
         )
 
@@ -447,7 +433,7 @@ class CrisisAgent(Agent):
         super().__init__(
             instructions=_CRISIS_INSTRUCTIONS,
             chat_ctx=chat_ctx,
-            tools=[provide_crisis_resources],
+            tools=[CrisisResourceToolset()],
         )
 
     async def on_enter(self) -> None:

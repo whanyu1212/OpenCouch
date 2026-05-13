@@ -38,6 +38,7 @@ transcript finalization.
 | `TherapeuticAgent` | Default conversation agent |
 | `CrisisAgent` | Level 2/3 crisis mode with narrower safety posture and tools |
 | `VoiceExerciseTask` | Bounded guided exercise flow |
+| LiveKit `Toolset`s | Memory control, grounded lookup, and crisis-resource capability groups |
 | Plain services | Runtime bootstrap, LLM turn policy, memory context, crisis classification, finalization |
 
 There are exactly two LiveKit agents in v1:
@@ -48,6 +49,18 @@ There are exactly two LiveKit agents in v1:
 Therapeutic modes such as holding, reflecting, understanding, and
 technique are turn-level guidance inside `TherapeuticAgent`, not
 separate LiveKit subagents.
+
+Reusable callable capabilities are grouped as LiveKit `Toolset`s:
+
+- `MemoryControlToolset` for saved-memory inspection, recall toggles,
+  and confirmed deletion.
+- `GroundedLookupToolset` for explicit search-grounded factual lookup.
+- `CrisisResourceToolset` for verified local crisis-resource lookup in
+  `CrisisAgent`.
+
+Lifecycle actions stay on the owning agent rather than inside toolsets:
+`TherapeuticAgent.start_grounding_exercise()` starts `VoiceExerciseTask`,
+and `CrisisAgent.de_escalate()` hands control back to `TherapeuticAgent`.
 
 ---
 
