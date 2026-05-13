@@ -415,6 +415,38 @@ class TestDispatchNode:
         assert trace[-1]["guidance_permission"] == "not_yet"
 
     @pytest.mark.asyncio
+    async def test_llm_primary_writes_repair_session_intent(self) -> None:
+        """Rupture/repair is an arc signal carried into response generation."""
+
+        fake = _FakeDispatchLLM(
+            response_style="supportive",
+            therapeutic_approach="none",
+            session_intent="repair",
+            session_stage="stabilizing",
+            guidance_permission="not_yet",
+            response_guidance=(
+                "Own the miss, do not defend, and reset to what the user "
+                "actually wanted."
+            ),
+        )
+        runtime = _MockRuntime(llm_client=fake)
+        state = _build_state("That's not helpful. You're making assumptions.")
+        state["diagnostics"] = {}
+
+        cmd = await run_therapeutic_dispatch_node(state, runtime)  # type: ignore[arg-type]
+        trace = cmd.update["diagnostics"]["routing_trace"]
+
+        assert cmd.goto == THERAPEUTIC_RESPONSE_NODE
+        assert cmd.update["session_progress"] == {
+            "session_intent": "repair",
+            "session_stage": "stabilizing",
+            "guidance_permission": "not_yet",
+        }
+        assert "do not defend" in cmd.update["response_guidance"]
+        assert trace[-1]["session_intent"] == "repair"
+        assert trace[-1]["guidance_permission"] == "not_yet"
+
+    @pytest.mark.asyncio
     async def test_llm_path_routes_to_llm_pick(self) -> None:
         """Ambiguous messages go to the LLM and use its decision."""
 

@@ -62,6 +62,8 @@ def _make_state(
     memory_reference_mode: str = "none",
     working_memory: list[Any] | None = None,
     crisis: CrisisAssessment | None = None,
+    session_progress: dict[str, Any] | None = None,
+    response_guidance: str = "",
 ) -> AgentState:
     """Build a minimal AgentState with procedural fields configured.
 
@@ -93,6 +95,8 @@ def _make_state(
         "procedural_profile": procedural_profile,
         "turn_lifecycle": {"active_flow": "none", "action": "none"},
         "memory_reference": {"mode": memory_reference_mode},
+        "session_progress": session_progress or {"turn_count": 1},
+        "response_guidance": response_guidance,
     }
     if crisis is not None:
         state["crisis"] = crisis
@@ -510,6 +514,43 @@ def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> Non
     assert "before we wrap up, what's the main takeaway?" in prompt
     assert "what should I remember from this?" in prompt
     assert "A turn that says 'thanks, that helps'" in prompt
+
+
+def test_dispatch_prompt_includes_repair_session_intent_guidance() -> None:
+    """The dispatcher should expose repair as an arc label, not a graph node."""
+
+    prompt = build_therapeutic_dispatch_system_prompt()
+
+    assert (
+        "session_intent: vent, understand, reflect, work, regulate, repair, close"
+        in prompt
+    )
+    assert "you're not listening" in prompt
+    assert "that's not what I meant" in prompt
+    assert "guidance_permission=not_yet" in prompt
+    assert "avoid defending" in prompt
+
+
+def test_supportive_prompt_injects_repair_response_guidance() -> None:
+    """Repair turns should constrain response generation toward reset and repair."""
+
+    state = _make_state(
+        session_progress={
+            "turn_count": 3,
+            "session_intent": "repair",
+            "session_stage": "stabilizing",
+            "guidance_permission": "not_yet",
+        },
+        response_guidance="Own the miss and reset to listening.",
+    )
+
+    prompt = build_supportive_system_prompt(state)
+
+    assert "Current session arc guidance" in prompt
+    assert "session_intent: repair" in prompt
+    assert "Repair turn" in prompt
+    assert "Do not defend" in prompt
+    assert "Own the miss and reset to listening." in prompt
 
     def test_recall_on_switches_constraint_variant(self) -> None:
         """With ``proactive_recall_enabled=True``, the prompt contains

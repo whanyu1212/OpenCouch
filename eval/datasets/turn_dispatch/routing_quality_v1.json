@@ -863,6 +863,95 @@
       }
     },
     {
+      "id": "grounded-official-anxiety-worksheets",
+      "description": "Worksheet/resource lookups should use grounded lookup even when the topic is therapeutic.",
+      "message": "Can you find official anxiety worksheets or toolkits I can read?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official anxiety worksheets toolkits",
+          "reasoning": "The user asks for external worksheets and toolkits.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "anxiety",
+          "worksheets"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-trauma-books-resources",
+      "description": "A request for things to read about a mental-health topic should use grounded lookup.",
+      "message": "Can you look up reputable books or resources about trauma-informed care?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "reputable books resources trauma-informed care",
+          "reasoning": "The user asks for external reading resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "trauma-informed",
+          "resources"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-practical-coping-no-sources",
+      "description": "A practical coping request without external-source language should stay therapeutic.",
+      "message": "What can I do tonight when my anxiety spikes?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for in-the-moment coaching, not external resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
       "id": "active-exercise-support-preserve",
       "description": "A reassurance side request during a guided exercise should preserve the exercise instead of advancing or clearing it.",
       "message": "Before I answer, I feel silly and need reassurance that I'm not failing.",

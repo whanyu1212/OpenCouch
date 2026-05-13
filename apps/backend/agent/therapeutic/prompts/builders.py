@@ -129,6 +129,19 @@ def _format_session_arc_response_block(state: AgentState) -> str:
     ]
     if session_intent:
         lines.append(f"- session_intent: {session_intent}")
+        if session_intent == "repair":
+            lines.extend(
+                [
+                    "- Repair turn: briefly acknowledge the miss, own it without "
+                    "over-apologizing, and reset to the user's stated meaning or "
+                    "preference.",
+                    "- Do not defend, explain your intent, argue, or add advice, "
+                    "an exercise, or structure unless the user explicitly asks "
+                    "for that in this same turn.",
+                    "- Ask at most one concise reset question only if the user's "
+                    "preferred direction is unclear.",
+                ]
+            )
     if session_stage:
         lines.append(f"- session_stage: {session_stage}")
     if guidance_permission:

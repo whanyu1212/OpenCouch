@@ -29,7 +29,15 @@ TherapeuticApproach = Literal[
     "none",
 ]
 
-SessionIntent = Literal["vent", "understand", "reflect", "work", "regulate", "close"]
+SessionIntent = Literal[
+    "vent",
+    "understand",
+    "reflect",
+    "work",
+    "regulate",
+    "repair",
+    "close",
+]
 
 SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
@@ -51,7 +59,7 @@ class DispatchDecision(BaseModel):
         default="vent",
         description=(
             "The user's conversational intent for this turn: vent, understand, "
-            "reflect, work, regulate, or close."
+            "reflect, work, regulate, repair, or close."
         ),
     )
     session_stage: SessionStage = Field(
