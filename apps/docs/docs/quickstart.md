@@ -123,12 +123,18 @@ and voice scripts below when you want the most reliable local path.
 
 The current browser voice path is LiveKit-native. For standalone
 dogfooding, use the wrapper script from the repository root; it starts
-Dockerized Postgres by default and forwards LiveKit worker commands:
+Dockerized Postgres by default and forwards LiveKit worker commands.
+Use `console` for a local microphone session; `start` is worker mode
+for a browser/LiveKit room and does not listen to your terminal
+microphone:
 
 <TerminalWindow title="bash — LiveKit voice">
-{`./scripts/voice_agent.sh --user-id dogfood start
+{`./scripts/voice_agent.sh --user-id dogfood console
 ./scripts/voice_agent.sh --user-id dogfood console --text
-./scripts/voice_agent.sh --memory-mode incognito console`}
+./scripts/voice_agent.sh --memory-mode incognito console
+
+# Worker mode for browser/LiveKit room sessions.
+./scripts/voice_agent.sh --user-id dogfood start`}
 </TerminalWindow>
 
 If you want to run the worker directly from `apps/backend`, the

@@ -65,10 +65,18 @@ separate LiveKit subagents.
 5. `opencouch_voice()` connects, resolves metadata, loads startup
    memory, and starts `AgentSession[SessionData]`.
 
-This is the normal browser/frontend path:
+This is the normal browser/frontend path. It waits for a participant in
+a LiveKit room and does not use the terminal microphone:
 
 <TerminalWindow title="LiveKit voice worker">
 {`./scripts/voice_agent.sh start`}
+</TerminalWindow>
+
+For local microphone dogfooding without the browser room, use console
+mode instead:
+
+<TerminalWindow title="Local voice console">
+{`./scripts/voice_agent.sh --user-id dogfood console`}
 </TerminalWindow>
 
 ### Direct-connect flow
@@ -189,7 +197,7 @@ Console sessions skip transcript finalization by default unless
 |---|---|
 | `./scripts/voice_agent.sh start` | Long-running worker for token-dispatch flows; starts Postgres by default |
 | `./scripts/voice_agent.sh connect --room <name>` | Direct room join for manual testing |
-| `./scripts/voice_agent.sh console` | Local console session |
+| `./scripts/voice_agent.sh console` | Local microphone console session |
 | `./scripts/voice_agent.sh console --text` | Text-only console smoke path |
 | `./scripts/voice_agent.sh download-files` | Pre-download model assets |
 | `cd apps/backend && .venv/bin/python -m agent.voice.agent dev` | Direct LiveKit development mode |

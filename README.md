@@ -221,15 +221,29 @@ For everyday persistent-mode dogfooding, [`scripts/cli_dogfood.sh`](scripts/cli_
 
 This assumes `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and `OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch` are set in your `.env` (see [Environment](#environment)). Use the raw `uv run python -m opencouch_cli ...` invocations above when you want guest mode, deterministic mode, or the SQLite fallback without starting Postgres.
 
-For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice worker independently from the text agent:
+For standalone voice dogfooding, [`scripts/voice_agent.sh`](scripts/voice_agent.sh) starts Postgres by default and launches the LiveKit voice runtime independently from the text agent. Use `console` for local microphone sessions; this is the normal dogfood path when you want to talk to the voice agent from your laptop.
 
 ```bash
-./scripts/voice_agent.sh --user-id dogfood start
+# Local microphone voice session.
+./scripts/voice_agent.sh --user-id dogfood console
+
+# Same voice runtime, but typed input/output for quick smoke checks.
 ./scripts/voice_agent.sh --user-id dogfood console --text
+
+# Incognito voice session; no durable memory writes.
 ./scripts/voice_agent.sh --memory-mode incognito console
+
+# Worker mode for browser/LiveKit room sessions.
+# This waits for a LiveKit room participant and does not listen to
+# your terminal microphone.
+./scripts/voice_agent.sh --user-id dogfood start
 ```
 
-The voice wrapper supports `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres` before the forwarded LiveKit command.
+If `console` starts but cannot hear you, check macOS microphone
+permission for your terminal app under System Settings → Privacy &
+Security → Microphone. The voice wrapper supports `--user-id`,
+`--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and
+`--no-postgres` before the forwarded LiveKit command.
 
 ### Telegram Gateway
 Run the standalone Telegram gateway. It does not require the FastAPI server.
