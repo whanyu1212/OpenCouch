@@ -91,3 +91,14 @@ class LangGraphTextAgentAdapter:
                     )
             elif chunk["type"] == "values" and chunk["ns"] == ():
                 yield TextRuntimeStateEvent(state=cast(AgentState, chunk["data"]))
+
+    async def update_state(
+        self,
+        config: RunnableConfig,
+        values: Mapping[str, Any],
+        *,
+        as_node: str | None = None,
+    ) -> None:
+        """Persist a state update through the LangGraph checkpointer."""
+
+        await self.workflow.aupdate_state(config, values, as_node=as_node)

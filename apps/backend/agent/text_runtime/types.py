@@ -11,7 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentState
 
-TextAgentRuntimeName = Literal["langgraph"]
+TextAgentRuntimeName = Literal["langgraph", "openai"]
 
 
 @dataclass(frozen=True)
@@ -64,3 +64,12 @@ class TextAgentAdapter(Protocol):
         context: WorkflowContext,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming text turn."""
+
+    async def update_state(
+        self,
+        config: RunnableConfig,
+        values: Mapping[str, Any],
+        *,
+        as_node: str | None = None,
+    ) -> None:
+        """Persist a state update through the runtime's checkpoint backend."""

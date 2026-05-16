@@ -112,11 +112,10 @@ def test_openai_agents_dependency_imports() -> None:
     assert Agent.__name__ == "Agent"
 
 
-def test_openai_runtime_remains_dormant() -> None:
-    """Adding SDK definitions must not enable the OpenAI runtime selector yet."""
+def test_openai_runtime_selector_is_enabled_for_hybrid_slice() -> None:
+    """The OpenAI selector is now enabled behind explicit runtime config."""
 
-    with pytest.raises(ValueError, match="Supported values: langgraph"):
-        resolve_text_agent_runtime("openai")
+    assert resolve_text_agent_runtime("openai") == "openai"
 
 
 def test_agent_roster_builds_dormant_specialists() -> None:
