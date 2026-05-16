@@ -36,7 +36,12 @@ from agent.therapeutic.prompts import (
     build_supportive_system_prompt,
     build_therapeutic_response_prompt,
 )
-from agent.turn_dispatch import TurnDispatchPlan, plan_turn_route
+from agent.turn_branches import build_grounded_lookup_delta, build_memory_control_delta
+from agent.turn_dispatch import (
+    TurnDispatchPlan,
+    build_turn_dispatch_update,
+    plan_turn_route,
+)
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 
 
@@ -158,6 +163,16 @@ class OpenAITextAgentAdapter:
                 context=context,
             )
 
+        branch_mode = _app_owned_branch_mode(prepared)
+        if branch_mode is not None:
+            return await self._run_app_owned_branch_turn(
+                prepared.state,
+                config=config,
+                context=context,
+                runtime_mode=branch_mode,
+                streamed=False,
+            )
+
         state = await self._load_turn_memory(prepared.state, context)
         run_context = self._run_context_for_state(state, config, context)
         response_text = await self._run_openai_agent(state, run_context)
@@ -165,6 +180,9 @@ class OpenAITextAgentAdapter:
             state,
             response_text=response_text,
             config=config,
+            runtime_mode="safe_therapeutic",
+            response_style="supportive",
+            selected_agent=THERAPEUTIC_AGENT_NAME,
             sdk_duration_ms=None,
             streamed=False,
         )
@@ -188,6 +206,20 @@ class OpenAITextAgentAdapter:
                 context=context,
             ):
                 yield event
+            return
+
+        branch_mode = _app_owned_branch_mode(prepared)
+        if branch_mode is not None:
+            yield TextRuntimeStatusEvent(stage=branch_mode)
+            final_state = await self._run_app_owned_branch_turn(
+                prepared.state,
+                config=config,
+                context=context,
+                runtime_mode=branch_mode,
+                streamed=True,
+            )
+            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+            yield TextRuntimeStateEvent(state=final_state)
             return
 
         yield TextRuntimeStatusEvent(stage="load_memory")
@@ -218,6 +250,9 @@ class OpenAITextAgentAdapter:
             state,
             response_text=response_text,
             config=config,
+            runtime_mode="safe_therapeutic",
+            response_style="supportive",
+            selected_agent=THERAPEUTIC_AGENT_NAME,
             sdk_duration_ms=elapsed_ms(run_start),
             streamed=True,
         )
@@ -246,6 +281,14 @@ class OpenAITextAgentAdapter:
                 return _shadow_result(
                     prepared,
                     status="fallback",
+                    shadow_duration_ms=elapsed_ms(shadow_start),
+                )
+
+            branch_mode = _app_owned_branch_mode(prepared)
+            if branch_mode is not None:
+                return _shadow_result(
+                    prepared,
+                    status="eligible",
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
@@ -308,26 +351,26 @@ class OpenAITextAgentAdapter:
                 fallback_reason="crisis_or_safety_clarification",
             )
 
+        dispatch_start = time.monotonic()
         dispatch_plan = await plan_turn_route(
             state,
             llm_client=context.llm_client,
         )
-        _apply_delta(
+        dispatch_update = build_turn_dispatch_update(
             state,
-            {
-                "route": dispatch_plan.route,
-                "turn_lifecycle": {
-                    "active_flow": dispatch_plan.active_flow,
-                    "action": dispatch_plan.active_flow_action,
-                },
-                "memory_reference": {"mode": dispatch_plan.memory_reference_mode},
-                "diagnostics": {
-                    "openai_text_dispatch_route": dispatch_plan.route,
-                    "openai_text_dispatch_confidence": dispatch_plan.confidence,
-                    "openai_text_dispatch_reason": dispatch_plan.reason,
-                },
-            },
+            dispatch_plan,
+            duration_ms=elapsed_ms(dispatch_start),
         )
+        diagnostics = dict(dispatch_update.get("diagnostics", {}) or {})
+        diagnostics.update(
+            {
+                "openai_text_dispatch_route": dispatch_plan.route,
+                "openai_text_dispatch_confidence": dispatch_plan.confidence,
+                "openai_text_dispatch_reason": dispatch_plan.reason,
+            }
+        )
+        dispatch_update["diagnostics"] = diagnostics
+        _apply_delta(state, dispatch_update)
 
         fallback_reason = _fallback_reason(dispatch_plan)
         if fallback_reason:
@@ -353,6 +396,37 @@ class OpenAITextAgentAdapter:
         _apply_delta(state, load_delta)
         return state
 
+    async def _run_app_owned_branch_turn(
+        self,
+        state: AgentState,
+        *,
+        config: RunnableConfig,
+        context: WorkflowContext,
+        runtime_mode: str,
+        streamed: bool,
+    ) -> AgentState:
+        if runtime_mode == "memory_control":
+            delta = await build_memory_control_delta(state, context)
+        elif runtime_mode == "grounded_lookup":
+            delta = await build_grounded_lookup_delta(state, context)
+        else:
+            raise ValueError(f"Unsupported app-owned OpenAI branch: {runtime_mode}")
+
+        _apply_delta(state, delta)
+        response_text = str(state.get("response_text") or "")
+        if not response_text:
+            raise ValueError(f"{runtime_mode} returned an empty response.")
+        return await self._finalize_openai_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode=runtime_mode,
+            response_style=str(state.get("response_style") or runtime_mode),
+            selected_agent=None,
+            sdk_duration_ms=None,
+            streamed=streamed,
+        )
+
     async def _run_openai_agent(
         self,
         state: AgentState,
@@ -376,37 +450,43 @@ class OpenAITextAgentAdapter:
         *,
         response_text: str,
         config: RunnableConfig,
+        runtime_mode: str,
+        response_style: str,
+        selected_agent: str | None,
         sdk_duration_ms: float | None,
         streamed: bool,
     ) -> AgentState:
         assistant_turn = {
             "role": MessageRole.ASSISTANT.value,
             "content": response_text,
-            "response_style": "supportive",
+            "response_style": response_style,
         }
         diagnostics = {
             **dict(state.get("diagnostics", {})),
             "text_agent_runtime": "openai",
-            "openai_text_runtime_mode": "safe_therapeutic",
-            "openai_selected_agent": THERAPEUTIC_AGENT_NAME,
+            "openai_text_runtime_mode": runtime_mode,
+            "openai_selected_agent": selected_agent,
             "openai_streamed": streamed,
         }
         if sdk_duration_ms is not None:
             diagnostics["openai_sdk_ms"] = round(sdk_duration_ms, 2)
 
-        final_state = cast(
-            AgentState,
-            {
-                **dict(state),
-                "response_text": response_text,
-                "response_style": "supportive",
-                "therapeutic_approach": "none",
-                "session_action": "none",
-                "should_persist_memory": False,
-                "diagnostics": diagnostics,
-                "transcript": [*list(state.get("transcript", [])), assistant_turn],
-            },
-        )
+        final_values: dict[str, Any] = {
+            **dict(state),
+            "response_text": response_text,
+            "response_style": response_style,
+            "diagnostics": diagnostics,
+            "transcript": [*list(state.get("transcript", [])), assistant_turn],
+        }
+        if runtime_mode == "safe_therapeutic":
+            final_values.update(
+                {
+                    "therapeutic_approach": "none",
+                    "session_action": "none",
+                    "should_persist_memory": False,
+                }
+            )
+        final_state = cast(AgentState, final_values)
 
         checkpoint_delta = dict(final_state)
         checkpoint_delta["transcript"] = [
@@ -501,6 +581,10 @@ def _apply_delta(state: AgentState, delta: Mapping[str, Any]) -> None:
 
 
 def _fallback_reason(plan: TurnDispatchPlan) -> str:
+    if plan.route in {"memory_control", "grounded_lookup"}:
+        if plan.active_flow == "guided_exercise":
+            return f"active_flow:{plan.active_flow}:{plan.active_flow_action}"
+        return ""
     if plan.route != "therapeutic":
         return f"unsupported_route:{plan.route}"
     if plan.active_flow != "none" or plan.active_flow_action != "none":
@@ -508,6 +592,15 @@ def _fallback_reason(plan: TurnDispatchPlan) -> str:
     if plan.memory_reference_mode != "none":
         return f"memory_reference:{plan.memory_reference_mode}"
     return ""
+
+
+def _app_owned_branch_mode(prepared: _PreparedTurn) -> str | None:
+    plan = prepared.dispatch_plan
+    if plan is None:
+        return None
+    if plan.route in {"memory_control", "grounded_lookup"}:
+        return plan.route
+    return None
 
 
 def _shadow_result(

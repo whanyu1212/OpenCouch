@@ -553,7 +553,7 @@ async def test_grounded_answer_node_channel_contract() -> None:
         _ = (state, llm_client, query)
         return "Verified answer.\n\nSources:\n- Official source", "answered"
 
-    with patch("agent.nodes.grounded_answer.answer_factual_lookup", _lookup):
+    with patch("agent.turn_branches.answer_factual_lookup", _lookup):
         delta = await run_grounded_answer_node(
             state,
             cast(

@@ -870,6 +870,7 @@ class PersistentAgentRuntime:
         user_id: str | None,
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None = None,
+        track_session: bool = True,
     ) -> WorkflowContext:
         """Build the agent workflow runtime context for one turn.
 
@@ -885,6 +886,9 @@ class PersistentAgentRuntime:
                 via :func:`agent.state.resolve_owner_id`.
             llm_client: The control-plane LLM client.
             response_llm_client: Optional response-writer override.
+            track_session: Whether the context should create runtime-local
+                session tracking helpers. Shadow runs must keep this disabled
+                so they do not affect liveness or recovery state.
 
         Returns:
             The runtime context for the turn.
@@ -897,12 +901,20 @@ class PersistentAgentRuntime:
             crisis_log_backend=self._crisis_log_backend,
             memory_mode=self.memory_mode,
             embedding_provider=self._embedding_provider,
-            session_memory_buffer=self._session_memory_buffer_for_thread(thread_id),
-            pre_fetched_memory=self._schedule_memory_prefetch(
-                thread_id=thread_id,
-                user_id=user_id,
-                message=message,
-                prior_state=prior_state,
+            session_memory_buffer=(
+                self._session_memory_buffer_for_thread(thread_id)
+                if track_session
+                else None
+            ),
+            pre_fetched_memory=(
+                self._schedule_memory_prefetch(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    message=message,
+                    prior_state=prior_state,
+                )
+                if track_session
+                else None
             ),
         )
 
@@ -1253,6 +1265,7 @@ class PersistentAgentRuntime:
                     user_id=user_id,
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
+                    track_session=False,
                 ),
                 prior_state=prior_state,
             )
