@@ -21,6 +21,7 @@ from agent.text_runtime.openai_agents import (
     GUIDED_EXERCISE_AGENT_NAME,
     THERAPEUTIC_AGENT_NAME,
     MemoryReadToolResult,
+    MemoryToolCallRecord,
     OpenAITextRunContext,
     build_openai_text_agent_roster,
     build_read_only_memory_tools,
@@ -164,6 +165,7 @@ def test_local_context_adapts_to_memory_service_state_without_clients() -> None:
     assert state["memory_control"]["action"] == {"type": "status"}
     assert "workflow_context" not in state
     assert "memory_store" not in state
+    assert context.memory_tool_calls == []
 
 
 @pytest.mark.asyncio
@@ -181,6 +183,14 @@ async def test_show_saved_memory_action_is_read_only() -> None:
     assert "Saved facts:" in result.response_text
     assert "Presentations make me anxious." in result.response_text
     assert result.memory_control == {"pending_action": None}
+    assert context.memory_tool_calls == [
+        MemoryToolCallRecord(
+            tool_name="show_saved_memory",
+            action_type="list",
+            response_text=result.response_text,
+            memory_control={"pending_action": None},
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -198,6 +208,9 @@ async def test_show_memory_status_tool_invocation_is_read_only() -> None:
     assert result.retry_safe is True
     assert "Saved facts: 1" in result.response_text
     assert "Proactive recall: off" in result.response_text
+    assert [call.tool_name for call in context.memory_tool_calls] == [
+        "show_memory_status"
+    ]
 
 
 @pytest.mark.asyncio

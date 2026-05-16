@@ -6,14 +6,24 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
+from agents.tool_context import ToolContext
+
 from tests.support.persistence import FakeCrossRestartLLM
 
 
 class FakeOpenAISDKRunner:
     """Deterministic Agents SDK runner fake for text-runtime tests."""
 
-    def __init__(self, final_output: str = "openai reply") -> None:
+    def __init__(
+        self,
+        final_output: str = "openai reply",
+        *,
+        invoke_required_tool: bool = False,
+        tool_response_as_final: bool = False,
+    ) -> None:
         self.final_output = final_output
+        self.invoke_required_tool = invoke_required_tool
+        self.tool_response_as_final = tool_response_as_final
         self.run_calls: list[dict[str, Any]] = []
         self.stream_calls: list[dict[str, Any]] = []
 
@@ -27,7 +37,13 @@ class FakeOpenAISDKRunner:
         self.run_calls.append(
             {"agent": agent, "input_text": input_text, "context": context}
         )
-        return SimpleNamespace(final_output=self.final_output)
+        tool_result = None
+        if self.invoke_required_tool:
+            tool_result = await _invoke_required_tool(agent, input_text, context)
+        final_output = self.final_output
+        if self.tool_response_as_final and tool_result is not None:
+            final_output = str(getattr(tool_result, "response_text", final_output))
+        return SimpleNamespace(final_output=final_output)
 
     def run_streamed(
         self,
@@ -56,6 +72,34 @@ class FakeOpenAIStream:
                 delta=self.final_output,
             ),
         )
+
+
+def _required_tool_name(input_text: str) -> str | None:
+    for tool_name in ("show_saved_memory", "show_memory_status"):
+        if f"Required tool: {tool_name}" in input_text:
+            return tool_name
+    return None
+
+
+async def _invoke_required_tool(
+    agent: Any, input_text: str, context: Any
+) -> Any | None:
+    tool_name = _required_tool_name(input_text)
+    if tool_name is None:
+        return None
+    for tool in getattr(agent, "tools", []):
+        if getattr(tool, "name", None) != tool_name:
+            continue
+        return await tool.on_invoke_tool(
+            ToolContext(
+                context,
+                tool_name=tool.name,
+                tool_call_id=f"call-{tool.name}",
+                tool_arguments="{}",
+            ),
+            "{}",
+        )
+    raise AssertionError(f"Required tool {tool_name!r} was not attached to agent.")
 
 
 class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):

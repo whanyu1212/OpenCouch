@@ -50,18 +50,19 @@ from agent.persistence import PersistentAgentRuntime, SessionLeaseExpired, Sessi
 from llm.base import BaseLLMClient, StructuredResponseT
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
 
 
 def _postgres_database_url() -> str | None:
-    """Return the opt-in Postgres DSN for Telegram registry integration tests.
+    """Return the explicit opt-in DSN for Postgres registry integration tests.
 
     Returns:
         str | None: Configured Postgres DSN, or ``None`` when unavailable.
     """
 
-    return os.getenv(_POSTGRES_TEST_URL_ENV) or os.getenv(
-        "OPENCOUCH_MEMORY_DATABASE_URL"
-    )
+    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
+        return None
+    return os.getenv(_POSTGRES_TEST_URL_ENV)
 
 
 class _FakeLLM(BaseLLMClient):
@@ -935,8 +936,9 @@ async def test_postgres_registry_roundtrips_rotated_session_state() -> None:
     database_url = _postgres_database_url()
     if database_url is None:
         pytest.skip(
-            "Postgres integration DSN not configured; set "
-            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
         )
 
     registry = PostgresTelegramSessionRegistry(database_url)

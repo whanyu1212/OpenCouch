@@ -10,7 +10,11 @@ from agent.text_runtime.openai_agents.agents import (
     build_openai_text_agent_roster,
     build_therapeutic_agent,
 )
-from agent.text_runtime.openai_agents.context import OpenAITextRunContext
+from agent.text_runtime.openai_agents.context import (
+    MemoryReadActionType,
+    MemoryToolCallRecord,
+    OpenAITextRunContext,
+)
 from agent.text_runtime.openai_agents.memory_tools import (
     MemoryReadToolResult,
     build_read_only_memory_tools,
@@ -24,6 +28,8 @@ __all__ = [
     "GUIDED_EXERCISE_AGENT_NAME",
     "THERAPEUTIC_AGENT_NAME",
     "MemoryReadToolResult",
+    "MemoryReadActionType",
+    "MemoryToolCallRecord",
     "OpenAITextAgentRoster",
     "OpenAITextRunContext",
     "build_crisis_response_agent",

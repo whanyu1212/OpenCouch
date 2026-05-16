@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, cast
 
 from agent.memory.modes import MemoryMode
 from agent.models import Channel, CrisisAssessment
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
+
+
+MemoryReadActionType = Literal["list", "status"]
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryToolCallRecord:
+    """One read-only memory tool result captured from an SDK run."""
+
+    tool_name: str
+    action_type: MemoryReadActionType
+    response_text: str
+    memory_control: dict[str, Any]
+    side_effect: Literal["none"] = "none"
+    retry_safe: bool = True
 
 
 @dataclass(slots=True)
@@ -29,6 +44,39 @@ class OpenAITextRunContext:
     pending_memory_action: Mapping[str, Any] | None = None
     installed_skills: list[str] = field(default_factory=list)
     turn_count: int = 0
+    memory_tool_calls: list[MemoryToolCallRecord] = field(default_factory=list)
+
+    def record_memory_tool_result(
+        self,
+        *,
+        action_type: MemoryReadActionType,
+        response_text: str,
+        memory_control: Mapping[str, Any],
+    ) -> None:
+        """Remember a read-only memory tool result for state merge/diagnostics."""
+
+        tool_name = (
+            "show_saved_memory" if action_type == "list" else "show_memory_status"
+        )
+        self.memory_tool_calls.append(
+            MemoryToolCallRecord(
+                tool_name=tool_name,
+                action_type=action_type,
+                response_text=response_text,
+                memory_control=dict(memory_control),
+            )
+        )
+
+    def latest_memory_tool_result(
+        self,
+        action_type: MemoryReadActionType,
+    ) -> MemoryToolCallRecord | None:
+        """Return the latest read-only memory tool result for an action type."""
+
+        for call in reversed(self.memory_tool_calls):
+            if call.action_type == action_type:
+                return call
+        return None
 
     def agent_state_for_memory_action(self, action: Mapping[str, Any]) -> AgentState:
         """Return a minimal LangGraph-state-shaped payload for memory services.
