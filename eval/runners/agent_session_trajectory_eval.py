@@ -440,7 +440,7 @@ class AgentSessionTrajectoryEvaluator(BaseEvaluator[AgentSessionCase]):
                 new=fake_factual_lookup,
             ),
             patch(
-                "agent.nodes.crisis_resource_lookup.find_crisis_resources",
+                "agent.crisis_branch.find_crisis_resources",
                 new=fake_crisis_resources,
             ),
             patch(

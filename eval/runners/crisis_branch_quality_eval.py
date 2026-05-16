@@ -150,7 +150,7 @@ async def _invoke_crisis_branch(
 
     workflow = build_agent_workflow()
     with patch(
-        "agent.nodes.crisis_resource_lookup.find_crisis_resources",
+        "agent.crisis_branch.find_crisis_resources",
         new=fake_crisis_resources,
     ):
         output = await workflow.ainvoke(
