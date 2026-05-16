@@ -148,10 +148,20 @@ def build_crisis_response_agent(
 def build_guided_exercise_agent(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
+    instructions: str | None = None,
 ) -> Agent[OpenAITextRunContext]:
-    """Build the dormant guided exercise specialist definition."""
+    """Build the guided exercise specialist definition."""
 
-    return _build_agent(_GUIDED_EXERCISE_DEFINITION, model=model)
+    definition = (
+        _GUIDED_EXERCISE_DEFINITION
+        if instructions is None
+        else _AgentDefinition(
+            name=_GUIDED_EXERCISE_DEFINITION.name,
+            handoff_description=_GUIDED_EXERCISE_DEFINITION.handoff_description,
+            instructions=instructions,
+        )
+    )
+    return _build_agent(definition, model=model)
 
 
 def build_openai_text_agent_roster(

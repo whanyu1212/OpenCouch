@@ -21,7 +21,11 @@ from agent.text_runtime import (
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
 )
-from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME, THERAPEUTIC_AGENT_NAME
+from agent.text_runtime.openai_agents import (
+    CRISIS_AGENT_NAME,
+    GUIDED_EXERCISE_AGENT_NAME,
+    THERAPEUTIC_AGENT_NAME,
+)
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM as _RouteLLM,
@@ -265,13 +269,13 @@ async def test_openai_adapter_handles_pending_memory_cancel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_falls_back_for_guided_exercise_active_flow() -> None:
+async def test_openai_adapter_preserves_exercise_during_app_owned_side_turn() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner()
     adapter = _adapter(workflow, runner)
     state = _initial_state("Can you look this up before we continue?")
     state["exercise_state"] = {
-        "exercise_type": "breathing",
+        "exercise_type": "grounding_5_4_3_2_1",
         "exercise_step": 1,
     }
 
@@ -283,9 +287,77 @@ async def test_openai_adapter_falls_back_for_guided_exercise_active_flow() -> No
         ),
     )
 
-    assert result == {"response_text": "fallback reply"}
-    assert workflow.ainvoke_calls == 1
+    assert result["route"] == "grounded_lookup"
+    assert result["response_style"] == "grounded_lookup"
+    assert result["exercise_state"]["exercise_type"] == "grounding_5_4_3_2_1"
+    assert result["exercise_state"]["exercise_step"] == 1
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "grounded_lookup"
+    assert workflow.ainvoke_calls == 0
     assert runner.run_calls == []
+    assert runner.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_starts_guided_exercise_with_guided_agent() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("guided start")
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("Can you walk me through box breathing?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="guided_exercise",
+                exercise_start_basis="explicit_user_request",
+                exercise_type="grounding_box_breathing",
+            )
+        ),
+    )
+
+    assert result["response_text"] == "guided start"
+    assert result["response_style"] == "guided_exercise"
+    assert result["exercise_state"]["exercise_type"] == "grounding_box_breathing"
+    assert result["exercise_state"]["exercise_step"] == 0
+    assert result["exercise_state"]["exercise_step_id"] == "inhale"
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "guided_exercise"
+    assert result["diagnostics"]["openai_selected_agent"] == GUIDED_EXERCISE_AGENT_NAME
+    assert workflow.ainvoke_calls == 0
+    assert runner.stream_calls
+    sdk_call = runner.stream_calls[0]
+    assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
+    assert "Exercise skill:" in sdk_call["input_text"]
+    assert "grounding_box_breathing" in sdk_call["input_text"]
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_continues_active_guided_exercise() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("next step")
+    adapter = _adapter(workflow, runner)
+    state = _initial_state("lamp, window, mug")
+    state["exercise_state"] = {
+        "exercise_type": "grounding_5_4_3_2_1",
+        "exercise_step": 0,
+        "exercise_step_id": "see",
+        "exercise_therapeutic_approach": "none",
+    }
+
+    result = await adapter.run_turn(
+        cast(Any, state),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(_RouteLLM(route="therapeutic", active_flow_action="continue")),
+    )
+
+    assert result["response_text"] == "next step"
+    assert result["response_style"] == "guided_exercise"
+    assert result["exercise_state"]["exercise_type"] == "grounding_5_4_3_2_1"
+    assert result["exercise_state"]["exercise_step"] == 1
+    assert result["exercise_state"]["exercise_step_id"] == "hear"
+    assert result["diagnostics"]["openai_selected_agent"] == GUIDED_EXERCISE_AGENT_NAME
+    assert workflow.ainvoke_calls == 0
+    assert runner.stream_calls
 
 
 @pytest.mark.asyncio
@@ -413,6 +485,34 @@ async def test_openai_adapter_shadow_reports_app_owned_branch_eligibility() -> N
 
 
 @pytest.mark.asyncio
+async def test_openai_adapter_shadow_reports_guided_exercise_agent() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_shadow_turn(
+        cast(Any, _initial_state("Can you guide me through grounding?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="guided_exercise",
+                exercise_start_basis="explicit_user_request",
+            )
+        ),
+    )
+
+    assert result.status == "eligible"
+    assert result.eligible is True
+    assert result.selected_agent == GUIDED_EXERCISE_AGENT_NAME
+    assert result.response_text_length is None
+    assert runner.run_calls == []
+    assert runner.stream_calls == []
+    assert workflow.ainvoke_calls == 0
+    assert workflow.state is None
+
+
+@pytest.mark.asyncio
 async def test_openai_adapter_shadow_reports_crisis_agent_without_side_effects() -> (
     None
 ):
@@ -462,6 +562,43 @@ async def test_openai_adapter_streams_safe_therapeutic_turn() -> None:
     assert events[-2] == TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
     assert isinstance(events[-1], TextRuntimeStateEvent)
     assert events[-1].state["response_text"] == "streamed reply"
+    assert runner.stream_calls
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_streams_guided_exercise_turn() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("guided chunk")
+    adapter = _adapter(workflow, runner)
+
+    events = [
+        event
+        async for event in adapter.run_turn_stream(
+            cast(Any, _initial_state("Can we do a grounding exercise?")),
+            config={"configurable": {"thread_id": "thread-1"}},
+            context=_context(
+                _RouteLLM(
+                    route="therapeutic",
+                    therapeutic_response_style="guided_exercise",
+                    exercise_start_basis="explicit_user_request",
+                )
+            ),
+        )
+    ]
+
+    assert events[:3] == [
+        TextRuntimeStatusEvent(stage="load_memory", turn_finalized=False),
+        TextRuntimeStatusEvent(stage="guided_exercise", turn_finalized=False),
+        TextRuntimeChunkEvent(text="guided chunk"),
+    ]
+    assert events[-2] == TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+    assert isinstance(events[-1], TextRuntimeStateEvent)
+    assert events[-1].state["response_text"] == "guided chunk"
+    assert events[-1].state["response_style"] == "guided_exercise"
+    assert (
+        events[-1].state["diagnostics"]["openai_selected_agent"]
+        == GUIDED_EXERCISE_AGENT_NAME
+    )
     assert runner.stream_calls
 
 

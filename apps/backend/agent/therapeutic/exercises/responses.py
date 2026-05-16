@@ -15,6 +15,7 @@ from agent.therapeutic.exercises.registry import (
     get_exercise_display_name,
     get_exercise_steps,
 )
+from agent.therapeutic.exercises.skills import render_exercise_skill_context
 from agent.therapeutic.exercises.state import (
     _advance_step_delta,
     _get_current_step,
@@ -56,6 +57,8 @@ async def _build_start_delta(
     first_step = steps[0]
     display_name = get_exercise_display_name(exercise_type)
     directive = (
+        f"{_render_skill_context(exercise_type, 0, runtime_action='start')}\n\n"
+        "Runtime task:\n"
         f"Start the guided exercise {display_name}. "
         f"Briefly name the exercise and invite the user into step 0.\n"
         f'Step 0 instruction: "{first_step.instruction}"\n'
@@ -99,7 +102,12 @@ async def _build_exit_delta(
         Response and state delta that clears the active exercise.
     """
 
+    exercise_state = state.get("exercise_state", {})
+    step_index = exercise_state.get("exercise_step", 0)
+    exercise_type = exercise_state.get("exercise_type") or EXERCISE_5_4_3_2_1
     directive = (
+        f"{_render_skill_context(exercise_type, step_index, runtime_action='exit')}"
+        "\n\nRuntime task:\n"
         "The user wants to stop or leave the current guided exercise. "
         "Briefly acknowledge that choice, do not continue the exercise, and "
         "ask what would feel most helpful now."
@@ -148,6 +156,8 @@ async def _build_resume_delta(
     step_ref = current_step.instruction if current_step else ""
 
     directive = (
+        f"{_render_skill_context(exercise_type, step_index, runtime_action='resume')}"
+        "\n\nRuntime task:\n"
         f"The user is asking to return to the active guided exercise after a "
         f"side turn. Resume at step {step_index}; do not classify their message "
         f"as an answer to the step and do not exit the exercise.\n"
@@ -196,6 +206,8 @@ async def _build_stuck_delta(
     step_ref = current_step.instruction if current_step else ""
 
     directive = (
+        f"{_render_skill_context(exercise_type, step_index, runtime_action='stuck')}\n\n"
+        "Runtime task:\n"
         f"The user is STUCK on step {step_index} of the exercise. "
         f'The step asked: "{step_ref}"\n'
         f"Offer a simpler version of the same step — make it smaller and "
@@ -243,6 +255,8 @@ async def _build_hold_delta(
     step_ref = current_step.instruction if current_step else ""
 
     directive = (
+        f"{_render_skill_context(exercise_type, step_index, runtime_action='hold')}\n\n"
+        "Runtime task:\n"
         f"The user gave a tentative or partial response to step {step_index}. "
         f'The step asked: "{step_ref}"\n'
         f"Give brief encouragement, then restate this same step in short, "
@@ -297,6 +311,8 @@ async def _build_advance_delta(
     next_step = steps[next_step_index]
     total_steps = len(steps)
     directive = (
+        f"{_render_skill_context(exercise_type, next_step_index, runtime_action='advance')}"
+        "\n\nRuntime task:\n"
         f"The user completed step {next_step_index - 1} of {total_steps - 1}. "
         f"Briefly acknowledge what they shared, then move to step "
         f"{next_step_index}.\n"
@@ -355,8 +371,11 @@ async def _build_complete_delta(
         raw_exercise_type if raw_exercise_type is not None else EXERCISE_5_4_3_2_1
     )
     display_name = get_exercise_display_name(exercise_type, default="that exercise")
+    step_index = exercise_state.get("exercise_step", 0)
 
     directive = (
+        f"{_render_skill_context(exercise_type, step_index, runtime_action='complete')}"
+        "\n\nRuntime task:\n"
         f"The user just finished the LAST step of the exercise. "
         f"Briefly acknowledge what they shared, name what they just did "
         f"({display_name}), and invite them to notice how their body "
@@ -394,3 +413,28 @@ async def _build_complete_delta(
             response_text=response_text,
         ),
     }
+
+
+def _render_skill_context(
+    exercise_type: str,
+    step_index: int | None,
+    *,
+    runtime_action: str,
+) -> str:
+    """Render best-effort exercise skill context for a response directive."""
+
+    try:
+        return render_exercise_skill_context(
+            exercise_type,
+            current_step_index=step_index,
+            runtime_action=runtime_action,
+        )
+    except KeyError:
+        return (
+            "Exercise skill:\n"
+            f"- skill_id: {exercise_type}\n"
+            f"- runtime_action: {runtime_action}\n"
+            "- registry_status: unavailable\n"
+            "Operating boundaries:\n"
+            "- Follow the runtime task exactly and do not invent extra steps."
+        )

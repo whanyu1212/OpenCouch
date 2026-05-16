@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
-from hashlib import sha256
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, cast
 
 from agents import Runner
@@ -30,9 +31,11 @@ from agent.state import AgentGraphInputState, AgentState
 from agent.text_runtime.langgraph_adapter import LangGraphTextAgentAdapter
 from agent.text_runtime.openai_agents import (
     CRISIS_AGENT_NAME,
+    GUIDED_EXERCISE_AGENT_NAME,
     THERAPEUTIC_AGENT_NAME,
     OpenAITextRunContext,
     build_crisis_response_agent,
+    build_guided_exercise_agent,
     build_therapeutic_agent,
 )
 from agent.text_runtime.types import (
@@ -48,12 +51,18 @@ from agent.therapeutic.prompts import (
     build_supportive_system_prompt,
     build_therapeutic_response_prompt,
 )
+from agent.therapeutic.dispatch import (
+    build_therapeutic_dispatch_update,
+    plan_therapeutic_route,
+)
+from agent.therapeutic.exercises.runner import ExerciseRunner
 from agent.turn_branches import build_grounded_lookup_delta, build_memory_control_delta
 from agent.turn_dispatch import (
     TurnDispatchPlan,
     build_turn_dispatch_update,
     plan_turn_route,
 )
+from llm.base import BaseLLMClient, StructuredResponseT
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 
 
@@ -82,6 +91,18 @@ audit logging, persistence, memory mutation, and guided-exercise state.
 Do not reclassify the user or invent crisis resources. Follow the provided
 prompt context exactly for either level-1 safety clarification or level-2/3
 crisis response.
+"""
+
+_RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS = """\
+You are the OpenCouch guided exercise text specialist for a turn already
+selected by the application runtime. The runtime owns consent, exercise
+selection, step state, step classification, exit handling, completion, memory
+side effects, and persistence.
+
+Use the runtime-provided exercise skill block and step directive as the source
+of truth. Do not offer a menu, start a different exercise, skip steps, add
+unsupported steps, or continue an exercise after the runtime says to exit or
+complete it.
 """
 
 
@@ -122,6 +143,86 @@ class OpenAIAgentsSDKRunner:
             input_text,
             context=context,
             max_turns=3,
+        )
+
+
+class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
+    """Response-LLM adapter that routes exercise prose through Agents SDK."""
+
+    def __init__(
+        self,
+        *,
+        runner: OpenAIAgentsSDKRunner,
+        model: str,
+        run_context: OpenAITextRunContext,
+    ) -> None:
+        self._runner = runner
+        self._model = model
+        self._run_context = run_context
+        self.last_duration_ms: float | None = None
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        del use_search
+        run_start = time.monotonic()
+        result = await self._runner.run(
+            agent=self._build_agent(system_instruction),
+            input_text=prompt,
+            context=self._run_context,
+        )
+        self.last_duration_ms = elapsed_ms(run_start)
+        return _final_output_text(getattr(result, "final_output", None))
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        run_start = time.monotonic()
+        stream = self._runner.run_streamed(
+            agent=self._build_agent(system_instruction),
+            input_text=prompt,
+            context=self._run_context,
+        )
+        chunks: list[str] = []
+        async for sdk_event in stream.stream_events():
+            chunk = _chunk_from_sdk_event(sdk_event)
+            if chunk:
+                chunks.append(chunk)
+                yield chunk
+
+        self.last_duration_ms = elapsed_ms(run_start)
+        final_text = _final_output_text(
+            getattr(stream, "final_output", None),
+            fallback="".join(chunks),
+        )
+        if final_text and not chunks:
+            yield final_text
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> StructuredResponseT:
+        del prompt, response_schema, system_instruction, use_search
+        raise RuntimeError("Guided exercise response adapter does not classify.")
+
+    def _build_agent(self, system_instruction: str | None) -> Any:
+        instructions = _RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS
+        if system_instruction:
+            instructions = f"{instructions}\n\n{system_instruction}"
+        return build_guided_exercise_agent(
+            model=self._model,
+            instructions=instructions,
         )
 
 
@@ -204,7 +305,18 @@ class OpenAITextAgentAdapter:
                 streamed=False,
             )
 
-        state = await self._load_turn_memory(prepared.state, context)
+        state, guided_exercise = await self._load_and_prepare_guided_exercise(
+            prepared.state,
+            context,
+        )
+        if guided_exercise:
+            return await self._run_guided_exercise_turn(
+                state,
+                config=config,
+                context=context,
+                streamed=False,
+            )
+
         run_context = self._run_context_for_state(state, config, context)
         response_text = await self._run_openai_agent(state, run_context)
         return await self._finalize_openai_turn(
@@ -269,7 +381,19 @@ class OpenAITextAgentAdapter:
             return
 
         yield TextRuntimeStatusEvent(stage="load_memory")
-        state = await self._load_turn_memory(prepared.state, context)
+        state, guided_exercise = await self._load_and_prepare_guided_exercise(
+            prepared.state,
+            context,
+        )
+        if guided_exercise:
+            async for event in self._run_guided_exercise_turn_stream(
+                state,
+                config=config,
+                context=context,
+            ):
+                yield event
+            return
+
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
         input_text = self._input_text_for_state(state)
@@ -347,7 +471,22 @@ class OpenAITextAgentAdapter:
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
-            state = await self._load_turn_memory(prepared.state, context)
+            state, guided_exercise = await self._load_and_prepare_guided_exercise(
+                prepared.state,
+                context,
+            )
+            if guided_exercise:
+                return _shadow_result(
+                    _PreparedTurn(
+                        state=state,
+                        eligible=True,
+                        dispatch_plan=prepared.dispatch_plan,
+                    ),
+                    status="eligible",
+                    selected_agent=GUIDED_EXERCISE_AGENT_NAME,
+                    shadow_duration_ms=elapsed_ms(shadow_start),
+                )
+
             run_context = self._run_context_for_state(state, config, context)
             agent = self._build_agent(state)
             input_text = self._input_text_for_state(state)
@@ -447,6 +586,23 @@ class OpenAITextAgentAdapter:
         _apply_delta(state, load_delta)
         return state
 
+    async def _load_and_prepare_guided_exercise(
+        self,
+        state: AgentState,
+        context: WorkflowContext,
+    ) -> tuple[AgentState, bool]:
+        state = await self._load_turn_memory(state, context)
+        dispatch_plan = await plan_therapeutic_route(
+            state,
+            context.llm_client,
+        )
+        if dispatch_plan.response_style != "guided_exercise":
+            return state, False
+
+        dispatch_update = build_therapeutic_dispatch_update(state, dispatch_plan)
+        _apply_delta(state, dispatch_update)
+        return state, True
+
     async def _run_app_owned_branch_turn(
         self,
         state: AgentState,
@@ -476,6 +632,115 @@ class OpenAITextAgentAdapter:
             selected_agent=None,
             sdk_duration_ms=None,
             streamed=streamed,
+        )
+
+    async def _run_guided_exercise_turn(
+        self,
+        state: AgentState,
+        *,
+        config: RunnableConfig,
+        context: WorkflowContext,
+        streamed: bool,
+    ) -> AgentState:
+        response_llm = self._guided_exercise_response_llm(state, config, context)
+        runner = self._guided_exercise_runner(
+            context,
+            response_llm=response_llm,
+        )
+        delta = await runner.run(state)
+        _apply_delta(state, delta)
+        response_text = str(state.get("response_text") or "")
+        if not response_text:
+            raise ValueError("guided_exercise returned an empty response.")
+        return await self._finalize_openai_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode="guided_exercise",
+            response_style=str(state.get("response_style") or "guided_exercise"),
+            selected_agent=GUIDED_EXERCISE_AGENT_NAME,
+            sdk_duration_ms=response_llm.last_duration_ms,
+            streamed=streamed,
+        )
+
+    async def _run_guided_exercise_turn_stream(
+        self,
+        state: AgentState,
+        *,
+        config: RunnableConfig,
+        context: WorkflowContext,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        yield TextRuntimeStatusEvent(stage="guided_exercise")
+        queue: asyncio.Queue[str] = asyncio.Queue()
+
+        def writer_factory() -> Any:
+            def writer(payload: dict[str, str]) -> None:
+                if payload.get("type") == "chunk":
+                    queue.put_nowait(str(payload.get("text") or ""))
+
+            return writer
+
+        response_llm = self._guided_exercise_response_llm(state, config, context)
+        runner = self._guided_exercise_runner(
+            context,
+            response_llm=response_llm,
+            stream_writer_factory=writer_factory,
+        )
+        task = asyncio.create_task(runner.run(state))
+        while not task.done() or not queue.empty():
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
+            if chunk:
+                yield TextRuntimeChunkEvent(text=chunk)
+
+        delta = await task
+        _apply_delta(state, delta)
+        response_text = str(state.get("response_text") or "")
+        if not response_text:
+            raise ValueError("guided_exercise returned an empty response.")
+        final_state = await self._finalize_openai_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode="guided_exercise",
+            response_style=str(state.get("response_style") or "guided_exercise"),
+            selected_agent=GUIDED_EXERCISE_AGENT_NAME,
+            sdk_duration_ms=response_llm.last_duration_ms,
+            streamed=True,
+        )
+        yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+        yield TextRuntimeStateEvent(state=final_state)
+
+    def _guided_exercise_response_llm(
+        self,
+        state: AgentState,
+        config: RunnableConfig,
+        context: WorkflowContext,
+    ) -> _OpenAIGuidedExerciseResponseLLM:
+        return _OpenAIGuidedExerciseResponseLLM(
+            runner=self._runner,
+            model=self._model,
+            run_context=self._run_context_for_state(state, config, context),
+        )
+
+    @staticmethod
+    def _guided_exercise_runner(
+        context: WorkflowContext,
+        *,
+        response_llm: BaseLLMClient,
+        stream_writer_factory: Any | None = None,
+    ) -> ExerciseRunner:
+        kwargs: dict[str, Any] = {}
+        if stream_writer_factory is not None:
+            kwargs["stream_writer_factory"] = stream_writer_factory
+        return ExerciseRunner(
+            classifier_llm=context.llm_client,
+            response_llm=response_llm,
+            memory_store=context.memory_store,
+            memory_mode=context.memory_mode,
+            **kwargs,
         )
 
     async def _run_crisis_turn(
@@ -804,11 +1069,14 @@ def _apply_delta(state: AgentState, delta: Mapping[str, Any]) -> None:
 
 def _fallback_reason(plan: TurnDispatchPlan) -> str:
     if plan.route in {"memory_control", "grounded_lookup"}:
-        if plan.active_flow == "guided_exercise":
-            return f"active_flow:{plan.active_flow}:{plan.active_flow_action}"
         return ""
     if plan.route != "therapeutic":
         return f"unsupported_route:{plan.route}"
+    if plan.active_flow == "guided_exercise" and plan.active_flow_action in {
+        "continue",
+        "resume",
+    }:
+        return ""
     if plan.active_flow != "none" or plan.active_flow_action != "none":
         return f"active_flow:{plan.active_flow}:{plan.active_flow_action}"
     if plan.memory_reference_mode != "none":
