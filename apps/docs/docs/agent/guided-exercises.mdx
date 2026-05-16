@@ -1,0 +1,77 @@
+---
+title: Guided Exercises
+sidebar_position: 6
+---
+
+import ExerciseCatalog from '@site/src/components/ExerciseCatalog';
+
+# Guided Exercises
+
+OpenCouch includes 13 structured exercises spanning 6 therapeutic
+subtypes. Each exercise is a multi-turn flow run by the plain
+`ExerciseRunner` service: the control LLM selects the exercise and
+classifies step progress, the response LLM writes the user-facing
+guidance, and local code applies catalog/state validation.
+
+## How it works
+
+1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured exercise or practice.
+2. **Exercise selector chooses one supported exercise.** Selection is LLM-owned and constrained to definitions available for the current channel, installed skills, and therapeutic approach.
+3. **Step-state classifier** evaluates each user response as `complete` / `hold` / `stuck` / `exit` using the current step's natural-language completion criteria.
+4. **`ExerciseRunner` advances, holds, adapts, exits, or completes** based on the classifier output and local state validation.
+5. **Exercise clears** on natural completion or user-initiated exit.
+
+### Approach continuity
+
+The therapeutic approach picked at exercise start (e.g., `act` for a
+values-clarification exercise) is pinned on
+`exercise_state.exercise_therapeutic_approach`.
+If the user pauses mid-exercise to ask a clarifying question, or when
+the exercise guidance resumes, the dispatcher preserves the pinned
+approach instead of letting the LLM pick a fresh one. Psychoeducation
+side-turns preserve the active exercise state, but may use a fresh
+top-level approach for the explanation. Without the exercise pin,
+resuming guidance after a side-turn could silently drift into `cbt` or
+`motivational_interviewing` framing.
+
+### Post-exercise check-in
+
+When an exercise reaches its terminal step, the completion node
+enriches the prompt with a "How was that for you?" check-in so the
+session can reflect on the experience rather than ending abruptly.
+The completion turn also sets `should_persist_memory=True` to hint
+the persistence layer to summarize the session.
+
+### Completion modes
+
+Steps use one of four modes for judging completion:
+
+| Mode | How it works | Used for |
+|------|-------------|----------|
+| **items** | Complete when the user names enough relevant items for the step's `min_items` / `target_items` guidance | Sensory listing, naming thoughts, identifying actions |
+| **confirmation** | Complete when the user indicates they performed the private action or are ready to continue | Breathing actions, visualization, body exercises |
+| **response** | Complete when the user gives a substantive answer to the step instruction | Reflections, values, planning prompts |
+| **llm_judged** | Complete when the user's reply satisfies custom `completion_criteria` in substance, even if imperfect | More nuanced cognitive or emotional steps |
+
+### Priority ordering
+
+The classifier returns exactly one state:
+
+1. **exit** — the user wants to stop, cancel, switch away, or just talk.
+2. **stuck** — the user says they cannot do the step, nothing comes to mind, or the exercise feels confusing/frustrating.
+3. **complete** — the user appears to have completed the requested step.
+4. **hold** — the user is tentative, partial, off-step, or still engaging but has not clearly completed the step.
+
+---
+
+## Exercise catalog
+
+Click any exercise to see its steps and trigger keywords. Use the filter tabs to browse by subtype. To see exercises in context as multi-turn conversations, see [Scenarios](/docs/agent/scenarios).
+
+<ExerciseCatalog />
+
+
+
+:::tip Adding a new exercise
+Define an `ExerciseDefinition` under `agent/therapeutic/exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
+:::

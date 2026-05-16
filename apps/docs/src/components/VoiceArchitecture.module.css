@@ -1,0 +1,454 @@
+/* ================================================================
+   VoiceArchitecture
+   -----------------
+   Static reference diagram. Site-native palette — uses the same
+   --oc-* tokens as NodeCatalog, MemoryArchitecture, etc., so the
+   component feels at home on the voice page.
+   ================================================================ */
+
+.root {
+  --va-accent:    var(--oc-accent);          /* deep teal */
+  --va-accent-2:  var(--oc-cta);             /* sandy orange */
+  --va-crisis:    #b94a3a;                   /* one localized rust accent */
+  --va-crisis-soft: rgba(185, 74, 58, 0.1);
+
+  margin: 1.75rem 0 2.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-family: var(--ifm-font-family-base);
+}
+
+[data-theme='dark'] .root {
+  --va-crisis:      #e87b66;
+  --va-crisis-soft: rgba(232, 123, 102, 0.16);
+}
+
+/* ── Section ─────────────────────────────────────────────── */
+
+.section {
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  background: var(--oc-surface-1);
+  box-shadow: var(--oc-shadow-sm);
+  padding: 16px 18px 18px;
+}
+
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--oc-border);
+}
+
+.sectionKicker {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--oc-text-muted);
+}
+
+.sectionTitle {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--oc-text-primary);
+  margin: 0;
+}
+
+/* ── Connector between sections ──────────────────────────── */
+
+.connector {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px;
+  margin: 0;
+}
+
+.connectorLine {
+  flex: 1;
+  height: 1px;
+  background: var(--oc-border-strong);
+  opacity: 0.55;
+}
+
+.connectorLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+  color: var(--oc-text-muted);
+  white-space: nowrap;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .connector { padding: 8px 4px; gap: 8px; }
+  .connectorLabel { white-space: normal; font-size: 0.62rem; }
+}
+
+/* ── Section 1: transport ────────────────────────────────── */
+
+.transportRow {
+  display: grid;
+  grid-template-columns: 1fr auto 1.15fr auto 1fr;
+  align-items: stretch;
+}
+
+@media (max-width: 720px) {
+  .transportRow { grid-template-columns: 1fr; }
+}
+
+.box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface-2);
+  border-radius: 8px;
+  min-height: 64px;
+}
+
+.boxEmphasis {
+  border-color: var(--va-accent);
+  background: var(--oc-accent-subtle);
+}
+
+.boxTitle {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+  letter-spacing: -0.005em;
+}
+
+.boxSub {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.66rem;
+  color: var(--oc-text-secondary);
+  letter-spacing: 0.005em;
+}
+
+/* Horizontal arrow between transport boxes */
+.arrow {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 0 14px;
+  min-width: 110px;
+}
+
+@media (max-width: 720px) {
+  .arrow {
+    min-width: 0;
+    padding: 8px 0;
+    flex-direction: column-reverse;
+    gap: 4px;
+  }
+}
+
+.arrowLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--oc-text-muted);
+  margin-bottom: 5px;
+  white-space: nowrap;
+}
+
+.arrowLine {
+  position: relative;
+  width: 100%;
+  height: 1px;
+  background: var(--oc-border-strong);
+}
+
+.arrowHead {
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6rem;
+  color: var(--oc-text-muted);
+  line-height: 1;
+}
+
+@media (max-width: 720px) {
+  .arrowLine {
+    width: 1px;
+    height: 22px;
+  }
+  .arrowHead {
+    right: 50%;
+    top: auto;
+    bottom: -3px;
+    transform: translateX(50%) rotate(90deg);
+  }
+}
+
+/* ── Section 2: session core ─────────────────────────────── */
+
+.sessionRow {
+  display: grid;
+  grid-template-columns: 1fr 130px 1fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "therapist handoff crisis"
+    "task      task    crisis";
+  gap: 14px 0;
+  align-items: stretch;
+}
+
+@media (max-width: 720px) {
+  .sessionRow {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "therapist"
+      "handoff"
+      "crisis"
+      "task";
+    gap: 12px;
+  }
+}
+
+/* Card — reused for therapist/crisis/shared */
+.agentCard {
+  grid-area: therapist;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--oc-border);
+  border-left: 3px solid var(--va-accent);
+  background: var(--oc-surface-1);
+  border-radius: 8px;
+}
+
+.agentCardCrisis {
+  grid-area: crisis;
+  border-left-color: var(--va-crisis);
+}
+
+.agentHead {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+}
+
+.agentKicker {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--oc-text-muted);
+}
+
+.agentTitle {
+  font-family: var(--ifm-font-family-base);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.agentSub {
+  margin: 2px 0 0;
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--oc-text-secondary);
+}
+
+.agentSub code,
+.agentList code {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--oc-text-primary);
+}
+
+.agentList {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agentList li {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--oc-text-secondary);
+  position: relative;
+  padding-left: 12px;
+}
+
+.agentList li::before {
+  content: '·';
+  position: absolute;
+  left: 2px;
+  top: -1px;
+  color: var(--va-accent);
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.agentCardCrisis .agentList li::before { color: var(--va-crisis); }
+
+/* Handoff column between agents */
+.handoffCol {
+  grid-area: handoff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 0 8px;
+}
+
+@media (max-width: 720px) {
+  .handoffCol {
+    flex-direction: row;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 18px;
+    padding: 6px 0;
+  }
+}
+
+.handoff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.handoffOut {
+  color: var(--va-crisis);
+  justify-content: flex-start;
+}
+
+.handoffIn {
+  color: var(--va-accent);
+  justify-content: flex-end;
+}
+
+.handoffArrow {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.handoffLabel {
+  letter-spacing: 0;
+}
+
+/* VoiceExerciseTask — beneath the therapist column */
+.taskWrap {
+  grid-area: task;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  padding-top: 2px;
+}
+
+.taskTetherLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--va-accent-2);
+  margin-left: 18px;
+  position: relative;
+}
+
+.taskTetherLabel::before {
+  /* Short downward tick to suggest the tool call into the task. */
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 1px;
+  background: var(--va-accent-2);
+}
+
+.taskCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid var(--oc-border);
+  border-left: 3px solid var(--va-accent-2);
+  background: var(--oc-surface-1);
+  border-radius: 8px;
+  max-width: 460px;
+}
+
+.taskCard .agentList li::before { color: var(--va-accent-2); }
+
+@media (max-width: 720px) {
+  .taskTetherLabel { margin-left: 0; }
+  .taskTetherLabel::before { display: none; }
+  .taskCard { max-width: none; }
+}
+
+/* ── Section 3: shared state ─────────────────────────────── */
+
+.sharedRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .sharedRow { grid-template-columns: 1fr; }
+}
+
+.sharedCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--oc-border);
+  border-left: 3px solid var(--oc-text-muted);
+  background: var(--oc-surface-1);
+  border-radius: 8px;
+}
+
+.fieldGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 5px;
+  margin-top: 4px;
+}
+
+.field {
+  font-family: var(--ifm-font-family-monospace) !important;
+  font-size: 0.66rem !important;
+  color: var(--oc-text-secondary) !important;
+  background: var(--oc-surface-2) !important;
+  border: 1px solid var(--oc-border) !important;
+  border-radius: 4px !important;
+  padding: 2px 7px !important;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+}

@@ -1,0 +1,74 @@
+---
+title: Nodes
+sidebar_position: 2
+---
+
+import NodeCatalog from '@site/src/components/NodeCatalog';
+
+# Nodes
+
+Every graph node, filterable by category or capability. Each card is
+a technical datasheet: what it consumes, what it produces, which
+policies apply, and which file owns the implementation.
+
+Four categories map to distinct responsibilities:
+
+- **Safety** — runs before any other branch and cannot be bypassed by
+  response style, therapeutic approach, or memory mode (`crisis_gate`,
+  `crisis_resource_lookup`, `crisis_response`, `crisis_log`)
+- **Routing** — non-therapeutic branches that short-circuit the
+  pipeline (`turn_dispatch`, `memory_control`, `grounded_answer`,
+  `therapeutic_subgraph`)
+- **Memory** — retrieval and structured working context
+  (`load_memory`)
+- **Terminal** — transcript finalization, pure state manipulation
+  (`finalize_turn`)
+
+<NodeCatalog />
+
+---
+
+## Branch ordering
+
+The parent graph keeps lifecycle boundaries explicit. After the crisis gate,
+one LLM-primary turn dispatcher picks the safe-turn destination before any
+memory is loaded:
+
+```text
+crisis_gate
+  ├─ (crisis)        crisis_resource_lookup → crisis_response → crisis_log
+  └─ turn_dispatch
+       ├─ (command)  memory_control                  ← skips memory + therapeutic
+       ├─ (lookup)   grounded_answer                 ← skips memory + therapeutic
+       └─ load_memory → therapeutic_subgraph
+```
+
+All non-therapeutic branches converge at `finalize_turn_node`,
+which always runs and emits the assistant turn into `history` and
+`transcript` via the `operator.add` reducer.
+
+Semantic and procedural extraction are not graph nodes anymore. The
+runtime schedules them after the graph reaches `END`, so memory writes
+do not extend the visible response path.
+
+## Adding a new node
+
+When you add a node to the graph, think through three things:
+
+**Does it do I/O?** If yes, register it with `retry_policy=RetryPolicy(max_attempts=2)` in `build_agent_workflow`. The retry policy is defense-in-depth for transient failures that escape the node's own error handling.
+
+**Does it write to a shared state field?** If multiple nodes write to the same field (like `diagnostics`, `session_progress`, or `exercise_state`), the field needs a reducer (`_merge_dicts` for dicts, `operator.add` for lists) in `AgentState`. Without a reducer, nodes will clobber each other's writes.
+
+**Can it run in parallel?** If the work has no ordering dependency with
+the graph response path, consider making it a runtime side effect instead
+of adding graph fan-out. Reducers still handle concurrent diagnostic
+writes safely.
+
+**Is it a router or a worker?** Routing nodes return `Command(goto=...)` to short-circuit the pipeline; workers return a state delta and rely on a static edge. Add a router only when there is a real lifecycle boundary.
+
+## Related
+
+- [Agent Graph](/docs/agent/graph) — full topology overview and design principles
+- [Agent State](/docs/agent/state) — what flows through the nodes
+- [Therapeutic Responses](/docs/agent/scenarios) — the 7 response styles inside the therapeutic subgraph
+- [Tools](/docs/agent/tools) — node-invoked external capabilities (web search for crisis hotlines and grounded factual lookups)

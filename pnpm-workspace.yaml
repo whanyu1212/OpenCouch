@@ -1,0 +1,13 @@
+packages:
+  - "apps/*"
+
+# Install native optional deps (lightningcss, swc, sharp, etc.) for both
+# macOS (host dev) and Linux (Docker container) so the same node_modules
+# tree works in either environment.
+supportedArchitectures:
+  os:
+    - darwin
+    - linux
+  cpu:
+    - arm64
+    - x64

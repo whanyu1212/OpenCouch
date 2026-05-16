@@ -1,0 +1,174 @@
+---
+title: Why a Graph, Not a ReAct Loop
+sidebar_position: 1
+---
+
+import GraphVsReact from '@site/src/components/GraphVsReact';
+
+# Why a Graph, Not a ReAct Loop
+
+OpenCouch uses a **compiled directed graph** (LangGraph) instead of
+a ReAct-style agent loop. This isn't a framework preference — it's a
+safety and correctness decision driven by the domain.
+
+---
+
+## The core difference
+
+| | ReAct loop | Compiled graph |
+|---|---|---|
+| **Execution order** | LLM *chooses* what runs next | Topology *enforces* what runs next |
+| **Safety guarantee** | Prompt says "check safety first" | Graph makes it impossible to skip |
+| **Tool usage** | LLM decides when/if to call tools | Nodes invoke tools at fixed positions |
+| **Extraction** | Optional step the LLM might skip | Hard edge — always runs after response |
+| **Enforcement** | Runtime guideline (can drift) | Compile-time invariant (cannot drift) |
+
+A ReAct loop is a programming pattern where an LLM picks actions.
+Those choices can be shaped by prompting, but they aren't
+*architecturally guaranteed*. A compiled graph is a declarative
+topology where ordering is enforced by the executor, not by the
+model's compliance.
+
+---
+
+## Why this matters for mental health
+
+In a support agent, two failure classes are unacceptable:
+
+1. **Skipped safety check** — a user in crisis gets a therapeutic
+   response instead of crisis routing and resources
+2. **Corrupted memory** — extraction runs before the response exists,
+   or doesn't run at all, breaking cross-session continuity
+
+Both failures are *possible* in a ReAct loop through prompt drift,
+model updates, cost-optimization shortcuts, or adversarial input.
+Both are *impossible* in a compiled graph because the topology
+doesn't contain an edge that permits them.
+
+---
+
+## Structural guarantees
+
+### 1. Safety always runs first
+
+```python
+workflow.add_edge(START, "crisis_gate_node")
+```
+
+Every message enters the graph at `START` and immediately hits the
+crisis gate. There is no edge from `START` to any other node. The
+gate returns a `Command(goto=...)` that routes to either crisis
+response or the therapeutic branch.
+
+**In a ReAct loop**, the LLM could decide to load memory first, or
+skip directly to response generation. Prompt hardening reduces this
+risk but cannot eliminate it — especially under adversarial input or
+model version changes.
+
+### 2. Extraction is scheduled only after the response path finishes
+
+```python
+workflow.add_edge("finalize_turn_node", END)
+# PersistentAgentRuntime schedules TurnExtractionCoordinator after graph END.
+```
+
+The response must be finalized (appended to transcript) before
+extractors see it. Extraction is now runtime-owned rather than a graph
+fan-out, but the ordering guarantee is the same: memory writes never
+run before the user-visible reply is sealed.
+
+**In a ReAct loop**, extraction is typically a cleanup step that
+could be skipped for latency, or run before the response is
+complete, corrupting the memory with in-progress reasoning.
+
+### 3. Tool invocation is positional, not emergent
+
+The web search for crisis resources is called from
+`crisis_resource_lookup_node`, and factual lookup is called from
+`grounded_answer_node`. Both are fixed graph positions chosen by
+typed routing, not emergent ReAct tool calls that can be hallucinated,
+omitted, or sequenced incorrectly.
+
+```python
+# Inside crisis_resource_lookup_node - always runs on the crisis branch
+location, resources, status = await find_crisis_resources(state, llm_client=llm_client)
+```
+
+**In a ReAct loop**, the LLM generates
+`{"tool": "web_search", ...}` as text, which gets parsed. The agent
+might hallucinate a tool, forget to call it, or call it at the wrong
+time.
+
+### 4. Routing is atomic with state updates
+
+The crisis gate returns a `Command` that bundles the routing decision
+*and* the state delta (assessment, diagnostics, audit metadata) into
+a single atomic operation:
+
+```python
+return Command(update=delta, goto=next_node)
+```
+
+**In a ReAct loop**, routing and state updates are separate steps —
+the LLM outputs an action string, it gets parsed, then state is
+updated. Parsing failures, malformed JSON, or partial writes can
+leave state inconsistent.
+
+### 5. Transcript continuity via reducers
+
+State fields like `history` and `transcript` use `operator.add`
+reducers. When `finalize_turn_node` returns
+`{"transcript": [assistant_turn]}`, LangGraph's reducer appends it
+to the checkpointed prior turns automatically.
+
+**In a ReAct loop**, manual `state["transcript"].append(...)` calls
+are error-prone across checkpoint/restore cycles — duplicate turns,
+missing history, ordering bugs.
+
+---
+
+## What a ReAct loop would look like here
+
+```python
+# Pseudocode — the ReAct alternative
+while True:
+    action = llm.decide_next_action(state)  # LLM chooses
+
+    if action == "check_crisis":
+        assessment = check_crisis(state)
+    elif action == "load_memory":
+        # BUG: agent skipped crisis check
+        memory = load_memory(state)
+    elif action == "respond":
+        # BUG: agent responded without safety or memory
+        response = generate_response(state)
+    elif action == "extract":
+        # BUG: agent might never reach this
+        extract_facts(state)
+```
+
+Every `elif` branch is a potential skip. The LLM *should* follow the
+right order, but "should" is not "must."
+
+---
+
+## When a ReAct loop is better
+
+ReAct loops excel when:
+
+- The task is open-ended and the agent needs to explore
+- Tool sequences are unpredictable and context-dependent
+- The cost of a wrong action is low (web browsing, code search)
+- Autonomy and creativity matter more than determinism
+
+OpenCouch's pipeline is the opposite: the sequence is known, safety
+ordering is critical, and the cost of a wrong action (missed crisis)
+is high. A graph encodes these constraints once and enforces them
+forever, regardless of prompt changes, model updates, or adversarial
+inputs.
+
+---
+
+## Summary
+
+<GraphVsReact />

@@ -1,7 +1,7 @@
 """Therapeutic subgraph assembly.
 
 Builds the compiled ``StateGraph`` that wires the therapeutic dispatcher
-+ mode nodes together. The parent graph (``agent/graph.py``) registers
++ response-style nodes together. The parent graph (``agent/graph.py``) registers
 the result as a single node via ``add_node("therapeutic_subgraph",
 build_therapeutic_subgraph())``.
 
@@ -9,63 +9,103 @@ Internal topology:
 
     START(subgraph)
       → therapeutic_dispatch_node
-        → Command(goto=<one of the mode nodes>)
-      → [supportive_response_node
-         | reflective_response_node
-         | clarifying_response_node
-         | psychoeducation_response_node
-         | closing_response_node
-         | guided_exercise_response_node]
+        → Command(goto=<therapeutic_response_node | guided_exercise_response_node>)
+      → [therapeutic_response_node | guided_exercise_response_node]
       → END(subgraph)
 
 The dispatcher returns ``Command(goto=...)`` rather than using a
 conditional edge — the same pattern as the top-level ``crisis_gate_node``.
-Each mode node terminates at the subgraph's END; LangGraph propagates
+Each response-style node terminates at the subgraph's END; LangGraph propagates
 state and the runtime context into and out of the subgraph
-automatically because both the parent and subgraph share ``AgentState``.
-
-Mode rollout history:
-- v0.1: supportive, reflective, clarifying (the MVP three)
-- v0.5: LLM-backed dispatcher added with tuned prompts
-- v0.6 Stage A: psychoeducation mode node wired up
-- v0.6 Stage B: closing mode node wired up (tonal only — session
-  termination and summarization remain runtime concerns)
-- v0.6 Stage C: guided_exercise mode node wired up. First
-  multi-turn mode in the codebase; tracks exercise state via
-  ``progress.exercise_type`` + ``progress.exercise_step``, and
-  the dispatcher gained an "active-exercise fast-path" that
-  keeps the mode engaged across turns without re-classifying.
+automatically.
 """
 
 from __future__ import annotations
 
+from typing import Any, NotRequired, TypedDict
+
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import RetryPolicy
 
+from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
-from agent.therapeutic.clarifying import run_clarifying_response_node
-from agent.therapeutic.closing import run_closing_response_node
-from agent.therapeutic.dispatcher import (
-    CLARIFYING_NODE,
-    CLOSING_NODE,
+from agent.state import (
+    AgentState,
+    ExerciseState,
+    MemoryReferenceState,
+    ProceduralProfileState,
+    SessionMemoryState,
+    SessionProgressState,
+    TurnLifecycleState,
+)
+from agent.therapeutic.dispatch import (
     GUIDED_EXERCISE_NODE,
-    PSYCHOEDUCATION_NODE,
-    REFLECTIVE_NODE,
-    SUPPORTIVE_NODE,
+    THERAPEUTIC_RESPONSE_NODE,
     run_therapeutic_dispatch_node,
 )
-from agent.therapeutic.guided_exercise import run_guided_exercise_response_node
-from agent.therapeutic.psychoeducation import run_psychoeducation_response_node
-from agent.therapeutic.reflective import run_reflective_response_node
-from agent.therapeutic.supportive import run_supportive_response_node
+from agent.therapeutic.exercises.node import run_guided_exercise_response_node
+from agent.therapeutic.response import run_therapeutic_response_node
+from agent.memory.entries import WorkingMemoryEntry
 
 # Dispatcher node name exported so the parent graph (or tests) can
 # reference it without importing from dispatcher.py directly.
 DISPATCH_NODE = "therapeutic_dispatch_node"
 
 
-def build_therapeutic_subgraph() -> CompiledStateGraph:
+class TherapeuticSubgraphOutput(TypedDict):
+    """Parent-visible delta emitted by the therapeutic subgraph.
+
+    The compiled subgraph is registered as a single parent-graph node.
+    If we let it default to the full ``AgentState`` output schema,
+    LangGraph bubbles the entire accumulated state back to the parent
+    on subgraph completion. That becomes a problem when ``transcript`` is
+    reducer-backed: the parent sees the full list as a node delta and appends
+    it again, duplicating the transcript.
+
+    Restricting the subgraph's output schema to only the fields it owns
+    keeps the parent merge semantic correct while preserving the full
+    input state inside the subgraph itself.
+    """
+
+    response_text: NotRequired[str]
+    response_style: NotRequired[str]
+    session_action: NotRequired[SessionAction]
+    therapeutic_approach: NotRequired[str | None]
+    session_progress: NotRequired[SessionProgressState]
+    response_guidance: NotRequired[str]
+    exercise_state: NotRequired[ExerciseState]
+    diagnostics: NotRequired[dict[str, Any]]
+
+
+class TherapeuticSubgraphInput(TypedDict):
+    """Subset of parent state consumed by the therapeutic subgraph."""
+
+    message: str
+    channel: Channel
+    user_id: str | None
+    session_id: str | None
+    installed_skills: list[str]
+    crisis: CrisisAssessment
+    transcript: list[dict[str, str]]
+    working_memory: list[WorkingMemoryEntry]
+    session_memory: SessionMemoryState
+    procedural_profile: ProceduralProfileState
+    session_progress: SessionProgressState
+    exercise_state: ExerciseState
+    turn_lifecycle: TurnLifecycleState
+    memory_reference: MemoryReferenceState
+    therapeutic_approach: NotRequired[str | None]
+    response_guidance: NotRequired[str]
+    diagnostics: NotRequired[dict[str, Any]]
+
+
+def build_therapeutic_subgraph() -> CompiledStateGraph[
+    AgentState,
+    WorkflowContext,
+    TherapeuticSubgraphInput,
+    TherapeuticSubgraphOutput,
+]:
     """Build and compile the therapeutic response subgraph.
 
     Returns a compiled ``StateGraph`` that can be registered as a single
@@ -73,13 +113,14 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
 
         parent.add_node("therapeutic_subgraph", build_therapeutic_subgraph())
 
-    The subgraph shares the parent's ``AgentState`` schema, so no
-    wrapper function is needed — LangGraph propagates state into and
-    out of the subgraph automatically.
+    The subgraph keeps ``AgentState`` as its internal schema, but its
+    parent-facing contract is narrowed with explicit input and output
+    schemas so only the channels it actually reads and writes cross the
+    subgraph boundary.
 
-    The subgraph does NOT do memory writes. Those live at the top level
-    (``extract_semantic_facts_node`` and similar, Stage E+) and run
-    AFTER the subgraph returns. This keeps memory concerns out of the
+    The subgraph does not own general memory writes. Those live at the
+    top level (``extract_semantic_facts_node`` and similar) and run after
+    the subgraph returns, which keeps memory concerns out of the
     therapeutic package.
 
     Returns:
@@ -87,24 +128,34 @@ def build_therapeutic_subgraph() -> CompiledStateGraph:
         parent graph.
     """
 
-    subgraph = StateGraph(AgentState, context_schema=WorkflowContext)
+    subgraph = StateGraph(
+        AgentState,
+        context_schema=WorkflowContext,
+        input_schema=TherapeuticSubgraphInput,
+        output_schema=TherapeuticSubgraphOutput,
+    )
 
-    subgraph.add_node(DISPATCH_NODE, run_therapeutic_dispatch_node)
-    subgraph.add_node(SUPPORTIVE_NODE, run_supportive_response_node)
-    subgraph.add_node(REFLECTIVE_NODE, run_reflective_response_node)
-    subgraph.add_node(CLARIFYING_NODE, run_clarifying_response_node)
-    subgraph.add_node(PSYCHOEDUCATION_NODE, run_psychoeducation_response_node)
-    subgraph.add_node(CLOSING_NODE, run_closing_response_node)
-    subgraph.add_node(GUIDED_EXERCISE_NODE, run_guided_exercise_response_node)
+    # Retry policy for therapeutic nodes that make LLM calls. Response-generation
+    # failures propagate out of the node so transient provider errors can be
+    # retried by LangGraph rather than hidden behind canned text.
+    _io_retry = RetryPolicy(max_attempts=2)
+
+    subgraph.add_node(
+        DISPATCH_NODE, run_therapeutic_dispatch_node, retry_policy=_io_retry
+    )
+    subgraph.add_node(
+        THERAPEUTIC_RESPONSE_NODE,
+        run_therapeutic_response_node,
+        retry_policy=_io_retry,
+    )
+    subgraph.add_node(
+        GUIDED_EXERCISE_NODE, run_guided_exercise_response_node, retry_policy=_io_retry
+    )
 
     subgraph.add_edge(START, DISPATCH_NODE)
-    # therapeutic_dispatch_node returns Command(goto=<mode>); no
-    # conditional edge needed. Each mode node terminates at END.
-    subgraph.add_edge(SUPPORTIVE_NODE, END)
-    subgraph.add_edge(REFLECTIVE_NODE, END)
-    subgraph.add_edge(CLARIFYING_NODE, END)
-    subgraph.add_edge(PSYCHOEDUCATION_NODE, END)
-    subgraph.add_edge(CLOSING_NODE, END)
+    # therapeutic_dispatch_node returns Command(goto=<node>); no
+    # conditional edge needed. Each response node terminates at END.
+    subgraph.add_edge(THERAPEUTIC_RESPONSE_NODE, END)
     subgraph.add_edge(GUIDED_EXERCISE_NODE, END)
 
     return subgraph.compile()

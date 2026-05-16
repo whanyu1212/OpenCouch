@@ -1,25 +1,36 @@
 import React, { useState } from 'react';
 import styles from './PromptVisuals.module.css';
 
-const modalities = ['pfa', 'cbt', 'grief_support', 'act'];
-const modalityLabels = ['PFA', 'CBT', 'Grief', 'ACT'];
-const modalityFull = [
-  'Psychological First Aid (+ DBT skills)',
+const approaches = [
+  'motivational_interviewing',
+  'cbt',
+  'act',
+  'dbt_skills',
+  'grief_support',
+  'interpersonal_therapy',
+  'pfa',
+];
+const approachLabels = ['MI', 'CBT', 'ACT', 'DBT', 'Grief', 'IPT', 'PFA'];
+const approachFull = [
+  'Motivational Interviewing',
   'Cognitive Behavioural Therapy',
-  'Grief Support',
   'Acceptance and Commitment Therapy',
+  'DBT skills',
+  'Grief Support',
+  'Interpersonal Therapy',
+  'Psychological First Aid',
 ];
 
-const rows: { mode: string; desc: string; compat: boolean[] }[] = [
-  { mode: 'supportive_conversation', desc: 'Default support lane — validate, reflect, and respond based on venting, strengths, or gentle guidance. MI baseline.',  compat: [true,  true,  true,  true] },
-  { mode: 'safety_check',           desc: 'Ambiguous risk signal — gentle clarification before routing.',                                                           compat: [true,  false, false, false] },
-  { mode: 'crisis_response',        desc: 'Confirmed risk — prioritise safety, surface resources.',                                                                 compat: [true,  false, false, false] },
-  { mode: 'orientation',            desc: 'New user — understand context and goals before full support. MI baseline.',                                              compat: [false, false, false, false] },
-  { mode: 'pattern_reflection',     desc: 'Pattern reflection — help the user examine recurring themes carefully. MI baseline.',                                    compat: [false, true,  true,  true] },
-  { mode: 'guided_exercise',        desc: 'Structured self-help — grounding, thought work, behavioural activation, or defusion.',                                  compat: [true,  true,  false, true] },
-  { mode: 'psychoeducation',        desc: 'Explain one likely mind-body process in simple, non-diagnostic language.',                                               compat: [true,  true,  true,  true] },
-  { mode: 'out_of_scope',           desc: 'Request outside boundaries — redirect with clear explanation.',                                                          compat: [false, false, false, false] },
-  { mode: 'realignment',            desc: 'Session drift or rupture — acknowledge the miss and re-attune. MI baseline.',                                            compat: [false, false, false, false] },
+const rows: { responseStyle: string; desc: string; compat: boolean[] }[] = [
+  { responseStyle: 'supportive',      desc: 'Default support lane — validate, reflect, and respond based on venting, strengths, or gentle guidance.', compat: [true, true, true, true, true, true, true] },
+  { responseStyle: 'reflective',      desc: 'Explore a named recurring pattern carefully without over-analyzing.',                                      compat: [true, true, true, false, true, true, false] },
+  { responseStyle: 'clarifying',      desc: 'Ask for the minimum context needed before choosing a deeper response.',                                    compat: [true, true, true, true, true, true, true] },
+  { responseStyle: 'psychoeducation', desc: 'Explain one likely mind-body process in simple, non-diagnostic language.',                                compat: [true, true, true, true, true, true, true] },
+  { responseStyle: 'technique',       desc: 'Structured therapeutic work without launching a named multi-turn exercise.',                              compat: [false, true, true, true, true, true, true] },
+  { responseStyle: 'guided_exercise', desc: 'State-tracked practice such as grounding, breathing, thought work, values, or emotion regulation.',        compat: [false, true, true, true, false, false, true] },
+  { responseStyle: 'closing',         desc: 'Wind down, reflect the useful part, and avoid opening a large new thread.',                               compat: [true, true, true, true, true, true, true] },
+  { responseStyle: 'safety_check',    desc: 'Ambiguous risk signal — ask one direct safety clarification.',                                             compat: [false, false, false, false, false, false, true] },
+  { responseStyle: 'crisis_response', desc: 'Confirmed risk — prioritize immediate safety and surface resources.',                                     compat: [false, false, false, false, false, false, true] },
 ];
 
 export default function CompatMatrix() {
@@ -31,13 +42,13 @@ export default function CompatMatrix() {
         <table className={styles.matrixTable}>
           <thead>
             <tr>
-              <th className={styles.matrixCorner}>Mode</th>
+              <th className={styles.matrixCorner}>Response</th>
               <th className={styles.matrixDescCorner}>What it does</th>
-              {modalityLabels.map((label, i) => (
+              {approachLabels.map((label, i) => (
                 <th
-                  key={modalities[i]}
+                  key={approaches[i]}
                   className={[styles.matrixModHead, hoveredCol === i ? styles.matrixModHeadActive : ''].join(' ')}
-                  title={modalityFull[i]}
+                  title={approachFull[i]}
                 >
                   {label}
                 </th>
@@ -46,18 +57,18 @@ export default function CompatMatrix() {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.mode}>
-                <td className={styles.matrixModeCell}>{row.mode}</td>
+              <tr key={row.responseStyle}>
+                <td className={styles.matrixResponseStyleCell}>{row.responseStyle}</td>
                 <td className={styles.matrixDescCell}>{row.desc}</td>
                 {row.compat.map((allowed, i) => (
                   <td
-                    key={modalities[i]}
+                    key={approaches[i]}
                     className={[styles.matrixCell, hoveredCol === i ? styles.matrixCellHighlit : ''].join(' ')}
                     onMouseEnter={() => setHoveredCol(i)}
                     onMouseLeave={() => setHoveredCol(null)}
                   >
                     {allowed ? (
-                      <span className={styles.matrixYes} title={`${row.mode} + ${modalityFull[i]}`}>✓</span>
+                      <span className={styles.matrixYes} title={`${row.responseStyle} + ${approachFull[i]}`}>✓</span>
                     ) : (
                       <span className={styles.matrixNo}>—</span>
                     )}
@@ -69,10 +80,11 @@ export default function CompatMatrix() {
         </table>
       </div>
       <p className={styles.matrixNote}>
-        Rules enforced in <code>prompts/catalog.py</code> — invalid combinations raise at build time, not silently at runtime.
-        Motivational Interviewing is applied as a baseline overlay (via <code>MODE_BASELINE_FILES</code>) to modes marked "MI baseline" above, not as a selectable modality.
-        DBT skills are bundled into the PFA modality file set.
-        Hover a column to highlight it. Hover a <span className={styles.matrixYes} style={{display:'inline-flex',width:20,height:20,fontSize:'0.8rem'}}>✓</span> for the exact pairing.
+        This is the intended routing surface, not a hard static registry.
+        The dispatcher prompt in <code>agent/therapeutic/dispatch/prompt.py</code>
+        selects <code>response_style</code> and <code>therapeutic_approach</code>;
+        prompt source loading lives in <code>agent/therapeutic/prompting/sources.py</code>.
+        Hover a column to highlight it.
       </p>
     </div>
   );

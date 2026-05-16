@@ -1,82 +1,111 @@
 ---
 title: Agent State
-sidebar_position: 2
+sidebar_position: 1
 ---
 
 import StateFields from '@site/src/components/StateFields';
 
 # Agent State
 
-One `AgentState` TypedDict flows through the entire graph. Every
-node reads from it and writes back partial updates (deltas).
-LangGraph merges deltas by replacing top-level keys, so each node
-must spread existing dicts before adding its own keys.
+One `AgentState` dict flows through every node. Nodes read from it
+and return **partial deltas**; LangGraph merges those deltas back
+in — using a reducer when one is declared, or last-write-wins
+otherwise.
 
-Click any field below to see what it does, who sets it, and its
-type.
+## Mental model
+
+| Lifecycle | What it means | Examples |
+|---|---|---|
+| **input** | Set once by the caller at turn start | `message`, `user_id`, `channel` |
+| **reducer** | Annotated with a reducer; survives the turn and accumulates across turns via the checkpointer | `history`, `session_progress`, `exercise_state`, `diagnostics` |
+| **loaded** | Re-fetched each turn from the memory store | `working_memory`, `procedural_profile.*` |
+| **turn-scoped** | Fresh each turn, last-write-wins | `crisis`, `route`, `response_text` |
+
+That's the whole story. The interactive table below splits the
+schema into nine groups and tags every field with one of these
+four labels — click a section to expand it.
+
+## Field reference
 
 <StateFields />
 
 ---
 
-## Lifecycle
+## Working memory
 
-Not all fields survive between turns. Understanding which persist
-and which are re-derived matters for debugging and eval design.
+`working_memory` is a list of structured dicts, not pre-formatted
+strings. Two entry types:
 
-**Input** — set by `build_initial_state()` from `AgentInput`. The
-current user message is appended to the transcript at this stage;
-the assistant side is appended later by `finalize_turn_node`.
+| Type | Key fields | Renders as |
+|---|---|---|
+| `SemanticWorkingMemoryEntry` | `evidence_quote`, `category`, `subject`, `predicate`, `object` | `[relationship] User WORRIES_ABOUT work — "my boss is terrible"` |
+| `EpisodicWorkingMemoryEntry` | `summary`, `primary_themes`, `is_catch_up`, `approach_used`, `approach_context` | `Last session (grief): talked about loss after my dog died.` |
 
-**Persisted** — stored in the LangGraph checkpoint between turns.
-The transcript is the source of truth. Progress fields (turn_count,
-stage) carry forward.
-
-**Loaded per turn** — `load_memory_node` populates `working_memory`
-(semantic + episodic snippets via hybrid RRF retrieval),
-`memory.procedural_rules` (full rule set from the user's procedural
-profile), and `memory.proactive_recall_enabled` (the recall toggle).
-These are loaded from the memory store, not derived from the
-transcript.
-
-**Turn-scoped** — reset at the start of each turn, then filled by
-nodes as the graph executes:
-
-- `crisis` — safety assessment (level, confidence, reason, flags)
-  from `crisis_gate_node`
-- `routing.route` — `"therapeutic"` or `"crisis"` from the gate
-- `routing.mode` — which therapeutic mode was selected (supportive,
-  reflective, clarifying, psychoeducation, guided_exercise, closing)
-- `routing.mode_source` — how the mode was selected (keyword, llm,
-  default)
-- `routing.mode_type` — category (therapeutic, operational, crisis)
-- `response` — the generated reply (text, kind, guidance)
-
-**Diagnostics** — `diagnostics: NotRequired[dict[str, Any]]` —
-per-turn timing and write-count metadata populated by each node.
-Keys include `load_memory_ms`, `crisis_gate_ms`, `extract_facts_ms`,
-`extract_procedural_ms`, `turn_total_ms`, `semantic_writes`,
-`procedural_writes`, `retrieval_path`, and `crisis_classifier_path`.
-Flows through to `AgentOutput.diagnostics` for the CLI's Stage
-Timings panel.
+Formatting via `format_working_memory_entries()` happens at three
+surfaces only: the therapeutic prompt builder, the dispatcher
+prompt, and the CLI's context panel. Legacy `str` entries from
+older checkpoints pass through unchanged.
 
 ## Public contract
 
-The external API sees `AgentInput` and `AgentOutput` — not
-`AgentState`. The state is internal to the graph.
+The external API only sees `AgentInput` and `AgentOutput` — the
+state itself is internal to the graph.
 
-| Model | Key fields |
+| Model | Public fields |
 |---|---|
-| `AgentInput` | message, channel, user_id, session_id, history, working_memory, installed_skills |
-| `AgentOutput` | response_text, response_type, crisis, mode, mode_type, mode_source, should_persist_memory, diagnostics |
-| `CrisisAssessment` | level (0-3), confidence, reason, needs_crisis_response, needs_clarification |
-| `Message` | role, content, **mode** (`str | None`) — optional per-turn annotation stamped onto assistant transcript entries by `finalize_turn_node` |
+| `AgentInput` | `message`, `channel`, `user_id`, `session_id`, `history`, `working_memory`, `installed_skills` |
+| `AgentOutput` | `response_text`, `response_type`, `crisis`, `response_style`, `response_style_type`, `response_style_source`, `therapeutic_approach`, `should_persist_memory`, `diagnostics` |
+| `CrisisAssessment` | `level` (0–3), `confidence`, `reason`, `needs_crisis_response`, `needs_clarification` |
+| `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by `finalize_turn_node`) |
+
+## Runtime context
+
+Runtime dependencies live on `WorkflowContext`, **not** on the
+state. It's a frozen dataclass injected via `runtime.context` —
+attribute access only.
+
+| Field | Type | Default |
+|---|---|---|
+| `llm_client` | `BaseLLMClient \| None` | required |
+| `memory_store` | `MemoryStore` | required |
+| `crisis_log_backend` | `CrisisLogBackend` | required |
+| `memory_mode` | `MemoryMode` | required |
+| `response_llm` | `BaseLLMClient \| None` | `None` |
+| `embedding_provider` | `EmbeddingProvider \| None` | `None` |
+| `session_memory_buffer` | `SessionMemoryBuffer \| None` | `None` |
+
+`session_memory_buffer` is set by `PersistentAgentRuntime` so that
+the runtime extraction coordinator can park session-end candidates
+in a per-thread buffer that persists across restarts.
+
+<details>
+<summary>Schema implementation detail</summary>
+
+The schema is built from six TypedDict fragments — `AgentIdentityState`,
+`AgentConversationState`, `AgentPersistentState`, `AgentCrisisState`,
+`AgentGraphOutputState`, and `AgentPrivateState`. The parent graph
+declares three views over them:
+
+| Schema | Used as |
+|---|---|
+| `AgentGraphInputState` | Input — what `build_initial_state()` emits |
+| `AgentState` | Internal — the full union, used by every node |
+| `AgentGraphOutputState` | Output — what `state_to_output()` reads back |
+
+You don't need to think about the fragments to use the agent —
+they exist so the parent graph can give LangGraph distinct input
+and output schemas, which prevents reducer double-counting when the
+therapeutic subgraph completes.
+
+</details>
 
 ## Key files
 
-| File | What it defines |
+| File | Defines |
 |---|---|
-| `agent/state.py` | `AgentState` TypedDict |
-| `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, stream event types |
-| `agent/graph.py` | `build_initial_state()` (input → state), `state_to_output()` (state → output) |
-| `agent/runtime_context.py` | `WorkflowContext` TypedDict — runtime dependencies injected via `runtime.context` |
+| `agent/state.py` | All TypedDict fragments and the `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` schemas |
+| `agent/memory/entries.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
+| `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ResponseStyleType`, stream events, `STAGE_LABELS` |
+| `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |
+| `agent/graph.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
+| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |

@@ -1,0 +1,1253 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Primary teal ── refined clinical palette ── */
+  --color-oc-teal-950: #081a18;
+  --color-oc-teal-900: #0d2422;
+  --color-oc-teal-800: #143432;
+  --color-oc-teal-700: #1b4542;
+  --color-oc-teal-600: #215f5a;
+  --color-oc-teal-500: #2d7a74;
+  --color-oc-teal-400: #3d9990;
+  --color-oc-teal-300: #65b8af;
+  --color-oc-teal-200: #9dd2cb;
+  --color-oc-teal-100: #d0ebe8;
+  --color-oc-teal-50: #eef7f6;
+
+  /* ── Warm neutrals — parchment undertones ── */
+  --color-oc-warm-50: #faf9f7;
+  --color-oc-warm-100: #f3f1ed;
+  --color-oc-warm-200: #e8e5df;
+  --color-oc-warm-300: #d6d2cb;
+  --color-oc-warm-400: #b8b3aa;
+  --color-oc-warm-500: #9a958c;
+  --color-oc-warm-600: #7d786f;
+  --color-oc-warm-700: #605c54;
+  --color-oc-warm-800: #43403a;
+  --color-oc-warm-900: #282623;
+
+  /* ── Surfaces — layered warm whites ── */
+  --color-oc-bg: #fdfcfa;
+  --color-oc-bg-card: #f6f4f0;
+  --color-oc-bg-elevated: #edeae4;
+  --color-oc-bg-input: #ffffff;
+  --color-oc-bg-sidebar: #f1eeea;
+  --color-oc-bg-code: #f8f6f2;
+  --color-oc-bg-state: #2c2926;
+
+  /* ── Borders — teal-tinted with depth ── */
+  --color-oc-border: rgba(33, 95, 90, 0.10);
+  --color-oc-border-strong: rgba(33, 95, 90, 0.24);
+  --color-oc-border-subtle: rgba(33, 95, 90, 0.06);
+
+  /* ── Accent ── */
+  --color-oc-accent: #215f5a;
+  --color-oc-accent-hover: #2d7a74;
+  --color-oc-accent-subtle: rgba(33, 95, 90, 0.06);
+  --color-oc-accent-glow: rgba(61, 153, 144, 0.18);
+
+  /* ── CTA warm amber ── */
+  --color-oc-cta: #c47a3b;
+  --color-oc-cta-hover: #b36a2d;
+  --color-oc-cta-subtle: rgba(196, 122, 59, 0.08);
+
+  /* ── Text — warm dark tones ── */
+  --color-oc-text: #1a1815;
+  --color-oc-text-secondary: #5c5750;
+  --color-oc-text-muted: #948f86;
+  --color-oc-text-dim: #b8b3aa;
+
+  /* ── Semantic ── */
+  --color-oc-red: #b84a40;
+  --color-oc-red-subtle: rgba(184, 74, 64, 0.08);
+  --color-oc-orange: #c47a3b;
+  --color-oc-orange-subtle: rgba(196, 122, 59, 0.08);
+  --color-oc-green: #2d7a74;
+  --color-oc-green-subtle: rgba(45, 122, 116, 0.08);
+
+  /* ── Font families — must reference CSS variables ── */
+  --font-display: var(--font-source-serif), "Iowan Old Style", "Georgia", serif;
+  --font-body: var(--font-geist), "system-ui", sans-serif;
+  --font-mono: var(--font-jetbrains), "Menlo", monospace;
+
+  /* ── Landing-screen tokens (warm parchment + forest, per design spec) ── */
+  --color-oc-ink: #15201D;
+  --color-oc-ink-2: #2C3A36;
+  --color-oc-muted: #6E6A60;
+  --color-oc-line: #E6DFD3;
+  --color-oc-line-2: #EFEADF;
+  --color-oc-primary: #1F4F46;
+  --color-oc-primary-2: #173E37;
+  --color-oc-primary-tint: #E8EFEA;
+  --color-oc-primary-soft: #DCE7E0;
+  --color-oc-surface-tint: #F6F2EA;
+  --color-oc-pulse: #4F9D87;
+}
+
+body {
+  background: var(--color-oc-bg);
+  color: var(--color-oc-text);
+  font-feature-settings: "ss01", "ss02";
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-oc-warm-300);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-oc-warm-400);
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(45, 122, 116, 0.18);
+  color: var(--color-oc-teal-900);
+}
+
+/* ── Subtle noise texture for surfaces ── */
+.oc-surface-noise {
+  position: relative;
+}
+.oc-surface-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.03;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 128px 128px;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+/* ── State dict JSON tree ── */
+.state-tree {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: #d4d0c8;
+}
+.state-tree .key {
+  color: #65b8af;
+}
+.state-tree .string {
+  color: #c4a36e;
+}
+.state-tree .number {
+  color: #d4956a;
+}
+.state-tree .boolean {
+  color: #b8a0d6;
+}
+.state-tree .null {
+  color: #948f86;
+  font-style: italic;
+}
+.state-tree .bracket {
+  color: #7d786f;
+}
+.state-tree .toggle {
+  cursor: pointer;
+  user-select: none;
+  color: #5c5750;
+  margin-right: 4px;
+}
+.state-tree .toggle:hover {
+  color: #65b8af;
+}
+
+/* ── Smooth page transitions ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slideUp {
+  animation: slideUp 0.35s ease-out forwards;
+}
+
+/* ── Voice waveform bars ── */
+@keyframes waveBar {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+.wave-bar {
+  animation: waveBar 0.8s ease-in-out infinite;
+}
+
+/* ── Memory panel slide-in ── */
+@keyframes panelSlideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-panelSlideIn {
+  animation: panelSlideIn 0.25s ease-out forwards;
+}
+
+/* ── Memory card entrance ── */
+@keyframes memoryIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-memoryIn {
+  animation: memoryIn 0.35s ease-out forwards;
+}
+
+/* ── Memory badge pop ── */
+@keyframes memoryBadge {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-memoryBadge {
+  animation: memoryBadge 0.3s ease-out forwards;
+}
+
+/* ── Dot pulse for loading ── */
+@keyframes dotPulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.dot-pulse > span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-oc-teal-400);
+  animation: dotPulse 1.2s ease-in-out infinite;
+}
+.dot-pulse > span:nth-child(2) { animation-delay: 0.15s; }
+.dot-pulse > span:nth-child(3) { animation-delay: 0.3s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   Chat & Voice surfaces — design tokens for NavRail, Composer,
+   PromptCard, VoiceOrb, MobileTabBar, atmospheric wash.
+   ============================================================ */
+
+/* ── Atmospheric wash (behind nav rail + chat/voice content) ── */
+.oc-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(680px 420px at 80% 8%, rgba(196, 122, 59, 0.10), transparent 60%),
+    radial-gradient(640px 480px at 12% 92%, rgba(33, 95, 90, 0.10), transparent 65%);
+}
+
+/* ── Nav rail (desktop) ── */
+.oc-rail {
+  width: 64px;
+  background: var(--color-oc-bg-sidebar);
+  border-right: 1px solid var(--color-oc-line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0 12px;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.oc-rail-brand {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-oc-line-2);
+  margin-bottom: 6px;
+}
+.oc-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  width: 100%;
+  align-items: center;
+}
+.oc-rail-item {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--color-oc-muted);
+  transition: background 140ms ease, color 140ms ease;
+  padding: 0;
+  text-decoration: none;
+}
+.oc-rail-item:hover {
+  background: var(--color-oc-surface-tint);
+  color: var(--color-oc-ink-2);
+}
+.oc-rail-item.is-active {
+  background: var(--color-oc-primary-tint);
+  color: var(--color-oc-primary);
+}
+.oc-rail-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.oc-rail-label {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+/* ── Top bar (chat / voice) ──
+   z-index: 20 so the SessionPill popover (z-index: 50 inside this stacking
+   context) can drop below the bar without falling behind the chat scroller
+   underneath. The bar's own background covers the wash; the popover sits on
+   top of everything within the conversation column.
+
+   Visibility is controlled by the JSX wrapper (.oc-app-top-wrap) since
+   Tailwind utilities can't beat raw CSS selectors directly on this element. */
+.oc-app-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--color-oc-line-2);
+  gap: 16px;
+  background: var(--color-oc-bg);
+  position: relative;
+  z-index: 20;
+}
+
+/* Desktop top-bar wrapper: hidden under md, visible at md+. Owning visibility
+   on a vanilla wrapper avoids the Tailwind-vs-custom-CSS specificity fight. */
+.oc-app-top-wrap {
+  display: none;
+}
+@media (min-width: 768px) {
+  .oc-app-top-wrap {
+    display: block;
+  }
+}
+.oc-app-top-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: -0.005em;
+  color: var(--color-oc-ink);
+}
+
+.oc-tab-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-oc-muted);
+  background: white;
+  border: 1px solid var(--color-oc-line);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.oc-tab-chip:hover:not(:disabled) {
+  border-color: var(--color-oc-warm-300);
+  color: var(--color-oc-ink-2);
+}
+.oc-tab-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.oc-session-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: white;
+  border: 1px solid var(--color-oc-line);
+  cursor: pointer;
+  transition: border-color 140ms ease;
+}
+.oc-session-pill:hover {
+  border-color: var(--color-oc-warm-300);
+}
+.oc-session-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-oc-pulse);
+  box-shadow: 0 0 0 3px rgba(79, 157, 135, 0.20);
+}
+.oc-session-dot--incognito {
+  background: var(--color-oc-warm-400);
+  box-shadow: none;
+}
+
+/* ── Chat layout ── */
+.oc-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+.oc-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 24px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.oc-chat-scroll--welcome {
+  position: relative;
+  isolation: isolate;
+  overflow-x: hidden;
+  background: #f7f3eb;
+}
+.oc-chat-scroll--welcome::before,
+.oc-chat-scroll--welcome::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.oc-chat-scroll--welcome::before {
+  z-index: 0;
+  background-image: url("/images/chat-welcome-bg.png");
+  background-size: cover;
+  background-position: center bottom;
+  opacity: 0.72;
+  filter: saturate(0.92) contrast(0.96);
+}
+.oc-chat-scroll--welcome::after {
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(253, 252, 250, 0.82) 0%, rgba(246, 244, 240, 0.52) 48%, rgba(253, 252, 250, 0.94) 100%),
+    linear-gradient(90deg, rgba(253, 252, 250, 0.64) 0%, rgba(253, 252, 250, 0.20) 42%, rgba(253, 252, 250, 0.70) 100%);
+}
+.oc-chat-scroll--welcome > * {
+  position: relative;
+  z-index: 2;
+}
+.oc-chat-inner {
+  width: 100%;
+  max-width: 680px;
+}
+.oc-chat-inner--narrow {
+  max-width: 560px;
+}
+.oc-chat-scroll--welcome .oc-chat-inner--narrow {
+  max-width: 620px;
+}
+
+/* ── Welcome block ── */
+.oc-welcome {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.oc-welcome-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-oc-text-dim);
+  margin-bottom: 14px;
+}
+.oc-welcome-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 38px;
+  margin: 0;
+  letter-spacing: -0.018em;
+  color: var(--color-oc-ink);
+  line-height: 1.1;
+}
+.oc-welcome-title em {
+  font-style: italic;
+  color: var(--color-oc-primary);
+  font-weight: inherit;
+}
+.oc-welcome-sub {
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--color-oc-muted);
+  margin: 12px auto 0;
+  max-width: 380px;
+  line-height: 1.5;
+}
+.oc-welcome-sub b {
+  color: var(--color-oc-ink-2);
+  font-weight: 600;
+}
+
+.oc-prompts-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-oc-text-dim);
+  margin: 8px 0 14px;
+}
+
+/* ── Prompt cards ── */
+.oc-prompts-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr;
+}
+.oc-prompts-grid--two {
+  grid-template-columns: 1fr 1fr;
+}
+
+.oc-prompt-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: white;
+  border: 1px solid var(--color-oc-line);
+  border-radius: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 120ms ease;
+  width: 100%;
+}
+.oc-chat-scroll--welcome .oc-prompt-card {
+  background: rgba(255, 255, 255, 0.90);
+  border-color: rgba(31, 79, 70, 0.14);
+  box-shadow: 0 18px 44px -36px rgba(21, 32, 29, 0.46);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.oc-prompt-card:hover {
+  border-color: var(--color-oc-warm-300);
+  background: #fffefc;
+}
+.oc-chat-scroll--welcome .oc-prompt-card:hover {
+  border-color: rgba(31, 79, 70, 0.28);
+  background: rgba(255, 255, 255, 0.97);
+}
+.oc-prompt-card:active {
+  transform: translateY(1px);
+}
+.oc-prompt-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--color-oc-surface-tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-oc-primary);
+}
+.oc-prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.oc-prompt-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--color-oc-ink);
+}
+.oc-prompt-desc {
+  font-size: 12.5px;
+  color: var(--color-oc-muted);
+  line-height: 1.45;
+}
+
+/* ── Recent threads ── */
+.oc-recents {
+  margin-top: 28px;
+}
+.oc-recents-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-oc-text-dim);
+  margin-bottom: 10px;
+}
+.oc-recents-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-oc-line-2);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  background: white;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-oc-muted);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.oc-recents-row:hover {
+  border-color: var(--color-oc-warm-300);
+  background: #fffefc;
+}
+.oc-recents-row .name {
+  color: var(--color-oc-ink-2);
+}
+.oc-recents-row .preview {
+  color: var(--color-oc-text-dim);
+  font-size: 11.5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oc-recents-row .turns {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--color-oc-text-dim);
+  flex-shrink: 0;
+}
+
+/* ── Composer ── */
+.oc-composer-bar {
+  border-top: 1px solid var(--color-oc-line-2);
+  padding: 12px 24px 18px;
+  background: linear-gradient(180deg, transparent, var(--color-oc-bg) 30%);
+  display: flex;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+.oc-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+  max-width: 680px;
+  background: white;
+  border: 1px solid var(--color-oc-line);
+  border-radius: 14px;
+  padding: 6px 6px 6px 12px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 12px 30px -22px rgba(31, 79, 70, 0.30);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.oc-composer:focus-within {
+  border-color: var(--color-oc-primary-soft);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset,
+              0 12px 30px -22px rgba(31, 79, 70, 0.30),
+              0 0 0 3px rgba(31, 79, 70, 0.08);
+}
+.oc-composer-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 14.5px;
+  color: var(--color-oc-ink);
+  padding: 10px 4px;
+  resize: none;
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+.oc-composer-input::placeholder {
+  color: var(--color-oc-text-dim);
+}
+.oc-composer-input:disabled {
+  opacity: 0.6;
+}
+.oc-composer-send {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--color-oc-muted);
+  flex-shrink: 0;
+  transition: background 140ms ease, color 140ms ease;
+}
+.oc-composer-send {
+  background: var(--color-oc-primary);
+  color: #f6f1e5;
+}
+.oc-composer-send:disabled {
+  background: var(--color-oc-line);
+  color: var(--color-oc-text-dim);
+  cursor: not-allowed;
+}
+.oc-composer-send:not(:disabled):hover {
+  background: var(--color-oc-primary-2);
+}
+
+/* ── Chat bubbles (in-conversation) ── */
+.oc-bubble {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+  align-items: flex-start;
+}
+.oc-bubble--user {
+  justify-content: flex-end;
+}
+.oc-bubble-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-oc-primary-soft);
+  color: var(--color-oc-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.oc-bubble-body {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: white;
+  border: 1px solid var(--color-oc-line-2);
+  font-size: 14.5px;
+  color: var(--color-oc-ink-2);
+  line-height: 1.55;
+  max-width: 86%;
+  white-space: pre-wrap;
+}
+.oc-bubble--user .oc-bubble-body {
+  background: var(--color-oc-primary-tint);
+  border-color: var(--color-oc-primary-soft);
+}
+
+/* ── Voice surface ── */
+.oc-voice-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--color-oc-bg);
+}
+.oc-voice-stage::before,
+.oc-voice-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.oc-voice-stage::before {
+  z-index: 0;
+  background-image: url("/images/voice-room-bg.png");
+  background-size: cover;
+  background-position: center;
+  opacity: 0.44;
+}
+.oc-voice-stage::after {
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(253, 252, 250, 0.82) 0%, rgba(246, 244, 240, 0.78) 48%, rgba(232, 239, 234, 0.86) 100%),
+    linear-gradient(90deg, rgba(31, 79, 70, 0.12), transparent 44%, rgba(196, 122, 59, 0.10));
+}
+.oc-voice-stage > * {
+  position: relative;
+  z-index: 2;
+}
+.oc-voice-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-oc-text-dim);
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+.oc-voice-eyebrow .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-oc-text-dim);
+}
+.oc-voice-eyebrow.is-ready .dot {
+  background: var(--color-oc-pulse);
+  box-shadow: 0 0 0 3px rgba(79, 157, 135, 0.20);
+}
+.oc-voice-eyebrow--warming .dot {
+  background: var(--color-oc-cta);
+  box-shadow: 0 0 0 3px rgba(196, 122, 59, 0.18);
+}
+.oc-voice-eyebrow--speaking .dot {
+  background: var(--color-oc-cta);
+  box-shadow: 0 0 0 3px rgba(196, 122, 59, 0.22);
+}
+
+.oc-voice-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 36px;
+  margin: 0;
+  letter-spacing: -0.01em;
+  color: var(--color-oc-ink);
+  line-height: 1.15;
+  max-width: 560px;
+}
+.oc-voice-title em {
+  font-style: italic;
+  color: var(--color-oc-primary);
+  font-weight: inherit;
+}
+.oc-voice-sub {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--color-oc-muted);
+  margin: 10px auto 28px;
+  max-width: 460px;
+  line-height: 1.5;
+}
+.oc-voice-cta {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 26px;
+  background: var(--color-oc-primary);
+  color: #f6f1e5;
+  border: none;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(23, 62, 55, 0.4) inset, 0 14px 30px -16px rgba(23, 62, 55, 0.5);
+  transition: background 140ms ease, transform 120ms ease, opacity 140ms ease;
+}
+.oc-voice-cta:hover:not(:disabled) {
+  background: var(--color-oc-primary-2);
+}
+.oc-voice-cta:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.oc-voice-cta:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.oc-voice-cta--secondary {
+  background: transparent;
+  color: var(--color-oc-ink-2);
+  border: 1px solid var(--color-oc-line);
+  box-shadow: none;
+  padding: 12px 18px;
+  font-size: 14px;
+}
+.oc-voice-cta--secondary:hover:not(:disabled) {
+  background: var(--color-oc-surface-tint);
+}
+.oc-voice-cta--danger {
+  background: #8b2e2e;
+  padding: 12px 22px;
+  font-size: 14px;
+}
+.oc-voice-cta--danger:hover:not(:disabled) {
+  background: #722525;
+}
+
+.oc-voice-meta {
+  margin-top: 22px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-oc-text-dim);
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.oc-voice-meta b {
+  color: var(--color-oc-ink-2);
+  font-weight: 500;
+}
+.oc-voice-meta .sep {
+  opacity: 0.4;
+}
+
+.oc-voice-readiness {
+  margin: 22px auto 0;
+  width: min(420px, 100%);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  text-align: left;
+  border: 1px solid rgba(196, 122, 59, 0.26);
+  border-radius: 12px;
+  background: rgba(255, 248, 237, 0.88);
+  color: var(--color-oc-ink-2);
+  box-shadow: 0 12px 28px -24px rgba(88, 56, 21, 0.45);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.oc-voice-readiness-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(196, 122, 59, 0.12);
+  color: var(--color-oc-cta);
+}
+.oc-voice-readiness-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.oc-voice-readiness-copy b {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-oc-ink);
+}
+.oc-voice-readiness-copy span {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-oc-muted);
+}
+
+@media (max-width: 767px) {
+  .oc-chat-scroll--welcome::before {
+    opacity: 0.42;
+    background-position: center top;
+  }
+  .oc-chat-scroll--welcome::after {
+    background:
+      linear-gradient(180deg, rgba(253, 252, 250, 0.92) 0%, rgba(246, 244, 240, 0.76) 52%, rgba(253, 252, 250, 0.98) 100%),
+      linear-gradient(90deg, rgba(253, 252, 250, 0.68), rgba(253, 252, 250, 0.30) 52%, rgba(253, 252, 250, 0.72));
+  }
+  .oc-chat-scroll--welcome .oc-chat-inner--narrow {
+    max-width: 100%;
+  }
+  .oc-voice-stage::before {
+    opacity: 0.30;
+    background-position: center top;
+  }
+  .oc-voice-stage::after {
+    background:
+      linear-gradient(180deg, rgba(253, 252, 250, 0.88) 0%, rgba(246, 244, 240, 0.82) 44%, rgba(232, 239, 234, 0.90) 100%),
+      linear-gradient(90deg, rgba(31, 79, 70, 0.12), transparent 52%, rgba(196, 122, 59, 0.08));
+  }
+}
+
+/* ── Voice orb ── */
+.oc-orb-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 8px auto 26px;
+}
+.oc-orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(31, 79, 70, 0.18), transparent 70%);
+  animation: orbBreath 4.5s ease-in-out infinite;
+}
+.oc-orb-ring-2 {
+  inset: 14%;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(31, 79, 70, 0.32),
+    rgba(31, 79, 70, 0.08) 60%,
+    transparent 80%
+  );
+  animation-delay: -2.2s;
+}
+.oc-orb-active .oc-orb-ring {
+  background: radial-gradient(circle at 50% 50%, rgba(196, 122, 59, 0.22), transparent 70%);
+}
+.oc-orb-active .oc-orb-ring-2 {
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(196, 122, 59, 0.36),
+    rgba(196, 122, 59, 0.10) 60%,
+    transparent 80%
+  );
+}
+.oc-orb-waiting .oc-orb-ring {
+  background: radial-gradient(circle at 50% 50%, rgba(196, 122, 59, 0.16), transparent 70%);
+  animation-duration: 6s;
+}
+.oc-orb-waiting .oc-orb-ring-2 {
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(196, 122, 59, 0.24),
+    rgba(196, 122, 59, 0.07) 60%,
+    transparent 80%
+  );
+  animation-duration: 6s;
+}
+.oc-orb-waiting .oc-orb-core {
+  color: var(--color-oc-cta);
+}
+.oc-orb-core {
+  position: relative;
+  width: 50%;
+  height: 50%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #f0ebe0);
+  border: 1px solid var(--color-oc-line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-oc-primary);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 18px 36px -22px rgba(31, 79, 70, 0.45);
+}
+@keyframes orbBreath {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+
+/* ── Mobile chrome ── */
+.oc-mobile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--color-oc-line-2);
+  background: var(--color-oc-bg);
+  position: relative;
+  z-index: 20;
+}
+
+/* Mobile top-bar wrapper: visible by default, hidden at md+. */
+.oc-mobile-top-wrap {
+  display: block;
+}
+@media (min-width: 768px) {
+  .oc-mobile-top-wrap {
+    display: none;
+  }
+}
+
+/* Mobile bottom tab-bar wrapper: visible by default, hidden at md+. */
+.oc-mobile-tabbar-wrap {
+  display: block;
+}
+@media (min-width: 768px) {
+  .oc-mobile-tabbar-wrap {
+    display: none;
+  }
+}
+
+/* Desktop nav rail wrapper: hidden by default, visible at md+. */
+.oc-rail-wrap {
+  display: none;
+}
+@media (min-width: 768px) {
+  .oc-rail-wrap {
+    display: flex;
+  }
+}
+.oc-mobile-top-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  margin: 0;
+  color: var(--color-oc-ink);
+}
+
+.oc-mobile-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: white;
+  border: 1px solid var(--color-oc-line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-oc-primary);
+  flex-shrink: 0;
+}
+
+.oc-tabbar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-top: 1px solid var(--color-oc-line-2);
+  background: var(--color-oc-bg-sidebar);
+  padding: 6px 6px 14px;
+  position: relative;
+  z-index: 1;
+}
+.oc-tab {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  color: var(--color-oc-muted);
+  border-radius: 10px;
+  text-decoration: none;
+  transition: color 140ms ease;
+}
+.oc-tab.is-active {
+  color: var(--color-oc-primary);
+}
+.oc-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.oc-tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.oc-tab-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.oc-mobile-composer {
+  border-top: 1px solid var(--color-oc-line-2);
+  padding: 10px 12px 12px;
+  background: var(--color-oc-bg);
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Session pill popover ── */
+/* ── Session pill wrapper ── owns the popover anchor.
+   When the popover is open we lift the wrapper above its flex siblings
+   (clear / new / memories chips) so the popover tail never paints behind
+   them, and we widen the popover so even narrow top bars can show all
+   controls. */
+.oc-session-pill-wrap {
+  position: relative;
+}
+.oc-session-pill-wrap.is-open {
+  z-index: 40;
+}
+.oc-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 280px;
+  max-width: min(320px, calc(100vw - 32px));
+  background: white;
+  border: 1px solid var(--color-oc-line);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px -20px rgba(31, 79, 70, 0.35),
+              0 4px 12px -4px rgba(31, 79, 70, 0.15);
+  padding: 14px;
+  z-index: 50;
+}
+.oc-popover-section + .oc-popover-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-oc-line-2);
+}
+.oc-popover-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-oc-text-dim);
+  margin-bottom: 8px;
+}
+.oc-popover-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-oc-ink-2);
+  padding: 4px 0;
+}
+.oc-popover-row .label {
+  color: var(--color-oc-muted);
+}
+.oc-popover-action {
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--color-oc-ink-2);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oc-popover-action:hover:not(:disabled) {
+  background: var(--color-oc-surface-tint);
+  color: var(--color-oc-ink);
+}
+.oc-popover-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.oc-popover-action--danger {
+  color: #8b2e2e;
+}
+.oc-popover-action--danger:hover:not(:disabled) {
+  background: rgba(184, 74, 64, 0.06);
+  color: #722525;
+}

@@ -1,0 +1,583 @@
+/* ================================================================
+   GraphTopology — Animated agent graph with branching + parallelism
+   ================================================================ */
+
+.container {
+  margin: 2rem 0;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+[data-theme='light'] .container {
+  background: #fafbfc;
+  border-color: #dde1e6;
+}
+
+/* ── Header bar ──────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: #141414;
+  border-bottom: 1px solid #222;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+[data-theme='light'] .header {
+  background: #f0f2f5;
+  border-color: #dde1e6;
+}
+
+.headerTitle {
+  font-weight: 700;
+  color: #2dd4bf;
+  letter-spacing: -0.02em;
+}
+
+[data-theme='light'] .headerTitle {
+  color: #0d9488;
+}
+
+.headerBadges {
+  display: flex;
+  gap: 5px;
+  flex: 1;
+}
+
+.headerBadge {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(45, 212, 191, 0.08);
+  color: #5eead4;
+  border: 1px solid rgba(45, 212, 191, 0.12);
+}
+
+[data-theme='light'] .headerBadge {
+  background: rgba(13, 148, 136, 0.06);
+  color: #0d9488;
+  border-color: rgba(13, 148, 136, 0.15);
+}
+
+.headerStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #52525b;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.runDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34d399;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.pausedDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #52525b;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* ── Body ────────────────────────────────────────────────────────── */
+
+.body {
+  padding: 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Spine (vertical center column) ──────────────────────────────── */
+
+.spine {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* ── Connectors ──────────────────────────────────────────────────── */
+
+.conn {
+  width: 2px;
+  height: 18px;
+  background: #2a2a2a;
+  margin: 0 auto;
+  transition: background 0.5s ease;
+  border-radius: 1px;
+}
+
+.connActive {
+  background: linear-gradient(to bottom, #2dd4bf60, #2dd4bf20);
+}
+
+[data-theme='light'] .conn {
+  background: #d4d4d8;
+}
+
+[data-theme='light'] .connActive {
+  background: linear-gradient(to bottom, #0d948880, #0d948830);
+}
+
+.connBranch {
+  height: 12px;
+}
+
+/* ── Nodes ────────────────────────────────────────────────────────── */
+
+.node {
+  padding: 10px 16px;
+  border-radius: 9px;
+  border: 1px solid #222;
+  background: #161616;
+  transition: all 0.4s ease;
+  min-width: 160px;
+  text-align: center;
+}
+
+[data-theme='light'] .node {
+  background: #fff;
+  border-color: #dde1e6;
+}
+
+.nodeIdle {
+  opacity: 0.35;
+}
+
+.nodeDone {
+  opacity: 0.65;
+}
+
+.nodeActive {
+  opacity: 1;
+  transform: scale(1.02);
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-bottom: 3px;
+}
+
+.nodeLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #e4e4e7;
+  letter-spacing: -0.01em;
+}
+
+[data-theme='light'] .nodeLabel {
+  color: #18181b;
+}
+
+.nodeSub {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 9.5px;
+  color: #52525b;
+  letter-spacing: 0.01em;
+}
+
+/* Node variants */
+
+.node_terminal {
+  background: #0d0d0d;
+  border-color: #333;
+  border-style: dashed;
+}
+
+[data-theme='light'] .node_terminal {
+  background: #f5f5f5;
+  border-color: #c4c4c4;
+}
+
+.node_safety {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.node_safety.nodeActive {
+  border-color: #f87171;
+  background: rgba(248, 113, 113, 0.06);
+  box-shadow: 0 0 24px rgba(248, 113, 113, 0.08);
+}
+
+.node_safety .nodeLabel { color: #fca5a5; }
+[data-theme='light'] .node_safety .nodeLabel { color: #b91c1c; }
+
+[data-theme='light'] .node_safety {
+  border-color: rgba(185, 28, 28, 0.2);
+}
+
+[data-theme='light'] .node_safety.nodeActive {
+  border-color: #b91c1c;
+  background: rgba(185, 28, 28, 0.04);
+  box-shadow: 0 0 24px rgba(185, 28, 28, 0.06);
+}
+
+.node_memory {
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+.node_memory.nodeActive {
+  border-color: #60a5fa;
+  background: rgba(96, 165, 250, 0.06);
+  box-shadow: 0 0 24px rgba(96, 165, 250, 0.08);
+}
+
+.node_memory .nodeLabel { color: #93c5fd; }
+[data-theme='light'] .node_memory .nodeLabel { color: #1d4ed8; }
+
+[data-theme='light'] .node_memory {
+  border-color: rgba(29, 78, 216, 0.2);
+}
+
+[data-theme='light'] .node_memory.nodeActive {
+  border-color: #1d4ed8;
+  background: rgba(29, 78, 216, 0.04);
+  box-shadow: 0 0 24px rgba(29, 78, 216, 0.06);
+}
+
+.node_therapy {
+  border-color: rgba(45, 212, 191, 0.3);
+}
+
+.node_therapy.nodeActive {
+  border-color: #2dd4bf;
+  background: rgba(45, 212, 191, 0.06);
+  box-shadow: 0 0 24px rgba(45, 212, 191, 0.08);
+}
+
+.node_therapy .nodeLabel { color: #5eead4; }
+[data-theme='light'] .node_therapy .nodeLabel { color: #0d9488; }
+
+[data-theme='light'] .node_therapy {
+  border-color: rgba(13, 148, 136, 0.2);
+}
+
+[data-theme='light'] .node_therapy.nodeActive {
+  border-color: #0d9488;
+  background: rgba(13, 148, 136, 0.04);
+  box-shadow: 0 0 24px rgba(13, 148, 136, 0.06);
+}
+
+.node_finalize {
+  border-color: rgba(168, 85, 247, 0.3);
+}
+
+.node_finalize.nodeActive {
+  border-color: #a855f7;
+  background: rgba(168, 85, 247, 0.06);
+  box-shadow: 0 0 24px rgba(168, 85, 247, 0.08);
+}
+
+.node_finalize .nodeLabel { color: #c4b5fd; }
+[data-theme='light'] .node_finalize .nodeLabel { color: #7c3aed; }
+
+[data-theme='light'] .node_finalize {
+  border-color: rgba(124, 58, 237, 0.2);
+}
+
+[data-theme='light'] .node_finalize.nodeActive {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.04);
+  box-shadow: 0 0 24px rgba(124, 58, 237, 0.06);
+}
+
+.node_extract {
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+.node_extract.nodeActive {
+  border-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.06);
+  box-shadow: 0 0 24px rgba(251, 191, 36, 0.08);
+}
+
+.node_extract .nodeLabel { color: #fde68a; }
+[data-theme='light'] .node_extract .nodeLabel { color: #b45309; }
+
+[data-theme='light'] .node_extract {
+  border-color: rgba(180, 83, 9, 0.2);
+}
+
+[data-theme='light'] .node_extract.nodeActive {
+  border-color: #b45309;
+  background: rgba(180, 83, 9, 0.04);
+  box-shadow: 0 0 24px rgba(180, 83, 9, 0.06);
+}
+
+/* Status icons */
+
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.check {
+  font-size: 11px;
+  color: #34d399;
+  font-weight: 700;
+}
+
+/* ── Branch zone ─────────────────────────────────────────────────── */
+
+.branchZone {
+  margin: 6px 0;
+  padding: 14px;
+  border: 1px dashed #2a2a2a;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+[data-theme='light'] .branchZone {
+  border-color: #d4d4d8;
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.branchHeader {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.branchLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #52525b;
+  background: #0a0a0a;
+  padding: 2px 10px;
+  border-radius: 4px;
+}
+
+[data-theme='light'] .branchLabel {
+  background: #fafbfc;
+  color: #71717a;
+}
+
+.branchLanes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 580px) {
+  .branchLanes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.branchLane {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.branchLaneHeader {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding-left: 4px;
+}
+
+.branchDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dotCrisis { background: #f87171; }
+.dotTherapeutic { background: #2dd4bf; }
+
+.branchLaneLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #71717a;
+}
+
+.branchNodeStack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.branchNodeStack .node {
+  width: 100%;
+}
+
+.routeOptions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.routeOptions .node {
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+@media (max-width: 580px) {
+  .routeOptions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Parallel zone ───────────────────────────────────────────────── */
+
+.parallelZone {
+  margin: 6px 0;
+  padding: 14px;
+  border: 1px solid rgba(251, 191, 36, 0.12);
+  border-radius: 12px;
+  background: rgba(251, 191, 36, 0.02);
+}
+
+[data-theme='light'] .parallelZone {
+  border-color: rgba(180, 83, 9, 0.15);
+  background: rgba(180, 83, 9, 0.02);
+}
+
+.parallelHeader {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.parallelLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #fbbf24;
+}
+
+[data-theme='light'] .parallelLabel {
+  color: #b45309;
+}
+
+.parallelLanes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 480px) {
+  .parallelLanes {
+    grid-template-columns: 1fr;
+  }
+}
+
+.parallelReducerTag {
+  text-align: center;
+  margin-top: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #a78bfa;
+  padding: 3px 10px;
+  background: rgba(167, 139, 250, 0.06);
+  border-radius: 4px;
+  border: 1px solid rgba(167, 139, 250, 0.12);
+  display: inline-block;
+  margin-left: auto;
+  margin-right: auto;
+  width: fit-content;
+}
+
+[data-theme='light'] .parallelReducerTag {
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.04);
+  border-color: rgba(124, 58, 237, 0.12);
+}
+
+/* Center the reducer tag */
+.parallelZone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.parallelLanes {
+  width: 100%;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 18px;
+  border-top: 1px solid #1e1e1e;
+  background: #0e0e0e;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #52525b;
+}
+
+[data-theme='light'] .footer {
+  background: #f5f5f5;
+  border-color: #dde1e6;
+}
+
+.footerLabel {
+  flex-shrink: 0;
+  min-width: 140px;
+}
+
+.progressTrack {
+  flex: 1;
+  height: 3px;
+  background: #1e1e1e;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+[data-theme='light'] .progressTrack {
+  background: #dde1e6;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #f87171, #2dd4bf, #fbbf24);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}

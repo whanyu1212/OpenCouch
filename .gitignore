@@ -1,3 +1,10 @@
+# macOS resource forks
+._*
+.DS_Store
+
+# Local UX notes
+UX_TOOLING_ENHANCEMENTS.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -14,8 +21,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -43,6 +50,9 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.render_cache/
+.remotion/
+.remember/
 nosetests.xml
 coverage.xml
 *.cover
@@ -60,6 +70,14 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+
+# Generated eval SQLite artifacts
+eval/*.sqlite
+eval/*.sqlite3
+eval/*.db
+eval/.*.sqlite
+eval/.*.sqlite3
+eval/.*.db
 
 # Flask stuff:
 instance/
@@ -136,6 +154,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
 .envrc
 .venv
 env/
@@ -213,19 +232,33 @@ __marimo__/
 
 # local learning and reference notes
 notes/
+*_spec.md
 
-# local living roadmap — maintained as a working doc but not tracked
+# local working docs — plans, reports, outlines, research notes
+# (kept at root level for convenience but not tracked in git)
 ROADMAP.md
+AGENTS.md
+[Cc][Ll][Aa][Uu][Dd][Ee].md
+llms.txt
+*_plan.md
+*_report.md
+*_outline.md
+*_design.md
+*_research*.md
+BETA_DEPLOYMENT_MIGRATION.md
+TELEGRAM_CHANNEL_IMPLEMENTATION.md
 
-# local runtime and eval sqlite databases
-apps/backend/.opencouch_threads.sqlite3
-apps/backend/.opencouch_threads.sqlite3-shm
-apps/backend/.opencouch_threads.sqlite3-wal
-apps/backend/.opencouch_memory.sqlite3
-apps/backend/.opencouch_memory.sqlite3-shm
-apps/backend/.opencouch_memory.sqlite3-wal
-apps/backend/.opencouch_crisis.sqlite3
-apps/backend/.opencouch_crisis.sqlite3-shm
-apps/backend/.opencouch_crisis.sqlite3-wal
+# local references / skills worktrees
+refs/
+skills/
+
+# editor local settings
+.vscode/
+
+# local runtime sqlite databases
+apps/backend/.store/
 eval/.session_trajectory_eval.sqlite3
 eval/.session_arc_eval.sqlite3
+
+# dogfood transcripts (not ready for commit)
+eval/dogfood/

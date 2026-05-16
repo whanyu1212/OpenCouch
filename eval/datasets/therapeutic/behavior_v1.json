@@ -1,0 +1,169 @@
+{
+  "name": "therapeutic_behavior_v1",
+  "description": "Broader therapeutic routing, exercise selection, and state-change checks.",
+  "cases": [
+    {
+      "id": "route-supportive-distress",
+      "description": "General emotional distress should produce a supportive response without exercise state.",
+      "message": "I feel overwhelmed and I don't really know what to do tonight.",
+      "scripted": {
+        "dispatch": {
+          "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
+          "therapeutic_approach": "none"
+        },
+        "response_text": "That sounds overwhelming. We can slow this down and focus on the next small moment."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "therapeutic_approach_any_of": ["none", "pfa"],
+        "response_text_non_empty": true,
+        "exercise_state": {},
+        "routing_decision_any_of": ["supportive", "supportive/pfa"]
+      }
+    },
+    {
+      "id": "route-reflective-pattern",
+      "description": "A user exploring a repeated pattern can route to reflective response.",
+      "message": "This keeps happening in my relationships and I want to understand the pattern.",
+      "scripted": {
+        "dispatch": {
+          "response_style": "reflective",
+          "exercise_start_basis": "ambiguous_or_none",
+          "therapeutic_approach": "interpersonal_therapy"
+        },
+        "response_text": "It sounds like you are noticing a recurring relationship pattern and want to understand it more clearly."
+      },
+      "expected": {
+        "response_style": "reflective",
+        "therapeutic_approach": "interpersonal_therapy",
+        "response_text_non_empty": true,
+        "routing_decision": "reflective/interpersonal_therapy"
+      }
+    },
+    {
+      "id": "select-specific-box-breathing",
+      "description": "A specific guided-exercise request should start the named exercise.",
+      "message": "Can you walk me through box breathing?",
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "exercise_start_basis": "explicit_user_request",
+          "therapeutic_approach": "dbt_skills"
+        },
+        "exercise_selection": "grounding_box_breathing",
+        "response_text": "Let's start box breathing with a slow inhale for four."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_non_empty": true,
+        "exercise_state": {
+          "exercise_type": "grounding_box_breathing",
+          "exercise_step": 0,
+          "exercise_step_id": "inhale"
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "continue-active-exercise",
+      "description": "A completed active step should advance to the next step.",
+      "message": "I did the inhale.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_box_breathing",
+          "exercise_step": 0,
+          "exercise_step_id": "inhale",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "guided_exercise",
+          "exercise_start_basis": "explicit_user_request",
+          "therapeutic_approach": "act"
+        },
+        "step_state": "complete",
+        "response_text": "Good. Now hold that breath gently for four."
+      },
+      "expected": {
+        "response_style": "guided_exercise",
+        "therapeutic_approach": "dbt_skills",
+        "response_text_non_empty": true,
+        "exercise_state": {
+          "exercise_type": "grounding_box_breathing",
+          "exercise_step": 1,
+          "exercise_step_id": "hold_full",
+          "exercise_therapeutic_approach": "dbt_skills"
+        },
+        "routing_decision": "guided_exercise/dbt_skills"
+      }
+    },
+    {
+      "id": "leave-active-exercise",
+      "description": "A non-exercise route from an active exercise should clear exercise state.",
+      "message": "Let's stop the exercise and talk about why my chest got tight.",
+      "state": {
+        "therapeutic_approach": "dbt_skills",
+        "exercise_state": {
+          "exercise_type": "grounding_box_breathing",
+          "exercise_step": 1,
+          "exercise_step_id": "hold_full",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "dispatch": {
+          "response_style": "reflective",
+          "exercise_start_basis": "ambiguous_or_none",
+          "therapeutic_approach": "cbt"
+        },
+        "response_text": "We can stop the exercise and look at what happened when your chest tightened."
+      },
+      "expected": {
+        "response_style_any_of": ["reflective", "psychoeducation", "supportive"],
+        "therapeutic_approach_any_of": ["cbt", "dbt_skills", "none", "pfa"],
+        "response_text_non_empty": true,
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "routing_decision_any_of": [
+          "reflective/cbt",
+          "psychoeducation/dbt_skills",
+          "psychoeducation",
+          "supportive",
+          "supportive/pfa"
+        ]
+      }
+    },
+    {
+      "id": "practical-support-contact-not-exercise",
+      "description": "A request to contact a support person should stay supportive/PFA instead of starting a guided exercise.",
+      "message": "Panic is starting. Help me text Maya during panic and keep it brief.",
+      "scripted": {
+        "dispatch": {
+          "response_style": "supportive",
+          "exercise_start_basis": "ambiguous_or_none",
+          "therapeutic_approach": "pfa"
+        },
+        "response_text": "Text Maya one clear line: panic is here, and I need you to stay with me for a few minutes."
+      },
+      "expected": {
+        "response_style": "supportive",
+        "therapeutic_approach_any_of": ["pfa", "none"],
+        "response_text_non_empty": true,
+        "response_text_contains": ["Maya"],
+        "exercise_state": {},
+        "routing_decision_any_of": ["supportive", "supportive/pfa"]
+      }
+    }
+  ]
+}

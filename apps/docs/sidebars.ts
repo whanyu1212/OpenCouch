@@ -7,27 +7,55 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Philosophy',
-      items: ['philosophy/approach', 'philosophy/crisis-gate']
+      items: ['philosophy/graph-vs-react', 'philosophy/approach', 'philosophy/crisis-gate']
     },
     {
       type: 'category',
       label: 'System',
-      items: ['backend/overview', 'backend/runtime']
+      items: [
+        'backend/overview',
+        'backend/runtime',
+        'system/api-reference',
+        'system/web-ui',
+        'system/telegram',
+      ]
     },
     {
       type: 'category',
       label: 'Agent',
-      items: ['agent/graph', 'agent/state', 'agent/prompt-assembly', 'agent/context-management', 'agent/scenarios']
+      items: [
+        {
+          type: 'category',
+          label: 'Agent Graph',
+          collapsed: false,
+          items: [
+            'agent/graph',
+            'agent/state',
+            'agent/nodes',
+            'agent/tools',
+          ],
+        },
+        'agent/routing-classifiers',
+        'agent/prompt-assembly',
+        'agent/context-management',
+        {
+          type: 'category',
+          label: 'Therapeutic Responses',
+          collapsed: false,
+          items: ['agent/scenarios', 'agent/guided-exercises'],
+        },
+      ]
     },
     {
       type: 'category',
       label: 'Memory',
-      items: ['memory/overview', 'memory/retrieval', 'memory/privacy']
+      items: ['memory/why-memory', 'memory/overview', 'memory/retrieval', 'memory/privacy']
     },
+    'voice/overview',
     {
       type: 'category',
-      label: 'Observability',
-      items: ['observability/overview']
+      label: 'Observability & Evaluation',
+      items: ['observability/overview', 'observability/session-feedback']
     },
     'roadmap',
   ]

@@ -1,0 +1,326 @@
+/* ================================================================
+   RetrievalFlow — Hybrid RRF scorer diagram
+   ================================================================ */
+
+.root {
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  background: #0a0a0a;
+  border: 1px solid #222;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+[data-theme='light'] .root {
+  background: #fafbfc;
+  border-color: #dde1e6;
+}
+
+/* ── Input node ──────────────────────────────────────────────────── */
+
+.inputNode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid #222;
+  background: #161616;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: #e4e4e7;
+}
+
+[data-theme='light'] .inputNode {
+  background: #fff;
+  border-color: #e4e8ec;
+  color: #18181b;
+}
+
+.inputIcon {
+  font-size: 14px;
+}
+
+/* ── Fork ────────────────────────────────────────────────────────── */
+
+.fork {
+  display: flex;
+  justify-content: center;
+  gap: 140px;
+  height: 20px;
+  position: relative;
+}
+
+.fork::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 10px;
+  background: #52525b;
+  transform: translateX(-1px);
+}
+
+.forkLine {
+  width: 2px;
+  height: 20px;
+  background: #52525b;
+  margin-top: 10px;
+}
+
+.fork::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: calc(50% - 71px);
+  width: 142px;
+  height: 2px;
+  background: #52525b;
+}
+
+/* ── Scorers ─────────────────────────────────────────────────────── */
+
+.scorers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+
+@media (max-width: 580px) {
+  .scorers {
+    grid-template-columns: 1fr;
+  }
+  .fork, .merge {
+    display: none;
+  }
+}
+
+.scorer {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid #222;
+  background: #0d0d0d;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+[data-theme='light'] .scorer {
+  background: #fff;
+  border-color: #e4e8ec;
+}
+
+.scorerToken {
+  border-color: rgba(215, 139, 95, 0.3);
+}
+
+.scorerToken .scorerDot {
+  background: #d78b5f;
+}
+
+.scorerToken .scorerLabel {
+  color: #d78b5f;
+}
+
+[data-theme='light'] .scorerToken {
+  border-color: rgba(176, 109, 63, 0.3);
+}
+
+[data-theme='light'] .scorerToken .scorerLabel {
+  color: #b06d3f;
+}
+
+.scorerEmbed {
+  border-color: rgba(61, 153, 144, 0.3);
+}
+
+.scorerEmbed .scorerDot {
+  background: #3d9990;
+}
+
+.scorerEmbed .scorerLabel {
+  color: #3d9990;
+}
+
+[data-theme='light'] .scorerEmbed {
+  border-color: rgba(27, 122, 115, 0.3);
+}
+
+[data-theme='light'] .scorerEmbed .scorerLabel {
+  color: #1b7a73;
+}
+
+.scorerHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scorerDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.scorerLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.scorerDetail {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--oc-text-secondary);
+}
+
+.scorerDetail code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 11px !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  padding: 1px 5px !important;
+  border-radius: 3px !important;
+  color: var(--oc-text-primary) !important;
+}
+
+[data-theme='light'] .scorerDetail code {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+.scorerStrengths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.strengthGood {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(45, 212, 191, 0.06);
+  border: 1px solid rgba(45, 212, 191, 0.12);
+  color: #5eead4;
+}
+
+[data-theme='light'] .strengthGood {
+  background: rgba(13, 148, 136, 0.06);
+  border-color: rgba(13, 148, 136, 0.15);
+  color: #0d9488;
+}
+
+/* ── Merge ───────────────────────────────────────────────────────── */
+
+.merge {
+  display: flex;
+  justify-content: center;
+  gap: 140px;
+  height: 20px;
+  position: relative;
+}
+
+.merge::after {
+  content: '';
+  position: absolute;
+  bottom: 10px;
+  left: calc(50% - 71px);
+  width: 142px;
+  height: 2px;
+  background: #52525b;
+}
+
+.merge::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  height: 10px;
+  background: #52525b;
+  transform: translateX(-1px);
+}
+
+.mergeLine {
+  width: 2px;
+  height: 10px;
+  background: #52525b;
+}
+
+/* ── Fusion node ─────────────────────────────────────────────────── */
+
+.fusionNode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(74, 144, 217, 0.3);
+  background: rgba(74, 144, 217, 0.06);
+}
+
+[data-theme='light'] .fusionNode {
+  border-color: rgba(53, 112, 176, 0.3);
+  background: rgba(53, 112, 176, 0.04);
+}
+
+.fusionLabel {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #60a5fa;
+}
+
+[data-theme='light'] .fusionLabel {
+  color: #2563eb;
+}
+
+.fusionFormula {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 11px !important;
+  color: #93c5fd !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+[data-theme='light'] .fusionFormula {
+  color: #3b82f6 !important;
+}
+
+/* ── Output ──────────────────────────────────────────────────────── */
+
+.outputConn {
+  width: 2px;
+  height: 14px;
+  background: linear-gradient(to bottom, rgba(74, 144, 217, 0.3), rgba(45, 212, 191, 0.2));
+}
+
+.outputNode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid #2dd4bf30;
+  background: linear-gradient(135deg, #0d2d2a, #111);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2dd4bf;
+}
+
+[data-theme='light'] .outputNode {
+  border-color: #0d948840;
+  background: linear-gradient(135deg, #f0fdfa, #fff);
+  color: #0d9488;
+}

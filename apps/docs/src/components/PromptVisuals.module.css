@@ -353,7 +353,7 @@
 .matrixTable tr:last-child td { border-bottom: none; }
 .matrixTable tbody tr:hover td { background: var(--oc-accent-subtle); }
 
-.matrixModeCell {
+.matrixResponseStyleCell {
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.76rem;
   font-weight: 500;
@@ -446,13 +446,81 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: 8px;
 }
 
 .scenarioBtns {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.scenarioActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scenarioBlurb {
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--oc-text-secondary);
+  margin: 0 0 14px;
+  max-width: 720px;
+}
+[data-theme='dark'] .scenarioBlurb { color: var(--oc-text-secondary); }
+
+.skipBtn {
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface-1);
+  color: var(--oc-text-secondary);
+  cursor: pointer;
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out),
+              color var(--oc-duration-fast) var(--oc-ease-out),
+              background var(--oc-duration-fast) var(--oc-ease-out);
+}
+.skipBtn:hover:not(:disabled) {
+  border-color: var(--oc-accent);
+  color: var(--oc-accent);
+  background: var(--oc-accent-subtle);
+}
+.skipBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Segmented speed picker — three small pills sharing one border */
+.speedGroup {
+  display: inline-flex;
+  border-radius: 8px;
+  border: 1px solid var(--oc-border);
+  overflow: hidden;
+  background: var(--oc-surface-1);
+}
+
+.speedBtn {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 6px 10px;
+  border: none;
+  border-right: 1px solid var(--oc-border);
+  background: transparent;
+  color: var(--oc-text-secondary);
+  cursor: pointer;
+  transition: color var(--oc-duration-fast) var(--oc-ease-out),
+              background var(--oc-duration-fast) var(--oc-ease-out);
+}
+.speedBtn:last-child { border-right: none; }
+.speedBtn:hover {
+  color: var(--oc-accent);
+  background: var(--oc-accent-subtle);
+}
+.speedBtnActive {
+  color: var(--oc-accent) !important;
+  background: var(--oc-accent-subtle) !important;
 }
 
 .playBtn {
@@ -539,8 +607,12 @@
   border-radius: 8px;
   border: 1px solid var(--oc-border);
   background: var(--oc-surface-2);
-  opacity: 0.3;
-  transition: opacity var(--oc-duration-base) var(--oc-ease-out), background var(--oc-duration-base) var(--oc-ease-out), border-color var(--oc-duration-base) var(--oc-ease-out);
+  opacity: 0.4;
+  transition: opacity var(--oc-duration-base) var(--oc-ease-out),
+              background var(--oc-duration-base) var(--oc-ease-out),
+              border-color var(--oc-duration-base) var(--oc-ease-out),
+              transform var(--oc-duration-fast) var(--oc-ease-out),
+              box-shadow var(--oc-duration-fast) var(--oc-ease-out);
 }
 .layerRowOn {
   opacity: 1;
@@ -550,6 +622,34 @@
 [data-theme='dark'] .layerRowOn {
   background: var(--oc-accent-subtle);
   border-color: var(--oc-accent);
+}
+.layerRowActive {
+  box-shadow: 0 0 0 2px var(--oc-accent-subtle);
+  transform: translateX(2px);
+}
+.layerRowSkipped {
+  opacity: 0.28;
+  border-style: dashed;
+}
+.layerRowSkipped .layerRowName { color: var(--oc-text-muted); }
+
+.layerRowSkippedTag {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.55rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--oc-text-muted);
+  background: var(--oc-surface-3);
+  border: 1px solid var(--oc-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.layerPanelHint {
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--oc-text-muted);
+  margin: 6px 4px 0;
 }
 
 .layerRowDot {
@@ -635,10 +735,18 @@
   max-height: 360px;
 }
 
-/* Token colours */
-.tokComment { color: #2d5c58; }
-.tokLabel   { color: #65b8af; font-weight: 600; }
-.tokValue   { color: #c6e8e4; }
+/* Token colours — applied to spans inside the terminal body */
+.tokComment      { color: #2d5c58; font-style: italic; }
+.tokLabel        { color: #65b8af; font-weight: 600; }
+.tokValue        { color: #c6e8e4; }
+.tokLayerHeader  { color: #f5d76e; font-weight: 700; letter-spacing: 0.01em; }
+.tokSubHeader    { color: #b3d9d3; font-weight: 600; }
+.tokDivider      { color: #78b8af; font-weight: 600; }
+
+.terminalError {
+  color: #f08a85;
+  font-style: italic;
+}
 
 /* Blinking cursor */
 .cursor {

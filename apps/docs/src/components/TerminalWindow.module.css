@@ -1,0 +1,92 @@
+.terminal {
+  margin: 1rem 0 1.25rem;
+  border: 1px solid var(--oc-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0e1c1b;
+  box-shadow: var(--oc-shadow-md);
+}
+
+.titleBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.5rem 0.72rem;
+  border-bottom: 1px solid rgba(120, 184, 175, 0.18);
+  background: rgba(14, 28, 27, 0.92);
+}
+
+.dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.dotRed {
+  background: #ff5f57;
+}
+
+.dotYellow {
+  background: #febc2e;
+}
+
+.dotGreen {
+  background: #28c840;
+}
+
+.titleText {
+  flex: 1;
+  text-align: center;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  color: #b0d4cf;
+  letter-spacing: 0.02em;
+}
+
+.titleSpacer {
+  width: 40px;
+}
+
+.body {
+  margin: 0;
+  padding: 0.92rem 1rem;
+  overflow-x: auto;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: #e8f5f3;
+  background: #081312;
+}
+
+/* Override Docusaurus code-block styles that assume a light background
+   in light mode. The terminal is always dark regardless of theme. */
+.body code {
+  color: inherit !important;
+  background: transparent !important;
+}
+
+html[data-theme='light'] .terminal {
+  background: #0f2422;
+  border-color: rgba(33, 95, 90, 0.22);
+}
+
+html[data-theme='light'] .titleBar {
+  background: #102826;
+}
+
+html[data-theme='light'] .body {
+  background: #0c201e;
+  color: #e8f5f3;
+}
+
+/* Force code inside the terminal to inherit the terminal's light text,
+   not Docusaurus's light-mode code color (which assumes a white bg). */
+html[data-theme='light'] .body code {
+  color: #e8f5f3 !important;
+  background: transparent !important;
+}

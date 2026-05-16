@@ -1,183 +1,324 @@
-"""Internal state container for the OpenCouch agent graph."""
+"""Typed state contracts for the OpenCouch LangGraph workflow.
 
-from typing import Any, NotRequired, TypedDict
+The top-level graph in ``agent.graph`` uses ``AgentGraphInputState`` as its
+input schema, ``AgentState`` as its internal schema, and
+``AgentGraphOutputState`` as its public output schema. The therapeutic subgraph
+imports the smaller state fragments below to define its own input and output
+boundaries.
 
-from agent.memory.models import CrisisClassifierPath, CrisisOverrideKind
-from agent.models import Channel, CrisisAssessment, ModeType, ResponseKind
+LangGraph treats each top-level key as a channel. Reducer-backed channels can
+receive partial deltas from multiple nodes or turns: ``transcript`` appends
+list entries with ``operator.add``, while grouped dict channels use
+``_merge_dicts`` so nodes can update only the nested fields they own.
+"""
+
+from __future__ import annotations
+
+import operator
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
+
+from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
+from agent.memory.models import GuidancePermission, SessionIntent, SessionStage
+from agent.models import Channel, CrisisAssessment, SessionAction
+from agent.memory.entries import WorkingMemoryEntry
+
+
+def resolve_owner_id(state: Mapping[str, Any]) -> str:
+    """Return the memory owner for the current session.
+
+    Args:
+        state: The current agent state or state-like dict.
+
+    Returns:
+        The resolved owner identifier.
+
+    Raises:
+        ValueError: If neither ``user_id`` nor ``session_id`` is present.
+    """
+
+    owner = state.get("user_id") or state.get("session_id")
+    if not owner:
+        raise ValueError(
+            "Cannot resolve memory owner: both user_id and session_id are "
+            "absent from state. Provide at least one to prevent memory "
+            "namespace cross-contamination."
+        )
+    return owner
+
+
+def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Merge two dict-like reducer values with right-side precedence.
+
+    Args:
+        left: The existing accumulated state value.
+        right: The incoming node delta.
+
+    Returns:
+        A merged dict. ``None`` is treated as an empty dict on either side.
+    """
+    return {**(left or {}), **(right or {})}
 
 
 class SessionMemoryState(TypedDict):
-    """Durable session memory that should persist across turns."""
+    """Prompt-visible session continuity carried across turns.
 
-    # Rolling summary used to keep the session coherent as history grows.
+    ``load_memory_node`` writes the current summary into this channel and
+    preserves sibling fields. Therapeutic prompt builders read it indirectly
+    through the subgraph input, while session-end summarization and memory
+    promotion use the corresponding persisted episodic records rather than this
+    channel as the source of truth.
+    """
+
     summary: str
-    # Current user concerns that should stay salient across turns.
-    active_concerns: list[str]
-    # Unresolved threads the agent should avoid dropping.
-    open_loops: list[str]
-    # Best-effort guess at what the user wants from the current session.
-    current_goal: str | None
+    active_concerns: NotRequired[list[str]]
+    open_loops: NotRequired[list[str]]
+    current_goal: NotRequired[str | None]
 
-    # ── Procedural memory (v0.7 Stage C) ────────────────────────────────
-    # Rendered procedural rule strings loaded by ``load_memory_node`` at
-    # the start of each turn. Populated from the user's
-    # :class:`ProceduralProfile` via the helpers in
-    # ``agent/memory/procedural.py``.
-    #
-    # STRUCTURALLY SEPARATE from ``working_memory``. Procedural rules
-    # are CONSTRAINTS (silent style-shaping directives the response
-    # builders apply as a system-prompt suffix), not CONTENT (semantic
-    # facts and episodic summaries that the agent may or may not
-    # reference in its reply). The two need different prompt treatment
-    # in v0.7 Stage D — keeping them in different state fields prevents
-    # the stringly-typed-prefix-parsing drift that would happen if
-    # rules and content shared a flat list.
-    #
-    # ``proactive_recall_enabled`` is the user's ``/memory recall on|off``
-    # toggle. When False (the default), Stage D injects a "do not
-    # explicitly reference past sessions" constraint into the system
-    # prompt. When True, the constraint is relaxed. The field is
-    # NotRequired because incognito-mode sessions never populate it.
+
+class ProceduralProfileState(TypedDict):
+    """Prompt-shaping procedural profile loaded for the current owner.
+
+    ``load_memory_node`` reads the durable procedural profile from the memory
+    store and writes the prompt-ready rules plus the proactive-recall toggle
+    here. Therapeutic prompt builders read this channel; CLI/API mutation
+    commands update the backing store rather than this in-flight state directly.
+    """
+
     procedural_rules: NotRequired[list[str]]
     proactive_recall_enabled: NotRequired[bool]
 
 
 class SessionProgressState(TypedDict):
-    """Session-level progression and intent signals."""
+    """Session-level counters and arc signals.
 
-    # Soft steering signal for the overall shape of the current session.
-    intent: NotRequired[str | None]
-    # Tracks whether the current intent came from explicit user language or inference.
-    intent_source: NotRequired[str | None]
-    # Structured session progression signal for shaping the next response.
-    stage: NotRequired[str]
-    # Tracks whether the current stage came from deterministic logic or LLM refinement.
-    stage_source: NotRequired[str | None]
-    # Short rationale for debugging and evals.
-    stage_reason: NotRequired[str]
-    # Count of user turns including the current inbound message.
+    ``build_initial_state`` seeds ``turn_count`` for each turn, using
+    checkpointed state when available. Persistent runtime summaries, feedback
+    records, and memory extractors read ``turn_count`` for provenance. The
+    therapeutic dispatcher may also write ``session_intent`` and
+    ``session_stage`` to keep response generation aware of the conversation arc
+    without adding graph nodes.
+    """
+
     turn_count: int
-    # Whether the current runtime is in ephemeral guest mode.
     is_guest: NotRequired[bool]
+    session_intent: NotRequired[SessionIntent]
+    session_stage: NotRequired[SessionStage]
+    guidance_permission: NotRequired[GuidancePermission]
 
-    # ── Multi-turn exercise state (v0.6 Stage C) ─────────────────────────
-    # When the guided_exercise mode node starts a multi-turn exercise, it
-    # writes the exercise identifier and current step index here. The
-    # dispatcher reads these fields on subsequent turns via a fast-path
-    # check: if ``exercise_type`` and ``exercise_step`` are both set, the
-    # dispatcher short-circuits to the guided_exercise node instead of
-    # re-classifying the message. This is how multi-turn exercise state
-    # persists across turns without requiring the LLM classifier to read
-    # prior history and infer "we're mid-exercise."
-    #
-    # Both fields are cleared (set to None) when the exercise completes
-    # naturally OR when the user exits mid-exercise. The guided_exercise
-    # node owns the lifecycle; the dispatcher only reads.
-    #
-    # v0.6 Stage C supports exactly one exercise type:
-    #   - "grounding_5_4_3_2_1" — the 5-4-3-2-1 sensory grounding exercise
-    # Future stages can add more exercise_type values without schema
-    # changes; the type is stored as a string so the schema doesn't need
-    # to enumerate every supported exercise at the TypedDict level.
+
+class ExerciseState(TypedDict):
+    """Active guided-exercise continuity state.
+
+    ``guided_exercise`` owns writes to this channel when starting, advancing,
+    completing, or exiting an exercise. The therapeutic dispatcher and prompt
+    builders read it to keep side turns inside an active exercise and to reuse
+    the therapeutic approach captured when the exercise began.
+    """
+
     exercise_type: NotRequired[str | None]
     exercise_step: NotRequired[int | None]
+    exercise_step_id: NotRequired[str | None]
+    exercise_version: NotRequired[int | None]
+    exercise_therapeutic_approach: NotRequired[str | None]
 
 
-class RoutingState(TypedDict):
-    """Routing and mode selection outputs for the current turn."""
+def cleared_exercise_state() -> ExerciseState:
+    """Return a graph delta that clears active guided-exercise continuity.
 
-    # Records which high-level path the graph decided to take.
-    route: NotRequired[str]
-    # Tracks the active non-crisis response mode inside the therapeutic path.
-    mode: NotRequired[str]
-    # Tracks whether the mode came from keyword, session_intent, llm, or default.
-    mode_source: NotRequired[str | None]
-    # Distinguishes operational routing states from therapeutic and crisis modes.
-    mode_type: NotRequired[ModeType]
-    # Active modality overlays selected for the current response node.
-    active_modalities: NotRequired[list[str]]
-    # Cached semantic interpretation shared by routing and prompt shaping.
-    semantic_signals: NotRequired[dict[str, bool]]
+    Returns:
+        ExerciseState: Exercise-state fields set to their inactive values.
+    """
 
-    # ── Crisis debug metadata (v0.2) ─────────────────────────────────────
-    # These three fields are written by ``run_crisis_gate_node`` on the
-    # crisis branch and read by ``run_crisis_log_node`` so the audit
-    # record accurately reflects which code path produced the
-    # classification. They're prefixed ``crisis_`` to make ownership
-    # unambiguous and prevent collisions with any future therapeutic
-    # classifier metadata.
-    #
-    # All three are NotRequired — non-crisis turns leave them unset,
-    # and the log node's fallback path reads defaults if missing.
-    crisis_override_kind: NotRequired[CrisisOverrideKind]
+    return {
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_step_id": None,
+        "exercise_version": None,
+        "exercise_therapeutic_approach": None,
+    }
+
+
+class MemoryControlState(TypedDict):
+    """User-directed memory-control continuity.
+
+    ``memory_control_node`` writes pending destructive actions here so the next
+    turn can confirm or cancel them. ``turn_dispatch_node`` writes the current
+    turn's explicit memory command into ``action``.
+    """
+
+    pending_action: NotRequired[dict[str, Any] | None]
+    action: NotRequired[dict[str, Any]]
+
+
+class GroundedLookupState(TypedDict):
+    """Explicit factual lookup scratch state.
+
+    ``turn_dispatch_node`` writes the current turn's search query and initial
+    status. ``grounded_answer_node`` updates the status after attempting the
+    grounded response.
+    """
+
+    query: NotRequired[str]
+    status: NotRequired[str]
+
+
+class TurnLifecycleState(TypedDict):
+    """Current-turn active-flow lifecycle decision.
+
+    ``turn_dispatch_node`` writes this after deciding whether an active
+    exercise or pending memory action should continue, pause, resume, or clear.
+    Downstream nodes read it as behavior state. Diagnostics may mirror these
+    values for observability, but diagnostics are not the source of truth.
+    """
+
+    active_flow: Literal["none", "guided_exercise", "pending_memory_action"]
+    action: Literal["none", "continue", "preserve", "resume", "clear"]
+
+
+class MemoryReferenceState(TypedDict):
+    """Current-turn permission to reference retrieved user memories.
+
+    ``turn_dispatch_node`` writes this after classifying the current safe
+    turn. It is distinct from the durable proactive-recall toggle: a user may
+    keep proactive recall off while explicitly asking "what did we work out
+    last time?" for this one turn.
+    """
+
+    mode: Literal["none", "explicit"]
+
+
+class CrisisAuditState(TypedDict):
+    """Turn-scoped crisis-classifier provenance.
+
+    ``crisis_gate_node`` writes this alongside the ``crisis`` assessment.
+    ``crisis_log_node`` reads it to persist classifier path, override outcome,
+    and LLM-failure metadata in the audit log.
+    """
+
+    crisis_override_kind: NotRequired[CrisisOverrideOutcome]
     crisis_classifier_path: NotRequired[CrisisClassifierPath]
     crisis_llm_failure_occurred: NotRequired[bool]
 
 
-class ResponseState(TypedDict):
-    """Response shaping and output payload for the current turn."""
+class AgentIdentityState(TypedDict):
+    """External request identity seeded from ``AgentInput``.
 
-    # Turn-specific prompt shaping guidance derived after mode selection.
-    guidance: NotRequired[str]
-    # Makes the output type explicit before the final response is returned.
-    kind: NotRequired[ResponseKind]
-    # Holds the generated text from the chosen response node.
-    text: NotRequired[str]
-    # Signals whether a later wrapper should persist memory after reply completion.
-    should_persist_memory: NotRequired[bool]
-    # Best-effort location inferred from the user's recent language during crisis flow.
-    inferred_location: NotRequired[str]
-    # Search-derived crisis resources scoped to the inferred location.
-    found_resources: NotRequired[list[dict[str, str]]]
-    # Set by the closing therapeutic mode as a hint to the runtime that it
-    # may want to shorten the inactivity timeout for this session. Does NOT
-    # directly terminate the session — session termination is runtime-owned.
-    closing_hint_shown: NotRequired[bool]
-    # Multi-turn exercise step counter for guided_exercise mode. Reset to
-    # None when the exercise is abandoned or completed.
-    exercise_step: NotRequired[int | None]
+    ``build_initial_state`` writes these fields at turn start. Nodes use
+    ``message`` as the current user text, ``user_id`` / ``session_id`` through
+    ``resolve_owner_id`` for memory namespace ownership, and
+    ``installed_skills`` for capability-aware routing.
+    """
 
-
-class AgentState(TypedDict):
-    """Shared graph state for a single turn plus persisted session context."""
-
-    # The current user message the graph is processing.
     message: str
-    # Channel stays normalized so graph logic does not depend on transport-specific code.
     channel: Channel
-    # Optional until auth/session plumbing exists, but reserved for later ownership checks.
     user_id: str | None
-    # Optional session identifier so the kernel can be wrapped by persistence later.
     session_id: str | None
-    # Skill names are loaded externally, then resolved into prompt behavior by the graph.
     installed_skills: list[str]
 
-    # Prior turns that may be injected into the model context for continuity.
-    history: list[dict[str, str]]
-    # Full durable transcript for rebuilding the next turn's session context.
-    transcript: NotRequired[list[dict[str, str]]]
-    # Scratch space for retrieved facts or interim context once memory exists.
-    working_memory: list[str]
 
-    # Grouped long-horizon memory and progression fields.
-    memory: SessionMemoryState
-    progress: SessionProgressState
+class AgentConversationState(TypedDict):
+    """Conversation and working-memory channels used during a turn.
 
-    # Safety, routing, and output groupings for the current turn.
+    ``build_initial_state`` emits the current user turn into ``transcript``.
+    ``finalize_turn_node`` appends the assistant turn. The transcript uses
+    ``operator.add`` so checkpointed conversation is extended instead of
+    overwritten. ``load_memory_node`` owns ``working_memory`` for prompt-time
+    semantic and episodic recall.
+    """
+
+    transcript: NotRequired[Annotated[list[dict[str, str]], operator.add]]
+    working_memory: list[WorkingMemoryEntry]
+
+
+class AgentPersistentState(TypedDict):
+    """Reducer-backed continuity channels persisted by checkpoints.
+
+    These grouped dicts are the long-lived channels inside LangGraph state.
+    Nodes should return partial nested deltas for only the fields they own; the
+    dict reducers preserve existing sibling keys from prior turns.
+    """
+
+    session_memory: Annotated[SessionMemoryState, _merge_dicts]
+    procedural_profile: Annotated[ProceduralProfileState, _merge_dicts]
+    session_progress: Annotated[SessionProgressState, _merge_dicts]
+    exercise_state: Annotated[ExerciseState, _merge_dicts]
+    memory_control: Annotated[MemoryControlState, _merge_dicts]
+    grounded_lookup: Annotated[GroundedLookupState, _merge_dicts]
+
+
+class AgentCrisisState(TypedDict):
+    """Current-turn crisis assessment shared by both graph branches.
+
+    ``crisis_gate_node`` owns this field. Crisis response, crisis logging, and
+    downstream output conversion read it; therapeutic turns keep the safe
+    assessment so callers still receive explicit safety metadata.
+    """
+
     crisis: CrisisAssessment
-    routing: RoutingState
-    response: ResponseState
 
-    # ── Per-turn diagnostics (v0.8 observability pass) ───────────────────
-    # Free-form dict nodes write into for CLI observability. Typical
-    # entries include per-stage timings (``load_memory_ms``,
-    # ``crisis_gate_ms``, ``extract_facts_ms``, etc.) and memory-write
-    # counters (``semantic_writes``, ``procedural_writes``). Not part
-    # of the stable schema — nodes add whatever keys help debug
-    # dogfood turns, and ``state_to_output`` copies the dict into
-    # ``AgentOutput.diagnostics`` so the CLI can render it.
-    #
-    # NotRequired because only the CLI reads it today; other callers
-    # (unit tests, eval runners) can leave it unset and everything
-    # downstream falls back to an empty dict via ``state.get``.
-    diagnostics: NotRequired[dict[str, Any]]
+
+class AgentGraphOutputState(AgentCrisisState, TypedDict):
+    """Public parent-graph output channels.
+
+    ``agent.graph`` registers this as the top-level output schema. Response
+    nodes own the response fields, ``guided_exercise`` may set
+    ``should_persist_memory`` on completion, and each observability-producing
+    node contributes to ``diagnostics`` through the merge reducer.
+    """
+
+    therapeutic_approach: NotRequired[str | None]
+    response_style: NotRequired[str]
+    session_action: NotRequired[SessionAction]
+    response_text: NotRequired[str]
+    should_persist_memory: NotRequired[bool]
+    diagnostics: NotRequired[Annotated[dict[str, Any], _merge_dicts]]
+
+
+class AgentPrivateState(TypedDict):
+    """Internal-only routing, audit, and scratch channels.
+
+    These fields are available to nodes during graph execution but are not part
+    of the public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
+    ``turn_lifecycle`` carries current-turn active-flow behavior from dispatch
+    to downstream nodes, ``memory_reference`` controls one-turn permission to
+    cite retrieved memories, ``crisis_audit`` feeds the crisis log, and
+    ``crisis_resource_lookup_node`` writes ``inferred_location`` /
+    ``found_resources`` / ``resource_lookup_status`` for crisis-resource lookup
+    turns.
+    """
+
+    route: NotRequired[str]
+    turn_lifecycle: NotRequired[TurnLifecycleState]
+    memory_reference: NotRequired[MemoryReferenceState]
+    response_guidance: NotRequired[str]
+    crisis_audit: NotRequired[CrisisAuditState]
+    inferred_location: NotRequired[str]
+    found_resources: NotRequired[list[dict[str, str]]]
+    resource_lookup_status: NotRequired[str]
+
+
+class AgentGraphInputState(
+    AgentIdentityState,
+    AgentConversationState,
+    AgentPersistentState,
+    AgentGraphOutputState,
+    AgentPrivateState,
+):
+    """Top-level graph input schema produced by ``build_initial_state``.
+
+    The input schema includes the current user turn, clean defaults for
+    turn-scoped channels, and reducer-backed continuity groups. When a
+    checkpointer is active, LangGraph merges these inputs with the prior
+    checkpoint so persistent channels are preserved instead of reset.
+    """
+
+
+class AgentState(AgentGraphInputState):
+    """Full internal state schema used by graph nodes.
+
+    Top-level nodes, therapeutic response nodes, prompt builders, tests, and
+    evals use this type when reading or returning state-like dictionaries. It
+    is not a public API response shape; use ``AgentGraphOutputState`` and
+    ``agent.graph.state_to_output`` for caller-facing data.
+    """

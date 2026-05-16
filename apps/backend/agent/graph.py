@@ -1,33 +1,52 @@
-"""LangGraph workflow and entrypoints for the OpenCouch agent.
+"""Build the top-level LangGraph workflow for the OpenCouch agent.
 
-This module owns the entire agent execution surface in three layers:
+This module owns graph assembly, state conversion, and the one-shot execution
+path. Thread persistence, runtime-owned stores, and active-session recovery live
+in ``agent.persistence``.
 
-* **State plumbing** — :func:`build_initial_state` and :func:`state_to_output`
-  convert between the public ``AgentInput`` / ``AgentOutput`` contract and the
-  internal grouped :class:`AgentState` shape used by the graph nodes.
-* **Graph assembly** — :func:`build_agent_workflow` constructs and compiles the
-  LangGraph ``StateGraph`` that wires the full topology: load_memory →
-  crisis_gate → (crisis_response + crisis_log | therapeutic_subgraph) →
-  extract_semantic_facts → extract_procedural_rules → finalize_turn → END.
-  Crisis-gate routing is encoded directly in the node via
-  :class:`langgraph.types.Command`, not via a conditional edge. The
-  terminal ``finalize_turn`` node appends the assistant response to the
-  transcript so the next turn's ``get_history`` call sees both sides of
-  each exchange.
-* **Public entrypoints** — :func:`run_agent` is a one-shot convenience wrapper
-  that compiles a fresh workflow, invokes it with sensible defaults, and
-  returns a normalized ``AgentOutput``. For thread-persistent execution see
-  :class:`agent.persistence.PersistentAgentRuntime`.
+Responsibilities:
+    State plumbing converts between ``AgentInput`` / ``AgentOutput`` and the
+    split LangGraph schemas: ``AgentGraphInputState``, ``AgentState``, and
+    ``AgentGraphOutputState``.
+
+    Graph assembly compiles a safety-first ``StateGraph``. ``crisis_gate_node``
+    routes with ``Command`` to either the crisis branch or the therapeutic
+    branch. Both branches converge at ``finalize_turn_node`` and then END.
+
+    Memory extraction (semantic + procedural) is *not* a graph node. It runs
+    as a background task dispatched by the runtime layer
+    (:class:`agent.persistence.PersistentAgentRuntime`) after the graph
+    terminates, so the user-visible turn does not wait on extraction LLM
+    calls. The one-shot ``run_agent`` entrypoint runs extraction
+    synchronously after ``ainvoke`` so that callers without a runtime still
+    get the side effects they expect.
+
+    The public entrypoint, ``run_agent``, compiles a fresh workflow with
+    in-memory defaults for callers that do not need thread-persistent behavior.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import RetryPolicy
 
-from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.graph_constants import (
+    CRISIS_GATE_NODE,
+    CRISIS_LOG_NODE,
+    CRISIS_RESOURCE_LOOKUP_NODE,
+    CRISIS_RESPONSE_NODE,
+    FINALIZE_TURN_NODE,
+    GROUNDED_ANSWER_NODE,
+    LOAD_MEMORY_NODE,
+    MEMORY_CONTROL_NODE,
+    THERAPEUTIC_SUBGRAPH_NODE,
+    TURN_DISPATCH_NODE,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.models import (
@@ -35,133 +54,138 @@ from agent.models import (
     AgentOutput,
     CrisisAssessment,
     MessageRole,
-    ModeType,
-    ResponseKind,
+    ResponseCategory,
+)
+from agent.memory.extraction_service import (
+    extract_procedural_rules,
+    extract_semantic_facts,
 )
 from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.nodes.crisis_log import run_crisis_log_node
+from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.nodes.crisis_response import run_crisis_response_node
-from agent.nodes.extract_facts import run_extract_semantic_facts_node
-from agent.nodes.extract_procedural_rules import run_extract_procedural_rules_node
 from agent.nodes.finalize_turn import run_finalize_turn_node
+from agent.nodes.grounded_answer import run_grounded_answer_node
 from agent.nodes.load_memory import run_load_memory_node
+from agent.nodes.memory_control import run_memory_control_node
+from agent.nodes.turn_dispatch import run_turn_dispatch_node
+from agent.observability.tracing import apply_graph_tracing
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
+from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
 from agent.therapeutic.graph import build_therapeutic_subgraph
-from services.llm.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
 
 # ── State plumbing ───────────────────────────────────────────────────────────
 
 
-def build_initial_state(agent_input: AgentInput) -> AgentState:
-    """Convert external input into the internal state dictionary.
+def build_initial_state(
+    agent_input: AgentInput,
+    *,
+    prior_turn_count: int | None = None,
+    include_input_history: bool = False,
+) -> AgentGraphInputState:
+    """Convert public input into the internal graph state.
 
-    Transcript handling: the prior exchanges from ``agent_input.history``
-    are serialized into the transcript, and then the **current user
-    message** is appended so downstream nodes see a transcript ending
-    in the user's latest turn. The assistant side is appended later by
-    :func:`agent.nodes.finalize_turn.run_finalize_turn_node` once the
-    response is ready. This split (user side at init, assistant side
-    at finalize) keeps transcript ownership clear and avoids the
-    phantom-assistant-turn bug that the pre-refactor ``load_memory_node``
-    introduced by trying to append both halves during a single step.
+    Args:
+        agent_input: The external turn input to seed into graph state.
+        prior_turn_count: Optional persisted user-turn count from the prior
+            checkpoint. When omitted, the function derives the count from
+            ``agent_input.history``.
+        include_input_history: Whether to inline ``agent_input.history`` into
+            ``transcript`` for one-shot callers without a checkpointer.
 
-    Routing and response scaffolds are left as empty/placeholder values
-    that the dispatcher and response nodes overwrite. They used to carry
-    misleading labels like ``memory_bootstrap`` and
-    ``startup_memory_bootstrap``, which showed up in CLI diagnostics
-    every turn even though they were never real states the graph
-    actually occupied. The current labels describe the genuine
-    pre-dispatch state: routing unresolved, no response generated yet.
+    Returns:
+        An ``AgentGraphInputState`` seeded for the current turn.
     """
 
-    prior_transcript = [
-        message.model_dump(mode="json") for message in agent_input.history
-    ]
     current_user_turn = {
         "role": MessageRole.USER.value,
         "content": agent_input.message,
     }
-    transcript_with_user = [*prior_transcript, current_user_turn]
+    prior_history_turns = [
+        message.model_dump(mode="json") for message in agent_input.history
+    ]
+    visible_history = (
+        [*prior_history_turns, current_user_turn]
+        if include_input_history
+        else [current_user_turn]
+    )
 
-    state = AgentState(
+    if prior_turn_count is None:
+        prior_user_turns = sum(
+            1
+            for msg in agent_input.history
+            if (
+                msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            )
+            == "user"
+        )
+        turn_count = prior_user_turns + 1
+    else:
+        turn_count = prior_turn_count + 1
+
+    state = AgentGraphInputState(
         message=agent_input.message,
         channel=agent_input.channel,
         user_id=agent_input.user_id,
         session_id=agent_input.session_id,
         installed_skills=list(agent_input.installed_skills),
-        history=list(transcript_with_user),
-        transcript=list(transcript_with_user),
+        transcript=visible_history,
         working_memory=list(agent_input.working_memory),
-        memory={
-            "summary": "",
-            "active_concerns": [],
-            "open_loops": [],
-            "current_goal": None,
-            # v0.7 Stage C: procedural fields default to empty / recall off.
-            # load_memory_node overwrites these with the stored profile on
-            # every turn; the empty defaults here exist so that any code
-            # reading state["memory"] before load_memory_node has run sees
-            # a consistent shape rather than missing keys.
+        session_memory={"summary": ""},
+        procedural_profile={
             "procedural_rules": [],
             "proactive_recall_enabled": False,
         },
-        progress={
-            "intent": None,
-            "intent_source": None,
-            "stage": "opening",
-            "stage_source": "deterministic",
-            "stage_reason": "turn_start",
-            "turn_count": sum(
-                1 for turn in transcript_with_user if turn.get("role") == "user"
-            ),
+        session_progress={
+            "turn_count": turn_count,
             "is_guest": False,
         },
+        exercise_state={},
+        memory_control={},
         crisis=CrisisAssessment(),
-        routing={
-            "route": "pending",
-            "mode": "pending",
-            "mode_source": "graph_bootstrap",
-            "mode_type": ModeType.OPERATIONAL,
-            "active_modalities": [],
-            "semantic_signals": {},
-        },
-        response={
-            "guidance": "pending",
-            "kind": ResponseKind.THERAPEUTIC,
-            "text": "",
-            "should_persist_memory": False,
-        },
-        # v0.8 observability: start each turn with a fresh, empty
-        # diagnostics dict that nodes can write timings and write-
-        # counts into. Explicitly seeded (rather than left absent)
-        # so node code can use ``state["diagnostics"][key] = value``
-        # without a ``setdefault`` or KeyError check — the dict is
-        # always present during a real graph invocation.
+        therapeutic_approach=None,
+        response_style="pending",
+        session_action="none",
+        response_text="",
+        should_persist_memory=False,
         diagnostics={},
+        route="",
+        turn_lifecycle={"active_flow": "none", "action": "none"},
+        memory_reference={"mode": "none"},
+        response_guidance="",
+        crisis_audit={},
+        grounded_lookup={"query": "", "status": "not_attempted"},
+        inferred_location="",
+        found_resources=[],
+        resource_lookup_status="not_attempted",
     )
     return state
 
 
-def state_to_output(state: AgentState) -> AgentOutput:
-    """Normalize graph state into the public agent output contract."""
+def state_to_output(state: Mapping[str, Any]) -> AgentOutput:
+    """Normalize graph state into the public output contract.
 
-    response_state = state.get("response", {})
-    routing_state = state.get("routing", {})
+    Args:
+        state: The final graph state or graph output payload for the turn.
 
+    Returns:
+        An ``AgentOutput`` built from the relevant response and routing fields.
+    """
+
+    crisis = state.get("crisis") or CrisisAssessment()
+    response_type = (
+        ResponseCategory.CRISIS if crisis.level >= 2 else ResponseCategory.THERAPEUTIC
+    )
     return AgentOutput(
-        response_text=response_state.get("text", ""),
-        response_type=response_state.get("kind", ResponseKind.THERAPEUTIC),
-        crisis=state.get("crisis", CrisisAssessment()),
-        mode=routing_state.get("mode"),
-        mode_type=routing_state.get("mode_type"),
-        mode_source=routing_state.get("mode_source"),
-        should_persist_memory=response_state.get("should_persist_memory", False),
-        # v0.8 observability: pass the per-turn diagnostics dict
-        # through to the CLI / API caller. Empty dict when no node
-        # wrote anything (e.g., pre-observability-instrumentation
-        # tests that construct state manually).
+        response_text=state.get("response_text", ""),
+        response_type=response_type,
+        crisis=crisis,
+        response_style=state.get("response_style"),
+        therapeutic_approach=state.get("therapeutic_approach"),
+        session_action=state.get("session_action", "none"),
+        should_persist_memory=state.get("should_persist_memory", False),
         diagnostics=dict(state.get("diagnostics", {})),
     )
 
@@ -172,32 +196,34 @@ def state_to_output(state: AgentState) -> AgentOutput:
 def build_agent_workflow(
     *,
     checkpointer: Any | None = None,
-) -> CompiledStateGraph:
-    """Compile the LangGraph workflow.
+) -> CompiledStateGraph[
+    AgentState,
+    WorkflowContext,
+    AgentGraphInputState,
+    AgentGraphOutputState,
+]:
+    """Compile the top-level LangGraph workflow.
 
     Topology::
 
         START
-          → load_memory_node
           → crisis_gate_node  (Command routes to one of the branches)
-          ├─ crisis_response_node → crisis_log_node → extract_semantic_facts_node
-          │                                             → extract_procedural_rules_node
-          │                                             → finalize_turn_node → END
-          └─ therapeutic_subgraph → extract_semantic_facts_node
-                                      → extract_procedural_rules_node
-                                      → finalize_turn_node → END
+             ├─ crisis_resource_lookup_node → crisis_response_node
+             │  → crisis_log_node → finalize_turn_node
+             └─ turn_dispatch_node
+                ├─ memory_control_node → finalize_turn_node
+                ├─ grounded_answer_node → finalize_turn_node
+                └─ load_memory_node → therapeutic_subgraph
+                   → finalize_turn_node
 
-    The therapeutic subgraph is embedded as a single node compiled by
-    :func:`agent.therapeutic.graph.build_therapeutic_subgraph`. Its
-    internal structure (dispatcher + three mode nodes) is hidden from
-    the parent topology, keeping the top-level graph small and
-    inspectable in LangSmith.
+        finalize_turn_node → END
 
-    ``finalize_turn_node`` is a small terminal step that appends the
-    assistant response to the transcript before END. It runs on both
-    branches via the converge-before-END structure, and pairs with
-    :func:`build_initial_state` (which appends the user message) to
-    keep transcript ownership explicit and out of the response nodes.
+    Memory extraction (semantic facts + procedural rules) is run by the
+    *runtime*, not the graph. ``PersistentAgentRuntime`` schedules
+    extraction as a background ``asyncio.Task`` after each ``run_turn``;
+    ``run_agent`` runs it synchronously after ``ainvoke``. Either way, the
+    graph's responsibility ends at ``finalize_turn_node`` so the
+    user-visible turn does not wait on extractor LLM calls.
 
     Args:
         checkpointer: Optional LangGraph checkpointer for thread persistence.
@@ -206,51 +232,65 @@ def build_agent_workflow(
         A compiled LangGraph workflow ready to invoke.
     """
 
-    workflow = StateGraph(AgentState, context_schema=WorkflowContext)
+    workflow = StateGraph(
+        AgentState,
+        context_schema=WorkflowContext,
+        input_schema=AgentGraphInputState,
+        output_schema=AgentGraphOutputState,
+    )
 
-    # Build the therapeutic subgraph once per workflow compile. The
-    # subgraph shares AgentState with the parent, so no wrapper function
-    # is needed — LangGraph propagates state and runtime context
-    # automatically.
     therapeutic_subgraph = build_therapeutic_subgraph()
 
-    # Register all top-level nodes.
-    workflow.add_node("load_memory_node", run_load_memory_node)
-    workflow.add_node("crisis_gate_node", run_crisis_gate_node)
-    workflow.add_node("crisis_response_node", run_crisis_response_node)
-    workflow.add_node("crisis_log_node", run_crisis_log_node)
-    workflow.add_node("therapeutic_subgraph", therapeutic_subgraph)
-    workflow.add_node("extract_semantic_facts_node", run_extract_semantic_facts_node)
+    # Shared retry policy for the top-level I/O nodes.
+    _io_retry = RetryPolicy(max_attempts=2)
+
+    workflow.add_node(LOAD_MEMORY_NODE, run_load_memory_node, retry_policy=_io_retry)
+    workflow.add_node(CRISIS_GATE_NODE, run_crisis_gate_node, retry_policy=_io_retry)
     workflow.add_node(
-        "extract_procedural_rules_node", run_extract_procedural_rules_node
+        TURN_DISPATCH_NODE, run_turn_dispatch_node, retry_policy=_io_retry
     )
-    workflow.add_node("finalize_turn_node", run_finalize_turn_node)
+    workflow.add_node(
+        MEMORY_CONTROL_NODE,
+        run_memory_control_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        GROUNDED_ANSWER_NODE,
+        run_grounded_answer_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        CRISIS_RESOURCE_LOOKUP_NODE,
+        run_crisis_resource_lookup_node,
+        retry_policy=_io_retry,
+    )
+    workflow.add_node(
+        CRISIS_RESPONSE_NODE, run_crisis_response_node, retry_policy=_io_retry
+    )
+    workflow.add_node(CRISIS_LOG_NODE, run_crisis_log_node, retry_policy=_io_retry)
+    workflow.add_node(THERAPEUTIC_SUBGRAPH_NODE, therapeutic_subgraph)
+    workflow.add_node(FINALIZE_TURN_NODE, run_finalize_turn_node)
 
-    # Spine: entry → memory load → crisis gate (which Command-routes).
-    workflow.add_edge(START, "load_memory_node")
-    workflow.add_edge("load_memory_node", "crisis_gate_node")
+    # Safety-first entry.
+    workflow.add_edge(START, CRISIS_GATE_NODE)
 
-    # Crisis branch: crisis_response → crisis_log → extract_facts → finalize → END.
-    # The crisis_log_node runs ONLY on the crisis branch (it's the
-    # always-on safety audit trail, not a cross-cutting concern).
-    workflow.add_edge("crisis_response_node", "crisis_log_node")
-    workflow.add_edge("crisis_log_node", "extract_semantic_facts_node")
+    # Crisis branch skips memory load.
+    workflow.add_edge(CRISIS_RESOURCE_LOOKUP_NODE, CRISIS_RESPONSE_NODE)
+    workflow.add_edge(CRISIS_RESPONSE_NODE, CRISIS_LOG_NODE)
+    workflow.add_edge(CRISIS_LOG_NODE, FINALIZE_TURN_NODE)
 
-    # Therapeutic branch: subgraph → extract_facts → finalize → END.
-    workflow.add_edge("therapeutic_subgraph", "extract_semantic_facts_node")
+    workflow.add_edge(MEMORY_CONTROL_NODE, FINALIZE_TURN_NODE)
+    workflow.add_edge(GROUNDED_ANSWER_NODE, FINALIZE_TURN_NODE)
+    workflow.add_edge(LOAD_MEMORY_NODE, THERAPEUTIC_SUBGRAPH_NODE)
+    workflow.add_edge(THERAPEUTIC_SUBGRAPH_NODE, FINALIZE_TURN_NODE)
 
-    # Shared terminal: extract_facts → extract_procedural_rules → finalize_turn
-    # → END. Both branches converge through the two side-effect writer nodes
-    # (semantic first, procedural second) before transcript finalization. The
-    # serial ordering is deliberate: parallel fan-out wouldn't help because
-    # both nodes run AFTER the response is composed (they don't affect user
-    # latency), and serial ordering gives deterministic log interleaving so
-    # dogfood traces are easier to read. Procedural writing is new in v0.7.
-    workflow.add_edge("extract_semantic_facts_node", "extract_procedural_rules_node")
-    workflow.add_edge("extract_procedural_rules_node", "finalize_turn_node")
-    workflow.add_edge("finalize_turn_node", END)
+    # Memory extraction is dispatched by the runtime after the graph
+    # terminates — see ``TurnExtractionCoordinator.schedule`` and
+    # ``agent.graph.run_agent``.
+    workflow.add_edge(FINALIZE_TURN_NODE, END)
 
-    return workflow.compile(checkpointer=checkpointer)
+    compiled = workflow.compile(checkpointer=checkpointer)
+    return apply_graph_tracing(compiled)
 
 
 # ── Public entrypoints ───────────────────────────────────────────────────────
@@ -264,24 +304,13 @@ async def run_agent(
     crisis_log_backend: CrisisLogBackend | None = None,
     memory_mode: MemoryMode = MemoryMode.INCOGNITO,
 ) -> AgentOutput:
-    """Run the full compiled agent workflow end-to-end for one turn.
-
-    Convenience entrypoint for callers (CLI scripts, tests, evals) that just
-    want a one-shot ``AgentInput -> AgentOutput`` invocation. The compiled
-    workflow handles routing through ``load_memory -> crisis_gate ->
-    (crisis_response + crisis_log | therapeutic_subgraph) ->
-    extract_semantic_facts -> extract_procedural_rules -> finalize_turn
-    -> END``.
-
-    For thread-persistent execution with checkpointed state and a long-lived
-    compiled graph, use :class:`agent.persistence.PersistentAgentRuntime`
-    instead — that path reuses one workflow across many turns.
+    """Run one turn through a fresh compiled workflow.
 
     Args:
         agent_input: The user message and conversation context for this turn.
-        llm_client: Optional provider client used for LLM-backed gate and
-            response nodes. When ``None`` the graph falls back to deterministic
-            behavior.
+        llm_client: Provider client used for LLM-backed gate and response
+            nodes. Crisis classification, safe-turn dispatch, and therapeutic
+            response generation require a client.
         memory_store: Optional unified memory store. Defaults to a fresh
             in-memory :class:`OpenCouchMemoryStore`.
         crisis_log_backend: Optional crisis log backend. Defaults to
@@ -290,19 +319,104 @@ async def run_agent(
         memory_mode: Persistence tier for this turn. Defaults to
             :attr:`MemoryMode.INCOGNITO` so one-shot calls do not accidentally
             pollute persistent stores.
+
+    Returns:
+        The normalized ``AgentOutput`` for the completed turn.
     """
 
     workflow = build_agent_workflow()
     store = memory_store or OpenCouchMemoryStore()
     crisis_log = crisis_log_backend or InMemoryCrisisLogBackend()
 
+    initial_state = build_initial_state(agent_input, include_input_history=True)
     final_state = await workflow.ainvoke(
-        build_initial_state(agent_input),
-        context={
-            "llm_client": llm_client,
-            "memory_store": store,
-            "crisis_log_backend": crisis_log,
-            "memory_mode": memory_mode,
-        },
+        initial_state,
+        context=WorkflowContext(
+            llm_client=llm_client,
+            memory_store=store,
+            crisis_log_backend=crisis_log,
+            memory_mode=memory_mode,
+        ),
     )
+
+    # ``run_agent`` is the one-shot entrypoint used by tests and eval
+    # runners — it has no thread lock, no per-thread drain, and no
+    # ``__aexit__`` shutdown drain. Running extraction synchronously
+    # here preserves the contract that callers without a runtime see
+    # extraction's side effects before this function returns.
+    # Merge initial_state (carries ``message`` and other input-only fields
+    # that fall out of the public output schema) with final_state. The
+    # graph's output schema strips private channels including ``route``,
+    # so derive it from the public ``crisis`` assessment to preserve the
+    # crisis-skip path in extraction policy.
+    extraction_state = {**dict(initial_state), **dict(final_state)}
+    crisis_assessment = final_state.get("crisis")
+    if crisis_assessment is not None and getattr(crisis_assessment, "level", 0) >= 2:
+        extraction_state["route"] = "crisis"
+    extraction_diagnostics = await _run_extraction_synchronously(
+        extraction_state,
+        llm_client=llm_client,
+        memory_store=store,
+        memory_mode=memory_mode,
+    )
+    if extraction_diagnostics:
+        merged_diag = {
+            **dict(final_state.get("diagnostics", {})),
+            **extraction_diagnostics,
+        }
+        if isinstance(final_state, dict):
+            final_state = {**final_state, "diagnostics": merged_diag}
+        else:
+            final_state = {**dict(final_state), "diagnostics": merged_diag}
     return state_to_output(final_state)
+
+
+async def _run_extraction_synchronously(
+    state: Mapping[str, Any],
+    *,
+    llm_client: BaseLLMClient | None,
+    memory_store: MemoryStore,
+    memory_mode: MemoryMode,
+) -> dict[str, Any]:
+    """Run both extractors sequentially and merge their diagnostics.
+
+    Used by ``run_agent`` (no runtime). The runtime path
+    (:meth:`PersistentAgentRuntime.run_turn`) dispatches extraction as a
+    background task instead — this function exists so that one-shot
+    callers without a runtime still see extraction side effects before
+    they receive their ``AgentOutput``.
+
+    Args:
+        state: The terminal graph state for the turn.
+        llm_client: Optional control-plane LLM. ``None`` skips extraction.
+        memory_store: Memory store to receive writes.
+        memory_mode: Persistence tier for the turn.
+
+    Returns:
+        Merged diagnostics dict from both extractors. Empty when
+        extraction was skipped (e.g., ``MemoryMode.INCOGNITO``).
+    """
+
+    import asyncio
+
+    semantic_outcome, procedural_outcome = await asyncio.gather(
+        extract_semantic_facts(
+            state,  # type: ignore[arg-type]
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+            embedding_provider=None,
+            session_buffer=None,
+        ),
+        extract_procedural_rules(
+            state,  # type: ignore[arg-type]
+            llm_client=llm_client,
+            memory_store=memory_store,
+            memory_mode=memory_mode,
+            session_buffer=None,
+        ),
+    )
+    return {
+        **semantic_outcome.as_diagnostics(),
+        **procedural_outcome.as_diagnostics(),
+    }

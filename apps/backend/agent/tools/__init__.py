@@ -1,5 +1,5 @@
 """Tool helpers for agent nodes."""
 
-from agent.tools.web_search import find_local_crisis_resources
+from agent.tools.grounded_search import answer_factual_lookup, find_crisis_resources
 
-__all__ = ["find_local_crisis_resources"]
+__all__ = ["answer_factual_lookup", "find_crisis_resources"]

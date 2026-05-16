@@ -1,0 +1,112 @@
+---
+title: Architecture
+sidebar_position: 1
+---
+
+import TurnPipeline from '@site/src/components/TurnPipeline';
+import PromptLayersVisual from '@site/src/components/PromptLayers';
+
+# Architecture
+
+Single Python backend. Explicit LangGraph text-agent graph. Three memory
+layers backed by Postgres-first durable persistence with a legacy SQLite
+fallback. Shared runtime for CLI, API, web text, and Telegram; separate
+LiveKit runtime for voice.
+
+---
+
+## Turn pipeline
+
+:::tip Safety-first ordering
+The crisis gate is the **first node** in the graph. Memory only
+loads on the therapeutic branch — and only after two operational
+gates (memory commands, factual lookups) have had a chance to
+short-circuit the turn. If a message triggers a crisis response,
+memory retrieval and all operational gates are skipped entirely.
+:::
+
+<TurnPipeline />
+
+---
+
+## Key decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| Execution | LangGraph `StateGraph` with split input/internal/output schemas | Explicit branches, deterministic ordering, checkpoint persistence; narrow output schema avoids reducer double-counting on subgraph completion |
+| LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface; `WorkflowContext` exposes both control LLM and optional response LLM |
+| Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` first, Gemini `gemini-embedding-001` fallback; null provider when no API key |
+| Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
+| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres for durable local/runtime paths; SQLite legacy fallback |
+| Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
+| Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime via `compose_sources()` |
+| Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
+| Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics + per-channel session-state merging (exercise, progress, procedural profile) |
+| Audit separation | `agent/audit/` package | Crisis log + session feedback live outside prompt memory; cannot be disabled by user recall toggles |
+| Observability | Opik + local diagnostics | Opik for primary trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
+| Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records, opaque (SHA-256) session id |
+
+---
+
+## Persistence
+
+:::info Durable persistence backends
+Dockerized Postgres is the recommended local/runtime persistence path for
+thread checkpoints, active-session state, memory, crisis log, session
+feedback, and voice finalization status. Legacy SQLite files under `.store/`
+remain available for compatibility fallback and focused migration tests.
+:::
+
+| Store | Primary backend | Legacy fallback | What it persists |
+|---|---|---|---|
+| Thread checkpoints | Postgres checkpointer | `threads.sqlite3` | Conversation state snapshots |
+| Memory | `PostgresMemoryStore` | `SqliteMemoryStore` | Semantic facts, episodic arcs, procedural profiles |
+| Crisis log | `PostgresCrisisLogBackend` | `SqliteCrisisLogBackend` | Crisis event audit trail |
+| Session feedback | `PostgresSessionFeedbackBackend` | `SqliteSessionFeedbackBackend` | End-of-session thumbs ratings |
+
+---
+
+## Prompt layers
+
+<PromptLayersVisual />
+
+See [Prompt Assembly](/docs/agent/prompt-assembly) for the full
+composition logic.
+
+---
+
+## Package layout
+
+| Package | Owns |
+|---|---|
+| `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
+| `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `turn_dispatch`, `memory_control`, `grounded_answer`, `load_memory`, etc.) |
+| `agent/therapeutic/` | Subgraph: LLM-primary dispatcher, shared therapeutic response node, guided-exercise node, exercise registry/state machine, and prompt builders |
+| `agent/memory/` | Store protocol, Postgres/SQLite backends, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
+| `agent/audit/` | Always-on safety records — crisis log and session feedback with in-memory, Postgres, and SQLite backends |
+| `agent/gates/safety/` | LLM-only crisis classification, prompts, and truth-table normalization |
+| `agent/gates/memory_control/` | User-facing memory-control actions and operations |
+| `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
+| `agent/tools/` | `find_crisis_resources` (grounded search for hotlines), `answer_factual_lookup` (factual search grounding) |
+| `llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
+| `opencouch_cli/` | Rich-based interactive CLI |
+| `channels/` | Standalone channel adapters, currently Telegram DM polling |
+| `agent/voice/` | LiveKit-Agents voice runtime — worker process, agent handoffs, bounded tasks, room transport, and transcript finalization |
+| `api/` | FastAPI routes (chat, threads, memory, voice token/finalization) |
+| `tests/` | Pytest suites for nodes, memory, retrieval, dispatcher, persistence |
+
+---
+
+## Quick links
+
+| Topic | Page |
+|---|---|
+| Agent graph | [Graph](/docs/agent/graph) |
+| Node catalog | [Nodes](/docs/agent/nodes) |
+| Tools | [Tools](/docs/agent/tools) |
+| State schema | [State](/docs/agent/state) |
+| Memory | [Memory](/docs/memory/overview) |
+| Crisis gate | [Crisis Gate](/docs/philosophy/crisis-gate) |
+| Runtime | [Runtime](/docs/backend/runtime) |
+| Observability | [Observability](/docs/observability/overview) |
+| Privacy | [Privacy](/docs/memory/privacy) |

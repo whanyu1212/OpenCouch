@@ -1,0 +1,427 @@
+"""Service for processing and persisting extracted memories.
+
+This module owns memory policy, deduplication, reconciliation, and store writes
+for semantic and procedural candidates produced during turn-level extraction or
+session-end promotion.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.models import (
+    EntityRef,
+    MemoryWrite,
+    ProceduralRule,
+    ProceduralRuleDraft,
+    SemanticFact,
+)
+from agent.memory.policy.candidates import (
+    SessionMemoryBuffer,
+    build_procedural_candidate,
+    build_semantic_candidate,
+)
+from agent.memory.policy.write import (
+    decide_procedural_candidate_llm_primary,
+    decide_semantic_candidate_llm_primary,
+)
+from agent.memory.procedural_profile import (
+    aupsert_procedural_rule,
+    build_procedural_rule,
+)
+from agent.memory.semantic_writes import (
+    BatchWriteItem,
+    apply_semantic_writes_batch,
+)
+from agent.memory.store import MemoryStore
+
+logger = logging.getLogger(__name__)
+
+
+def _canonicalize_semantic_owner(write: MemoryWrite, *, owner_id: str) -> MemoryWrite:
+    """Normalize extractor user-subject aliases to the concrete memory owner.
+
+    Args:
+        write (MemoryWrite): Extracted semantic fact candidate.
+        owner_id (str): Concrete memory owner namespace for the current turn.
+
+    Returns:
+        MemoryWrite: Candidate with the ``User`` subject bound to ``owner_id``.
+    """
+
+    if write.subject.type != "User" or write.subject.identifier == owner_id:
+        return write
+    return write.model_copy(
+        update={"subject": EntityRef(type="User", identifier=owner_id)}
+    )
+
+
+@dataclass(frozen=True)
+class SemanticProcessingResult:
+    """Summary of semantic candidate processing for telemetry and diagnostics."""
+
+    written: int
+    bumped: int
+    candidates: int
+    commit_now_candidates: int
+    session_end_holds: int
+    repeat_required: int
+    policy_drops: int
+    policy_errors: int
+    write_skips: int
+    reason: str
+    written_items: list[SemanticFact] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProceduralProcessingResult:
+    """Summary of procedural candidate processing for telemetry and diagnostics."""
+
+    written: int
+    candidates: int
+    commit_now_candidates: int
+    session_end_holds: int
+    policy_drops: int
+    policy_errors: int
+    write_skips: int
+    reason: str
+    written_items: list[ProceduralRule] = field(default_factory=list)
+
+
+class TurnWriteService:
+    """Process extracted memory candidates and persist approved writes."""
+
+    async def process_semantic_facts(
+        self,
+        *,
+        writes: list[MemoryWrite],
+        message: str,
+        reason: str,
+        owner_id: str,
+        store: MemoryStore,
+        llm_client: Any,
+        embedding_provider: EmbeddingProvider | None = None,
+        session_buffer: SessionMemoryBuffer | None = None,
+    ) -> SemanticProcessingResult:
+        """Apply policy, deduplication, reconciliation, and writes to facts.
+
+        Args:
+            writes: Candidate fact writes from the extractor.
+            message: Current user message used for candidate context.
+            reason: Extractor reason to preserve in diagnostics.
+            owner_id: Owner whose memory namespace receives writes.
+            store: Memory store for reads and writes.
+            llm_client: Control LLM used by policy/reconciliation helpers.
+            embedding_provider: Optional document embedding provider.
+            session_buffer: Optional session-end candidate buffer.
+
+        Returns:
+            Processing counters for node diagnostics.
+        """
+
+        immediate_candidates: list[tuple[Any, Any]] = []
+        session_end_holds = 0
+        repeat_required = 0
+        policy_drops = 0
+
+        # Build candidates synchronously, then fan out the per-candidate
+        # policy decisions in parallel. The decision functions are pure
+        # async with no shared state and no ordering dependency, so
+        # ``gather`` is safe; policy-classifier failures are allowed to
+        # surface so transient provider failures do not silently become
+        # deterministic memory writes.
+        normalized_writes = [
+            _canonicalize_semantic_owner(write, owner_id=owner_id) for write in writes
+        ]
+        candidates = [
+            build_semantic_candidate(write, message=message)
+            for write in normalized_writes
+        ]
+        try:
+            decisions = await asyncio.gather(
+                *(
+                    decide_semantic_candidate_llm_primary(
+                        candidate,
+                        llm_client=llm_client,
+                    )
+                    for candidate in candidates
+                )
+            )
+        except Exception:
+            logger.warning(
+                "memory_service: semantic write-policy failed; skipping all "
+                "%d semantic candidates for this turn.",
+                len(candidates),
+                exc_info=True,
+            )
+            return SemanticProcessingResult(
+                written=0,
+                bumped=0,
+                candidates=len(writes),
+                commit_now_candidates=0,
+                session_end_holds=0,
+                repeat_required=0,
+                policy_drops=0,
+                policy_errors=len(writes),
+                write_skips=0,
+                reason="skipped: semantic policy error",
+                written_items=[],
+            )
+
+        for candidate, decision in zip(candidates, decisions):
+            if decision.action == "commit_now":
+                immediate_candidates.append((candidate, decision))
+            elif decision.action == "commit_at_session_end":
+                session_end_holds += 1
+                if session_buffer is not None:
+                    session_buffer.hold_semantic(candidate, decision)
+            elif decision.action == "require_repetition":
+                repeat_required += 1
+                if session_buffer is not None:
+                    session_buffer.hold_semantic(candidate, decision)
+            else:
+                policy_drops += 1
+
+        if not immediate_candidates:
+            logger.info(
+                "memory_service: semantic policy held all %d facts "
+                "(session_end=%d, repetition=%d, dropped=%d)",
+                len(writes),
+                session_end_holds,
+                repeat_required,
+                policy_drops,
+            )
+            return SemanticProcessingResult(
+                written=0,
+                bumped=0,
+                candidates=len(writes),
+                commit_now_candidates=0,
+                session_end_holds=session_end_holds,
+                repeat_required=repeat_required,
+                policy_drops=policy_drops,
+                policy_errors=0,
+                write_skips=0,
+                reason=reason,
+                written_items=[],
+            )
+
+        batch_items = [
+            BatchWriteItem(
+                candidate=candidate,
+                write_timing="immediate",
+                write_reason=decision.reason,
+                policy_version=decision.policy_version,
+            )
+            for candidate, decision in immediate_candidates
+        ]
+        batch_outcome = await apply_semantic_writes_batch(
+            store,
+            owner_id=owner_id,
+            items=batch_items,
+            llm_client=llm_client,
+            embedding_provider=embedding_provider,
+            log_context="memory_service",
+        )
+
+        if batch_outcome.fetch_failed:
+            return SemanticProcessingResult(
+                written=0,
+                bumped=0,
+                candidates=len(writes),
+                commit_now_candidates=len(immediate_candidates),
+                session_end_holds=session_end_holds,
+                repeat_required=repeat_required,
+                policy_drops=policy_drops,
+                policy_errors=0,
+                write_skips=batch_outcome.skipped,
+                reason="skipped: dedup fetch failed",
+                written_items=[],
+            )
+
+        logger.info(
+            "memory_service: semantic turn complete — %d written, %d bumped, "
+            "%d immediate, %d held_for_session, %d repeat_required, %d dropped",
+            batch_outcome.written,
+            batch_outcome.bumped,
+            len(immediate_candidates),
+            session_end_holds,
+            repeat_required,
+            policy_drops,
+        )
+        return SemanticProcessingResult(
+            written=batch_outcome.written,
+            bumped=batch_outcome.bumped,
+            candidates=len(writes),
+            commit_now_candidates=len(immediate_candidates),
+            session_end_holds=session_end_holds,
+            repeat_required=repeat_required,
+            policy_drops=policy_drops,
+            policy_errors=0,
+            write_skips=batch_outcome.skipped,
+            reason=reason,
+            written_items=batch_outcome.written_items,
+        )
+
+    async def process_procedural_rules(
+        self,
+        *,
+        drafts: list[ProceduralRuleDraft],
+        message: str,
+        reason: str,
+        session_id: str,
+        turn_index: int,
+        owner_id: str,
+        store: MemoryStore,
+        llm_client: Any,
+        session_buffer: SessionMemoryBuffer | None = None,
+    ) -> ProceduralProcessingResult:
+        """Apply policy and profile upserts to procedural rule drafts.
+
+        Args:
+            drafts: Candidate rule drafts returned by the extractor.
+            message: Current user message used for candidate context.
+            reason: Extractor reason to preserve in diagnostics.
+            session_id: Session id for candidate provenance.
+            turn_index: Zero-based turn index for candidate provenance.
+            owner_id: Owner whose procedural profile receives writes.
+            store: Memory store for profile writes.
+            llm_client: Control LLM used by policy/reconciliation helpers.
+            session_buffer: Optional session-end candidate buffer.
+
+        Returns:
+            Processing counters for node diagnostics.
+        """
+
+        immediate_candidates: list[tuple[Any, Any]] = []
+        session_end_holds = 0
+        policy_drops = 0
+
+        # Build candidates synchronously, then fan out the per-candidate
+        # policy decisions in parallel — same shape as
+        # :meth:`process_semantic_facts`.
+        candidates = [
+            build_procedural_candidate(
+                draft,
+                message=message,
+                session_id=session_id,
+                turn_index=turn_index,
+            )
+            for draft in drafts
+        ]
+        try:
+            decisions = await asyncio.gather(
+                *(
+                    decide_procedural_candidate_llm_primary(
+                        candidate,
+                        llm_client=llm_client,
+                    )
+                    for candidate in candidates
+                )
+            )
+        except Exception:
+            logger.warning(
+                "memory_service: procedural write-policy failed; skipping all "
+                "%d procedural candidates for this turn.",
+                len(candidates),
+                exc_info=True,
+            )
+            return ProceduralProcessingResult(
+                written=0,
+                candidates=len(drafts),
+                commit_now_candidates=0,
+                session_end_holds=0,
+                policy_drops=0,
+                policy_errors=len(drafts),
+                write_skips=0,
+                reason="skipped: procedural policy error",
+                written_items=[],
+            )
+
+        for candidate, decision in zip(candidates, decisions):
+            if decision.action == "commit_now":
+                immediate_candidates.append((candidate, decision))
+            elif decision.action == "commit_at_session_end":
+                session_end_holds += 1
+                if session_buffer is not None:
+                    session_buffer.hold_procedural(candidate, decision)
+            else:
+                policy_drops += 1
+
+        if not immediate_candidates:
+            logger.info(
+                "memory_service: procedural policy held all %d rules "
+                "(session_end=%d, dropped=%d)",
+                len(drafts),
+                session_end_holds,
+                policy_drops,
+            )
+            return ProceduralProcessingResult(
+                written=0,
+                candidates=len(drafts),
+                commit_now_candidates=0,
+                session_end_holds=session_end_holds,
+                policy_drops=policy_drops,
+                policy_errors=0,
+                write_skips=0,
+                reason=reason,
+                written_items=[],
+            )
+
+        written = 0
+        write_skips = 0
+        written_items: list[ProceduralRule] = []
+        for candidate, decision in immediate_candidates:
+            draft = candidate.payload
+            try:
+                rule = build_procedural_rule(
+                    rule_text=draft.rule,
+                    evidence=draft.evidence,
+                    confidence=draft.confidence,
+                    source="explicit_user",
+                    write_timing="immediate",
+                    write_reason=decision.reason,
+                    policy_version=decision.policy_version,
+                )
+                upsert = await aupsert_procedural_rule(
+                    store,
+                    user_id=owner_id,
+                    rule=rule,
+                    llm_client=llm_client,
+                )
+                if upsert.action != "skipped":
+                    written += 1
+                    written_items.append(rule)
+                else:
+                    write_skips += 1
+            except Exception:
+                logger.warning(
+                    "memory_service: failed to write procedural draft %r; "
+                    "continuing with other drafts.",
+                    draft.rule[:60],
+                    exc_info=True,
+                )
+                write_skips += 1
+
+        logger.info(
+            "memory_service: procedural turn complete — %d written, %d immediate, "
+            "%d held_for_session, %d dropped",
+            written,
+            len(immediate_candidates),
+            session_end_holds,
+            policy_drops,
+        )
+        return ProceduralProcessingResult(
+            written=written,
+            candidates=len(drafts),
+            commit_now_candidates=len(immediate_candidates),
+            session_end_holds=session_end_holds,
+            policy_drops=policy_drops,
+            policy_errors=0,
+            write_skips=write_skips,
+            reason=reason,
+            written_items=written_items,
+        )

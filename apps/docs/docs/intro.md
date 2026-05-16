@@ -3,190 +3,154 @@ sidebar_position: 1
 title: Overview
 ---
 
+import FlowVisualizer from '@site/src/components/FlowVisualizer';
+import MemoryLayers from '@site/src/components/MemoryLayers';
+
 # OpenCouch
 
-OpenCouch is an open-source mental health support agent built on
-[LangGraph](https://langchain-ai.github.io/langgraph/) with three
-[CoALA](https://arxiv.org/abs/2309.02427)-inspired memory layers
-(semantic facts, episodic session arcs, procedural style rules), an
-always-on crisis safety gate, and six therapeutic response modes. It
-is designed to be private by default, safe by design, and deployable
-across hosted and self-hosted modes.
+A mental health support agent that **remembers you across sessions**,
+**checks for safety before every response**, and **adapts its style
+to how you prefer to be supported**.
 
-> **What is CoALA?** Cognitive Architectures for Language Agents
-> (Princeton, 2023) is a framework proposing that LLM agents should
-> organize memory into three distinct types — semantic (facts about
-> the world), episodic (narrative records of past experiences), and
-> procedural (learned rules about how to behave) — mirroring how
-> human cognition works. Most LLM agents only implement semantic
-> memory (a vector store of facts); OpenCouch implements all three,
-> which is what makes cross-session personalization and style
-> adaptation possible. See the
-> [Memory Layers](/docs/memory/overview) page for how each layer
-> works in practice.
+:::note Active development
+OpenCouch moves quickly. These docs are kept close to the code, but
+some pages may lag briefly after larger refactors or dogfood changes.
+:::
 
-**What it is:**
-
-- A mental health support product that remembers you across sessions
-- A LangGraph-based agent with explicit graph execution (not a
-  prompt-and-pray wrapper)
-- A development prototype with 476+ tests, 5 eval harnesses, and
-  CLI-first dogfood tooling
-
-**What it is not:**
-
-- Not a licensed therapist
-- Not a diagnostic tool
-- Not an emergency service
-- Not yet suitable for real-user support (prompts have not been
-  clinically reviewed)
+---
 
 ## How a turn flows
 
-Every user message passes through the same pipeline. Safety runs
-first, memory loads before response generation, and extraction runs
-after — so the agent always has context and never skips safety.
+Every message passes through the same pipeline. Safety runs first.
+Then one LLM-primary turn dispatcher short-circuits the turn for
+explicit memory commands or factual lookup requests; everything else
+loads memory and routes through the therapeutic subgraph. After the
+reply is sealed, the runtime schedules off-graph extraction work to
+evaluate what, if anything, is worth remembering.
 
-```mermaid
-graph LR
-    A["User message"] --> B["Load Memory"]
-    B --> C{"Crisis Gate"}
-    C -->|safe| D["Therapeutic\nSubgraph"]
-    C -->|crisis| E["Crisis\nResponse"]
-    D --> F["Extract Facts\n& Rules"]
-    E --> G["Crisis Log"]
-    G --> F
-    F --> H["Finalize Turn"]
+<FlowVisualizer />
 
-    style C fill:#e46e62,stroke:#b84a40,color:#fff
-    style E fill:#e46e62,stroke:#b84a40,color:#fff
-    style D fill:#65b8af,stroke:#3d9990,color:#fff
-    style B fill:#d78b5f,stroke:#b06d3f,color:#fff
-    style F fill:#d78b5f,stroke:#b06d3f,color:#fff
-```
+The therapeutic path can end in one of four ways:
 
-## Three memory layers
+- **Memory command** (`"forget that"`, `"recall off"`,
+  `"remember that I prefer…"`) → `memory_control_node` executes the
+  action selected by `turn_dispatch_node` and replies operationally.
+  No memory retrieval and no therapeutic response generation.
+- **Factual lookup** (`"verify…"`, `"look up the latest…"`) →
+  `grounded_answer_node` runs a search-grounded LLM call and
+  replies with sources. No therapeutic framing.
+- **Therapeutic turn** (the default) → memory loads, the dispatcher
+  picks one of seven response styles plus a therapeutic approach, and
+  the matching response node generates the reply.
+- **Crisis turn** (when `crisis_gate_node` raises level ≥ 2) →
+  region-aware hotline lookup, crisis reply, audit log. Memory is
+  never loaded on this branch.
 
-The agent remembers you across sessions through three distinct
-memory types, each with its own write trigger and retrieval
-strategy.
+[See the full graph →](/docs/agent/graph)
 
-```mermaid
-graph TB
-    subgraph Semantic["Semantic Memory"]
-        direction LR
-        S1["KNOWS Sarah"]
-        S2["USES fluoxetine"]
-        S3["WORRIES_ABOUT work"]
-    end
+---
 
-    subgraph Episodic["Episodic Memory"]
-        direction LR
-        E1["Session 1: talked about\npanic attacks, did grounding"]
-        E2["Session 2: discussed\nwork stress and sleep"]
-    end
+## How memory works
 
-    subgraph Procedural["Procedural Memory"]
-        direction LR
-        P1["Don't suggest meditation"]
-        P2["Prefer shorter responses"]
-    end
+Three memory layers give the agent context that survives across
+sessions — retrieved per turn, loaded into prompts on demand.
 
-    Semantic -->|"retrieved per turn\nvia hybrid search"| WM["Working Memory\n(prompt context)"]
-    Episodic -->|"catch-up on first turn\n+ query matches"| WM
-    Procedural -->|"always loaded\n(style directives)"| SP["System Prompt\nSuffix"]
+<MemoryLayers />
 
-    WM --> R["Response\nGeneration"]
-    SP --> R
+Inspired by [CoALA](https://arxiv.org/abs/2309.02427) (Cognitive
+Architectures for Language Agents, Princeton 2023). Most LLM agents
+only implement semantic memory; OpenCouch implements all three,
+which is what makes cross-session personalization possible.
+[Learn more →](/docs/memory/overview)
 
-    style Semantic fill:#3d9990,stroke:#2d7a74,color:#fff
-    style Episodic fill:#d78b5f,stroke:#b06d3f,color:#fff
-    style Procedural fill:#65b8af,stroke:#3d9990,color:#fff
-    style WM fill:#f5f3ea,stroke:#838881,color:#143432
-    style SP fill:#f5f3ea,stroke:#838881,color:#143432
-    style R fill:#4a90d9,stroke:#3570b0,color:#fff
-```
+---
 
-## Capabilities
+## Three pillars
 
 <div className="doc-card-grid">
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <strong>Crisis Safety</strong>
+      <strong>Safety first</strong>
     </div>
-    <p>Always-on hybrid regex + LLM crisis gate with 42-case eval dataset and persistent audit log.</p>
+    <p>LLM-only crisis gate runs before anything else, with local truth-table normalization for levels 0-3. Region-aware hotline lookup overlays verified resources onto crisis replies. Always-on audit log even in incognito.</p>
   </div>
 
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-      <strong>Therapeutic Modes</strong>
+      <strong>Adaptive response</strong>
     </div>
-    <p>Six response modes: supportive, reflective, clarifying, psychoeducation, guided exercise, closing.</p>
-  </div>
-
-  <div className="doc-card">
-    <div className="doc-card__header">
-      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-      <strong>Semantic Memory</strong>
-    </div>
-    <p>LLM-extracted facts from user turns with hot-path dedup and hybrid retrieval.</p>
+    <p>Seven response styles — supportive, reflective, clarifying, psychoeducation, technique, guided exercise, closing — paired with a therapeutic approach (CBT, ACT, DBT skills, MI, IPT, grief, PFA) by an LLM-primary dispatcher per turn. A guided exercise pins its starting approach in <code>exercise_state.exercise_therapeutic_approach</code> so guidance resumes without approach drift after side-turns.</p>
   </div>
 
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-      <strong>Episodic Memory</strong>
+      <strong>Persistent memory</strong>
     </div>
-    <p>Session-end summarization with cross-session catch-up on first turn.</p>
+    <p>Semantic facts, episodic session arcs, and procedural style rules — extracted with structured LLM output, classified by LLM-primary write policy with hard local safety/storage guards, and retrieved via hybrid search with Reciprocal Rank Fusion.</p>
   </div>
+</div>
 
-  <div className="doc-card">
-    <div className="doc-card__header">
-      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-      <strong>Procedural Memory</strong>
-    </div>
-    <p>User style rules ("don't suggest meditation"), proactive recall toggle.</p>
-  </div>
+---
 
+## Under the hood
+
+<div className="doc-card-grid">
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-      <strong>Durable Persistence</strong>
+      <strong>Durable persistence</strong>
     </div>
-    <p>SQLite-backed storage for all three memory layers and the crisis log.</p>
-  </div>
-
-  <div className="doc-card">
-    <div className="doc-card__header">
-      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-      <strong>Hybrid Retrieval</strong>
-    </div>
-    <p>Embedding similarity + token-recall fused via Reciprocal Rank Fusion.</p>
+    <p>Postgres-first durable storage for threads, memory, crisis log, and session feedback, with legacy SQLite fallback for compatibility. Audit stores live in their own package (<code>agent/audit/</code>) so they're never touched by user-facing memory recall toggles.</p>
   </div>
 
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-      <strong>Privacy Controls</strong>
+      <strong>Privacy controls</strong>
     </div>
-    <p>Per-record deletion, namespace-wide wipe, crisis log retention purge, recall toggle.</p>
+    <p>Memory commands are first-class graph traffic — natural-language <code>list</code>, <code>forget</code>, <code>recall on/off</code>, and explicit-preference saves all run through <code>memory_control_node</code>. Destructive deletes carry a pending action across turns for confirm/cancel.</p>
   </div>
 
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      <strong>CLI Observability</strong>
+      <strong>Observability</strong>
     </div>
-    <p>Per-turn stage timings, raw state dump, transcript mode annotations.</p>
+    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions, and runtime side-effect counters. Graph nodes and runtime services merge diagnostics through the same structured channel; Opik captures the full trace.</p>
   </div>
 
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      <strong>Cost Optimization</strong>
+      <strong>Cost &amp; latency levers</strong>
     </div>
-    <p>Pre-extractor small-talk gate skips LLM calls on greetings and acknowledgments.</p>
+    <p>Pre-extractor small-talk checks skip most acknowledgment turns. The runtime schedules memory extraction after the graph reaches <code>END</code>, so memory writes do not block the visible reply. Stream emits <code>response_ready</code> as soon as <code>finalize_turn_node</code> seals the reply.</p>
+  </div>
+
+  <div className="doc-card">
+    <div className="doc-card__header">
+      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+      <strong>Voice chat (LiveKit)</strong>
+    </div>
+    <p>LiveKit-native worker under <code>agent/voice/</code>. Browser joins a LiveKit room over WebRTC; the worker dispatches into the room, runs <code>TherapeuticAgent</code> with handoffs to <code>CrisisAgent</code> and bounded <code>VoiceExerciseTask</code>s. Three-phase memory (startup load → mid-session retrieval → shutdown transcript replay).</p>
+  </div>
+
+  <div className="doc-card">
+    <div className="doc-card__header">
+      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <strong>Session continuity</strong>
+    </div>
+    <p>20-minute inactivity sweeper auto-finalizes idle sessions through the same end-session path as <code>/end</code>. Held memory candidates persist across restarts via the active-session backend — delayed promotion does not silently disappear.</p>
   </div>
 </div>
+
+---
+
+## Important to know
+
+OpenCouch is a **research and development prototype** — not a
+substitute for professional mental health care. It is not a licensed
+therapist, a diagnostic tool, or an emergency service.

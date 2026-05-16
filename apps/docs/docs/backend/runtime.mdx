@@ -1,50 +1,204 @@
 ---
 title: Runtime & Persistence
+sidebar_position: 2
 ---
 
+import TerminalWindow from '@site/src/components/TerminalWindow';
 import RuntimeLayers from '@site/src/components/RuntimeLayers';
-import ThreadLifecycle from '@site/src/components/ThreadLifecycle';
 
 # Runtime & Persistence
 
-The agent has two entry points that share the same core pipeline. The stateless layer is for simple request/response. The persistent layer adds thread-aware checkpointing so conversations survive across sessions.
+Two text-runtime layers, one pipeline. The stateless layer is for
+single-turn requests. The persistent layer adds thread-aware
+checkpointing, candidate buffering, an inactivity sweeper, and the
+shared session-end path (`/end`, timeout, shutdown, API end-session).
 
-## Two layers, one pipeline
+---
 
-Both layers run the same nodes in the same order. The difference is what happens between turns.
+## Two layers
 
 <RuntimeLayers />
 
-The stateless path (`run_agent`) is a single async function — the caller passes in history and gets back a response. The persistent path (`PersistentAgentRuntime`) manages a SQLite-backed checkpoint store. It loads the previous state, runs the turn, and saves the result automatically.
+:::tip The difference is between turns, not within a turn
+Both layers run identical graph nodes in identical order. The
+persistent layer saves state through the configured backend after each
+turn and restores it via reducers on the next.
+:::
 
-The runtime now wires three collaborators at startup: an LLM client, an `EmbeddingProvider` (used for semantic retrieval in the memory layer), and a memory store. All three are injected into the graph so nodes never construct their own clients.
+:::note Voice has its own finalization path
+The LiveKit voice runtime (`agent/voice/agent.py`) lazy-creates
+**one shared `PersistentAgentRuntime` per worker process**, so it
+shares the configured memory store, crisis log, and embedding provider
+with text mode. But voice does **not** drive turns
+through `run_turn` / `run_turn_stream`. On disconnect it
+serializes the room transcript and hands it to
+`runtime.end_transcript_session(...)` — a separate path from
+text-mode `/end`. The 20-min inactivity sweeper and session-end
+candidate buffering described below are therefore text-only;
+voice has its own shutdown persistence path.
+See [Voice (LiveKit)](/docs/voice) for the full picture.
+:::
+
+:::note Telegram adds an optional session registry
+The Telegram gateway uses the persistent text runtime. When thread
+rotation is enabled, the channel also owns a Telegram-specific session
+registry that maps one chat to rotating runtime thread ids, recovers
+orphan rows on startup, and reclaims closed checkpoints after a grace
+period. See [Telegram Gateway](/docs/system/telegram) for the channel
+details.
+:::
+
+---
+
+## How state accumulates
+
+:::info No `get_history()` on the hot path
+`build_initial_state()` emits only the current user turn. The
+checkpointer restores prior turns automatically via reducers. This
+eliminated the O(n) transcript deserialization that ran on every
+persistent turn.
+:::
+
+| Field | Reducer | Behavior |
+|---|---|---|
+| `history` | `operator.add` | Each turn appends new entries; checkpointer accumulates |
+| `transcript` | `operator.add` | `finalize_turn_node` appends a 1-element delta |
+| `session_progress` | `_merge_dicts` | `turn_count` increments while preserving sibling fields |
+| `session_memory` | `_merge_dicts` | Summary / active concerns / open loops merge across turns |
+| `procedural_profile` | `_merge_dicts` | Procedural rules + recall toggle merge |
+| `exercise_state` | `_merge_dicts` | Active exercise continuity; `exercise_therapeutic_approach` pins the approach used when guidance resumes |
+| `memory_control` | `_merge_dicts` | `pending_action` carries destructive deletes across turns |
+| `diagnostics` | `_merge_dicts` | Graph nodes and runtime side effects write independently; gate timings, retrieval path, and write counts merge |
+
+**Non-reducer fields** (`crisis`, `crisis_audit`, `route`,
+`response_text`, `response_style`, `therapeutic_approach`, the
+turn-scoped lookup fields) are overwritten fresh each turn — they
+describe a single turn's decisions and replies.
 
 ---
 
 ## Thread lifecycle
 
-Hover a turn to see what persists versus what gets re-derived. Persisted fields survive between turns; re-derived fields are recomputed from the transcript by `prepare_turn_state` each turn.
+<TerminalWindow title="session lifecycle">
+{`# Session 1 — 3 turns + end
+$ opencouch --thread-id alice-s1 --user-id alice
+> Hi there                            # turn 1: checkpoint created
+> I've been feeling anxious           # turn 2: transcript accumulates
+> Can we do a grounding exercise?     # turn 3: exercise state persists via progress reducer
+> /end                                # feedback prompt → summarize → episodic arc written
 
-<ThreadLifecycle />
+# Session 2 — same user, new thread
+$ opencouch --thread-id alice-s2 --user-id alice
+> Hey                                 # first-turn catch-up fires: "Last session (anxiety)..."
+                                      # alice's semantic facts + procedural rules visible`}
+</TerminalWindow>
 
-The `compact_persisted_state` step runs at the end of every turn. It strips the derived `history` field before the checkpoint is saved — the transcript is the source of truth, and history is just a trimmed view of it.
+| Event | What happens |
+|---|---|
+| **First turn** | Checkpoint created. `build_initial_state()` provides defaults; `opencouch_active_sessions` row registers the active session. |
+| **Subsequent turns** | Checkpointer restores accumulated state. Only the new user turn is emitted. The session row's `last_active_at` updates. |
+| **`/end`** | Optional feedback prompt → `record_session_feedback()` → `end_session()` → `summarize_session` triggers service-backed episodic summarization/persistence → `commit_session_memory` triggers service-backed promotion of held candidates → active-session row deleted. |
+| **20-min inactivity** | Background sweeper finds expired session rows and runs the same `end_session()` flow with the runtime's default LLM client. Held candidates and episodic arcs are still written even if the user never typed `/end`. |
+| **Process shutdown** | `__aexit__` best-effort finalizes anything still open (when `finalize_active_sessions_on_close=True`, the default). |
+| **Resume after `/end`** | Same thread_id works. Transcript persists. Next turn starts a fresh session and a fresh candidate buffer. |
+| **Incognito** | All four backends in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). The active-session table is skipped. |
 
 ---
 
 ## The `--user-id` flag
 
-By default, each thread is its own isolated namespace — memory created in one thread is invisible to another. The `--user-id` flag decouples memory identity from thread identity: when set, every thread sharing the same user ID reads and writes the same memory store. This means switching threads (e.g. starting a fresh conversation) preserves accumulated semantic facts, procedural rules, and episodic arcs.
+<TerminalWindow title="memory scoping">
+{`# Without --user-id: memory scoped to thread
+$ opencouch --thread-id thread-a      # facts written to "thread-a" namespace
+$ opencouch --thread-id thread-b      # can't see thread-a's facts
+
+# With --user-id: memory scoped to user across threads
+$ opencouch --thread-id s1 --user-id alice   # facts written to "alice"
+$ opencouch --thread-id s2 --user-id alice   # sees alice's facts from s1`}
+</TerminalWindow>
+
+## Identity and thread fallbacks
+
+`PersistentAgentRuntime` does not generate thread ids. Its text turn
+methods require callers to pass `thread_id`, and the runtime carries
+that value as `session_id` inside graph state. Defaults live at the
+caller boundary:
+
+| Surface | Missing `thread_id` | Missing `user_id` | Memory owner |
+|---|---|---|---|
+| Runtime API | No runtime fallback; caller must provide one | Accepted as `None` | `user_id` if set, otherwise `session_id` (`thread_id`) |
+| HTTP / WebSocket text API | Request validation fails | Accepted as `None` | `user_id` if set, otherwise `thread_id` |
+| CLI text | Generates `local-<12 uuid hex>` | Persistent mode falls back to the active thread id; guest mode ignores `--user-id` | `user_id` if set, otherwise active `thread_id` |
+| Web UI | Blank setup field generates `web-<8 random base36>` | Blank persistent setup uses `web-user`; incognito clears `user_id` | `user_id` if set, otherwise `thread_id` |
+| LiveKit browser voice | Token route generates `voice-<12 uuid hex>` | Token route uses `voice-user` | Voice memory writes are under `user_id`; records keep `thread_id` provenance |
+| LiveKit worker direct session | Env / metadata may supply one; otherwise generates `voice-<12 uuid hex>` | Env / metadata may supply one; otherwise uses `voice-user` | Voice memory writes are under `user_id`; records keep `thread_id` provenance |
+| Telegram, rotation off | Uses `telegram:dm:<chat_id>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
+| Telegram, rotation on | Uses `telegram:dm:<chat_id>:session:<ulid>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
+
+The generated thread id is never derived from the user id. The fallback
+goes the other direction: when no stable `user_id` is supplied, memory
+ownership falls back to the thread/session id so each thread stays
+isolated by default.
 
 ---
 
-## Privacy controls
+## WorkflowContext
 
-Three CLI commands call through to the store/backend layer for memory management:
+Runtime dependencies injected as a **frozen dataclass**. Nodes
+access via `runtime.context.llm_client` — not dict access.
 
-| Command | Effect |
+```python
+@dataclass(slots=True, frozen=True)
+class WorkflowContext:
+    llm_client: BaseLLMClient | None          # control-plane LLM (safety, routing, memory extraction)
+    memory_store: MemoryStore                  # unified read/write across semantic / episodic / procedural
+    crisis_log_backend: CrisisLogBackend       # always-on audit trail
+    memory_mode: MemoryMode                    # INCOGNITO / LOCAL / SYNCED
+    response_llm: BaseLLMClient | None = None  # optional response-writing LLM; falls back to llm_client
+    embedding_provider: EmbeddingProvider | None = None  # for hybrid retrieval and write-time indexing
+    session_memory_buffer: SessionMemoryBuffer | None = None  # held candidates until session end
+```
+
+A convenience property `control_llm` returns `llm_client` for
+nodes that just want "the safety / routing / memory model"
+without caring whether a separate response model is configured.
+
+:::note Why frozen?
+Immutability guarantees that no node can accidentally modify a
+shared dependency during a turn. The `slots=True` flag reduces
+memory overhead. Both are free correctness wins.
+:::
+
+---
+
+## Active session recovery
+
+`PersistentAgentRuntime` keeps an `opencouch_active_sessions` table
+in the same SQLite checkpoint database. Each row carries the
+thread's `session_buffer` (held semantic / procedural candidates),
+`max_crisis_level`, and `transcript_start_index` for the current
+session. A 20-minute inactivity sweeper auto-finalizes expired
+sessions, and `__aexit__` best-effort finalizes anything still open
+on shutdown — so held candidates and session-end summarization
+trigger reliably even if the user never types `/end`.
+
+In `INCOGNITO` mode the same flow runs entirely in memory: the
+checkpoint goes to `:memory:` and the active-session table is
+skipped.
+
+---
+
+## Key files
+
+| File | Purpose |
 |---|---|
-| `/memory forget` | Deletes a specific fact or rule from the user's memory |
-| `/memory clear` | Wipes all memory for the current user identity |
-| `/memory purge-crisis [days]` | Removes crisis log entries older than the specified retention window |
-
-See the [Memory](/docs/memory/overview) section for the full architecture.
+| `agent/persistence.py` | `PersistentAgentRuntime` — `run_turn`, `run_turn_stream`, `end_session`, `record_session_feedback`, sweeper, active-session recovery |
+| `agent/graph.py` | `build_agent_workflow`, `build_initial_state`, `state_to_output`, `run_agent` |
+| `agent/state.py` | All state fragments + `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` |
+| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
+| `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
+| `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
+| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/audit/postgres_session_feedback.py` | Primary Postgres feedback store |
+| `agent/audit/sqlite_session_feedback.py` | SQLite feedback fallback backend |

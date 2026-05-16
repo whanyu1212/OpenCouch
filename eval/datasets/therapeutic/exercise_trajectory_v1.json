@@ -1,0 +1,254 @@
+{
+  "name": "therapeutic_exercise_trajectory_v1",
+  "description": "Multi-turn guided-exercise trajectory checks with optional LLM judging.",
+  "cases": [
+    {
+      "id": "box-breathing-complete",
+      "description": "The assistant conducts a complete box-breathing cycle one step at a time.",
+      "expected": {
+        "exercise_type": "grounding_box_breathing",
+        "must_not_offer_menu": true,
+        "min_judge_score": 0.78,
+        "final_exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        }
+      },
+      "turns": [
+        {
+          "message": "Can you walk me through box breathing?",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills"
+            },
+            "exercise_selection": "grounding_box_breathing",
+            "response_text": "Let's do box breathing. Breathe in slowly through your nose for a count of four, then tell me when you've done that."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 0,
+              "exercise_step_id": "inhale",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "Done inhaling.",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "act"
+            },
+            "step_state": "complete",
+            "response_text": "Good. Now hold that breath gently for another count of four. Let me know when you're ready."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 1,
+              "exercise_step_id": "hold_full",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "Ready.",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "act"
+            },
+            "step_state": "complete",
+            "response_text": "Now breathe out slowly through your mouth for four, letting the air go completely."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 2,
+              "exercise_step_id": "exhale",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "I exhaled.",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "act"
+            },
+            "step_state": "complete",
+            "response_text": "One more hold with empty lungs for a count of four. Keep it soft and tell me when you're done."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_box_breathing",
+              "exercise_step": 3,
+              "exercise_step_id": "hold_empty",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "Done with the last hold.",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "act"
+            },
+            "step_state": "complete",
+            "response_text": "You completed the box breathing cycle. Take a moment to notice how your body feels now."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null,
+              "exercise_version": null,
+              "exercise_therapeutic_approach": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "grounding-clarify-stuck-exit",
+      "description": "The assistant preserves a grounding step through clarification, adapts when stuck, then exits cleanly.",
+      "expected": {
+        "exercise_type": "grounding_5_4_3_2_1",
+        "must_not_offer_menu": true,
+        "min_judge_score": 0.78,
+        "final_exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        }
+      },
+      "turns": [
+        {
+          "message": "Can we do 5-4-3-2-1 grounding?",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills"
+            },
+            "exercise_selection": "grounding_5_4_3_2_1",
+            "response_text": "Let's begin 5-4-3-2-1 grounding. Take one breath, then name five things you can see around you."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "Do I have to name exactly five things?",
+          "scripted": {
+            "dispatch": {
+              "response_style": "clarifying",
+              "exercise_start_basis": "ambiguous_or_none",
+              "therapeutic_approach": "act"
+            },
+            "response_text": "No, it does not have to be exact. A few things you can see is enough; just stay with this step."
+          },
+          "expected": {
+            "response_style_any_of": ["clarifying", "guided_exercise"],
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "I can see the chair but I am stuck after that.",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills"
+            },
+            "step_state": "stuck",
+            "response_text": "The chair counts. Let's make this smaller: name one detail about the chair, like its color, shape, or texture."
+          },
+          "expected": {
+            "response_style": "guided_exercise",
+            "therapeutic_approach": "dbt_skills",
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": "grounding_5_4_3_2_1",
+              "exercise_step": 0,
+              "exercise_step_id": "see",
+              "exercise_therapeutic_approach": "dbt_skills"
+            }
+          }
+        },
+        {
+          "message": "Actually stop this and just talk with me.",
+          "scripted": {
+            "dispatch": {
+              "response_style": "guided_exercise",
+              "exercise_start_basis": "explicit_user_request",
+              "therapeutic_approach": "dbt_skills"
+            },
+            "step_state": "exit",
+            "response_text": "Of course. We can stop the exercise here and just talk. What feels most important right now?"
+          },
+          "expected": {
+            "response_style_any_of": [
+              "guided_exercise",
+              "supportive",
+              "reflective",
+              "psychoeducation"
+            ],
+            "response_text_non_empty": true,
+            "exercise_state": {
+              "exercise_type": null,
+              "exercise_step": null,
+              "exercise_step_id": null,
+              "exercise_version": null,
+              "exercise_therapeutic_approach": null
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

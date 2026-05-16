@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import {useEffect} from 'react';
 
@@ -77,13 +78,13 @@ const cards = [
   {
     title: 'Agent',
     href: '/docs/agent/graph',
-    description: 'Modes, subgraphs, and how execution is structured.',
+    description: 'Response styles, therapeutic approaches, and graph routing.',
     icon: AgentIcon,
   },
   {
     title: 'Prompt Assembly',
     href: '/docs/agent/prompt-assembly',
-    description: 'How soul, policy, mode, modality, and task layers compose.',
+    description: 'How identity, policy, response, approach, memory, and task layers compose.',
     icon: PromptIcon,
   }
 ];
@@ -107,7 +108,7 @@ const flowSteps = [
   {
     label: 'Where you already are',
     n: '04',
-    body: 'Web chat first, then voice, WhatsApp, Telegram, and SMS — built in order of what actually matters to reach people.'
+    body: 'Web chat, LiveKit voice, and Telegram DMs are already dogfood surfaces. WhatsApp and Discord are planned next.'
   },
   {
     label: 'AGPL-3.0 licensed',
@@ -124,6 +125,9 @@ const stats = [
 ];
 
 export default function Home(): JSX.Element {
+  const glyphSrc = useBaseUrl('/img/opencouch-glyph-1024.png');
+  const landingSrc = useBaseUrl('/img/landing.png');
+
   useEffect(() => {
     const nodes = Array.from(
       document.querySelectorAll<HTMLElement>('[data-reveal]')
@@ -173,6 +177,7 @@ export default function Home(): JSX.Element {
             <div className="hero-copy">
               <p className="hero__eyebrow">Open Source</p>
               <h1 className="hero__title">
+                <img className="hero__logo" src={glyphSrc} alt="" aria-hidden="true" />
                 OpenCouch
               </h1>
               <p className="hero__subtitle">
@@ -190,29 +195,8 @@ export default function Home(): JSX.Element {
               </div>
             </div>
 
-            <div className="hero-visual" aria-hidden="true">
-              <div className="hero-visual__terminal">
-                <div className="hero-visual__chrome">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <div className="hero-visual__code">
-                  <p>$ uv run python -m opencouch_cli --mode auto</p>
-                  <p>&gt; loading therapeutic graph…</p>
-                  <p>&gt; crisis gate: ready</p>
-                  <p>&gt; session context: initialized</p>
-                </div>
-              </div>
-              <div className="hero-visual__chat">
-                <div className="hero-visual__bubble hero-visual__bubble--user">
-                  I keep spiraling at night. Can we slow this down?
-                </div>
-                <div className="hero-visual__bubble hero-visual__bubble--assistant">
-                  Absolutely. Let's start with one small grounding step and stay with
-                  what feels manageable.
-                </div>
-              </div>
+            <div className="hero-visual">
+              <img className="hero-visual__image" src={landingSrc} alt="OpenCouch landing page" />
             </div>
           </div>
 

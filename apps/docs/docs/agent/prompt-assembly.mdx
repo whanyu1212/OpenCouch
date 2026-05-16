@@ -9,17 +9,14 @@ import AssemblyPreview from '@site/src/components/AssemblyPreview';
 
 # Prompt Assembly
 
-OpenCouch does not use one giant prompt string.
-
-Instead, every system prompt is assembled in discrete layers — each
-with a clear source of truth, a defined scope, and explicit
-separation of concerns. This makes safety reviews, eval design, and
-prompt iteration tractable.
+Not one giant string. Every system prompt is assembled in discrete
+layers — each with a clear source, defined scope, and explicit
+separation of concerns.
 
 ## Layer architecture
 
-The layers stack in a fixed order. Lower layers are always present;
-upper layers are selected at runtime by the graph.
+Lower layers are always present. Upper layers are selected at
+runtime by the graph.
 
 <PromptLayerStack />
 
@@ -27,68 +24,82 @@ upper layers are selected at runtime by the graph.
 
 ## How the layers combine
 
-| Question | What answers it | Source | Changes per turn? |
+| Layer | Question it answers | Source | Per turn? |
 |---|---|---|---|
-| Who is this system? | **Core** | `knowledge/soul.md`, `knowledge/identity.md` | Never |
-| What are the hard rules? | **Core** | `knowledge/policy/boundaries.md`, `knowledge/policy/privacy.md` | Never |
-| What mode is it in? | **Mode knowledge** | `knowledge/response_modes/*.md` — one file per therapeutic mode | Yes — selected by the dispatcher |
-| What technique overlay? | **Modality** | `knowledge/modalities/*.md` — MI is wired into supportive mode; 6 more are authored but not yet wired | Per mode |
-| How should it respond? | **Instructions** | Mode-specific instruction blocks in `agent/therapeutic/prompts.py` | Per mode |
-| What does it know about the user? | **Working memory** | Semantic facts + episodic arcs retrieved by `load_memory_node` via hybrid RRF | Yes — re-retrieved each turn |
-| What style rules apply? | **Procedural rules** | Rules from the user's `ProceduralProfile`, injected as system prompt suffix | Yes — loaded each turn |
+| **Core** | Who is this system? What are the hard rules? | `core_identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/shared.py`) | Never changes |
+| **Response style** | What response shape is this turn? | `response_styles/*.md` — support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check | Selected by dispatcher / crisis gate |
+| **Therapeutic approach** | What therapeutic framework overlay? | `therapeutic_approaches/*.md` — motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, picked by dispatcher |
+| **Instructions** | How should it respond on this turn specifically? | `agent/therapeutic/prompting/instructions.py` and `agent/prompts/crisis.py` | Per response style |
+| **Working memory** | What does it know about the user? | Semantic + episodic entries from `load_memory_node` | Re-retrieved each turn |
+| **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
 
-## Procedural rule injection
+:::info Two kinds of injected context
+**Working memory** shapes the agent's *awareness* — "Previously
+noted: user has a sister named Sarah." **Procedural rules** shape
+its *behavior* — "this user prefers shorter responses." Rules are
+always applied regardless of the proactive recall toggle.
+:::
 
-Rules from the user's `ProceduralProfile` are injected into the
-system prompt suffix as *"You have the following style rules from
-past conversations..."*. These are behavioral directives — e.g.,
-"this user prefers shorter responses" or "don't suggest meditation."
+The crisis branch composes a tighter prompt: `CORE_SOURCES` +
+`response_styles/crisis_response.md` (and `policy/crisis.md` for the
+classifier prompt) + recent history. Memory layers are skipped on
+crisis turns by design.
 
-Rules are **always applied** regardless of the proactive recall
-toggle. They are operating instructions, not optional content.
+The `safety_check` response style is used when the crisis
+classifier returns level 1 (ambiguous distress, `needs_clarification`)
+— a one-question safety probe inside the therapeutic branch rather
+than a full crisis response.
 
-## Working memory injection
+---
 
-Semantic facts and episodic snippets (the "working memory" populated
-by `load_memory_node`) are injected into the prompt context as
-content to reference ("Previously noted: ...", "Last session (...):
-..."). This is distinct from procedural rules: working memory shapes
-the agent's *awareness*, procedural rules shape its *behavior*.
+## Why layers
 
-## Why layers, not one prompt
+| Property | How layers enforce it |
+|---|---|
+| Safety policy can't be overwritten | Core layer (including `policy/boundaries.md` + `policy/privacy.md`) is always first; no style/approach can weaken it |
+| Response knowledge is reviewable | Each response style's knowledge is a standalone `.md` in `agent/prompts/sources/response_styles/` |
+| Procedural rules can't be overridden | Injected last as system prompt suffix; safety-conflict rules ("skip the safety check") are dropped by the procedural extractor |
+| Each layer has a clear owner | `agent/prompts/sources/` for content, `agent/therapeutic/prompting/` and `agent/prompts/crisis.py` for assembly |
 
-- **Safety policy (core) can't be accidentally overwritten** by a
-  mode or modality change
-- **Mode knowledge is reviewable** — each mode's knowledge file is
-  a standalone markdown document in `knowledge/response_modes/`
-- **Procedural rules are injected last** and can't be overridden by
-  earlier layers
-- **Each layer has a clear owner**: `knowledge/` markdown for
-  content, `agent/therapeutic/prompts.py` for assembly
+---
 
 ## Implementation
 
 | File | What it does |
 |---|---|
-| `agent/therapeutic/prompts.py` | Knowledge file composition tuples (`_SUPPORTIVE_KNOWLEDGE`, `_REFLECTIVE_KNOWLEDGE`, etc.), mode-specific instruction blocks (`_SUPPORTIVE_INSTRUCTIONS`, etc.), and `build_*_system_prompt()` functions that compose layers into a final system prompt |
-| `knowledge/soul.md` | Agent identity, voice, tone, pacing, directness |
-| `knowledge/identity.md` | Product boundaries and positioning |
-| `knowledge/policy/` | Safety and privacy policy |
-| `knowledge/response_modes/` | One file per therapeutic mode (support, reflection, psychoeducation, closing, guided_exercise) |
-| `knowledge/modalities/` | Modality knowledge files (MI is active; PFA, CBT, grief, IPT, ACT, DBT are authored but not yet wired) |
-| `agent/nodes/load_memory.py` | Populates `working_memory` and `memory.procedural_rules` for prompt injection |
-| `agent/memory/procedural.py` | Loads the user's procedural profile |
+| `agent/prompts/__init__.py` | Re-exports `compose_sources`, `CORE_SOURCES`, crisis prompt builders |
+| `agent/prompts/shared.py` | `CORE_SOURCES` tuple, `load_prompt_source()`, `compose_sources()`, `format_recent_history()` |
+| `agent/prompts/crisis.py` | Crisis classifier + crisis response prompt builders |
+| `agent/therapeutic/prompting/sources.py` | `_knowledge_for_response_style()` and response-style / approach source selection |
+| `agent/therapeutic/prompting/instructions.py` | Per-response-style instruction blocks |
+| `agent/therapeutic/prompting/builders.py` | `build_*_system_prompt()` functions for therapeutic response nodes |
+| `agent/therapeutic/prompts.py` | Compatibility re-export wrapper for older imports |
+| `agent/prompts/sources/core_identity.md` | Assistant role, product stance, voice, tone, pacing, directness, and core boundaries |
+| `agent/prompts/sources/policy/` | Safety + privacy + crisis policy (3 files) |
+| `agent/prompts/sources/response_styles/` | One file per response style (7 files) |
+| `agent/prompts/sources/therapeutic_approaches/` | 8 therapeutic-approach knowledge files, dynamically loaded per turn |
+| `agent/prompts/sources/session_stages.md` | Stage-aware response guidance (not yet wired into the graph) |
+| `agent/prompts/sources/cross_session_continuity.md` | First-turn catch-up framing |
+| `agent/nodes/load_memory.py` | Populates `working_memory` and `procedural_profile.procedural_rules` |
 
 ---
 
-## Compatibility and live assembly
+## Compatibility matrix
 
-The following interactive components show how modes and modalities
-combine, and what a fully assembled prompt looks like for different
-scenarios.
+Which response styles pair with which therapeutic approaches, and
+which combinations the dispatcher can actually pick.
 
 <CompatMatrix />
 
 ---
+
+## Live assembly
+
+Real (trimmed) excerpts generated from backend prompt dumps. Pick a
+scenario, hit play, and watch which layers light up as the
+animation walks past each section header. The "skipped" rows show
+which layers a given scenario deliberately omits (e.g., the crisis
+path drops the procedural-rules and recall-toggle blocks by
+design).
 
 <AssemblyPreview />

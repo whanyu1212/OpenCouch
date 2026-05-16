@@ -18,3 +18,12 @@ repos:
       - id: ruff-format
         name: ruff format
         files: ^(apps/backend|eval/runners)/.*\.py$
+
+  - repo: local
+    hooks:
+      - id: clean-appledouble-files
+        name: clean macOS AppleDouble files
+        entry: bash scripts/clean_appledouble_files.sh
+        language: system
+        pass_filenames: false
+        always_run: true

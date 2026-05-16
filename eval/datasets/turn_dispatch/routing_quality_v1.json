@@ -1,0 +1,1162 @@
+{
+  "name": "turn_dispatch_routing_quality_v1",
+  "description": "Routing-quality cases for ambiguous safe-turn dispatch boundaries. Scripted mode validates the harness; live mode evaluates the configured control model.",
+  "cases": [
+    {
+      "id": "therapeutic-remember-anxiety-support",
+      "description": "A memory-adjacent support request should not inspect or modify saved memory.",
+      "message": "Do you remember I get anxious before presentations? It is happening again.",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user references prior context while asking for emotional support.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-what-remember-anxiety",
+      "description": "An explicit saved-memory inspection request should route to memory control.",
+      "message": "What do you remember about my anxiety?",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "list",
+          "reasoning": "The user asks to inspect saved assistant memory.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "list"
+        },
+        "turn_dispatch_decision": "list",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-save-shorter-responses",
+      "description": "A response-style preference should route to memory control save_preference.",
+      "message": "Remember that I prefer shorter responses.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "save_preference",
+          "preference_text": "shorter responses",
+          "reasoning": "The user asks to save a response-style preference.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "save_preference",
+        "memory_action_preference_text_contains": "shorter",
+        "turn_dispatch_decision": "save_preference",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-remembering-breakup",
+      "description": "Remembering an event emotionally is not saved-memory management.",
+      "message": "I keep remembering my breakup and feel awful.",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user is describing emotional distress, not asking to manage saved memory.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-forget-job",
+      "description": "Deleting saved content by topic should route to memory control.",
+      "message": "Forget what you saved about my job.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "forget_by_query",
+          "query": "saved memory about my job",
+          "reasoning": "The user asks to delete saved memory by topic.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "forget_by_query",
+        "memory_action_query_contains": "job",
+        "turn_dispatch_decision": "forget_by_query",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-overreacting-check",
+      "description": "Subjective reassurance should not become factual lookup.",
+      "message": "Can you check if I'm overreacting?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for subjective emotional reflection.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-overthinking-articles",
+      "description": "A request to find credible articles should use grounded lookup.",
+      "message": "Can you find credible articles about overthinking?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "credible articles about overthinking",
+          "reasoning": "The user asks for external reading resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "overthinking",
+          "articles"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-panic-explain-calm",
+      "description": "Simple psychoeducation embedded in a support request should stay therapeutic.",
+      "message": "I think I had a panic attack. Can you explain simply and help me calm down?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for explanation and immediate emotional support, not external sources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-official-panic-info",
+      "description": "Official panic-attack information should use grounded lookup.",
+      "message": "Find official information about panic attacks.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official information about panic attacks",
+          "reasoning": "The user requests official external information.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "panic",
+          "official"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-grounding-techniques-now",
+      "description": "A request for techniques to try now should route therapeutic.",
+      "message": "What are grounding techniques I can try right now?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for immediate coaching, not source-backed lookup.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-nhs-grounding-resources",
+      "description": "A request for named external grounding resources should use grounded lookup.",
+      "message": "Find NHS grounding technique resources I can read.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "NHS grounding technique resources",
+          "reasoning": "The user asks for external named resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "NHS",
+          "grounding"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-therapist-directories",
+      "description": "Non-crisis therapist directory lookup should use grounded lookup.",
+      "message": "Find therapist directories in Singapore. This is not a crisis.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "therapist directories Singapore non-crisis",
+          "reasoning": "The user asks for external local service information.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "Singapore",
+          "therapist"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-support-groups",
+      "description": "Support group lookup should use grounded lookup.",
+      "message": "Find social anxiety support groups in Singapore.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "social anxiety support groups Singapore",
+          "reasoning": "The user asks for external local service information.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "support groups",
+          "Singapore"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-reading-list-depression",
+      "description": "A request for a reading list should use grounded lookup.",
+      "message": "Find a credible reading list about depression recovery.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "credible reading list depression recovery",
+          "reasoning": "The user asks for external reading resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "depression",
+          "reading"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-phq9-official-source",
+      "description": "Official questionnaire source lookup should use grounded lookup.",
+      "message": "Can you find the official source for the PHQ-9 questionnaire?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official source PHQ-9 questionnaire",
+          "reasoning": "The user asks for an official source.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "PHQ-9",
+          "official"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-current-service-cost",
+      "description": "Current product or service cost should use grounded lookup.",
+      "message": "What does BetterHelp cost today?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "BetterHelp cost today",
+          "reasoning": "The user asks for current external service pricing.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": "BetterHelp",
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-current-workshop-schedule",
+      "description": "Current schedule information should use grounded lookup.",
+      "message": "Find current anxiety workshop schedules in Singapore.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "current anxiety workshop schedules Singapore",
+          "reasoning": "The user asks for current local schedule information.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "Singapore",
+          "workshop"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-distress-local-options",
+      "description": "A mixed support and local non-crisis lookup should use grounded lookup for the concrete ask.",
+      "message": "I'm anxious and overwhelmed; can you find local non-crisis support options in Singapore?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "local non-crisis anxiety support options Singapore",
+          "reasoning": "The user asks for external local support options.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "Singapore",
+          "non-crisis"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-distress-stay-with-me",
+      "description": "Distress plus a request for presence should stay therapeutic.",
+      "message": "I'm anxious and overwhelmed; can you stay with me for a minute?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for emotional support and presence.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-sleep-official-guidance",
+      "description": "Support plus an official reading request should use grounded lookup.",
+      "message": "I'm struggling with sleep; can you find official sleep hygiene guidance I can read?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official sleep hygiene guidance",
+          "reasoning": "The user asks for official external guidance to read.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "sleep",
+          "official"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-sleep-think-through",
+      "description": "Sleep distress without a source request should stay therapeutic.",
+      "message": "I'm struggling with sleep; can you help me think through tonight?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for coaching and support rather than external lookup.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-clear-confirm-then-talk",
+      "description": "A clear pending deletion confirmation should stay in memory control even when another topic follows.",
+      "message": "Yes delete it, and then I want to talk about today.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "confirm_pending",
+          "active_flow_action": "continue",
+          "reasoning": "The user clearly confirms the pending deletion.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "confirm_pending"
+        },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
+        "turn_dispatch_decision": "confirm_pending",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-clear-cancel-then-lookup",
+      "description": "A clear pending deletion cancellation should stay in memory control before new lookup work.",
+      "message": "Never mind, keep it. Also find sleep hygiene guidelines.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "cancel_pending",
+          "active_flow_action": "continue",
+          "reasoning": "The user clearly cancels the pending deletion.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "cancel_pending"
+        },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
+        "turn_dispatch_decision": "cancel_pending",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-unrelated-therapeutic-clears",
+      "description": "Unrelated emotional support should leave memory control and clear pending deletion.",
+      "message": "Actually I want to talk about why today felt so heavy.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "clear",
+          "reasoning": "The user moved on to emotional support.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-unrelated-grounded-clears",
+      "description": "Unrelated external lookup should leave memory control and clear pending deletion.",
+      "message": "Can you look up sleep hygiene guidelines from a credible source?",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "credible sleep hygiene guidelines",
+          "active_flow_action": "clear",
+          "reasoning": "The user moved on to external lookup.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "sleep",
+          "guidelines"
+        ],
+        "memory_action": {},
+        "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-ambiguous-yes-not-delete-clears",
+      "description": "A yes that is not clearly about deletion should not confirm pending deletion.",
+      "message": "Yes, that feels hard. Can we talk about it?",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "clear",
+          "reasoning": "The user does not clearly confirm or cancel the pending deletion.",
+          "confidence": "medium"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-official-anxiety-worksheets",
+      "description": "Worksheet/resource lookups should use grounded lookup even when the topic is therapeutic.",
+      "message": "Can you find official anxiety worksheets or toolkits I can read?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official anxiety worksheets toolkits",
+          "reasoning": "The user asks for external worksheets and toolkits.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "anxiety",
+          "worksheets"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-trauma-books-resources",
+      "description": "A request for things to read about a mental-health topic should use grounded lookup.",
+      "message": "Can you look up reputable books or resources about trauma-informed care?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "reputable books resources trauma-informed care",
+          "reasoning": "The user asks for external reading resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "trauma-informed",
+          "resources"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-practical-coping-no-sources",
+      "description": "A practical coping request without external-source language should stay therapeutic.",
+      "message": "What can I do tonight when my anxiety spikes?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for in-the-moment coaching, not external resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-support-preserve",
+      "description": "A reassurance side request during a guided exercise should preserve the exercise instead of advancing or clearing it.",
+      "message": "Before I answer, I feel silly and need reassurance that I'm not failing.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for support without ending or participating in the active exercise step.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-grounded-preserve",
+      "description": "A source-backed side request during a guided exercise should route to grounded lookup and preserve the exercise.",
+      "message": "Before I continue, can you find official resources about grounding techniques?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official grounding technique resources",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for official external resources without ending the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "official",
+          "grounding"
+        ],
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-memory-list-preserve",
+      "description": "A saved-memory inspection side request during a guided exercise should preserve the exercise.",
+      "message": "Before I continue, what do you remember about my presentations?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "list",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks to inspect saved memory while temporarily pausing the exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "list"
+        },
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "list",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-memory-delete-clears",
+      "description": "A saved-memory deletion request during a guided exercise should leave the exercise flow.",
+      "message": "Before I continue, forget what you saved about presentations.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "forget_by_query",
+          "query": "saved memory about presentations",
+          "active_flow_action": "clear",
+          "reasoning": "Deleting memory is a new memory-control flow, so the exercise should be cleared.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "forget_by_query",
+        "memory_action_query_contains": "presentations",
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "active_flow": "guided_exercise",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "forget_by_query",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-explicit-resume",
+      "description": "An explicit return to the guided exercise should resume the active exercise flow.",
+      "message": "Ok, back to the exercise.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 0,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "resume",
+          "reasoning": "The user explicitly asks to return to the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "resume",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    }
+  ]
+}

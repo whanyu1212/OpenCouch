@@ -5,74 +5,96 @@ sidebar_position: 99
 
 # Roadmap
 
-What's planned but not yet shipped.
+What's shipped, what's in progress, and what's planned.
 
-## Web Frontend
+---
 
-A proper web UI that replaces the CLI as the primary user-facing
-surface. The backend already exposes the full agent pipeline through
-`PersistentAgentRuntime` — the frontend would call it via a FastAPI
-layer with WebSocket streaming for real-time response delivery.
-Likely stack: React/Next.js with a clean chat interface, session
-management, and memory inspection panels mirroring what the CLI's
-`/memory list`, `/context`, and `/debug state` provide today.
+## Shipped
 
-## Voice Chat
+| Feature | What landed |
+|---|---|
+| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and LiveKit voice entrypoint. Lives in `apps/web/`, but is temporarily behind the backend refactor and is not the primary dogfood path right now. |
+| **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
+| **Voice Chat (LiveKit)** | LiveKit-native worker with WebRTC room transport, `TherapeuticAgent` ↔ `CrisisAgent` handoffs, bounded `VoiceExerciseTask` (10 voice-allowlisted exercises), `@function_tool` declarations, and three-phase memory (startup load / mid-session retrieval / shutdown transcript replay). Lives in `apps/backend/agent/voice/`. |
+| **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /api/threads/{id}/end`. Postgres-first durable backend with incognito-safe in-memory mode and legacy SQLite fallback. |
+| **Telegram DM Gateway** | Standalone local dogfood gateway for Telegram DMs. Uses `Channel.TELEGRAM`, persistent text runtime, allowlisted numeric sender IDs, canonical owner ID memory, `/start`, `/help`, `/end`, safe Telegram HTML rendering, optional thread rotation, startup recovery, per-chat locking, lease retry, and closed-thread reclaim. |
+| **Session Trajectory Eval** | Unified runner for short (inline) and long (checkpoint) trajectory datasets covering approach, boundary enforcement, crisis arcs, closing, venting, and response style transitions. Supports concurrent hybrid execution with `--concurrency`, `--case`, and `--verbose`. |
+| **Crisis Gate — LLM-only** | Crisis classification is a structured LLM call with strict truth-table enforcement. Provider failures surface through retries/errors instead of silently degrading to regex rules. |
+| **Routing — LLM-primary** | Crisis, therapeutic dispatch, grounded lookup, memory-control, guided-exercise selection, and memory write policy use LLM-owned classifiers with local validation and hard confirmation gates where needed. |
+| **Eval Harness** | Rebuilt eval suite with thin base runners, reusable LLM judges, standalone node contracts, parent-graph trajectories, runtime persistence/recovery cases, tool-quality checks, and live Postgres LLM smoke coverage. |
+| **Knowledge Overhaul** | `core_identity.md` defines assistant role, product stance, voice, therapeutic grounding, cultural sensitivity, repair patterns, and boundary-setting voice. `boundaries.md` expands redirection patterns and dependency framing. |
+| **OpenAI Embeddings** | `text-embedding-3-large` as default provider, Gemini as fallback. Hybrid RRF retrieval achieves 14/17 recall@5 vs 6/17 token-only. |
 
-LiveKit + OpenAI Realtime integration using **Pattern C**: Realtime
-handles audio I/O and voice quality, the LangGraph agent runs
-per-turn for safety and routing. The crisis gate runs on every
-transcribed user turn before Realtime is allowed to respond —
-transcript-only crisis detection ships first, acoustic
-paralinguistic detection (voice cracking, sobbing, prosodic
-flatness) follows in a later release.
+---
 
-See `notes/voice-chat-design.md` for the full Pattern A/B/C
-analysis and the decision rationale.
+## In progress
 
-## Messaging Channels
+| Feature | Status | What's left |
+|---|---|---|
+| **Response quality rubric** | Partially implemented | Generic rubric judge and targeted therapeutic/crisis/grounded-tool judges exist. Needs broader response-quality datasets for ordinary support turns and longer dogfood transcripts. |
+| **Memory integration eval** | Broad coverage, still expanding | Runtime and recall trajectories cover semantic, episodic, procedural, correction, deletion, and cross-feature behavior. Remaining work is wider live dogfood coverage and voice parity. |
+| **Session feedback — closing mode** | Closing signal wired, feedback UX pending | Closing detection is LLM-primary and emits `session_action=suggest_end_session`; feedback prompt still needs to fire from natural closings, not just CLI/API end commands. |
+| **Session feedback — voice** | Designed, not wired | Voice disconnect bypasses `end_session()` — needs to either route through the runtime or gain its own feedback hook. |
 
-Adapters for messaging platforms so users can interact with the
-agent where they already are:
+---
 
-- **Telegram** — bot API with webhook-based message handling
-- **WhatsApp** — via the WhatsApp Business API or a provider like
-  Twilio
-- **Discord** — bot with slash commands and thread-based sessions
+## Planned
 
-Each channel adapter would map platform-specific message formats to
-the existing `AgentInput` / `AgentOutput` contract and the
-`Channel` enum (`Channel.TELEGRAM`, `Channel.WHATSAPP`,
-`Channel.DISCORD`). The `Channel` field already exists on
-`AgentInput` — the agent graph is channel-agnostic by design, so
-adding a new channel is a transport adapter, not a graph change.
+### Messaging Channels
 
-Crisis responses would need channel-specific formatting (e.g.,
-inline buttons for crisis hotline links on Telegram, embeds on
-Discord).
+WhatsApp and Discord adapters. `Channel.WHATSAPP` already exists;
+Discord would need an enum addition. The agent graph is channel-agnostic.
+Each adapter maps platform message formats to `AgentInput` /
+`AgentOutput`. Crisis responses would need channel-specific formatting
+(inline buttons, embeds). Telegram groups, media, and richer Telegram UX
+remain future scope beyond the shipped DM text gateway.
 
-## Graph Memory
+### Acoustic Crisis Detection
+
+Voice mode currently uses transcript-only crisis detection. Real
+gaps: voice cracking, sobbing, pressured speech, prosodic flatness.
+A user saying "I'm fine" through tears scores level 0.
+
+Requires either a curated distressed-voice dataset (ethically
+fraught) or a validated off-the-shelf acoustic classifier (not a
+solved problem). Calendar-gated on dataset and model maturity.
+
+### Graph Memory
 
 Graphiti + Neo4j for entity/relationship extraction from semantic
 facts. Enables relational reasoning: "you mentioned your sister and
-your work stress — they tend to co-occur." Replaces flat semantic
-fact retrieval with 1-hop graph expansion in `load_memory_node`.
+your work stress — they tend to co-occur." The `graphiti-core`
+dependency is in `pyproject.toml`, but the integration is
+intentionally disabled pending design.
 
-## Clinical Review
+### Background Consolidation
 
-A trained clinician reads the `knowledge/response_modes/*.md` files
-and `agent/therapeutic/prompts.py`, reviews the agent's responses
-across several dogfood sessions, and provides feedback on clinical
-quality. This is the last gate before "a trusted friend could try
-it" becomes a defensible claim. Requires a clinician's time, which
-is a calendar dependency more than an engineering one.
+Automatic fact merging, dormant marking, and a `consolidation_runs`
+log. Schema is defined (`ConsolidationProposal`,
+`ConsolidationRunRecord` in `agent/memory/models.py`); the
+implementation is planned but not wired into the graph. Adds
+`/memory restore` as an undo for destructive operations.
 
-## Background Consolidation
+### Session Intent, Stage, and Response Guidance
 
-Automatic fact merging, dormant marking, and a
-`consolidation_runs` log. Adds `/memory restore` as an undo for
-destructive operations (`/memory forget`, `/memory clear`). The
-consolidation pass runs on a looser dedup threshold (0.85 Jaccard)
-than the hot-path dedup (0.95) because consolidation mistakes are
-observable via the log and correctable, while hot-path mistakes are
-not.
+Three state fields (`progress.intent`, `progress.stage`,
+`response.guidance`) are defined in the schema but not yet populated
+by any node. When implemented, they enable session-level steering:
+the agent knows whether to deepen, stabilize, or close based on
+conversation arc rather than just the current message. The eval
+runner already supports assertions for all three — just re-add the
+dataset expectations.
+
+### Crisis Gate Production Telemetry
+
+Model ID, prompt version, raw/normalized levels, confidence values,
+timeout/parse failure counters, and degraded-mode alerts. The
+production telemetry layer is not yet in place.
+
+### Clinical Review
+
+A trained clinician reviews the `agent/prompts/sources/response_styles/*.md`
+files, the prompt builders in `agent/therapeutic/prompting/`, and
+agent responses across dogfood sessions. This is the gate before
+"a trusted friend could try it" becomes a defensible claim. Calendar
+dependency, not engineering.

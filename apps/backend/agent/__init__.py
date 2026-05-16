@@ -1,6 +1,12 @@
 """Agent orchestration package."""
 
-from agent.models import AgentInput, AgentOutput, CrisisAssessment, Message
+from agent.models import (
+    AgentInput,
+    AgentOutput,
+    CrisisAssessment,
+    Message,
+    SessionAction,
+)
 from agent.state import AgentState
 
 __all__ = [
@@ -9,4 +15,5 @@ __all__ = [
     "AgentState",
     "CrisisAssessment",
     "Message",
+    "SessionAction",
 ]

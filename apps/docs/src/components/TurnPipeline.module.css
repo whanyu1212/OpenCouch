@@ -1,0 +1,233 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+
+.outline {
+  --gate-color: #b91c1c;
+  --crisis-color: #dc2626;
+  --safe-color: #059669;
+  --session-color: #4f46e5;
+
+  padding: 0.5rem 0 1rem;
+  font-family: var(--ifm-font-family-base);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+[data-theme='dark'] .outline {
+  --gate-color: #f87171;
+  --crisis-color: #fca5a5;
+  --safe-color: #6ee7b7;
+  --session-color: #a5b4fc;
+}
+
+/* ── Section ───────────────────────────────────────────────────────────────── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionHeader {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--oc-text-muted);
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sessionSection {
+  padding-top: 16px;
+  border-top: 1px solid var(--oc-border);
+}
+
+.sessionBadge {
+  font-size: 0.56rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: white;
+  background: var(--session-color);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+/* ── Node ──────────────────────────────────────────────────────────────────── */
+
+.node {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent, var(--oc-accent));
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--accent) 4%, var(--ifm-background-color));
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.node:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--ifm-background-color));
+  transform: translateX(2px);
+}
+
+.nodeCompact {
+  padding: 7px 12px;
+}
+
+.nodeNum {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--accent, var(--oc-accent));
+  min-width: 18px;
+  padding-top: 1px;
+  opacity: 0.7;
+}
+
+.nodeBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nodeLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.nodeCompact .nodeLabel {
+  font-size: 0.72rem;
+}
+
+.nodeDesc {
+  font-size: 0.66rem;
+  color: var(--oc-text-muted);
+  line-height: 1.4;
+}
+
+/* ── Route tag ─────────────────────────────────────────────────────────────── */
+
+.routeTag {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.62rem;
+  color: var(--oc-text-muted);
+  padding-left: 4px;
+  font-style: italic;
+}
+
+/* ── Branch grid ───────────────────────────────────────────────────────────── */
+
+.branchGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.branchCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface-1);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.branchCard:hover {
+  box-shadow: var(--oc-shadow-sm);
+}
+
+.crisisCard {
+  border-color: rgba(220, 38, 38, 0.2);
+}
+.crisisCard:hover { border-color: rgba(220, 38, 38, 0.4); }
+
+.safeCard {
+  border-color: rgba(16, 185, 129, 0.2);
+}
+.safeCard:hover { border-color: rgba(16, 185, 129, 0.4); }
+
+.branchTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--oc-text-muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--oc-border);
+  margin-bottom: 4px;
+}
+
+.branchDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Parallel group ────────────────────────────────────────────────────────── */
+
+.parallelGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.parallelTag {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.56rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-text-muted);
+  border: 1px dashed var(--oc-border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  width: fit-content;
+}
+
+.parallelNodes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* ── Footnote ──────────────────────────────────────────────────────────────── */
+
+.footnote {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--oc-text-muted);
+  line-height: 1.5;
+}
+
+.footnote code {
+  font-size: 0.66rem;
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 700px) {
+  .branchGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .parallelNodes {
+    grid-template-columns: 1fr;
+  }
+}

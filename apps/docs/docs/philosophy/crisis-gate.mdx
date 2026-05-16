@@ -1,0 +1,111 @@
+---
+title: Crisis Gate
+sidebar_position: 3
+---
+
+import CrisisGateFlow from '@site/src/components/CrisisGateFlow';
+
+# Crisis Gate
+
+First node in the graph. Every message passes through it before
+memory loads, before routing, before response generation. Cannot
+be skipped.
+
+The classifier is **LLM-only**: a structured-output call decides the
+level for every message, then local normalization enforces the
+level-to-route truth table. Provider failures are handled by graph
+retries and surfaced as errors instead of silently degrading to regex.
+
+---
+
+## Walkthrough
+
+Pick a sample input. Watch the LLM verdict normalize into the state
+delta on the right, and where the turn ends up routing.
+
+<CrisisGateFlow />
+
+---
+
+## Decision steps
+
+| Step | When it runs | What it does |
+|---|---|---|
+| **1. LLM classifier** | Every message | Structured output: `level`, `confidence`, `reason`. Sees recent history, handles negation, sarcasm, quoted speech, idioms, and safety-denial context. |
+| **2. Truth-table normalization** | Always after a classifier result | Forces `needs_crisis_response = level ≥ 2` and `needs_clarification = level == 1`, regardless of what the classifier returned. Prevents miscalibrated flags from wrong-routing. |
+
+---
+
+## Routing
+
+| Final level | Route | Pipeline |
+|---|---|---|
+| 0 / 1 | `therapeutic` | `turn_dispatch_node → load_memory_node → therapeutic_subgraph` |
+| 2 / 3 | `crisis` | `crisis_resource_lookup_node → crisis_response_node → crisis_log_node` |
+
+**Level 1 stays therapeutic.** `needs_clarification=true` is set in
+state but doesn't trigger the crisis branch — the therapeutic
+dispatcher picks `clarifying` or `supportive` based on the
+message.
+
+The crisis branch leads with `crisis_resource_lookup_node` so any
+verified hotlines for the user's region land in the same crisis
+reply. `crisis_log_node` is always-on regardless of memory mode —
+even in incognito the event is recorded with `user_id` scrubbed
+and `session_id` opaqued.
+
+---
+
+## Privacy asymmetry
+
+| Field in incognito | Behavior |
+|---|---|
+| `user_id_or_null` | `None` — no identity persisted |
+| `session_id_opaque` | SHA-256 hash, no reverse mapping |
+| Event recorded? | **Yes** — safety audit trail preserved |
+
+Retention: 90 days. `/memory purge-crisis [days]` enforces the
+window (exclusive boundary — the cutoff date itself is preserved).
+
+---
+
+## Diagnostics
+
+| Key | Value |
+|---|---|
+| `crisis_gate_ms` | Wall-clock time for the full assessment |
+| `crisis_classifier_path` | `llm_primary` |
+| `crisis_level` | Normalized level (0–3) |
+| `crisis_audit.crisis_override_kind` | Always `none` |
+| `crisis_audit.crisis_llm_failure_occurred` | Always `false` for completed turns; failed classifier calls surface through retry/error handling instead of producing a degraded verdict |
+
+---
+
+## Design rules
+
+| Rule | Why |
+|---|---|
+| Response pipeline waits for the gate | Safety sequencing > latency |
+| LLM is the classifier, not regex | Handles negation, context, sarcasm, quoted speech, idioms, and subtle escalation |
+| No silent no-LLM fallback | A failed safety classifier should be visible and retried, not converted into brittle local pattern matching |
+| Normalization enforces the truth table | Prevents miscalibrated LLMs from wrong-flagging |
+| Audit log is always-on | Privacy asymmetry — incognito scrubs identity but still records |
+| Boundary-case tests | Cover imminent risk, clear self-harm, idiomatic-safe, ambiguous, and safety-denial cases |
+
+---
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `agent/nodes/crisis_gate.py` | Crisis gate orchestration, truth-table normalization, graph routing |
+| `agent/gates/safety/service.py` | LLM-only crisis classifier service and structured output schema |
+| `agent/gates/safety/prompts.py` | Crisis classifier prompt and system instruction |
+| `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup (runs first on the crisis branch) |
+| `agent/nodes/crisis_response.py` | Crisis reply with optional resource overlay |
+| `agent/nodes/crisis_log.py` | Always-on audit record writer (graph node) |
+| `agent/audit/crisis_log.py` | Backend protocol + in-memory + null implementations |
+| `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
+| `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
+| `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
+| `agent/tools/grounded_search.py` | `find_crisis_resources` (called by `crisis_resource_lookup_node`) |

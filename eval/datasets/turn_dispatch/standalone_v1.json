@@ -1,0 +1,1187 @@
+{
+  "name": "turn_dispatch_standalone_v1",
+  "description": "Standalone turn-dispatch node contracts for safe-turn routing before downstream graph nodes run.",
+  "cases": [
+    {
+      "id": "therapeutic-ordinary-support",
+      "description": "Ordinary emotional support should route to therapeutic memory load.",
+      "message": "I had a really hard day at work and feel drained.",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user wants emotional support, not lookup or memory management.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-subjective-check",
+      "description": "Subjective reassurance using the word check should not become grounded lookup.",
+      "message": "Can you check if I'm overreacting about what my friend said?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for subjective reflection, not external facts.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-memory-adjacent-not-control",
+      "description": "A normal reference to remembering a personal pattern should not inspect or modify saved memory.",
+      "message": "Do you remember I get anxious before presentations? It is happening again.",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user references prior context while asking for support.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-exercise-request",
+      "description": "A coaching or exercise request belongs to the therapeutic path.",
+      "message": "Can you guide me through a breathing exercise?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user asks for a therapeutic exercise.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "therapeutic-ambiguous-safe-default",
+      "description": "Ambiguous safe support should default to therapeutic.",
+      "message": "I don't really know what I need. Can we talk for a bit?",
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user wants ordinary supportive conversation.",
+          "confidence": "medium",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-current-988-lookup",
+      "description": "An explicit current factual lookup should route to grounded lookup.",
+      "message": "Can you look up whether 988 works outside the United States?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "whether 988 works outside the United States",
+          "reasoning": "The user explicitly asks for external factual information.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "988",
+          "outside"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-panic-reading-resources",
+      "description": "A request for credible reading material should use grounded lookup.",
+      "message": "Find me credible articles to read about panic attacks.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "credible articles about panic attacks",
+          "reasoning": "The user asks for external reading resources.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "panic",
+          "articles"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "no-active-flow-noisy-action-is-normalized",
+      "description": "No-flow turns should not fail when the LLM emits an irrelevant active-flow action.",
+      "message": "Can you look up official psychological resources about panic attacks?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official psychological resources about panic attacks",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for official external resources.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "official",
+          "panic"
+        ],
+        "memory_action": {},
+        "active_flow": "none",
+        "active_flow_action": "none",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-cbt-psychoeducation-source",
+      "description": "A source-backed psychoeducation question should use grounded lookup.",
+      "message": "What does CBT say about thought records? Please use credible sources.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "CBT thought records credible sources",
+          "reasoning": "The user requests source-backed psychoeducation.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "CBT",
+          "thought records"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-non-crisis-local-resources",
+      "description": "Non-crisis local mental-health resource lookup should use grounded lookup, not crisis branch.",
+      "message": "Can you find therapy directories in Singapore? I do not need crisis hotlines.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "therapy directories Singapore non-crisis mental health",
+          "reasoning": "The user requests local external resources and explicitly excludes crisis hotlines.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "Singapore",
+          "therapy"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "grounded-official-questionnaire-source",
+      "description": "A request for an official source URL should use grounded lookup.",
+      "message": "Can you find the official source for the PHQ-9 questionnaire?",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "official PHQ-9 questionnaire source",
+          "reasoning": "The user asks for an official source.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "PHQ-9",
+          "official"
+        ],
+        "memory_action": {},
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-list-saved",
+      "description": "Saved-memory list request should route to memory control.",
+      "message": "Show me what you remember about me.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "list",
+          "reasoning": "The user asks to inspect saved assistant memory.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "list"
+        },
+        "turn_dispatch_decision": "list",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-status",
+      "description": "Saved-memory status request should route to memory control.",
+      "message": "Is memory turned on right now?",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "status",
+          "reasoning": "The user asks for memory status.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "status"
+        },
+        "turn_dispatch_decision": "status",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-recall-off",
+      "description": "Disabling proactive recall should route to memory control set_recall false.",
+      "message": "Turn proactive recall off.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "set_recall",
+          "enabled": false,
+          "reasoning": "The user asks to disable proactive recall.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "set_recall",
+          "enabled": false
+        },
+        "turn_dispatch_decision": "set_recall",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-recall-on",
+      "description": "Enabling proactive recall should route to memory control set_recall true.",
+      "message": "You can proactively recall saved memories again.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "set_recall",
+          "enabled": true,
+          "reasoning": "The user asks to enable proactive recall.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "set_recall",
+          "enabled": true
+        },
+        "turn_dispatch_decision": "set_recall",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-forget-by-index",
+      "description": "Deleting a numbered saved fact should route to forget_by_index.",
+      "message": "Delete saved fact number 2.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "forget_by_index",
+          "target_kind": "fact",
+          "target_index": 2,
+          "reasoning": "The user asks to delete a numbered saved fact.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "forget_by_index",
+          "target_kind": "fact",
+          "target_index": 2
+        },
+        "turn_dispatch_decision": "forget_by_index",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-forget-by-query",
+      "description": "Deleting saved content by description should route to forget_by_query.",
+      "message": "Forget the saved memory about presentations.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "forget_by_query",
+          "query": "saved memory about presentations",
+          "reasoning": "The user asks to delete saved memory by topic.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "forget_by_query",
+        "memory_action_query_contains": "presentations",
+        "turn_dispatch_decision": "forget_by_query",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "memory-save-style-preference",
+      "description": "Saving a response-style preference should route to memory control save_preference.",
+      "message": "Remember that I prefer concise, direct responses.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "save_preference",
+          "preference_text": "concise, direct responses",
+          "reasoning": "The user asks to save a response-style preference.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "save_preference",
+        "memory_action_preference_text_contains": [
+          "concise",
+          "direct"
+        ],
+        "turn_dispatch_decision": "save_preference",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-confirm-delete",
+      "description": "A confirmation with a pending delete should route to confirm_pending.",
+      "message": "Yes, delete it.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "confirm_pending",
+          "active_flow_action": "continue",
+          "reasoning": "The user confirms the pending deletion.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "confirm_pending"
+        },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
+        "turn_dispatch_decision": "confirm_pending",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-cancel-delete",
+      "description": "A cancellation with a pending delete should route to cancel_pending.",
+      "message": "Never mind, keep it.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "cancel_pending",
+          "active_flow_action": "continue",
+          "reasoning": "The user cancels the pending deletion.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {
+          "type": "cancel_pending"
+        },
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
+        "turn_dispatch_decision": "cancel_pending",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-unrelated-therapeutic-clears",
+      "description": "Unrelated support after pending deletion should choose therapeutic and clear pending action.",
+      "message": "Actually I want to talk about why today felt so heavy.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "clear",
+          "reasoning": "The user moved on to an emotional support request.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-unrelated-grounded-clears",
+      "description": "Unrelated lookup after pending deletion should choose grounded lookup and clear pending action.",
+      "message": "Can you look up sleep hygiene guidelines from a credible source?",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "namespace": [
+                "eval-user",
+                "semantic"
+              ],
+              "key": "fact-presentations",
+              "rule_id": null,
+              "preview": "I get anxious before presentations."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "credible sleep hygiene guidelines",
+          "active_flow_action": "clear",
+          "reasoning": "The user moved on to an external factual lookup.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "sleep",
+          "guidelines"
+        ],
+        "memory_action": {},
+        "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-continue-action",
+      "description": "An in-progress guided exercise turn should expose continue lifecycle intent.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "I noticed the chair and the window. What's next?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 1,
+          "exercise_step_id": "see",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "continue",
+          "reasoning": "The user is participating in the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "continue",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-lookup-preserves-flow",
+      "description": "A lookup request during an exercise should expose preserve lifecycle intent.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Can you look up whether grounding exercises are evidence based?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 2,
+          "exercise_step_id": "feel",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "evidence for grounding exercises anxiety",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks a source-backed side question without ending the exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "grounding",
+          "anxiety"
+        ],
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-stop-clears-flow",
+      "description": "A user rejecting the active exercise should expose clear lifecycle intent.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "I don't want to do this exercise anymore.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 2,
+          "exercise_step_id": "feel",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "clear",
+          "reasoning": "The user explicitly wants to stop the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "exercise_state": {
+          "exercise_type": null,
+          "exercise_step": null,
+          "exercise_step_id": null,
+          "exercise_version": null,
+          "exercise_therapeutic_approach": null
+        },
+        "active_flow": "guided_exercise",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-therapeutic-side-support-preserves-flow",
+      "description": "A therapeutic side request during an exercise should preserve exercise state when the LLM marks it as a side turn.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Before I continue, can you reassure me that I'm not failing at this?",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 2,
+          "exercise_step_id": "feel",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks for support without ending the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "preserve",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-resume-action",
+      "description": "A user asking to return to an active exercise should expose resume lifecycle intent.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Ok, let's continue the grounding exercise.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 2,
+          "exercise_step_id": "feel",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "resume",
+          "reasoning": "The user explicitly wants to return to the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "load_memory_node",
+        "route": "therapeutic",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action": {},
+        "active_flow": "guided_exercise",
+        "active_flow_action": "resume",
+        "turn_dispatch_decision": "therapeutic",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "active-exercise-missing-action-fails",
+      "description": "An active exercise dispatch must explicitly classify active-flow intent.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "I can hear the fan and my typing.",
+      "state": {
+        "exercise_state": {
+          "exercise_type": "five_four_three_two_one",
+          "exercise_step": 1,
+          "exercise_step_id": "hear",
+          "exercise_version": 1,
+          "exercise_therapeutic_approach": "dbt_skills"
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "reasoning": "The user is responding to the active exercise.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "error_contains": "active_flow_action"
+      }
+    },
+    {
+      "id": "pending-memory-confirm-continues-flow",
+      "description": "A pending memory deletion confirmation should expose continue lifecycle intent.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Yes, delete that.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "fact",
+              "index": 2,
+              "preview": "User prefers short replies."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "confirm_pending",
+          "active_flow_action": "continue",
+          "reasoning": "The user confirms the pending memory deletion.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "memory_control_node",
+        "route": "memory_control",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query": "",
+        "memory_action_type": "confirm_pending",
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "continue",
+        "turn_dispatch_decision": "confirm_pending",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "pending-memory-preserve-fails",
+      "description": "Pending memory actions cannot be preserved as side flows; the user must confirm/cancel or move on.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Can you keep that deletion pending while we talk about sleep?",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "rule",
+              "index": 1,
+              "preview": "Avoid suggesting breathing exercises."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "therapeutic",
+          "active_flow_action": "preserve",
+          "reasoning": "The user asks to keep the pending deletion open.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "error_contains": "Unsupported pending memory active_flow_action"
+      }
+    },
+    {
+      "id": "pending-memory-lookup-clears-flow",
+      "description": "A lookup side request while a memory deletion is pending should expose clear lifecycle intent matching current pending-action cleanup.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Actually, look up sleep hygiene guidelines first.",
+      "state": {
+        "memory_control": {
+          "pending_action": {
+            "type": "delete",
+            "target": {
+              "kind": "rule",
+              "index": 1,
+              "preview": "Avoid suggesting breathing exercises."
+            }
+          }
+        }
+      },
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "query": "credible sleep hygiene guidelines",
+          "active_flow_action": "clear",
+          "reasoning": "The user moves on from the pending deletion to an unrelated lookup.",
+          "confidence": "high"
+        }
+      },
+      "expected": {
+        "goto": "grounded_answer_node",
+        "route": "grounded_lookup",
+        "grounded_lookup_status": "not_attempted",
+        "grounded_lookup_query_contains": [
+          "sleep",
+          "guidelines"
+        ],
+        "memory_action": {},
+        "pending_action_is_null": true,
+        "active_flow": "pending_memory_action",
+        "active_flow_action": "clear",
+        "turn_dispatch_decision": "grounded_lookup",
+        "turn_dispatch_source": "llm_primary",
+        "turn_dispatch_classifier_path": "llm_primary",
+        "turn_dispatch_llm_failure_occurred": false,
+        "structured_calls": {
+          "TurnDispatchDecision": 1
+        }
+      }
+    },
+    {
+      "id": "missing-llm-fails",
+      "description": "Turn dispatch should fail visibly without an LLM.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "I need support.",
+      "scripted": {
+        "no_llm": true
+      },
+      "expected": {
+        "error_contains": "Turn dispatch requires an LLM client"
+      }
+    },
+    {
+      "id": "memory-control-missing-action-fails",
+      "description": "A memory-control route without an action should fail visibly.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "What do you remember about me?",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "reasoning": "The user asks to inspect memory.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "error_contains": "without an action"
+      }
+    },
+    {
+      "id": "grounded-lookup-missing-query-fails",
+      "description": "A grounded lookup route without a query should fail visibly.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Look up current resources for panic attacks.",
+      "scripted": {
+        "decision": {
+          "route": "grounded_lookup",
+          "reasoning": "The user asks for external lookup.",
+          "confidence": "high",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "error_contains": "without query"
+      }
+    },
+    {
+      "id": "forget-by-query-vague-target-fails",
+      "description": "A vague forget-by-query target should fail visibly instead of deleting an ambiguous memory.",
+      "modes": [
+        "scripted"
+      ],
+      "message": "Forget it.",
+      "scripted": {
+        "decision": {
+          "route": "memory_control",
+          "memory_action_type": "forget_by_query",
+          "query": "it",
+          "reasoning": "The user asks to forget a vague target.",
+          "confidence": "medium",
+          "active_flow_action": "none"
+        }
+      },
+      "expected": {
+        "error_contains": "vague target"
+      }
+    }
+  ]
+}

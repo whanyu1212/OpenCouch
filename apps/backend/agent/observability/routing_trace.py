@@ -1,0 +1,159 @@
+"""Structured routing trace helpers for graph diagnostics."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypedDict
+
+ROUTING_TRACE_KEY = "routing_trace"
+
+
+class RoutingTraceEntry(TypedDict, total=False):
+    """One compact routing decision for CLI/API observability."""
+
+    stage: str
+    decision: str
+    source: str
+    reason: str
+    confidence: str
+    active_flow: str
+    active_flow_action: str
+    exercise_start_basis: str
+    session_intent: str
+    session_stage: str
+    guidance_permission: str
+
+
+def append_routing_trace(
+    existing_diagnostics: Mapping[str, Any] | None,
+    entry: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return a diagnostics delta with one routing-trace entry appended.
+
+    Args:
+        existing_diagnostics (Mapping[str, Any] | None): Current diagnostics
+            mapping from state. Only the existing routing trace is read.
+        entry (Mapping[str, Any]): New routing trace entry.
+
+    Returns:
+        dict[str, Any]: Diagnostics delta containing only ``routing_trace``.
+    """
+
+    trace: list[RoutingTraceEntry] = []
+    existing_trace = (existing_diagnostics or {}).get(ROUTING_TRACE_KEY)
+    if isinstance(existing_trace, list):
+        for item in existing_trace:
+            normalized = _normalize_trace_entry(item)
+            if normalized is not None:
+                trace.append(normalized)
+
+    normalized_entry = _normalize_trace_entry(entry)
+    if normalized_entry is not None:
+        trace.append(normalized_entry)
+
+    return {ROUTING_TRACE_KEY: trace}
+
+
+def routing_trace_from_diagnostics(
+    diagnostics: Mapping[str, Any] | None,
+) -> tuple[RoutingTraceEntry, ...]:
+    """Return normalized routing trace entries from diagnostics.
+
+    Args:
+        diagnostics (Mapping[str, Any] | None): Agent diagnostics mapping.
+
+    Returns:
+        tuple[RoutingTraceEntry, ...]: Clean routing trace entries.
+    """
+
+    raw_trace = (diagnostics or {}).get(ROUTING_TRACE_KEY)
+    if not isinstance(raw_trace, list):
+        return ()
+
+    entries: list[RoutingTraceEntry] = []
+    for item in raw_trace:
+        normalized = _normalize_trace_entry(item)
+        if normalized is not None:
+            entries.append(normalized)
+    return tuple(entries)
+
+
+def _normalize_trace_entry(value: Any) -> RoutingTraceEntry | None:
+    """Normalize one routing trace item.
+
+    Args:
+        value (Any): Raw trace entry.
+
+    Returns:
+        RoutingTraceEntry | None: Clean entry, or None when required fields
+            are absent.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+
+    stage = _clean_trace_value(value.get("stage"), max_length=48)
+    decision = _clean_trace_value(value.get("decision"), max_length=64)
+    if not stage or not decision:
+        return None
+
+    entry: RoutingTraceEntry = {
+        "stage": stage,
+        "decision": decision,
+    }
+    source = _clean_trace_value(value.get("source"), max_length=64)
+    reason = _clean_trace_value(value.get("reason"), max_length=180)
+    confidence = _clean_trace_value(value.get("confidence"), max_length=24)
+    active_flow = _clean_trace_value(value.get("active_flow"), max_length=48)
+    active_flow_action = _clean_trace_value(
+        value.get("active_flow_action"),
+        max_length=24,
+    )
+    exercise_start_basis = _clean_trace_value(
+        value.get("exercise_start_basis"),
+        max_length=32,
+    )
+    session_intent = _clean_trace_value(value.get("session_intent"), max_length=32)
+    session_stage = _clean_trace_value(value.get("session_stage"), max_length=32)
+    guidance_permission = _clean_trace_value(
+        value.get("guidance_permission"),
+        max_length=32,
+    )
+    if source:
+        entry["source"] = source
+    if reason:
+        entry["reason"] = reason
+    if confidence:
+        entry["confidence"] = confidence
+    if active_flow:
+        entry["active_flow"] = active_flow
+    if active_flow_action:
+        entry["active_flow_action"] = active_flow_action
+    if exercise_start_basis:
+        entry["exercise_start_basis"] = exercise_start_basis
+    if session_intent:
+        entry["session_intent"] = session_intent
+    if session_stage:
+        entry["session_stage"] = session_stage
+    if guidance_permission:
+        entry["guidance_permission"] = guidance_permission
+    return entry
+
+
+def _clean_trace_value(value: Any, *, max_length: int) -> str:
+    """Return a compact single-line string for routing trace display.
+
+    Args:
+        value (Any): Raw value.
+        max_length (int): Maximum display length.
+
+    Returns:
+        str: Cleaned string, possibly truncated.
+    """
+
+    if value is None:
+        return ""
+    cleaned = " ".join(str(value).strip().split())
+    if len(cleaned) <= max_length:
+        return cleaned
+    return f"{cleaned[: max_length - 1]}..."

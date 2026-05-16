@@ -1,0 +1,106 @@
+---
+title: Hybrid Retrieval
+sidebar_position: 3
+---
+
+import RetrievalFlow from '@site/src/components/RetrievalFlow';
+
+# Hybrid Retrieval
+
+Reciprocal Rank Fusion (RRF) combines two scorers so the agent
+handles both exact-name queries and paraphrased queries well.
+
+<RetrievalFlow />
+
+---
+
+## Why hybrid?
+
+Neither scorer alone is robust enough for therapy content:
+
+| Scorer | Wins on | Loses on |
+|---|---|---|
+| **Token-recall** | Proper nouns ("Sarah"), medication names ("fluoxetine"), short queries, multilingual text (CJK, Cyrillic, accented Latin) | Stemming ("anxiety" vs "anxious"), synonyms ("sibling" vs "sister"), paraphrase |
+| **Embedding** | Stemming, synonyms, semantic paraphrase ("I feel stuck" vs "things feel hopeless") | Proper nouns (name signal diluted), short queries (too little context) |
+| **Hybrid RRF** | Both — fuses by rank position, not raw score | Nothing significant |
+
+:::tip Unicode-aware tokenization
+The tokenizer uses `\b\w+\b` (Python 3 Unicode-aware) with a CJK
+character-splitting post-processor. Chinese, Japanese, Korean, Cyrillic,
+and accented Latin text all produce meaningful token sets for both dedup
+and retrieval. CJK characters are emitted individually (standard for CJK
+IR without a word segmenter), covering BMP and astral-plane Extensions
+B through H.
+:::
+
+RRF's constant `k=60` requires no per-dataset tuning (Cormack et al.
+2009).
+
+---
+
+## Fallback paths
+
+| Scenario | What happens |
+|---|---|
+| No embedding provider | Pure token-recall (the pre-embedding behavior) |
+| Embedding API failure | Logged, falls back to token-recall for this turn |
+| Record has no embedding | Participates in token-recall only |
+| Model mismatch | Record skipped in embedding scan |
+
+The `retrieval_path` diagnostic reports which path ran:
+`"hybrid_rrf"`, `"token_recall"`, or `"token_recall_after_embed_error"`.
+
+---
+
+## Episodic date filter
+
+Query-based episodic retrieval applies a `max_age_days=30` filter —
+session arcs older than 30 days are excluded from the search results.
+This keeps the agent focused on recent context.
+
+The first-turn catch-up path (`alatest`) is **not** date-filtered — the
+most recent session summary always appears regardless of age. This
+ensures every new session opens with continuity even if the user hasn't
+visited in months.
+
+---
+
+## Embedding storage
+
+| Column | Type | Purpose |
+|---|---|---|
+| `embedding` | BLOB | float32 array via `struct.pack` |
+| `embedding_dim` | INTEGER | Dimensionality validation |
+| `embedding_model` | TEXT | Model migration detection |
+
+The provider factory (`create_configured_embedding_provider` in
+`agent/memory/embeddings.py`) picks:
+
+1. **OpenAI** `text-embedding-3-large` (3072 dims) when
+   `OPENAI_API_KEY` is set.
+2. **Gemini** `gemini-embedding-001` (3072 dims) when
+   `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
+3. **`NullEmbeddingProvider`** otherwise — retrieval degrades to
+   token-recall only.
+
+Mismatched-dimension records are skipped during dense rank, so
+swapping the embedding model never produces silently-wrong results;
+records re-embed lazily on the next write.
+
+---
+
+## load_memory structure
+
+`load_memory_node` owns the turn-level retrieval orchestration:
+semantic and episodic search, procedural profile loading, first-turn
+episodic catch-up, and diagnostics. A `test_memory_retrieval_parity.py`
+suite verifies that the in-memory and SQLite stores produce the same
+ranked results for the same input — so the retrieval algorithm is
+backend-agnostic by contract, not by accident.
+
+---
+
+## Regression coverage
+
+The eval harness is being rebuilt. Until the replacement lands, retrieval
+changes should be covered with backend tests and targeted manual trace review.

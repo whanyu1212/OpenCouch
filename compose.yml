@@ -1,0 +1,94 @@
+name: opencouch-dev
+
+x-backend-service: &backend-service
+  build:
+    context: .
+    dockerfile: apps/backend/Dockerfile
+    target: api-dev
+  env_file:
+    - path: .env
+      required: false
+    - path: .env.local
+      required: false
+    - path: apps/backend/.env
+      required: false
+    - path: apps/backend/.env.local
+      required: false
+  environment:
+    OPENCOUCH_PERSISTENCE_BACKEND: postgres
+    OPENCOUCH_MEMORY_DATABASE_URL: postgresql://opencouch:opencouch@postgres:5432/opencouch
+  volumes:
+    - .:/workspace
+    - backend-cache:/root/.cache
+  working_dir: /workspace/apps/backend
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: opencouch
+      POSTGRES_USER: opencouch
+      POSTGRES_PASSWORD: opencouch
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencouch -d opencouch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  api:
+    <<: *backend-service
+    command:
+      - python
+      - -m
+      - uvicorn
+      - main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  voice-agent:
+    <<: *backend-service
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+      target: voice-dev
+    command:
+      - python
+      - -m
+      - agent.voice.agent
+      - start
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: prod
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080/api
+    environment:
+      CI: "true"
+      NEXT_PUBLIC_API_URL: http://localhost:8080/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  backend-cache:
+  postgres-data:

@@ -1,0 +1,169 @@
+.container {
+  margin: 1.5rem 0 2rem;
+  padding: 1.2rem;
+  border: 1px solid var(--oc-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--oc-shadow-sm);
+}
+
+.preGate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.connector {
+  width: 26px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--oc-teal-300), var(--oc-teal-500));
+  border-radius: 999px;
+  opacity: 0.65;
+}
+
+.node {
+  border: 1px solid var(--oc-border);
+  border-radius: 10px;
+  padding: 0.62rem 0.78rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--oc-text-primary);
+  background: var(--oc-surface-1);
+  box-shadow: var(--oc-shadow-sm);
+  text-align: center;
+}
+
+.nodeDefault {
+  border-color: var(--oc-border);
+  background: var(--oc-surface-1);
+}
+
+.nodeWarm {
+  border-color: rgba(215, 139, 95, 0.42);
+  background: rgba(215, 139, 95, 0.12);
+}
+
+.nodeSafe {
+  border-color: rgba(61, 153, 144, 0.45);
+  background: rgba(61, 153, 144, 0.12);
+}
+
+.nodeDanger {
+  border-color: rgba(228, 110, 98, 0.5);
+  background: rgba(228, 110, 98, 0.12);
+}
+
+.branchSplit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin: 0.7rem auto 0.3rem;
+  max-width: 640px;
+}
+
+.branchLine {
+  height: 2px;
+  background: linear-gradient(90deg, var(--oc-teal-300), transparent);
+  opacity: 0.55;
+}
+
+.branches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 1.3rem;
+}
+
+.branchColumn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px dashed var(--oc-border);
+  border-radius: 12px;
+  padding: 0.8rem 0.7rem 0.95rem;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.branchLabelSafe,
+.branchLabelDanger {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin-bottom: 0.2rem;
+}
+
+.branchLabelSafe {
+  color: var(--oc-teal-500);
+}
+
+.branchLabelDanger {
+  color: #d76b60;
+}
+
+.mergeConnector {
+  width: 2px;
+  height: 16px;
+  margin: 0.55rem auto 0.45rem;
+  background: linear-gradient(180deg, var(--oc-teal-400), transparent);
+  opacity: 0.65;
+}
+
+.postMerge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+html[data-theme='dark'] .container {
+  background: rgba(20, 40, 37, 0.7);
+  border-color: rgba(120, 184, 175, 0.18);
+}
+
+html[data-theme='dark'] .node {
+  color: var(--oc-text-primary);
+  background: var(--oc-surface-2);
+  border-color: rgba(120, 184, 175, 0.18);
+}
+
+html[data-theme='dark'] .nodeWarm {
+  background: rgba(240, 173, 126, 0.14);
+  border-color: rgba(240, 173, 126, 0.42);
+}
+
+html[data-theme='dark'] .nodeSafe {
+  background: rgba(120, 184, 175, 0.14);
+  border-color: rgba(120, 184, 175, 0.42);
+}
+
+html[data-theme='dark'] .nodeDanger {
+  background: rgba(228, 110, 98, 0.14);
+  border-color: rgba(228, 110, 98, 0.5);
+}
+
+html[data-theme='dark'] .branchColumn {
+  background: rgba(16, 33, 30, 0.58);
+  border-color: rgba(120, 184, 175, 0.22);
+}
+
+@media (max-width: 860px) {
+  .branches {
+    grid-template-columns: 1fr;
+  }
+
+  .branchSplit {
+    display: none;
+  }
+
+  .connector {
+    width: 18px;
+  }
+}

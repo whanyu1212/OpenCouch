@@ -4,13 +4,13 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'OpenCouch Docs',
   tagline: 'Architecture, safety, and contributor documentation for OpenCouch',
-  url: 'https://opencouch.dev',
-  baseUrl: '/',
+  url: 'https://whanyu1212.github.io',
+  baseUrl: '/OpenCouch/',
   onBrokenLinks: 'throw',
-  organizationName: 'opencouch',
+  organizationName: 'whanyu1212',
   projectName: 'OpenCouch',
   trailingSlash: false,
-  favicon: 'img/favicon.svg',
+  favicon: 'img/opencouch-glyph-1024.png',
 
   markdown: {
     mermaid: true,
@@ -43,6 +43,7 @@ const config: Config = {
       disableSwitch: false,
       respectPrefersColorScheme: true,
     },
+
 
     mermaid: {
       theme: {light: 'base', dark: 'dark'},
@@ -102,7 +103,7 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'https://github.com/opencouch',
+          href: 'https://github.com/whanyu1212/OpenCouch',
           label: 'GitHub',
           position: 'right',
           className: 'navbar__link--github',

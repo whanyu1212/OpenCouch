@@ -1,0 +1,153 @@
+---
+title: Memory Layers
+sidebar_position: 2
+---
+
+import MemoryArchitecture from '@site/src/components/MemoryArchitecture';
+
+# Memory Layers
+
+Three [CoALA](https://arxiv.org/abs/2309.02427)-inspired memory
+layers give the agent persistent context across sessions. Click a
+layer to see how it writes, reads, and stores.
+
+<MemoryArchitecture />
+
+:::tip Post-response extraction is runtime-owned
+After the graph reaches `END`, the runtime schedules semantic and
+procedural extraction work. The extractors don't write everything they
+extract directly into long-term memory. They:
+
+1. extract candidates with structured LLM output
+2. run LLM-primary write policy with hard local safety/storage guards
+3. either commit immediately, hold for session end, require repetition, or drop
+
+Diagnostics still merge via `_merge_dicts`, so the two extractor lanes
+can report into the same turn without racing.
+:::
+
+:::info Working memory carries structured context
+`load_memory_node` returns `WorkingMemoryEntry` dicts with full
+semantic triples (category, subject, predicate, object) alongside the
+evidence quote. The response LLM sees entries like
+`[relationship] User WORRIES_ABOUT work — 'my boss is terrible'`
+instead of raw quotes. Formatting happens on demand at prompt-build
+time via `format_working_memory_entries()`.
+:::
+
+:::note Audit and memory are separate packages
+Crisis logs and session feedback live in
+[`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit) —
+not under `agent/memory/`. The split is enforced because audit
+records are operationally always-on, never feed the prompt, and never
+participate in the user-facing memory-recall toggle.
+`agent/memory/types/audit.py` only keeps compatibility re-exports of
+the audit record schemas.
+:::
+
+---
+
+## Current write model
+
+| Layer | Turn-time behavior | Session-end behavior |
+|---|---|---|
+| **Semantic** | Extracts candidates after the reply. The LLM-primary write policy decides commit-now vs session-end hold vs repetition vs drop; hard local guards only enforce storage/safety invariants. | Held candidates can promote after transcript support, episodic-summary support, or repetition. |
+| **Episodic** | No per-turn writes. | One session summary arc is written at session end if the session is substantive enough. |
+| **Procedural** | Explicit durable instructions can commit immediately when the LLM-primary policy classifies them as durable. Implicit agent-facing preferences are usually held; safety-conflict requests ("skip the safety check") are dropped. | Held implicit preferences can promote if they repeat strongly enough during the session. |
+
+Session end is a shared path, not just `/end`. Text-mode explicit
+end, inactivity timeout (20 min), graceful shutdown, web end-session,
+and voice transcript finalization converge on the same memory
+finalization services through their respective runtime entrypoints.
+
+Held semantic and procedural candidates live in a `SessionMemoryBuffer`
+that is persisted through the active-session backend, so delayed
+promotion survives restart rather than disappearing with the process.
+
+---
+
+## Memory modes
+
+Three persistence tiers are defined in `agent/memory/modes.py`:
+
+| Mode | Writes to disk | Embeddings | Crisis log | Feedback |
+|---|---|---|---|---|
+| **Incognito** | No (in-memory only) | `NullEmbeddingProvider` | In-memory (ephemeral) | In-memory (ephemeral) |
+| **Local** | Yes (configured backend; Postgres recommended) | Configured provider | Configured backend | Configured backend |
+| **Synced** | Yes (treated like Local today) | Configured provider | Configured backend | Configured backend |
+
+`SYNCED` is reserved for a future remote persistence tier; runtime
+code currently treats it like `LOCAL` while the backend sync layer
+remains unimplemented. The CLI's `--memory-mode guest` is a friendly
+alias for `INCOGNITO`.
+
+The `--user-id` flag decouples memory identity from thread identity
+— switching threads preserves memory across sessions. Without
+`--user-id`, the thread id is used as the memory owner.
+
+---
+
+## Robustness guardrails
+
+| Guardrail | What it prevents |
+|---|---|
+| **Unicode-aware tokenizer** | Non-English text (CJK, Cyrillic, accented Latin) produces meaningful token sets for dedup and retrieval instead of empty sets. CJK characters are split into per-character tokens for search. |
+| **Procedural rule cap with archival** | Active rules are capped; older or superseded rules are archived (not deleted) to prevent unbounded system prompt inflation. |
+| **Atomic batch writes** | The `aput_batch` store method wraps multi-record writes in one backend transaction. A crash mid-batch cannot leave ghost active records. |
+| **Episodic date filter** | Query-based episodic retrieval excludes arcs older than 30 days. The first-turn catch-up (`alatest`) is not date-filtered — the most recent session summary always appears regardless of age. |
+| **Owner identity validation** | `resolve_owner_id` requires either `user_id` or `session_id` in state. Missing both raises `ValueError` immediately instead of silently writing to a shared `"local-default"` namespace. |
+| **LLM-primary policy with hard guards** | Product judgment lives in structured LLM policy calls; local code only enforces non-negotiable storage and safety constraints. |
+| **Reconciliation as safety valve** | New facts that collide with active records can bump, supersede, or coexist through LLM-primary reconciliation. Exact duplicates remain local storage mechanics. |
+
+---
+
+## Key files
+
+### Memory package (`agent/memory/`)
+
+| File | Purpose |
+|---|---|
+| `agent/memory/store/__init__.py` | `MemoryStore` protocol — `aput`, `aput_batch`, `asearch_similar`, `alatest`, plus the in-memory `OpenCouchMemoryStore` |
+| `agent/memory/store/postgres.py` | Primary durable Postgres backend with hybrid retrieval support |
+| `agent/memory/store/sqlite.py` | SQLite fallback backend with embedding BLOB storage and transactional batch writes |
+| `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
+| `agent/memory/retrieval.py` | RRF fusion (`k=60`), lexical/dense rank, cosine similarity |
+| `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + Gemini / OpenAI / Null providers |
+| `agent/memory/text_tokens.py` | Unicode-aware tokenizer with CJK character splitting |
+| `agent/memory/policy/candidates.py` | Candidate models + `SessionMemoryBuffer` |
+| `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
+| `agent/memory/policy/write.py` | LLM-primary immediate-write / hold / drop / require-repetition policy with hard local guards |
+| `agent/memory/policy/semantic.py` | Stable vs session-only semantic category policy constants |
+| `agent/memory/reconciliation.py` | LLM-primary bump / supersede / coexist handling for semantic + procedural writes |
+| `agent/memory/procedural_profile.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
+| `agent/memory/policy/small_talk.py` | Pre-extractor small-talk heuristic (length + vocabulary) |
+| `agent/memory/prompts/extraction.py` | Semantic extraction prompts |
+| `agent/memory/prompts/procedural.py` | Procedural extraction prompts |
+| `agent/memory/prompts/summarization.py` | Session summarization prompts |
+| `agent/memory/hashing.py` | `hash_session_id()`, `iso_now()` |
+| `agent/memory/types/` | Pydantic models grouped by concern (semantic, episodic, procedural, therapeutic, primitives) |
+
+### Audit package (`agent/audit/`)
+
+| File | Purpose |
+|---|---|
+| `agent/audit/models.py` | `CrisisLogRecord`, `SessionFeedbackRecord`, classifier-path enums |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
+| `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
+| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
+| `agent/audit/sqlite_crisis_log.py` | SQLite crisis log fallback backend |
+| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/audit/sqlite_session_feedback.py` | SQLite session feedback fallback backend |
+
+### Graph integration
+
+| File | Purpose |
+|---|---|
+| `agent/memory/entries.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
+| `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
+| `agent/nodes/load_memory.py` | Per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
+| `agent/runtime/turn_extraction.py` | Runtime-owned turn extraction coordinator that schedules semantic/procedural memory work after graph `END` |
+| `agent/memory/turn_write_service.py` | Semantic/procedural candidate extraction and immediate-write orchestration |
+| `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/session_commit_service.py` |
+| `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/episodic.py` |
+| `agent/persistence.py` | Shared session-end path, timeout handling, active-session buffering |

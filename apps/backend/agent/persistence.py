@@ -1,111 +1,116 @@
-"""Persistent thread runtime for the fresh START -> load_memory -> END graph."""
+"""Persistent runtime for thread-backed OpenCouch sessions."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
+from uuid import uuid4
 
-from agent.graph import build_agent_workflow, build_initial_state, state_to_output
-from agent.memory.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
-from agent.memory.embeddings import (
-    EmbeddingProvider,
-    NullEmbeddingProvider,
-    create_configured_embedding_provider,
+from langchain_core.runnables import RunnableConfig
+
+from agent.runtime.active_session import (
+    ActiveSessionManager,
+    PersistedActiveSessionState,
+    PostgresActiveSessionStore,
+    SqliteActiveSessionStore,
 )
+from agent.graph import build_agent_workflow, build_initial_state, state_to_output
+from agent.graph_constants import FINALIZE_TURN_NODE
+from agent.memory.policy.candidates import SessionMemoryBuffer
+from agent.audit.crisis_log import CrisisLogBackend
+from agent.audit.session_feedback import SessionFeedbackBackend
+from agent.memory.hashing import hash_session_id, iso_now
+from agent.memory.hashing import iso_now as _iso_now
+from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.recall import LoadMemoryResult, load_memory_for_turn
+from agent.audit.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.models import StoredSessionArc
+from agent.runtime.session import (
+    RuntimeSessionTracker,
+    active_transcript_length,
+    crisis_level_from_state,
+    extract_memory_from_transcript,
+    finalize_session_window,
+    session_continuity_clear_delta,
+    slice_state_to_active_session,
+    transcript_length,
+    turn_count_from_state,
+)
+from agent.runtime.streaming import (
+    chunk_event_from_custom_payload,
+    messages_from_transcript,
+    response_ready_output,
+    stamp_turn_total_ms,
+    status_stage_for_node,
+)
+from agent.runtime.turn_extraction import TurnExtractionCoordinator
 from agent.memory.modes import MemoryMode
-from agent.memory.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.memory.sqlite_store import SqliteMemoryStore
-from agent.memory.store import MemoryStore, OpenCouchMemoryStore
+from agent.memory.store import MemoryStore
+from agent.runtime.backends import (
+    create_crisis_log_backend,
+    create_embedding_provider,
+    create_memory_store,
+    create_session_feedback_backend,
+    effective_thread_persistence_backend,
+)
+from agent.runtime.checkpointer import (
+    ALLOWED_MSGPACK_MODULES as CHECKPOINT_ALLOWED_MSGPACK_MODULES,
+    open_checkpointer,
+    validate_thread_checkpointer_config,
+)
 from agent.models import (
     AgentInput,
-    AgentOutput,
     Channel,
     DoneEvent,
     Message,
-    MessageRole,
+    ResponseReadyEvent,
     StatusEvent,
     StreamEvent,
 )
-from agent.nodes.summarize_session import run_summarize_session
-from agent.state import AgentState
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from agent.runtime.types import (
+    ActiveSessionExists,
+    ExpectedSessionLiveness,
+    PersistentTurnResult,
+    SessionInterrupted,
+    SessionLeaseExpired,
+    SessionStatus,
+    ThreadSummary,
+)
+from agent.runtime_context import WorkflowContext
+from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
-from services.llm.base import BaseLLMClient
+from llm.base import BaseLLMClient
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_THREAD_DB_PATH = BACKEND_ROOT / ".opencouch_threads.sqlite3"
-# v0.8: SQLite file paths for the memory store and crisis log.
-# Kept separate from the thread checkpointer file so LangGraph owns
-# its schema and we own ours — no cross-table coupling or shared-
-# transaction surprises when LangGraph bumps its schema. Named
-# consistently as ``.opencouch_*.sqlite3`` so all three OpenCouch-
-# owned SQLite files sit together in ``apps/backend/``.
-DEFAULT_MEMORY_DB_PATH = BACKEND_ROOT / ".opencouch_memory.sqlite3"
-DEFAULT_CRISIS_LOG_DB_PATH = BACKEND_ROOT / ".opencouch_crisis.sqlite3"
-ALLOWED_MSGPACK_MODULES = [
-    ("agent.models", "Channel"),
-    ("agent.models", "CrisisAssessment"),
-    ("agent.models", "ModeType"),
-    ("agent.models", "ResponseKind"),
+logger = logging.getLogger(__name__)
+
+AgentWorkflow = CompiledStateGraph[
+    AgentState,
+    WorkflowContext,
+    AgentGraphInputState,
+    AgentGraphOutputState,
 ]
 
-
-def _iso_now() -> str:
-    """Return the current UTC time in ISO-8601 format with 'Z' suffix."""
-
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-@dataclass(slots=True)
-class PersistentTurnResult:
-    """Return value for one persisted conversation turn."""
-
-    output: AgentOutput
-    state: AgentState
-    history: list[Message]
-
-
-@dataclass(slots=True)
-class ThreadSummary:
-    """Compact persisted-thread summary for CLI thread management."""
-
-    thread_id: str
-    turn_count: int
-    message_count: int
-    has_context: bool
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_STORE_DIR = BACKEND_ROOT / ".store"
+DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
+# Keep runtime-owned stores separate from the LangGraph checkpoint DB.
+DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
+DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
+DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
+ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
+SESSION_TIMEOUT = timedelta(minutes=20)
 
 
 class PersistentAgentRuntime:
-    """Thread-backed runtime with incognito, local, or synced memory mode.
-
-    v0.8 changed the default storage layer. Prior to v0.8, every mode
-    used in-memory backings regardless of the ``memory_mode`` flag —
-    the mode only affected the LangGraph conversation checkpointer's
-    SQLite path. Now all three storage layers (thread checkpoint,
-    memory store, crisis log) have mode-aware defaults:
-
-    - ``INCOGNITO`` → every layer uses ``:memory:`` SQLite (or the
-      in-memory sibling class for the memory store / crisis log).
-      Nothing touches disk. Closes the incognito privacy contract.
-    - ``LOCAL`` / ``SYNCED`` → thread checkpointer uses
-      :data:`DEFAULT_THREAD_DB_PATH`, memory store uses
-      :data:`DEFAULT_MEMORY_DB_PATH`, crisis log uses
-      :data:`DEFAULT_CRISIS_LOG_DB_PATH`. All three are file-backed
-      and survive CLI restarts.
-
-    Explicit overrides still work for tests: if the caller passes
-    ``memory_store=OpenCouchMemoryStore()`` or a specific
-    ``crisis_log_backend``, the runtime uses that instance and
-    doesn't open a SQLite connection for that layer. The existing
-    test fixtures that construct in-memory backings directly
-    continue to work unchanged.
-    """
+    """Thread-backed runtime with mode-aware persistence backends."""
 
     def __init__(
         self,
@@ -113,179 +118,639 @@ class PersistentAgentRuntime:
         *,
         memory_store: MemoryStore | None = None,
         crisis_log_backend: CrisisLogBackend | None = None,
+        session_feedback_backend: SessionFeedbackBackend | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
+        memory_backend: Literal["sqlite", "postgres"] = "sqlite",
+        memory_database_url: str | None = None,
+        thread_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        thread_database_url: str | None = None,
+        crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        crisis_log_database_url: str | None = None,
+        session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        session_feedback_database_url: str | None = None,
         memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
         crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
+        feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH,
         embedding_provider: "EmbeddingProvider | None" = None,
+        default_llm_client: BaseLLMClient | None = None,
+        session_timeout: timedelta = SESSION_TIMEOUT,
+        session_sweep_interval_seconds: float = 30.0,
+        finalize_active_sessions_on_close: bool = True,
+        auto_finalize_excluded: Callable[[str], bool] | None = None,
+        speculative_memory_prefetch: bool = True,
+        extract_in_foreground: bool = False,
     ) -> None:
         """Initialize the runtime.
 
         Args:
             sqlite_path: SQLite database path for LangGraph checkpoints.
                 Forced to ``:memory:`` in incognito mode.
-            memory_store: Optional unified memory store. If None, the
-                runtime picks an implementation based on ``memory_mode``:
-                :class:`OpenCouchMemoryStore` for INCOGNITO,
-                :class:`SqliteMemoryStore` for LOCAL/SYNCED. Tests that
-                want an explicit in-memory store can pass one directly
-                to bypass the mode-based selection.
-            crisis_log_backend: Optional crisis log backend. Same
-                mode-based selection as ``memory_store``:
-                :class:`InMemoryCrisisLogBackend` for INCOGNITO,
-                :class:`SqliteCrisisLogBackend` for LOCAL/SYNCED. The
-                crisis log is always-on regardless of memory_mode (see
-                schema.yaml §2 namespaces.crisis_log for the privacy
-                asymmetry), but the *backend* still follows the mode:
-                incognito means no crisis events hit disk; local means
-                they do. Tests can override with NullCrisisLogBackend
-                or a mock to assert specific behaviors.
-            memory_mode: Persistence tier for the runtime. ``INCOGNITO``
-                uses ephemeral in-memory stores only; ``LOCAL`` persists
-                to the configured SQLite paths; ``SYNCED`` is reserved
-                for a future remote backend and currently behaves the
-                same as LOCAL.
-            memory_sqlite_path: SQLite database path for the memory
-                store. Only used when ``memory_mode`` is LOCAL/SYNCED
-                and the caller didn't pass an explicit ``memory_store``.
-                Defaults to :data:`DEFAULT_MEMORY_DB_PATH`.
-            crisis_log_sqlite_path: SQLite database path for the crisis
-                log. Only used when ``memory_mode`` is LOCAL/SYNCED and
-                the caller didn't pass an explicit
-                ``crisis_log_backend``. Defaults to
-                :data:`DEFAULT_CRISIS_LOG_DB_PATH`.
+            memory_store: Optional explicit memory-store override.
+            crisis_log_backend: Optional explicit crisis-log override.
+            session_feedback_backend: Optional explicit feedback-backend override.
+            memory_mode: Persistence tier for the runtime.
+            memory_backend: Memory-store backend to use for persistent modes.
+            memory_database_url: PostgreSQL connection string used when
+                ``memory_backend`` is ``"postgres"``.
+            thread_persistence_backend: Checkpointer backend to use for
+                persistent modes.
+            thread_database_url: PostgreSQL connection string used when
+                ``thread_persistence_backend`` is ``"postgres"``.
+            crisis_log_persistence_backend: Crisis-log backend to use for
+                persistent modes.
+            crisis_log_database_url: PostgreSQL connection string used when
+                ``crisis_log_persistence_backend`` is ``"postgres"``.
+            session_feedback_persistence_backend: Session-feedback backend to use
+                for persistent modes.
+            session_feedback_database_url: PostgreSQL connection string used when
+                ``session_feedback_persistence_backend`` is ``"postgres"``.
+            memory_sqlite_path: SQLite path for the default memory store.
+            crisis_log_sqlite_path: SQLite path for the default crisis log.
+            feedback_sqlite_path: SQLite path for the default feedback store.
+            embedding_provider: Optional explicit embedding provider override.
+            default_llm_client: Optional fallback LLM client for shutdown and
+                timeout-driven finalization.
+            session_timeout: Inactivity window before an active session expires.
+            session_sweep_interval_seconds: How often the sweeper checks for
+                expired sessions.
+            finalize_active_sessions_on_close: Whether ``__aexit__`` should
+                best-effort finalize unresolved sessions.
+            auto_finalize_excluded: Optional predicate for thread ids that
+                external channel registries own and should finalize explicitly.
+            speculative_memory_prefetch: When ``True`` (default), schedule a
+                turn-memory load at turn start so it overlaps with the
+                crisis/control/grounded gates. The wasted work on non-load
+                paths is bounded; set to ``False`` to revert to the strictly
+                sequential load.
+            extract_in_foreground: When ``True``, run memory extraction
+                synchronously inside :meth:`run_turn` / :meth:`run_turn_stream`
+                rather than dispatching it as a background task. This is the
+                test-determinism flag: tests that read post-turn memory state
+                or the extraction diagnostics should set it. Production
+                runtimes leave it ``False`` (the default) to keep extraction
+                off the user-visible turn path.
         """
 
         self.memory_mode = memory_mode
         is_incognito = memory_mode == MemoryMode.INCOGNITO
 
-        # Thread checkpointer path: incognito forces :memory: so the
-        # LangGraph checkpointer doesn't leak conversation state to
-        # disk. Non-incognito uses the caller-provided path.
         resolved_sqlite = ":memory:" if is_incognito else sqlite_path
         self.sqlite_path = (
             Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
         )
 
-        self._saver_cm = None
-        self._checkpointer: AsyncSqliteSaver | None = None
-        self._graph: CompiledStateGraph | None = None
+        self._thread_persistence_backend = effective_thread_persistence_backend(
+            memory_mode=memory_mode,
+            thread_persistence_backend=thread_persistence_backend,
+        )
+        self._thread_database_url = thread_database_url
+        validate_thread_checkpointer_config(
+            thread_persistence_backend=self._thread_persistence_backend,
+            thread_database_url=thread_database_url,
+        )
 
-        # v0.8: pick memory store + crisis log backend based on mode
-        # and whether the caller passed an explicit override. The
-        # mode-based defaults give persistent-mode CLI sessions real
-        # disk backing without requiring the caller to construct
-        # SqliteMemoryStore themselves; the override path lets tests
-        # pass in in-memory instances directly.
-        if memory_store is not None:
-            # Explicit override — trust the caller.
-            self._memory_store = memory_store
-        elif is_incognito:
-            self._memory_store = OpenCouchMemoryStore()
+        self._saver_cm: AbstractAsyncContextManager[Any] | None = None
+        self._checkpointer: AsyncSqliteSaver | AsyncPostgresSaver | None = None
+        self._graph: AgentWorkflow | None = None
+        self._default_llm_client = default_llm_client
+        self._session_timeout = session_timeout
+        self._session_sweep_interval_seconds = max(
+            1.0, float(session_sweep_interval_seconds)
+        )
+        self._finalize_active_sessions_on_close = finalize_active_sessions_on_close
+        self._auto_finalize_excluded = auto_finalize_excluded
+        self._speculative_memory_prefetch = speculative_memory_prefetch
+        self._extract_in_foreground = extract_in_foreground
+        self._session_sweeper_task: asyncio.Task[None] | None = None
+        self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
+        self._thread_locks: dict[str, asyncio.Lock] = {}
+
+        self._memory_store = create_memory_store(
+            memory_mode=memory_mode,
+            memory_store=memory_store,
+            memory_backend=memory_backend,
+            memory_database_url=memory_database_url,
+            memory_sqlite_path=memory_sqlite_path,
+        )
+        self._crisis_log_backend = create_crisis_log_backend(
+            memory_mode=memory_mode,
+            crisis_log_backend=crisis_log_backend,
+            crisis_log_persistence_backend=crisis_log_persistence_backend,
+            crisis_log_database_url=crisis_log_database_url,
+            crisis_log_sqlite_path=crisis_log_sqlite_path,
+        )
+        self._session_feedback_backend = create_session_feedback_backend(
+            memory_mode=memory_mode,
+            session_feedback_backend=session_feedback_backend,
+            session_feedback_persistence_backend=session_feedback_persistence_backend,
+            session_feedback_database_url=session_feedback_database_url,
+            feedback_sqlite_path=feedback_sqlite_path,
+        )
+        self._embedding_provider: EmbeddingProvider = create_embedding_provider(
+            memory_mode=memory_mode,
+            embedding_provider=embedding_provider,
+        )
+
+        self._session_tracker = RuntimeSessionTracker()
+        if self._thread_persistence_backend == "postgres":
+            self._active_session_store = PostgresActiveSessionStore(
+                checkpointer_getter=self._ensure_postgres_open
+            )
         else:
-            self._memory_store = SqliteMemoryStore(memory_sqlite_path)
-
-        if crisis_log_backend is not None:
-            self._crisis_log_backend = crisis_log_backend
-        elif is_incognito:
-            self._crisis_log_backend = InMemoryCrisisLogBackend()
-        else:
-            self._crisis_log_backend = SqliteCrisisLogBackend(crisis_log_sqlite_path)
-
-        # v0.8.1: embedding provider for hybrid retrieval. Resolution
-        # order: (1) explicit override, (2) NullEmbeddingProvider in
-        # incognito mode (no network calls, no embeddings to store),
-        # (3) configured provider (Gemini) if an API key is set,
-        # (4) NullEmbeddingProvider as the final fallback. The null
-        # fallback means the store's hybrid retrieval gracefully
-        # degrades to token-recall when no provider is available —
-        # same contract as the extractor nodes which silently skip
-        # when no LLM client is configured.
-        if embedding_provider is not None:
-            self._embedding_provider: EmbeddingProvider = embedding_provider
-        elif is_incognito:
-            self._embedding_provider = NullEmbeddingProvider()
-        else:
-            self._embedding_provider = create_configured_embedding_provider()
-
-        # v0.4: per-process tracking of when each thread's current session
-        # began. Used by the session summarizer to populate started_at on
-        # the stored episodic arc. Reset on CLI restart — matches the Q4
-        # scoping decision that "one continuous CLI process = one session,
-        # continuation after /resume in a new CLI is a new session."
-        #
-        # Keys are thread_ids, values are ISO-8601 strings. Entries are
-        # populated lazily on the first run_turn for each thread and
-        # cleared by end_session after a successful summary write.
-        self._session_starts: dict[str, str] = {}
-
-        # v0.4: per-process tracking of the peak crisis-gate level
-        # observed across the turns of each thread's current session.
-        # The crisis gate is the canonical source of truth for crisis
-        # severity (with regex fast paths, LLM classifier, and override
-        # logic) — this dict is a simple max-of-seen rollup that the
-        # summarizer reads at session end to populate the stored arc's
-        # ``crisis_level_max`` field deterministically, rather than
-        # asking the summarizer LLM to re-interpret the session.
-        #
-        # Keys are thread_ids, values are the max level seen so far
-        # (0, 1, 2, or 3). Entries are populated on every run_turn
-        # (updated via max) and cleared by end_session alongside
-        # ``_session_starts``.
-        self._max_crisis_levels: dict[str, int] = {}
+            self._active_session_store = SqliteActiveSessionStore(
+                checkpointer_getter=self._ensure_sqlite_open
+            )
+        self._active_session_manager = ActiveSessionManager(
+            store=self._active_session_store,
+            memory_mode=self.memory_mode,
+            session_timeout=self._session_timeout,
+        )
+        # Background extraction coordinator owns the per-thread task
+        # registry. Drained by the next turn's prepare-step (so turn
+        # N+1 sees turn N's writes), by ``end_session`` (so finalization
+        # sees a coherent buffer), and by ``__aexit__`` at shutdown.
+        self._extraction = TurnExtractionCoordinator(
+            memory_store=self._memory_store,
+            embedding_provider=self._embedding_provider,
+            memory_mode=self.memory_mode,
+            session_buffer_for=self._session_memory_buffer_for_thread,
+            persist_after_extraction=self._persist_runtime_session_tracking,
+        )
 
     async def __aenter__(self) -> PersistentAgentRuntime:
         """Open runtime resources.
 
-        Only opens the LangGraph thread checkpointer connection
-        eagerly — the memory store and crisis log backends (whether
-        in-memory or SQLite) open their own resources lazily on first
-        async method call. This asymmetry exists because the LangGraph
-        checkpointer was designed with explicit ``__aenter__`` /
-        ``__aexit__`` semantics, while the v0.8 SQLite stores use
-        lazy connection initialization to keep ``__init__`` cheap
-        and to support sync test fixtures that construct instances
-        without an event loop.
-
-        The practical effect is the same: by the time the runtime is
-        usable (inside the ``async with`` block), all three storage
-        layers are ready to accept reads and writes.
+        Returns:
+            The initialized runtime instance.
         """
 
-        if self.sqlite_path != Path(":memory:"):
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-
-        serde = JsonPlusSerializer(allowed_msgpack_modules=ALLOWED_MSGPACK_MODULES)
-        self._saver_cm = AsyncSqliteSaver.from_conn_string(str(self.sqlite_path))
+        self._saver_cm = open_checkpointer(
+            thread_persistence_backend=self._thread_persistence_backend,
+            sqlite_path=self.sqlite_path,
+            thread_database_url=self._thread_database_url,
+        )
         self._checkpointer = await self._saver_cm.__aenter__()
-        self._checkpointer.serde = serde
+        await self._ensure_runtime_schema()
+        await self._prewarm()
+        self._session_sweeper_task = asyncio.create_task(self._session_sweeper_loop())
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        """Close runtime resources."""
+        """Close runtime resources.
 
+        Args:
+            exc_type: The active exception type, if any.
+            exc: The active exception instance, if any.
+            tb: The active traceback, if any.
+        """
+
+        if self._session_sweeper_task is not None:
+            self._session_sweeper_task.cancel()
+            try:
+                await self._session_sweeper_task
+            except asyncio.CancelledError:
+                pass
+            self._session_sweeper_task = None
+        # Drain background extractions before closing the memory store so
+        # in-flight writes still find a live store. finalize_active_sessions
+        # below also writes to the store, so the order is: drain → finalize
+        # → close.
+        await self._extraction.drain_all()
+        if self._finalize_active_sessions_on_close:
+            await self.finalize_active_sessions(llm_client=self._default_llm_client)
         await self._memory_store.aclose()
         await self._crisis_log_backend.aclose()
+        await self._session_feedback_backend.aclose()
         if self._saver_cm is not None:
             await self._saver_cm.__aexit__(exc_type, exc, tb)
 
-    def _ensure_open(self) -> None:
-        """Raise if runtime is used outside its async context."""
+    def _ensure_open(self) -> AsyncSqliteSaver | AsyncPostgresSaver:
+        """Raise when the runtime is used outside its async context.
+
+        Returns:
+            The active runtime checkpointer.
+
+        Raises:
+            RuntimeError: If the runtime has not been entered yet.
+        """
 
         if self._checkpointer is None:
             raise RuntimeError(
                 "PersistentAgentRuntime must be used inside 'async with'."
+            )
+        return self._checkpointer
+
+    def _ensure_sqlite_open(self) -> AsyncSqliteSaver:
+        """Return the active SQLite checkpointer.
+
+        Returns:
+            AsyncSqliteSaver: The active SQLite checkpointer.
+
+        Raises:
+            RuntimeError: If the runtime is not using the SQLite checkpointer.
+        """
+
+        checkpointer = self._ensure_open()
+        if not isinstance(checkpointer, AsyncSqliteSaver):
+            raise RuntimeError("PersistentAgentRuntime is not using SQLite threads.")
+        return checkpointer
+
+    def _ensure_postgres_open(self) -> AsyncPostgresSaver:
+        """Return the active Postgres checkpointer.
+
+        Returns:
+            AsyncPostgresSaver: The active Postgres checkpointer.
+
+        Raises:
+            RuntimeError: If the runtime is not using the Postgres checkpointer.
+        """
+
+        checkpointer = self._ensure_open()
+        if not isinstance(checkpointer, AsyncPostgresSaver):
+            raise RuntimeError("PersistentAgentRuntime is not using Postgres threads.")
+        return checkpointer
+
+    async def _ensure_runtime_schema(self) -> None:
+        """Create runtime-owned tables.
+
+        Returns:
+            None.
+        """
+
+        checkpointer = self._ensure_open()
+        await checkpointer.setup()
+
+    async def _prewarm(self) -> None:
+        """Warm runtime resources before the first user turn.
+
+        Returns:
+            None.
+        """
+
+        self._get_graph()
+
+        try:
+            await asyncio.wait_for(self._embedding_provider.awarmup(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "PersistentAgentRuntime prewarm: embedding warmup timed out; "
+                "continuing with cold provider."
+            )
+        except Exception:
+            logger.warning(
+                "PersistentAgentRuntime prewarm: embedding warmup failed; "
+                "continuing with cold provider.",
+                exc_info=True,
+            )
+
+        await self._active_session_manager.ensure_schema()
+
+    def _thread_lock(self, thread_id: str) -> asyncio.Lock:
+        """Return the in-process lock for one thread.
+
+        Args:
+            thread_id: Thread identifier.
+
+        Returns:
+            The per-thread asyncio lock.
+        """
+
+        lock = self._thread_locks.get(thread_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._thread_locks[thread_id] = lock
+        return lock
+
+    def _auto_finalization_excluded(self, thread_id: str) -> bool:
+        """Return whether runtime background finalization should skip a thread.
+
+        Args:
+            thread_id: Thread identifier.
+
+        Returns:
+            True when an external registry owns session finalization.
+        """
+
+        if self._auto_finalize_excluded is None:
+            return False
+        try:
+            return bool(self._auto_finalize_excluded(thread_id))
+        except Exception:
+            logger.warning(
+                "auto-finalize exclusion predicate failed for thread %s",
+                thread_id,
+                exc_info=True,
+            )
+            return False
+
+    async def _list_active_thread_ids(self) -> list[str]:
+        """List thread ids with unresolved active sessions.
+
+        Incognito runtimes have no persisted store, so they return the
+        in-process tracker's known threads. Persistent runtimes delegate
+        to the active-session manager.
+
+        Returns:
+            The unresolved active-session thread ids.
+        """
+
+        if self.memory_mode == MemoryMode.INCOGNITO:
+            return self._session_tracker.thread_ids()
+        return await self._active_session_manager.list_persisted_active_session_ids()
+
+    async def _clear_session_continuity_in_checkpoint(
+        self,
+        thread_id: str,
+        state: AgentState | None,
+        *,
+        suppress_errors: bool = False,
+    ) -> None:
+        """Clear session-scoped continuity fields from a persisted checkpoint.
+
+        Args:
+            thread_id: The thread identifier to update.
+            state: The current checkpointed state, if any.
+            suppress_errors: Whether checkpoint update failures should be logged.
+
+        Returns:
+            None.
+
+        Raises:
+            Exception: Propagates checkpoint update failures when
+                ``suppress_errors`` is ``False``.
+        """
+
+        delta = session_continuity_clear_delta(state)
+        if not delta:
+            return
+
+        try:
+            graph = self._get_graph()
+            await graph.aupdate_state(
+                self._config_for_thread(thread_id),
+                delta,
+                as_node=FINALIZE_TURN_NODE,
+            )
+        except Exception:
+            if suppress_errors:
+                logger.warning(
+                    "failed to clear session continuity for thread %s",
+                    thread_id,
+                    exc_info=True,
+                )
+                return
+            raise
+
+    def _clear_thread_state(self, thread_id: str) -> None:
+        """Drop all in-process state for one thread.
+
+        Clears the session tracker (active-session metadata, transcript
+        start index, max crisis level, session memory buffer) and pops
+        the cached per-thread LLM client. Composite operation — both
+        pieces are runtime-owned and always cleared together.
+
+        Args:
+            thread_id: The thread identifier to clear.
+        """
+
+        self._session_tracker.clear(thread_id)
+        self._thread_llm_clients.pop(thread_id, None)
+
+    def _remember_llm_client(
+        self,
+        thread_id: str,
+        llm_client: BaseLLMClient | None,
+    ) -> None:
+        """Remember the latest LLM client for a thread.
+
+        Args:
+            thread_id: The thread identifier.
+            llm_client: The client to remember.
+
+        Returns:
+            None.
+        """
+
+        if llm_client is not None:
+            self._thread_llm_clients[thread_id] = llm_client
+
+    def _effective_llm_client(
+        self,
+        thread_id: str,
+        llm_client: BaseLLMClient | None = None,
+    ) -> BaseLLMClient | None:
+        """Resolve the effective LLM client for a thread.
+
+        Args:
+            thread_id: The thread identifier.
+            llm_client: An explicit per-call override.
+
+        Returns:
+            The resolved client, or ``None`` when unavailable.
+        """
+
+        return (
+            llm_client
+            or self._thread_llm_clients.get(thread_id)
+            or self._default_llm_client
+        )
+
+    async def _persist_runtime_session_tracking(
+        self,
+        thread_id: str,
+        *,
+        last_active_at: str | None = None,
+    ) -> None:
+        """Persist in-process session trackers for one thread.
+
+        Args:
+            thread_id: The thread identifier to persist.
+            last_active_at: Optional explicit last-active timestamp.
+
+        Returns:
+            None.
+        """
+
+        session = self._session_tracker.to_persisted_session(
+            thread_id,
+            last_active_at=last_active_at or _iso_now(),
+        )
+        if session is None:
+            return
+        await self._active_session_manager.save_persisted_active_session(session)
+
+    async def _finalize_expired_sessions_once(self) -> None:
+        """Finalize any sessions that crossed the inactivity timeout.
+
+        Returns:
+            None.
+        """
+
+        try:
+            active_thread_ids = await self._list_active_thread_ids()
+        except Exception:
+            logger.warning(
+                "finalize_expired_sessions_once: failed to list active sessions",
+                exc_info=True,
+            )
+            return
+
+        for active_thread_id in active_thread_ids:
+            try:
+                if self._auto_finalization_excluded(active_thread_id):
+                    continue
+                persisted = (
+                    await self._active_session_manager.load_persisted_active_session(
+                        active_thread_id
+                    )
+                )
+                if (
+                    persisted is None
+                    or not self._active_session_manager.session_has_expired(persisted)
+                ):
+                    continue
+                logger.info(
+                    "session timeout reached for thread %s; auto-finalizing expired session",
+                    active_thread_id,
+                )
+                await self.end_session(
+                    active_thread_id,
+                    llm_client=self._effective_llm_client(active_thread_id),
+                )
+            except Exception:
+                logger.warning(
+                    "finalize_expired_sessions_once: failed to end expired session for thread %s",
+                    active_thread_id,
+                    exc_info=True,
+                )
+
+    async def _session_sweeper_loop(self) -> None:
+        """Run the background session-timeout sweeper loop.
+
+        Returns:
+            None.
+        """
+
+        try:
+            while True:
+                await asyncio.sleep(self._session_sweep_interval_seconds)
+                await self._finalize_expired_sessions_once()
+        except asyncio.CancelledError:
+            raise
+
+    async def _prepare_session_for_turn(
+        self,
+        *,
+        thread_id: str,
+        prior_state: AgentState | None,
+        llm_client: BaseLLMClient | None,
+        expected_liveness: ExpectedSessionLiveness | None = None,
+    ) -> None:
+        """Restore or create the active session before a new turn.
+
+        Args:
+            thread_id: The thread identifier being prepared.
+            prior_state: The last checkpointed state for the thread.
+            llm_client: The LLM client for any timeout-driven finalization.
+            expected_liveness: Optional caller-owned liveness expectation.
+
+        Returns:
+            None.
+        """
+
+        # Drain the prior turn's background extraction so that turn N+1's
+        # memory retrieval (load_memory_node) sees turn N's writes. The
+        # drain is bounded by EXTRACTION_DRAIN_TIMEOUT_SECONDS to protect
+        # against LLM provider stalls.
+        await self._extraction.drain(thread_id)
+
+        status = await self._session_status_unlocked(thread_id)
+        if expected_liveness == "active" and status != SessionStatus.ACTIVE:
+            if status == SessionStatus.INTERRUPTED:
+                raise SessionInterrupted(thread_id)
+            raise SessionLeaseExpired(thread_id, status)
+        if expected_liveness == "absent" and status != SessionStatus.ABSENT:
+            raise ActiveSessionExists(thread_id, status)
+        if expected_liveness is None:
+            if status == SessionStatus.INTERRUPTED:
+                raise SessionInterrupted(thread_id)
+            if status == SessionStatus.ROTATION_REQUIRED:
+                raise SessionLeaseExpired(thread_id, status)
+
+        persisted = await self._active_session_manager.load_persisted_active_session(
+            thread_id
+        )
+        if persisted is not None:
+            self._session_tracker.hydrate(persisted)
+            if self._active_session_manager.session_has_expired(persisted):
+                logger.info(
+                    "session timeout reached for thread %s; ending prior session before new turn",
+                    thread_id,
+                )
+                await self._end_session_unlocked(thread_id, llm_client=llm_client)
+                persisted = None
+
+        if persisted is None and self._session_tracker.has_tracking(thread_id):
+            return
+
+        if persisted is None:
+            await self._clear_session_continuity_in_checkpoint(thread_id, prior_state)
+            now = _iso_now()
+            self._session_tracker.start_session(
+                thread_id,
+                started_at=now,
+                transcript_start_index=transcript_length(prior_state),
+            )
+            await self._persist_runtime_session_tracking(
+                thread_id,
+                last_active_at=now,
+            )
+
+    async def _record_successful_turn_tracking(
+        self,
+        thread_id: str,
+        final_state: AgentState,
+        *,
+        session_transcript_soft_limit: int | None,
+    ) -> None:
+        """Persist runtime-owned tracking after a successful turn.
+
+        Args:
+            thread_id: The thread identifier.
+            final_state: The post-turn state.
+            session_transcript_soft_limit: Optional active-session transcript
+                message limit that triggers channel rotation.
+
+        Returns:
+            None.
+        """
+
+        turn_level = crisis_level_from_state(final_state)
+        self._session_tracker.record_crisis_level(thread_id, turn_level)
+
+        turn_approach = final_state.get("therapeutic_approach")
+        self._session_memory_buffer_for_thread(thread_id).record_approach(turn_approach)
+
+        await self._persist_runtime_session_tracking(thread_id)
+
+        if session_transcript_soft_limit is None:
+            return
+        transcript_start_index = self._session_tracker.transcript_start_index(thread_id)
+        active_transcript_len = active_transcript_length(
+            final_state,
+            transcript_start_index=transcript_start_index,
+        )
+        if active_transcript_len >= session_transcript_soft_limit:
+            await self._active_session_manager.set_active_session_rotation_required(
+                thread_id
             )
 
     @property
     def memory_store(self) -> MemoryStore:
         """Return the runtime's unified memory store.
 
-        Exposed for CLI and debug-tooling use (e.g. ``/memory status``).
-        The store is the same instance passed into node runtime contexts,
-        so reads reflect the current live state. Typed as the
-        :class:`MemoryStore` protocol so callers don't depend on
-        whether the runtime is holding the in-memory or SQLite
-        implementation.
+        Returns:
+            The configured memory store.
         """
 
         return self._memory_store
@@ -294,133 +759,341 @@ class PersistentAgentRuntime:
     def crisis_log_backend(self) -> CrisisLogBackend:
         """Return the runtime's crisis log backend.
 
-        Exposed for CLI and debug-tooling use. The backend is the same
-        instance passed into node runtime contexts and is always-on
-        regardless of memory mode.
+        Returns:
+            The configured crisis log backend.
         """
 
         return self._crisis_log_backend
 
-    def _config_for_thread(self, thread_id: str) -> dict[str, dict[str, str]]:
-        """Build LangGraph config payload for one thread."""
+    @property
+    def session_feedback_backend(self) -> SessionFeedbackBackend:
+        """Return the runtime's session-feedback backend.
 
-        return {"configurable": {"thread_id": thread_id}}
+        Returns:
+            The configured session-feedback backend.
+        """
+
+        return self._session_feedback_backend
+
+    def _config_for_thread(
+        self,
+        thread_id: str,
+        *,
+        channel: Channel | None = None,
+        user_id: str | None = None,
+        streaming: bool = False,
+    ) -> RunnableConfig:
+        """Build LangGraph config for one thread.
+
+        Args:
+            thread_id: The thread identifier.
+            channel: The current channel, if known.
+            user_id: The user identifier, if known.
+            streaming: Whether the graph run is streaming.
+
+        Returns:
+            The LangGraph config payload.
+        """
+
+        metadata = {
+            "thread_id": thread_id,
+            "therapeutic_approach": "text",
+            "streaming": streaming,
+            "channel": channel.value if channel is not None else None,
+            "user_scope": "persistent" if user_id else "guest",
+            "memory_mode": self.memory_mode.value,
+        }
+        return {
+            "configurable": {"thread_id": thread_id},
+            "metadata": metadata,
+        }
+
+    def _session_memory_buffer_for_thread(self, thread_id: str) -> SessionMemoryBuffer:
+        """Return the runtime-managed session buffer for a thread.
+
+        Args:
+            thread_id: The thread identifier.
+
+        Returns:
+            The per-thread session memory buffer.
+        """
+
+        return self._session_tracker.session_memory_buffer_for_thread(thread_id)
 
     def _context_for_turn(
         self,
         *,
+        thread_id: str,
+        message: str,
+        prior_state: AgentState | None,
+        user_id: str | None,
         llm_client: BaseLLMClient | None,
-    ) -> dict[str, object]:
-        """Build LangGraph runtime context for one turn."""
+        response_llm_client: BaseLLMClient | None = None,
+    ) -> WorkflowContext:
+        """Build the LangGraph runtime context for one turn.
 
-        return {
-            "llm_client": llm_client,
-            "memory_store": self._memory_store,
-            "crisis_log_backend": self._crisis_log_backend,
-            "memory_mode": self.memory_mode,
-            # v0.8.1: make the embedding provider visible to graph
-            # nodes via runtime.context. The extractor nodes read
-            # this to compute embeddings at write time; the
-            # load_memory node reads it to compute query embeddings
-            # for the hybrid retrieval path. Always present (even as
-            # NullEmbeddingProvider) so nodes don't need to guard
-            # against the key being missing from the dict.
-            "embedding_provider": self._embedding_provider,
-        }
+        Args:
+            thread_id: The thread identifier.
+            message: The user message for this turn. Used to seed the
+                speculative memory pre-fetch with the same query the graph
+                will use.
+            prior_state: The last checkpointed state for this thread, used
+                to compute ``is_first_turn`` for the pre-fetch.
+            user_id: The optional user identifier. Together with ``thread_id``
+                it determines the memory owner the same way the graph does
+                via :func:`agent.state.resolve_owner_id`.
+            llm_client: The control-plane LLM client.
+            response_llm_client: Optional response-writer override.
 
-    @staticmethod
-    def _messages_from_transcript(
-        transcript: list[dict[str, Any]],
-    ) -> list[Message]:
-        """Materialize validated messages from a serialized transcript.
-
-        v0.8 observability pass: the transcript dicts now carry an
-        optional ``mode`` field for assistant turns (written by
-        ``run_finalize_turn_node``). We forward it into the Message
-        pydantic model so the CLI's ``/history`` renderer can show
-        it next to each assistant reply. User turns leave ``mode``
-        unset, which we coerce to ``None``. Older checkpoints that
-        predate this field just see ``None`` from ``.get()`` and the
-        resulting Messages look identical to pre-v0.8 shape.
-
-        The dict type annotation is ``dict[str, Any]`` rather than
-        ``dict[str, str]`` because the ``mode`` field can be ``None``
-        in user turns. The previous stricter annotation was technically
-        wrong even before this change (LangGraph's JsonPlusSerializer
-        can round-trip non-string values), but no caller noticed.
+        Returns:
+            The runtime context for the turn.
         """
 
-        messages: list[Message] = []
-        for turn in transcript:
-            role = turn.get("role")
-            content = (turn.get("content") or "").strip()
-            if role not in {"system", "user", "assistant"} or not content:
-                continue
-            mode = turn.get("mode") if role == "assistant" else None
-            messages.append(Message(role=MessageRole(role), content=content, mode=mode))
-        return messages
+        return WorkflowContext(
+            llm_client=llm_client,
+            response_llm=response_llm_client or llm_client,
+            memory_store=self._memory_store,
+            crisis_log_backend=self._crisis_log_backend,
+            memory_mode=self.memory_mode,
+            embedding_provider=self._embedding_provider,
+            session_memory_buffer=self._session_memory_buffer_for_thread(thread_id),
+            pre_fetched_memory=self._schedule_memory_prefetch(
+                thread_id=thread_id,
+                user_id=user_id,
+                message=message,
+                prior_state=prior_state,
+            ),
+        )
 
-    def _get_graph(self) -> CompiledStateGraph:
-        """Return the compiled LangGraph workflow for this runtime."""
+    def _schedule_memory_prefetch(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        message: str,
+        prior_state: AgentState | None,
+    ) -> asyncio.Task[LoadMemoryResult] | None:
+        """Schedule a speculative turn-memory load when applicable.
 
-        self._ensure_open()
+        The fetch overlaps with the crisis/control/grounded gates so that the
+        therapeutic path can ``await`` an already-resolved result. The
+        crisis/control/grounded paths discard the result; the wasted work is
+        bounded to one DB query batch plus the embedding compute.
+
+        Args:
+            thread_id: The thread identifier; used as the memory owner when
+                no ``user_id`` is set.
+            user_id: Optional user identifier; takes precedence over
+                ``thread_id`` for owner resolution to mirror
+                :func:`agent.state.resolve_owner_id`.
+            message: User message text used as the retrieval query.
+            prior_state: Last checkpointed state for the thread; used to
+                compute ``is_first_turn``.
+
+        Returns:
+            The scheduled ``asyncio.Task`` when speculation is active; ``None``
+            when speculation is disabled, the runtime is incognito, or the
+            owner could not be resolved (defensive — should not occur for
+            normal turn inputs).
+        """
+
+        if not self._speculative_memory_prefetch:
+            return None
+        if self.memory_mode == MemoryMode.INCOGNITO:
+            return None
+
+        owner_id = user_id or thread_id
+        if not owner_id:
+            return None
+
+        is_first_turn = transcript_length(prior_state) == 0
+        return asyncio.create_task(
+            load_memory_for_turn(
+                memory_store=self._memory_store,
+                embedding_provider=self._embedding_provider,
+                owner_id=owner_id,
+                query=message,
+                is_first_turn=is_first_turn,
+            ),
+            name=f"memory-prefetch:{thread_id}",
+        )
+
+    def _get_graph(self) -> AgentWorkflow:
+        """Return the compiled LangGraph workflow for this runtime.
+
+        Returns:
+            The compiled workflow instance.
+        """
+
+        checkpointer = self._ensure_open()
         if self._graph is None:
-            self._graph = build_agent_workflow(checkpointer=self._checkpointer)
+            self._graph = build_agent_workflow(checkpointer=checkpointer)
         return self._graph
 
     async def get_state(self, thread_id: str) -> AgentState | None:
-        """Load the latest persisted state snapshot for a thread."""
+        """Load the latest persisted state snapshot for a thread.
+
+        Args:
+            thread_id: The thread identifier.
+
+        Returns:
+            The latest checkpointed state, if any.
+        """
 
         graph = self._get_graph()
         snapshot = await graph.aget_state(self._config_for_thread(thread_id))
-        values = snapshot.values or {}
-        return values or None
+        values = snapshot.values or None
+        if values is None:
+            return None
+        return cast(AgentState, dict(values))
 
     async def get_history(self, thread_id: str) -> list[Message]:
-        """Load the full persisted transcript for a thread."""
+        """Load the full persisted transcript for a thread.
+
+        Args:
+            thread_id: The thread identifier.
+
+        Returns:
+            The materialized transcript messages for the thread.
+        """
 
         state = await self.get_state(thread_id)
         if state is None:
             return []
-        return self._messages_from_transcript(state.get("transcript", []))
+        return messages_from_transcript(state.get("transcript", []))
+
+    async def session_status(self, thread_id: str) -> SessionStatus:
+        """Return the active-session liveness status for a thread.
+
+        Args:
+            thread_id: Thread identifier.
+
+        Returns:
+            The current session status.
+        """
+
+        return await self._session_status_unlocked(thread_id)
+
+    async def _session_status_unlocked(self, thread_id: str) -> SessionStatus:
+        """Return session status without acquiring the per-thread lock.
+
+        Args:
+            thread_id: Thread identifier.
+
+        Returns:
+            The current session status.
+        """
+
+        if self.memory_mode == MemoryMode.INCOGNITO:
+            if self._session_tracker.has_tracking(thread_id):
+                return SessionStatus.ACTIVE
+            return SessionStatus.ABSENT
+
+        row = await self._active_session_manager.load_persisted_active_session_row(
+            thread_id
+        )
+        if row is None:
+            if self._session_tracker.has_tracking(thread_id):
+                return SessionStatus.ACTIVE
+            return SessionStatus.ABSENT
+
+        if row.finalize_required_reason == "interrupted":
+            return SessionStatus.INTERRUPTED
+
+        if row.mutation_token is not None:
+            if not self._active_session_manager.is_mutation_in_flight(
+                row.mutation_token
+            ):
+                return SessionStatus.INTERRUPTED
+
+        if row.rotate_after_this_turn:
+            return SessionStatus.ROTATION_REQUIRED
+
+        try:
+            session = PersistedActiveSessionState.from_json(row.payload_json)
+        except Exception:
+            logger.warning(
+                "active session payload could not be decoded for thread %s",
+                thread_id,
+                exc_info=True,
+            )
+            return SessionStatus.INTERRUPTED
+
+        if self._active_session_manager.session_has_expired(session):
+            return SessionStatus.EXPIRED_UNFINALIZED
+
+        return SessionStatus.ACTIVE
+
+    async def has_active_session(self, thread_id: str) -> bool:
+        """Return whether a thread currently has an unresolved session.
+
+        Args:
+            thread_id: The thread identifier.
+
+        Returns:
+            ``True`` when the thread still has active session tracking.
+        """
+
+        return await self.session_status(thread_id) == SessionStatus.ACTIVE
 
     async def reset_thread(self, thread_id: str) -> None:
-        """Delete all persisted checkpoints for a thread."""
+        """Delete all persisted checkpoints and session state for a thread.
 
-        self._ensure_open()
-        await self._checkpointer.adelete_thread(thread_id)
+        Args:
+            thread_id: The thread identifier.
+
+        Returns:
+            None.
+        """
+
+        async with self._thread_lock(thread_id):
+            status = await self._session_status_unlocked(thread_id)
+            if status != SessionStatus.ABSENT:
+                raise ActiveSessionExists(thread_id, status)
+
+            checkpointer = self._ensure_open()
+            await checkpointer.adelete_thread(thread_id)
+            await self._active_session_manager.delete_persisted_active_session(
+                thread_id
+            )
+            self._clear_thread_state(thread_id)
 
     async def list_threads(self, *, limit: int = 20) -> list[ThreadSummary]:
-        """List the most recent persisted threads in SQLite."""
+        """List the most recent persisted threads.
 
-        self._ensure_open()
-        await self._checkpointer.setup()
+        Args:
+            limit: The maximum number of threads to return.
+
+        Returns:
+            The most recent persisted thread summaries.
+        """
+
+        checkpointer = self._ensure_open()
+        await checkpointer.setup()
 
         thread_ids: list[str] = []
-        async with (
-            self._checkpointer.lock,
-            self._checkpointer.conn.execute(
-                """
-            SELECT thread_id
-            FROM checkpoints
-            GROUP BY thread_id
-            ORDER BY MAX(rowid) DESC
-            LIMIT ?
-            """,
-                (limit,),
-            ) as cursor,
+        seen_thread_ids: set[str] = set()
+        async for checkpoint_tuple in checkpointer.alist(
+            None, limit=max(limit * 5, limit)
         ):
-            async for row in cursor:
-                thread_ids.append(row[0])
+            thread_id = str(checkpoint_tuple.config["configurable"]["thread_id"])
+            if thread_id in seen_thread_ids:
+                continue
+            seen_thread_ids.add(thread_id)
+            thread_ids.append(thread_id)
+            if len(thread_ids) >= limit:
+                break
 
         summaries: list[ThreadSummary] = []
         for thread_id in thread_ids:
             state = await self.get_state(thread_id)
-            history = self._messages_from_transcript(
+            history = messages_from_transcript(
                 state.get("transcript", []) if state is not None else []
             )
-            progress = state.get("progress", {}) if state is not None else {}
-            turn_count = progress.get("turn_count", 0)
+            session_progress: Mapping[str, Any] = (
+                state.get("session_progress", {}) if state is not None else {}
+            )
+            turn_count = session_progress.get("turn_count", 0)
             summaries.append(
                 ThreadSummary(
                     thread_id=thread_id,
@@ -431,6 +1104,43 @@ class PersistentAgentRuntime:
             )
         return summaries
 
+    @staticmethod
+    def _build_turn_initial_state(
+        *,
+        thread_id: str,
+        message: str,
+        channel: Channel,
+        user_id: str | None,
+        installed_skills: list[str] | None,
+        prior_turn_count: int,
+    ) -> AgentGraphInputState:
+        """Build the graph input state for one user turn.
+
+        Args:
+            thread_id: Thread identifier used as the session id.
+            message: Current user message.
+            channel: Channel metadata for the turn.
+            user_id: Optional user identifier.
+            installed_skills: Optional installed skill names.
+            prior_turn_count: Persisted user-turn count before this turn.
+
+        Returns:
+            Initial graph state for the turn.
+        """
+
+        return build_initial_state(
+            AgentInput(
+                message=message,
+                channel=channel,
+                user_id=user_id,
+                session_id=thread_id,
+                history=[],
+                working_memory=[],
+                installed_skills=list(installed_skills or []),
+            ),
+            prior_turn_count=prior_turn_count,
+        )
+
     async def run_turn(
         self,
         *,
@@ -440,79 +1150,136 @@ class PersistentAgentRuntime:
         user_id: str | None = None,
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
+        response_llm_client: BaseLLMClient | None = None,
+        expected_liveness: ExpectedSessionLiveness | None = None,
+        session_transcript_soft_limit: int | None = None,
     ) -> PersistentTurnResult:
-        """Run one conversation turn through the minimal workflow."""
+        """Run one conversation turn through the runtime workflow.
 
-        graph = self._get_graph()
-        history = await self.get_history(thread_id)
+        Args:
+            thread_id: The thread identifier.
+            message: The user message to process.
+            channel: The channel metadata for the turn.
+            user_id: The optional user identifier.
+            installed_skills: Optional installed skill names.
+            llm_client: The control-plane LLM client.
+            response_llm_client: Optional response-writer override.
+            expected_liveness: Optional active-session liveness expectation.
+            session_transcript_soft_limit: Optional active-session transcript
+                message limit that marks the session for rotation after success.
 
-        # v0.4: track the session start time for this thread. Populated
-        # lazily on the first turn we see for each thread within the
-        # lifetime of this runtime process. Used by end_session to
-        # populate the session summary's started_at field. See the
-        # docstring on self._session_starts for the "one CLI = one
-        # session" definition.
-        if thread_id not in self._session_starts:
-            self._session_starts[thread_id] = _iso_now()
+        Returns:
+            The persisted turn result, including output, state, and history.
+        """
 
-        agent_input = AgentInput(
-            message=message,
-            channel=channel,
-            user_id=user_id,
-            session_id=thread_id,
-            history=history,
-            working_memory=[],
-            installed_skills=list(installed_skills or []),
-        )
-        initial_state = build_initial_state(agent_input)
+        async with self._thread_lock(thread_id):
+            graph = self._get_graph()
+            self._remember_llm_client(thread_id, llm_client)
 
-        # v0.8 observability: time the whole turn for the CLI's
-        # post-turn diagnostics panel. The per-node timings are
-        # stamped into ``state["diagnostics"]`` inside each node,
-        # and we add the outer total here. They're added
-        # non-destructively by reading the final state's
-        # diagnostics dict and merging.
-        turn_start = time.monotonic()
-        final_state = await graph.ainvoke(
-            initial_state,
-            config=self._config_for_thread(thread_id),
-            context=self._context_for_turn(llm_client=llm_client),
-        )
-        turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
-
-        # Stamp the outer total into the final state's diagnostics
-        # before we pass it to state_to_output. LangGraph returns a
-        # plain dict for final_state, so we mutate it in place
-        # rather than constructing a new one.
-        if "diagnostics" not in final_state or final_state["diagnostics"] is None:
-            final_state["diagnostics"] = {}
-        final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
-
-        # v0.4: update the per-thread max crisis level so end_session
-        # can pass it to the summarizer. The crisis gate writes a
-        # CrisisAssessment into state["crisis"] on every turn; we
-        # take the max across the session's lifetime. The lookup is
-        # defensive because a turn that somehow skipped the crisis
-        # gate entirely would leave the field None.
-        turn_crisis = final_state.get("crisis")
-        turn_level = 0
-        if turn_crisis is not None:
-            # CrisisAssessment is a pydantic model with a ``level`` attr,
-            # but the checkpointed state may round-trip as a plain dict,
-            # so read defensively.
-            turn_level = (
-                turn_crisis.level
-                if hasattr(turn_crisis, "level")
-                else int(turn_crisis.get("level", 0) or 0)
+            # Reducers restore transcript; only turn_count is needed here.
+            prior_state = await self.get_state(thread_id)
+            await self._prepare_session_for_turn(
+                thread_id=thread_id,
+                prior_state=prior_state,
+                llm_client=llm_client,
+                expected_liveness=expected_liveness,
             )
-        prior_max = self._max_crisis_levels.get(thread_id, 0)
-        self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
+            prior_turn_count = turn_count_from_state(prior_state)
 
-        return PersistentTurnResult(
-            output=state_to_output(final_state),
-            state=final_state,
-            history=self._messages_from_transcript(final_state.get("transcript", [])),
-        )
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
+                message=message,
+                channel=channel,
+                user_id=user_id,
+                installed_skills=installed_skills,
+                prior_turn_count=prior_turn_count,
+            )
+
+            async with self._active_session_manager.active_session_mutation(
+                thread_id,
+                mutation_kind="turn",
+            ) as mutation_token:
+                turn_start = time.monotonic()
+                graph_output = await graph.ainvoke(
+                    initial_state,
+                    config=self._config_for_thread(
+                        thread_id,
+                        channel=channel,
+                        user_id=user_id,
+                        streaming=False,
+                    ),
+                    context=self._context_for_turn(
+                        thread_id=thread_id,
+                        message=message,
+                        prior_state=prior_state,
+                        user_id=user_id,
+                        llm_client=llm_client,
+                        response_llm_client=response_llm_client,
+                    ),
+                )
+                final_state = await self.get_state(thread_id)
+                if final_state is None:
+                    final_state = cast(
+                        AgentState, {**dict(initial_state), **dict(graph_output)}
+                    )
+
+                stamp_turn_total_ms(final_state, started_at=turn_start)
+
+                await self._record_successful_turn_tracking(
+                    thread_id,
+                    final_state,
+                    session_transcript_soft_limit=session_transcript_soft_limit,
+                )
+
+                # ``final_state`` is the public output-schema slice and is
+                # missing the input-only fields (``message``, ``user_id``,
+                # ``session_id``) that extraction reads. Merge with
+                # ``initial_state`` to restore those, with final_state's
+                # post-graph reducer values winning over the seed.
+                extraction_state = cast(
+                    AgentState,
+                    {**dict(initial_state), **dict(final_state)},
+                )
+                if self._extract_in_foreground:
+                    # Foreground path: run extraction synchronously and merge
+                    # its diagnostics into final_state so callers (and tests)
+                    # see the extract_facts_*/extract_procedural_* keys in
+                    # the same turn. Used by tests that assert on extraction
+                    # behavior end-to-end.
+                    extraction_diagnostics = await self._extraction.run_pair(
+                        state=extraction_state,
+                        llm_client=llm_client,
+                        session_buffer=self._session_memory_buffer_for_thread(
+                            thread_id
+                        ),
+                    )
+                    if extraction_diagnostics:
+                        existing = final_state.get("diagnostics") or {}
+                        final_state["diagnostics"] = {
+                            **existing,
+                            **extraction_diagnostics,
+                        }
+                    # Re-persist after extraction so the populated buffer
+                    # survives a later end_session that hydrates from
+                    # persistence.
+                    await self._persist_runtime_session_tracking(thread_id)
+                else:
+                    self._extraction.schedule(
+                        thread_id=thread_id,
+                        state=extraction_state,
+                        llm_client=llm_client,
+                    )
+
+                result = PersistentTurnResult(
+                    output=state_to_output(final_state),
+                    state=final_state,
+                    history=messages_from_transcript(final_state.get("transcript", [])),
+                )
+
+                await self._active_session_manager.clear_active_session_mutation(
+                    thread_id, mutation_token
+                )
+                return result
 
     async def end_session(
         self,
@@ -520,83 +1287,275 @@ class PersistentAgentRuntime:
         *,
         llm_client: BaseLLMClient | None = None,
     ) -> StoredSessionArc | None:
-        """Summarize the active session for ``thread_id`` and write it to memory.
-
-        Loads the current state for the thread, invokes the session
-        summarizer with the full transcript plus session metadata, and
-        returns the written :class:`StoredSessionArc` on success.
-
-        Skip conditions (return ``None``):
-        - Incognito memory mode (symmetric with extract_facts — no
-          episodic writes in incognito).
-        - No LLM client provided (the summarizer needs one).
-        - LLM judged the session too thin to summarize (returned
-          ``arc=None``).
-        - LLM call or store write failed (degrades silently; check
-          the warning logs for diagnostics).
-        - No state exists for ``thread_id`` (e.g., the thread has no
-          turns yet).
-
-        After a successful summarization, the tracked session_start for
-        this thread is cleared, so a subsequent ``run_turn`` on the same
-        thread_id starts a fresh session. This matches the v0.4 scoping
-        decision that one session = one summary, and a continuation
-        after end_session is a new session.
-
-        The session summarizer is a standalone function rather than a
-        graph node — see ``agent/nodes/summarize_session.py`` for the
-        rationale. The runtime invokes it directly with explicit
-        dependencies (llm_client, memory_store, memory_mode) rather
-        than through the LangGraph runtime context.
+        """Summarize the active session for a thread and write it to memory.
 
         Args:
-            thread_id: Which thread's session to summarize.
-            llm_client: The LLM client to use for the summarization
-                call. If None, the summarizer skips silently (same
-                contract as extract_facts).
+            thread_id: The thread whose active session should be summarized.
+            llm_client: The optional LLM client for session summarization.
 
         Returns:
-            The written :class:`StoredSessionArc` on success, or
-            ``None`` on any legitimate skip / failure.
+            The written session arc, or ``None`` when summarization is skipped.
         """
 
-        state = await self.get_state(thread_id)
-        if state is None:
-            # No state yet — nothing to summarize. This happens if
-            # end_session is called immediately after /new without any
-            # turns having run.
+        async with self._thread_lock(thread_id):
+            return await self._end_session_unlocked(thread_id, llm_client=llm_client)
+
+    async def _end_session_unlocked(
+        self,
+        thread_id: str,
+        *,
+        llm_client: BaseLLMClient | None = None,
+    ) -> StoredSessionArc | None:
+        """Summarize an active session while the caller owns the thread lock.
+
+        Args:
+            thread_id: The thread whose active session should be summarized.
+            llm_client: The optional LLM client for session summarization.
+
+        Returns:
+            The written session arc, or ``None`` when summarization is skipped.
+        """
+
+        # Drain any in-flight extraction so the buffer (and the
+        # persisted record it post-persists) reflects the most recent
+        # turn's writes before we hydrate and finalize.
+        await self._extraction.drain(thread_id)
+
+        effective_llm_client = self._effective_llm_client(thread_id, llm_client)
+        status = await self._session_status_unlocked(thread_id)
+        persisted = await self._active_session_manager.load_persisted_active_session(
+            thread_id
+        )
+        if persisted is not None:
+            self._session_tracker.hydrate(persisted)
+        has_active_session = (
+            persisted is not None or self._session_tracker.has_tracking(thread_id)
+        )
+
+        if not has_active_session:
             return None
 
-        started_at = self._session_starts.get(thread_id, _iso_now())
-        ended_at = _iso_now()
-        # v0.4: pull the peak crisis level seen during this session
-        # from the per-process tracker. Populated by run_turn after
-        # every graph invocation. Defaults to 0 if this thread has
-        # never run a turn in the current process — which is the
-        # correct semantics for "no crisis events observed."
-        crisis_level_max = self._max_crisis_levels.get(thread_id, 0)
+        @asynccontextmanager
+        async def _finalize_mutation_scope() -> AsyncIterator[str | None]:
+            if persisted is None:
+                yield None
+                return
+            async with self._active_session_manager.active_session_mutation(
+                thread_id,
+                mutation_kind="finalize",
+                finalize_required_reason=(
+                    "interrupted" if status == SessionStatus.INTERRUPTED else None
+                ),
+            ) as mutation_token:
+                yield mutation_token
 
-        stored_arc = await run_summarize_session(
-            state,
-            llm_client=llm_client,
+        async with _finalize_mutation_scope() as mutation_token:
+            state = await self.get_state(thread_id)
+
+            if state is None:
+                await self._active_session_manager.delete_persisted_active_session(
+                    thread_id
+                )
+                self._clear_thread_state(thread_id)
+                return None
+
+            try:
+                transcript_start_index = self._session_tracker.transcript_start_index(
+                    thread_id
+                )
+                session_state = slice_state_to_active_session(
+                    state,
+                    transcript_start_index=transcript_start_index,
+                )
+                started_at = self._session_tracker.started_at(
+                    thread_id,
+                    default=_iso_now(),
+                )
+                ended_at = _iso_now()
+                crisis_level_max = self._session_tracker.max_crisis_level(thread_id)
+                session_buffer = self._session_tracker.session_memory_buffer_or_none(
+                    thread_id
+                )
+                stored_arc = await finalize_session_window(
+                    session_state,
+                    thread_id=thread_id,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    crisis_level_max=crisis_level_max,
+                    session_buffer=session_buffer,
+                    llm_client=effective_llm_client,
+                    memory_store=self._memory_store,
+                    memory_mode=self.memory_mode,
+                    embedding_provider=self._embedding_provider,
+                )
+                await self._clear_session_continuity_in_checkpoint(
+                    thread_id,
+                    state,
+                    suppress_errors=True,
+                )
+                await self._active_session_manager.delete_persisted_active_session(
+                    thread_id
+                )
+                self._clear_thread_state(thread_id)
+                return stored_arc
+            except Exception:
+                if mutation_token is not None:
+                    await self._active_session_manager.clear_active_session_mutation(
+                        thread_id,
+                        mutation_token,
+                    )
+                raise
+
+    async def end_transcript_session(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        transcript: list[dict[str, Any]],
+        llm_client: BaseLLMClient | None = None,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+        crisis_level_max: int = 0,
+    ) -> StoredSessionArc | None:
+        """Finalize a session represented only by a transcript.
+
+        Args:
+            thread_id: The thread identifier.
+            user_id: The optional user identifier.
+            transcript: The serialized transcript entries for the session.
+            llm_client: The optional LLM client for memory extraction.
+            started_at: Optional session start timestamp.
+            ended_at: Optional session end timestamp.
+            crisis_level_max: The highest crisis level seen in the session.
+
+        Returns:
+            The written session arc, or ``None`` when summarization is skipped.
+        """
+
+        if not transcript:
+            return None
+
+        self._remember_llm_client(thread_id, llm_client)
+        session_buffer = SessionMemoryBuffer(session_id=thread_id)
+        await extract_memory_from_transcript(
+            thread_id=thread_id,
+            user_id=user_id,
+            transcript=transcript,
+            llm_client=self._effective_llm_client(thread_id, llm_client),
+            session_buffer=session_buffer,
             memory_store=self._memory_store,
             memory_mode=self.memory_mode,
-            session_id=thread_id,
-            started_at=started_at,
-            ended_at=ended_at,
+            embedding_provider=self._embedding_provider,
+        )
+        session_state = cast(
+            AgentState,
+            {
+                "user_id": user_id,
+                "session_id": thread_id,
+                "transcript": list(transcript),
+            },
+        )
+        return await finalize_session_window(
+            session_state,
+            thread_id=thread_id,
+            started_at=started_at or _iso_now(),
+            ended_at=ended_at or _iso_now(),
             crisis_level_max=crisis_level_max,
+            session_buffer=session_buffer,
+            llm_client=self._effective_llm_client(thread_id, llm_client),
+            memory_store=self._memory_store,
+            memory_mode=self.memory_mode,
             embedding_provider=self._embedding_provider,
         )
 
-        # Clear the start time and crisis level tracker regardless of
-        # outcome so subsequent turns on this thread begin a fresh
-        # session. If we kept the old values around after a failed
-        # summary, the next attempt would use stale metadata — better
-        # to reset and treat the next turn as a new session start.
-        self._session_starts.pop(thread_id, None)
-        self._max_crisis_levels.pop(thread_id, None)
+    async def finalize_active_sessions(
+        self,
+        *,
+        llm_client: BaseLLMClient | None = None,
+    ) -> None:
+        """Finalize any unresolved active sessions.
 
-        return stored_arc
+        Args:
+            llm_client: The fallback LLM client to use for summarization.
+
+        Returns:
+            None.
+        """
+
+        try:
+            active_thread_ids = await self._list_active_thread_ids()
+        except Exception:
+            logger.warning(
+                "finalize_active_sessions: failed to list active sessions",
+                exc_info=True,
+            )
+            return
+
+        for active_thread_id in active_thread_ids:
+            try:
+                if self._auto_finalization_excluded(active_thread_id):
+                    continue
+                await self.end_session(
+                    active_thread_id,
+                    llm_client=self._effective_llm_client(active_thread_id, llm_client),
+                )
+            except Exception:
+                logger.warning(
+                    "finalize_active_sessions: failed to end session for thread %s",
+                    active_thread_id,
+                    exc_info=True,
+                )
+
+    async def record_session_feedback(
+        self,
+        thread_id: str,
+        *,
+        label: FeedbackLabel,
+        source: FeedbackSource,
+    ) -> SessionFeedbackRecord | None:
+        """Record an explicit end-of-session feedback label.
+
+        Args:
+            thread_id: The thread whose session is ending.
+            label: The explicit feedback label the user provided.
+            source: Which end-session surface produced this feedback.
+
+        Returns:
+            The written feedback record, or ``None`` on failure.
+        """
+
+        try:
+            state = await self.get_state(thread_id)
+            turn_count = turn_count_from_state(state)
+
+            # Mirror the crisis-log privacy contract in incognito mode.
+            if self.memory_mode == MemoryMode.INCOGNITO:
+                user_id: str | None = None
+            elif state is not None:
+                user_id = state.get("user_id")
+            else:
+                user_id = None
+
+            record = SessionFeedbackRecord(
+                id=str(uuid4()),
+                session_id_opaque=hash_session_id(thread_id),
+                user_id_or_null=user_id,
+                recorded_at=iso_now(),
+                label=label,
+                turn_count_at_end=turn_count,
+                source=source,
+                schema_version=1,
+            )
+
+            await self._session_feedback_backend.aappend(record)
+            return record
+        except Exception:
+            logger.warning(
+                "session feedback write failed for thread %s",
+                thread_id,
+                exc_info=True,
+            )
+            return None
 
     async def run_turn_stream(
         self,
@@ -607,123 +1566,173 @@ class PersistentAgentRuntime:
         user_id: str | None = None,
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
+        response_llm_client: BaseLLMClient | None = None,
+        expected_liveness: ExpectedSessionLiveness | None = None,
+        session_transcript_soft_limit: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Run one turn and yield per-node status events + a terminal done event.
+        """Run one turn and stream status and response events.
 
-        Streams the graph via ``astream(stream_mode=["updates", "values"])``
-        so that per-node progress and the accumulated final state come out
-        of a single pass. Each ``updates`` chunk is a ``{node_name: delta}``
-        dict emitted when that node finishes — we map the node name to the
-        CLI's stage label vocabulary (``load_memory``, ``crisis_gate``,
-        ``therapeutic``, etc.) and yield a :class:`StatusEvent`. Each
-        ``values`` chunk is the full merged state at that checkpoint —
-        we keep the most recent one as the final state.
+        Args:
+            thread_id: The thread identifier.
+            message: The user message to process.
+            channel: The channel metadata for the turn.
+            user_id: The optional user identifier.
+            installed_skills: Optional installed skill names.
+            llm_client: The control-plane LLM client.
+            response_llm_client: Optional response-writer override.
+            expected_liveness: Optional active-session liveness expectation.
+            session_transcript_soft_limit: Optional active-session transcript
+                message limit that marks the session for rotation after success.
 
-        Duplicates the session-tracking bookkeeping from :meth:`run_turn`
-        (session start stamp, max crisis level, turn-total timing) so
-        callers using ``run_turn_stream`` get the same side effects as
-        callers using ``run_turn``. The two paths converge on
-        ``state_to_output`` for the terminal output.
-
-        Why the per-node status labels don't exactly match node names:
-        the CLI's ``_STAGE_LABELS`` vocabulary predates the graph
-        refactor and uses short names like ``crisis_gate`` and
-        ``therapeutic``. Rather than rename either side, we translate
-        here. Unknown nodes fall through to the node name itself so
-        future additions still render readably in the Live display.
+        Yields:
+            Stream events for status updates, response readiness, and completion.
         """
 
-        graph = self._get_graph()
-        history = await self.get_history(thread_id)
+        async with self._thread_lock(thread_id):
+            graph = self._get_graph()
+            self._remember_llm_client(thread_id, llm_client)
 
-        # v0.4: track session start on the first turn we see for this
-        # thread. Same logic as ``run_turn`` — see that method for the
-        # "one CLI = one session" definition.
-        if thread_id not in self._session_starts:
-            self._session_starts[thread_id] = _iso_now()
-
-        agent_input = AgentInput(
-            message=message,
-            channel=channel,
-            user_id=user_id,
-            session_id=thread_id,
-            history=history,
-            working_memory=[],
-            installed_skills=list(installed_skills or []),
-        )
-        initial_state = build_initial_state(agent_input)
-
-        # Map internal graph node names → CLI stage labels. Keeps the
-        # naming mismatch between graph internals and CLI vocabulary
-        # contained to a single source of truth. Therapeutic subgraph
-        # emits its own node updates from within the subgraph, but at
-        # the parent level it reports as ``therapeutic_subgraph`` — we
-        # surface that as ``therapeutic`` so the CLI label matches.
-        _NODE_TO_STAGE = {
-            "load_memory_node": "load_memory",
-            "crisis_gate_node": "crisis_gate",
-            "crisis_response_node": "crisis_response",
-            "crisis_log_node": "crisis_log",
-            "therapeutic_subgraph": "therapeutic",
-            "extract_semantic_facts_node": "extract_facts",
-            "extract_procedural_rules_node": "extract_procedural",
-            "finalize_turn_node": "finalize",
-        }
-
-        turn_start = time.monotonic()
-        final_state: AgentState | None = None
-
-        async for mode, payload in graph.astream(
-            initial_state,
-            config=self._config_for_thread(thread_id),
-            context=self._context_for_turn(llm_client=llm_client),
-            stream_mode=["updates", "values"],
-        ):
-            if mode == "updates":
-                # ``updates`` payloads are ``{node_name: delta}`` dicts,
-                # usually with a single key. Emit one StatusEvent per
-                # node completion. Unknown node names (e.g., therapeutic
-                # subgraph internals) fall through to the raw name.
-                for node_name in payload:
-                    stage = _NODE_TO_STAGE.get(node_name, node_name)
-                    yield StatusEvent(stage=stage)
-            elif mode == "values":
-                # ``values`` payloads carry the full accumulated state
-                # after each step. We hold onto the latest one and use
-                # it as the final state once the stream ends.
-                final_state = payload  # type: ignore[assignment]
-
-        turn_total_ms = round((time.monotonic() - turn_start) * 1000, 2)
-
-        # Defensive guard: a graph that returns no values chunks (which
-        # would be a LangGraph bug, not a legitimate runtime state) would
-        # leave final_state as None. Fall back to reading the checkpoint
-        # directly so the caller still gets a DoneEvent rather than a
-        # crash deep in state_to_output.
-        if final_state is None:
-            fallback = await self.get_state(thread_id)
-            if fallback is None:
-                raise RuntimeError(
-                    "run_turn_stream: graph stream yielded no values chunks "
-                    "and no checkpoint was found for this thread."
-                )
-            final_state = fallback
-
-        # Stamp the outer turn-total into diagnostics. Mirrors run_turn.
-        if "diagnostics" not in final_state or final_state["diagnostics"] is None:
-            final_state["diagnostics"] = {}
-        final_state["diagnostics"]["turn_total_ms"] = turn_total_ms
-
-        # v0.4: update max crisis level — same logic as run_turn.
-        turn_crisis = final_state.get("crisis")
-        turn_level = 0
-        if turn_crisis is not None:
-            turn_level = (
-                turn_crisis.level
-                if hasattr(turn_crisis, "level")
-                else int(turn_crisis.get("level", 0) or 0)
+            # Reducers restore transcript; only turn_count is needed here.
+            prior_state = await self.get_state(thread_id)
+            await self._prepare_session_for_turn(
+                thread_id=thread_id,
+                prior_state=prior_state,
+                llm_client=llm_client,
+                expected_liveness=expected_liveness,
             )
-        prior_max = self._max_crisis_levels.get(thread_id, 0)
-        self._max_crisis_levels[thread_id] = max(prior_max, turn_level)
+            prior_turn_count = turn_count_from_state(prior_state)
 
-        yield DoneEvent(output=state_to_output(final_state))
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
+                message=message,
+                channel=channel,
+                user_id=user_id,
+                installed_skills=installed_skills,
+                prior_turn_count=prior_turn_count,
+            )
+
+            turn_start = time.monotonic()
+            final_state: AgentState | None = None
+            chunks_emitted = False
+            finalize_seen = False
+            response_ready_emitted = False
+
+            async with self._active_session_manager.active_session_mutation(
+                thread_id,
+                mutation_kind="turn",
+            ) as mutation_token:
+                async for chunk in graph.astream(
+                    initial_state,
+                    config=self._config_for_thread(
+                        thread_id,
+                        channel=channel,
+                        user_id=user_id,
+                        streaming=True,
+                    ),
+                    context=self._context_for_turn(
+                        thread_id=thread_id,
+                        message=message,
+                        prior_state=prior_state,
+                        user_id=user_id,
+                        llm_client=llm_client,
+                        response_llm_client=response_llm_client,
+                    ),
+                    stream_mode=("custom", "updates", "values"),
+                    subgraphs=True,
+                    version="v2",
+                ):
+                    if chunk["type"] == "custom":
+                        # Forward token chunks from any namespace.
+                        event = chunk_event_from_custom_payload(chunk["data"])
+                        if event is not None:
+                            yield event
+                            chunks_emitted = True
+                    elif chunk["type"] == "updates" and chunk["ns"] == ():
+                        # Skip subgraph internals to avoid duplicate status events.
+                        for node_name in chunk["data"]:
+                            yield StatusEvent(stage=status_stage_for_node(node_name))
+                            if node_name == FINALIZE_TURN_NODE:
+                                finalize_seen = True
+                                ready_output = response_ready_output(
+                                    final_state,
+                                    finalize_seen=finalize_seen,
+                                    response_ready_emitted=response_ready_emitted,
+                                )
+                                if ready_output is not None:
+                                    if not chunks_emitted:
+                                        yield chunk_event_from_custom_payload(
+                                            {
+                                                "type": "chunk",
+                                                "text": ready_output.response_text,
+                                            }
+                                        )
+                                        chunks_emitted = True
+                                    yield ResponseReadyEvent(output=ready_output)
+                                    response_ready_emitted = True
+                    elif chunk["type"] == "values" and chunk["ns"] == ():
+                        final_state = cast(AgentState, chunk["data"])
+                        ready_output = response_ready_output(
+                            final_state,
+                            finalize_seen=finalize_seen,
+                            response_ready_emitted=response_ready_emitted,
+                        )
+                        if ready_output is not None:
+                            if not chunks_emitted:
+                                yield chunk_event_from_custom_payload(
+                                    {
+                                        "type": "chunk",
+                                        "text": ready_output.response_text,
+                                    }
+                                )
+                                chunks_emitted = True
+                            yield ResponseReadyEvent(output=ready_output)
+                            response_ready_emitted = True
+
+                # Fall back to the checkpoint if the stream never yielded state values.
+                if final_state is None:
+                    fallback = await self.get_state(thread_id)
+                    if fallback is None:
+                        raise RuntimeError(
+                            "run_turn_stream: graph stream yielded no values chunks "
+                            "and no checkpoint was found for this thread."
+                        )
+                    final_state = fallback
+
+                stamp_turn_total_ms(final_state, started_at=turn_start)
+
+                await self._record_successful_turn_tracking(
+                    thread_id,
+                    final_state,
+                    session_transcript_soft_limit=session_transcript_soft_limit,
+                )
+
+                extraction_state = cast(
+                    AgentState,
+                    {**dict(initial_state), **dict(final_state)},
+                )
+                if self._extract_in_foreground:
+                    extraction_diagnostics = await self._extraction.run_pair(
+                        state=extraction_state,
+                        llm_client=llm_client,
+                        session_buffer=self._session_memory_buffer_for_thread(
+                            thread_id
+                        ),
+                    )
+                    if extraction_diagnostics:
+                        existing = final_state.get("diagnostics") or {}
+                        final_state["diagnostics"] = {
+                            **existing,
+                            **extraction_diagnostics,
+                        }
+                    await self._persist_runtime_session_tracking(thread_id)
+                else:
+                    self._extraction.schedule(
+                        thread_id=thread_id,
+                        state=extraction_state,
+                        llm_client=llm_client,
+                    )
+
+                await self._active_session_manager.clear_active_session_mutation(
+                    thread_id, mutation_token
+                )
+                yield DoneEvent(output=state_to_output(final_state))

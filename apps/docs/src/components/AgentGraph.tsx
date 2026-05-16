@@ -13,124 +13,120 @@ interface StepDef {
   id: string;
   label: string;
   sub: string;
-  badges?: { label: string; llm?: boolean; crisis?: boolean }[];
+  badges?: { label: string; llm?: boolean; crisis?: boolean; retry?: boolean; reducer?: boolean; parallel?: boolean }[];
   detail: Detail;
-  branch?: { condition: string; target: string; crisis?: boolean };
+  branch?: { condition: string; targetA: string; targetB: string; crisis?: boolean };
 }
 
-interface ModeDef {
+interface ResponseStyleDef {
   id: string;
   label: string;
-  conditional?: boolean;
-  conditionLabel?: string;
   detail: Detail;
 }
 
-/* ── Pipeline steps (the main spine — what every message goes through) ───── */
+/* ── Pipeline steps ───────────────────────────────────────────────────────── */
 
 const STEPS: StepDef[] = [
   {
     id: 'input',
     label: 'User message',
-    sub: 'prepare_turn_state re-derives context from the persisted transcript',
+    sub: 'build_initial_state emits only the current user turn',
     detail: {
-      what: 'Entry point. Accepts a message, channel, transcript, and session IDs. Re-derives all context from the persisted transcript each turn.',
-      how: 'Trims history, extracts concerns/loops/goal, updates sticky session intent, builds rolling summary, resets turn-scoped fields.',
-      emits: 'AgentState with route="therapeutic" mode="supportive_conversation"',
+      what: 'Entry point. Accepts a message, channel, and session IDs. Emits only the current user turn — the checkpointer + operator.add reducer accumulates prior turns automatically.',
+      how: 'build_initial_state creates the AgentState dict. Persistent sessions pass prior_turn_count from the checkpoint instead of deserializing the full transcript. One-shot callers can opt into include_input_history=True for testing.',
+      emits: 'AgentState with history=[user_turn], transcript=[user_turn]',
     },
   },
   {
     id: 'crisis_gate',
-    label: 'Crisis gate',
-    sub: 'Hard safety boundary — every message, no exceptions',
+    label: 'crisis_gate_node',
+    sub: 'Safety first — every message, no exceptions',
     badges: [
-      { label: 'deterministic' },
-      { label: 'optional LLM', llm: true },
+      { label: 'LLM structured output', llm: true },
+      { label: 'retry', retry: true },
     ],
     branch: {
-      condition: 'crisis.level >= 2',
-      target: 'Crisis response — acknowledge, surface resources, one safety question. Skips all normal routing.',
+      condition: 'needs_crisis_response',
+      targetA: 'crisis_response → crisis_log → finalize',
+      targetB: 'turn_dispatch → memory_control | grounded_answer | therapeutic',
       crisis: true,
     },
     detail: {
-      what: 'Assesses every inbound message for self-harm or suicide risk. Cannot be bypassed or weakened by mode, modality, or tone settings.',
-      how: 'Layer 1: deterministic regex for obvious cases (imminent risk, idiomatic safe). Layer 2: optional LLM classifier for ambiguous cases. Layer 3: policy normalization. Output: CrisisAssessment with level 0–3 and two routing flags.',
-      emits: 'state.crisis  state.route = "crisis" | "therapeutic"',
+      what: 'Hard safety boundary. Runs BEFORE memory retrieval — there is no path that loads context without first passing the safety check. Returns a Command(goto=...) that routes the turn.',
+      how: 'LLM-only classifier returns a structured CrisisAssessment with level 0–3. Local normalization enforces needs_crisis_response for levels 2–3 and needs_clarification for level 1; provider failures retry or surface instead of falling back to regex.',
+      emits: 'state.crisis + state.routing.route ("crisis" | "therapeutic")',
     },
   },
   {
-    id: 'session_stage',
-    label: 'Session stage',
-    sub: 'opening → deepening → stabilizing → closing',
-    detail: {
-      what: 'Infers where the conversation is in its natural arc. Influences prompt tone and response shape without changing the mode.',
-      how: 'Deterministic first: wrap-up language detection, turn count heuristics, mode history. Optional LLM refinement. Stage is sticky — does not flap without a clear cue.',
-      emits: 'state.session_stage + session_stage_source + session_stage_reason',
-    },
-  },
-  {
-    id: 'mode_router',
-    label: 'Mode router',
-    sub: 'Three-layer selection — keyword patterns → session intent → LLM classifier',
+    id: 'turn_dispatch',
+    label: 'turn_dispatch_node',
+    sub: 'LLM route plan for safe turns',
     badges: [
-      { label: 'keyword' },
-      { label: 'intent' },
-      { label: 'LLM fallback', llm: true },
+      { label: 'LLM structured output', llm: true },
+      { label: 'retry', retry: true },
     ],
     detail: {
-      what: 'Selects one of 8 response modes. Safety-critical modes are exclusively deterministic — the LLM classifier can never override them.',
-      how: 'Layer 1: keyword regex patterns match the message. Layer 2: sticky session intent steers ambiguous follow-ups. Layer 3: optional LLM classifier selects among 4 therapeutic modes when layers 1–2 miss. Layer 4: default to supportive_conversation.',
-      emits: 'state.mode + state.mode_source (keyword | session_intent | llm | default)',
+      what: 'Safe-turn router. Routes explicit saved-memory commands to memory_control_node, factual lookup requests to grounded_answer_node, and ordinary support to load_memory_node.',
+      how: 'LLM-primary structured decision with local validation for active-flow actions, memory-control payloads, grounded lookup queries, and explicit memory-reference mode.',
+      emits: 'state.route + state.memory_control.action + state.grounded_lookup.query + Command(goto=...)',
     },
   },
   {
-    id: 'semantic_signals',
-    label: 'Semantic signals',
-    sub: 'Shared boolean flags derived from history + concerns + message',
+    id: 'load_memory',
+    label: 'load_memory_node',
+    sub: 'Therapeutic branch only — hybrid retrieval across 3 namespaces',
     badges: [
-      { label: 'deterministic' },
-      { label: 'cached' },
+      { label: 'hybrid RRF' },
+      { label: 'retry', retry: true },
     ],
     detail: {
-      what: 'Computes 13 boolean semantic flags once per turn: theme detection (grief, anxiety, stress, relational), intent signals (wants_grounding, wants_cbt, wants_explanation, wants_pattern_reflection, wants_behavioral_activation), emotional state (is_venting, is_progress_update), and lifecycle (safety_sensitive, is_closing).',
-      how: 'Combines recent history, active concerns, current goal, and the current message into a single lowercased text, then matches against curated term lists. Cached on state.semantic_signals for reuse by mode router, modality selector, and response shaping.',
-      emits: 'state.semantic_signals',
+      what: 'Retrieves semantic facts, episodic session arcs, and procedural style rules. Returns structured WorkingMemoryEntry dicts — formatting happens on demand at prompt-build time.',
+      how: 'Semantic + episodic retrieval run in parallel via asyncio.gather. Each uses the store\'s hybrid path: token-recall + optional cosine-similarity fused via Reciprocal Rank Fusion. Procedural profile loaded separately. First-turn episodic catch-up injects the most recent session arc.',
+      emits: 'state.working_memory (structured entries) + state.procedural_profile.procedural_rules',
     },
   },
   {
-    id: 'modality_selection',
-    label: 'Modality selection',
-    sub: 'Picks therapeutic technique overlays based on semantic signals',
+    id: 'therapeutic',
+    label: 'therapeutic_subgraph',
+    sub: 'Dispatcher routes to shared response or guided exercise node',
     badges: [
-      { label: 'deterministic' },
+      { label: 'subgraph' },
+      { label: 'all nodes retry', retry: true },
     ],
     detail: {
-      what: 'Selects 0–3 modality overlays (pfa, cbt, grief_support, act) based on the chosen mode and semantic signals. MI is applied as a baseline to certain modes automatically via MODE_BASELINE_FILES.',
-      how: 'Per-mode rules in modality_selector.py read semantic signals and session stage to compose a priority-ordered modality list. Bounded to 3, deduplicated. Modes like realignment and safety_check get fixed modalities (empty or pfa only).',
-      emits: 'state.active_modalities',
+      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher, one shared therapeutic response node, and one guided-exercise response node. Uses a narrow output schema so only response, approach, session action, diagnostics, and exercise state flow back to the parent.',
+      how: 'Dispatcher is LLM-owned: the model picks response_style + therapeutic_approach, with local validation around active exercise state. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
+      emits: 'response_style + response_text + therapeutic_approach + exercise_state',
     },
   },
   {
-    id: 'response_shaping',
-    label: 'Response shaping',
-    sub: 'Infers sub-strategy within the selected mode',
+    id: 'finalize',
+    label: 'finalize_turn_node',
+    sub: 'Append assistant reply — single-element delta via operator.add reducer',
     badges: [
-      { label: 'deterministic' },
+      { label: 'pure state' },
+      { label: 'no retry' },
     ],
     detail: {
-      what: 'Deterministic inference of how the response should be shaped within the chosen mode. This is where support strategy, exercise focus, and psychoeducation topic are decided.',
-      how: 'Support: hold_space / strengths_based / supportive_guidance. Exercise: grounding / behavioral_activation / thought_work / acceptance. Psychoeducation: anxiety_response / stress_response / grief_process / general. Pattern reflection: modality-aware guidance variants (grief-aware, strengths-aware, relational, ACT).',
-      emits: 'state.response_guidance',
+      what: 'Appends the assistant response to transcript and history as a 1-element list. The operator.add reducer handles merging with the accumulated state from the checkpoint. Empty/whitespace responses produce an empty delta to keep the transcript clean.',
+      how: 'Reads state.response_text, stamps routing metadata onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
+      emits: 'state.transcript += [assistant_turn], state.history += [assistant_turn]',
     },
   },
   {
-    id: 'response',
-    label: 'Response generation',
-    sub: 'Registry-backed prompt assembly → LLM call (or deterministic fallback) → finalize',
+    id: 'extractors',
+    label: 'runtime extraction',
+    sub: 'Off-graph side effect after response finalization',
+    badges: [
+      { label: 'parallel', parallel: true },
+      { label: 'LLM structured output', llm: true },
+      { label: 'retry', retry: true },
+      { label: 'diagnostics reducer', reducer: true },
+    ],
     detail: {
-      what: 'Uses the therapeutic_mode_registry to assemble the full prompt and generate the reply. Each mode has a registered config with prompt builders, system builders, temperature, and fallback templates.',
-      how: 'The prompt is layered: soul.md and policy (always present), mode file + MI baseline if applicable (selected by router), modality overlays (from modality_selector), response guidance (from shaping), session context and history (from state). LLM generates text; per-mode deterministic fallback responses used if LLM unavailable.',
-      emits: 'state.response_text + state.response_type + state.mode_type',
+      what: 'After the graph reaches END, the runtime schedules semantic and procedural extraction. Each lane extracts candidates with structured LLM output, then runs LLM-primary write policy with hard local safety/storage guards.',
+      how: 'Gating: crisis path -> skip, no LLM -> skip/error by path, incognito -> skip, small talk -> skip. Otherwise: structured-output extraction, policy decision, then immediate commit vs persisted active-session buffer vs drop. Session-end promotion later runs via runtime session finalization. Diagnostics record timing, write counts, policy drops, and policy errors.',
+      emits: 'state.diagnostics (extract_facts_ms, extract_procedural_ms, etc.)',
     },
   },
   {
@@ -138,85 +134,70 @@ const STEPS: StepDef[] = [
     label: 'AgentOutput',
     sub: 'Normalized public response returned to the API layer',
     detail: {
-      what: 'finalize_turn_state appends the user message and assistant response to the durable transcript, then state_to_output extracts the public response shape.',
-      how: 'Extracts response_text, response_type, crisis assessment, mode, mode_type, mode_source, and should_persist_memory.',
+      what: 'state_to_output extracts the public response shape from the final state. The checkpoint stores the full accumulated state for the next turn — including the reducer-merged transcript, diagnostics, and progress.',
+      how: 'Extracts response_text, crisis assessment, response_style, therapeutic_approach, session_action, and diagnostics. Public response_type is derived from crisis.level.',
       emits: 'AgentOutput',
     },
   },
 ];
 
-/* ── Modes ─────────────────────────────────────────────────────────────────── */
+/* ── Therapeutic response styles ──────────────────────────────────────────── */
 
-const CONDITIONAL_MODES: ModeDef[] = [
+const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
   {
-    id: 'safety_check', label: 'safety_check', conditional: true,
-    conditionLabel: 'crisis gate sets needs_clarification',
+    id: 'supportive', label: 'supportive',
     detail: {
-      what: 'Asks one direct safety question before proceeding. Triggered when the message is concerning but ambiguous.',
-      how: 'Keyword-only routing (deterministic). Uses PFA modality. Does not assume intent — clarifies first.',
-      emits: 'mode_source = keyword',
+      what: 'Default — user sharing feelings, seeking support, or greeting. Three sub-strategies: hold_space (venting), strengths_based (progress), supportive_guidance (validate + next step).',
+      how: 'Reachable from all routing layers. Most common response style.',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
-    id: 'orientation', label: 'orientation', conditional: true,
-    conditionLabel: 'first message + intake language',
+    id: 'reflective', label: 'reflective',
     detail: {
-      what: 'Warm introduction to what OpenCouch can and cannot do. Only fires on the first turn with intake patterns.',
-      how: 'Keyword-only routing (deterministic). Triggered by "how does this work", "I\'m new here", etc. Disabled if conversation has history.',
-      emits: 'mode_source = keyword',
+      what: 'User describing a recurring pattern they\'ve already named. Reflects on themes, connections, cycles.',
+      how: 'Picked by the LLM dispatcher when the user is already naming a pattern.',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
-    id: 'out_of_scope', label: 'out_of_scope', conditional: true,
-    conditionLabel: 'diagnosis, medication, or legal request',
+    id: 'clarifying', label: 'clarifying',
     detail: {
-      what: 'For requests outside boundaries. States limits clearly without shame, redirects to appropriate help.',
-      how: 'Keyword-only routing (deterministic). Matches "diagnose", "medication", "legal advice", etc.',
-      emits: 'mode_source = keyword',
-    },
-  },
-  {
-    id: 'realignment', label: 'realignment', conditional: true,
-    conditionLabel: 'user signals a mismatch',
-    detail: {
-      what: 'When the user says the previous reply missed — "that\'s not helpful", "you missed the point", "wrong direction".',
-      how: 'Keyword-only routing (deterministic). Acknowledges the miss, re-attunes without defensiveness.',
-      emits: 'mode_source = keyword',
-    },
-  },
-];
-
-const THERAPEUTIC_MODES: ModeDef[] = [
-  {
-    id: 'support', label: 'supportive_conversation',
-    detail: {
-      what: 'Default support with three sub-strategies: hold_space (venting, no advice), strengths_based (progress/wins), supportive_guidance (validate + one next step).',
-      how: 'Reachable from all three routing layers. Most common mode. Sub-strategy inferred by response_shaping.',
-      emits: 'response_type = THERAPEUTIC',
-    },
-  },
-  {
-    id: 'guided_exercise', label: 'guided_exercise',
-    detail: {
-      what: 'Structured self-help with four subtypes: grounding (sensory/breathing), behavioral_activation (tiny action), thought_work (CBT-style), acceptance (ACT defusion).',
-      how: 'Reachable from all three routing layers. Subtype inferred from keywords, modality, and context.',
-      emits: 'response_type = THERAPEUTIC',
-    },
-  },
-  {
-    id: 'reflection', label: 'pattern_reflection',
-    detail: {
-      what: 'Reflects on recurring themes, connections, and cycles. Names patterns tentatively, invites testing.',
-      how: 'Reachable from all three routing layers. Guidance varies: grief-aware, strengths-aware, relational, ACT.',
-      emits: 'response_type = THERAPEUTIC',
+      what: 'Ambiguous or very short message — agent needs context before responding.',
+      how: 'Picked by the LLM dispatcher when the next useful move is one small clarifying question.',
+      emits: 'AgentOutput.response_type = therapeutic',
     },
   },
   {
     id: 'psychoeducation', label: 'psychoeducation',
     detail: {
-      what: 'Brief normalizing explanations of anxiety, stress, grief, or emotional responses. Permission before explaining, pivot back to experience.',
-      how: 'Reachable from all three routing layers. Topic inferred: anxiety_response, stress_response, grief_process, general.',
-      emits: 'response_type = THERAPEUTIC',
+      what: 'User describes a reaction AND seeks understanding. Brief normalizing explanation, permission before explaining, pivot back to experience.',
+      how: 'LLM classifier picks this for "why do I feel..." patterns.',
+      emits: 'AgentOutput.response_type = therapeutic',
+    },
+  },
+  {
+    id: 'technique', label: 'technique',
+    detail: {
+      what: 'User wants structured therapeutic work without launching a named exercise — examining a thought, weighing evidence for a belief, working through a dilemma. The therapeutic_approach knowledge drives the response shape.',
+      how: 'Picked by the LLM dispatcher when the user asks for structure but not a specific exercise. Requires an active therapeutic_approach.',
+      emits: 'therapeutic_approach',
+    },
+  },
+  {
+    id: 'guided_exercise', label: 'guided_exercise',
+    detail: {
+      what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_therapeutic_approach) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
+      how: 'Active-exercise context is passed to the LLM dispatcher. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
+      emits: 'exercise_state.{exercise_type, exercise_step, exercise_therapeutic_approach}',
+    },
+  },
+  {
+    id: 'closing', label: 'closing',
+    detail: {
+      what: 'User signals wind-down ("I should go", "thanks, this helped"). Graceful session close. May set should_persist_memory=True.',
+      how: 'LLM dispatcher distinguishes a real wind-down ("I have to head out") from mid-conversation thanks ("thanks, that helps").',
+      emits: 'response_text',
     },
   },
 ];
@@ -253,18 +234,18 @@ export default function AgentGraph() {
     setActive(p => p === id ? null : id);
   }, []);
 
-  const activeModeId = active?.startsWith('mode:') ? active.replace('mode:', '') : null;
-  const isRouterExpanded = active === 'mode_router' || activeModeId !== null;
+  const activeResponseStyleId = active?.startsWith('style:') ? active.replace('style:', '') : null;
+  const isTherapeuticExpanded = active === 'therapeutic' || activeResponseStyleId !== null;
 
   return (
     <div className={styles.root}>
-      <p className={styles.hint}>Click any step to expand. The main spine shows what every message goes through.</p>
+      <p className={styles.hint}>Click any step to expand. The pipeline shows the safety-first topology with runtime-owned post-response memory evaluation.</p>
 
       <div className={styles.pipeline}>
         {STEPS.map((step) => {
           const isActive = active === step.id;
-          const isRouterStep = step.id === 'mode_router';
-          const stepIsExpanded = isActive || (isRouterStep && isRouterExpanded);
+          const isTherapeuticStep = step.id === 'therapeutic';
+          const stepIsExpanded = isActive || (isTherapeuticStep && isTherapeuticExpanded);
 
           return (
             <div
@@ -272,6 +253,7 @@ export default function AgentGraph() {
               className={[
                 styles.step,
                 stepIsExpanded ? styles.stepActive : '',
+                step.id === 'crisis_gate' ? styles.stepCrisis : '',
               ].join(' ')}
             >
               <div className={styles.stepDot} />
@@ -291,6 +273,9 @@ export default function AgentGraph() {
                           styles.badge,
                           b.llm ? styles.badgeLlm : '',
                           b.crisis ? styles.badgeCrisis : '',
+                          b.retry ? styles.badgeRetry : '',
+                          b.reducer ? styles.badgeReducer : '',
+                          b.parallel ? styles.badgeParallel : '',
                         ].join(' ')}
                       >
                         {b.label}
@@ -299,73 +284,59 @@ export default function AgentGraph() {
                   </div>
                 )}
 
-                {/* Conditional branch callout */}
+                {/* Branch callout */}
                 {step.branch && (
-                  <div className={styles.branchRow}>
-                    <span className={[styles.badge, step.branch.crisis ? styles.badgeCrisis : ''].join(' ')}>
-                      if {step.branch.condition}
-                    </span>
-                    <span className={styles.branchArrow}>→</span>
-                    <span className={styles.stepSub}>{step.branch.target}</span>
+                  <div className={styles.branchContainer}>
+                    <div className={styles.branchRow}>
+                      <span className={[styles.badge, styles.badgeCrisis].join(' ')}>
+                        if {step.branch.condition}
+                      </span>
+                      <span className={styles.branchArrow}>{'\u2192'}</span>
+                      <span className={styles.stepSub}>{step.branch.targetA}</span>
+                    </div>
+                    <div className={styles.branchRow}>
+                      <span className={styles.badge}>else</span>
+                      <span className={styles.branchArrow}>{'\u2192'}</span>
+                      <span className={styles.stepSub}>{step.branch.targetB}</span>
+                    </div>
                   </div>
                 )}
               </button>
 
               {/* Step detail panel */}
-              {isActive && <DetailPanel detail={step.detail} key={`d-${step.id}`} />}
+              {isActive && !isTherapeuticStep && <DetailPanel detail={step.detail} key={`d-${step.id}`} />}
 
-              {/* Mode router expansion */}
-              {isRouterStep && isRouterExpanded && (
+              {/* Therapeutic subgraph expansion */}
+              {isTherapeuticStep && isTherapeuticExpanded && (
                 <>
-                  {/* Conditional modes section */}
-                  <div className={styles.modeSection}>
-                    <div className={styles.modeSectionHeader}>
-                      <span className={styles.modeGridLabel}>Conditional modes — keyword-only, deterministic</span>
-                    </div>
-                    {CONDITIONAL_MODES.map(m => {
-                      const mActive = activeModeId === m.id;
-                      return (
-                        <div key={m.id} className={styles.conditionalMode}>
-                          <button
-                            className={[styles.modeChip, mActive ? styles.modeChipActive : ''].join(' ')}
-                            onClick={(e) => { e.stopPropagation(); toggle(`mode:${m.id}`); }}
-                          >
-                            <span className={styles.modeChipLabel}>{m.label}</span>
-                            <span className={styles.modeCondition}>{m.conditionLabel}</span>
-                          </button>
-                          {mActive && <DetailPanel detail={m.detail} key={`d-${m.id}`} />}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {isActive && <DetailPanel detail={step.detail} key={`d-${step.id}`} />}
 
-                  {/* Therapeutic modes section */}
-                  <div className={styles.modeSection}>
-                    <div className={styles.modeSectionHeader}>
-                      <span className={styles.modeGridLabel}>Therapeutic modes — reachable from all 3 routing layers</span>
+                  <div className={styles.responseStyleSection}>
+                    <div className={styles.responseStyleSectionHeader}>
+                      <span className={styles.responseStyleGridLabel}>Therapeutic responses — dispatcher picks exactly one per turn</span>
                     </div>
-                    <div className={styles.modeGrid}>
-                      {THERAPEUTIC_MODES.map(m => {
-                        const mActive = activeModeId === m.id;
+                    <div className={styles.responseStyleGrid}>
+                      {THERAPEUTIC_RESPONSE_STYLES.map(m => {
+                        const responseStyleActive = activeResponseStyleId === m.id;
                         return (
                           <button
                             key={m.id}
                             className={[
-                              styles.modeChip,
-                              styles.modeChipTherapeutic,
-                              mActive ? styles.modeChipActive : '',
+                              styles.responseStyleChip,
+                              styles.responseStyleChipTherapeutic,
+                              responseStyleActive ? styles.responseStyleChipActive : '',
                             ].join(' ')}
-                            onClick={(e) => { e.stopPropagation(); toggle(`mode:${m.id}`); }}
+                            onClick={(e) => { e.stopPropagation(); toggle(`style:${m.id}`); }}
                           >
-                            <span className={styles.modeChipLabel}>{m.label}</span>
+                            <span className={styles.responseStyleChipLabel}>{m.label}</span>
                           </button>
                         );
                       })}
                     </div>
-                    {activeModeId && THERAPEUTIC_MODES.find(m => m.id === activeModeId) && (
+                    {activeResponseStyleId && THERAPEUTIC_RESPONSE_STYLES.find(m => m.id === activeResponseStyleId) && (
                       <DetailPanel
-                        detail={THERAPEUTIC_MODES.find(m => m.id === activeModeId)!.detail}
-                        key={`d-${activeModeId}`}
+                        detail={THERAPEUTIC_RESPONSE_STYLES.find(m => m.id === activeResponseStyleId)!.detail}
+                        key={`d-${activeResponseStyleId}`}
                       />
                     )}
                   </div>
