@@ -76,6 +76,9 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         preference_text: str = "direct answers when I am spiraling",
         grounded_answer: str = "Official answer.\n\nSources:\n- Official source",
         grounded_status: str = "answered",
+        crisis_location_status: str = "provided",
+        crisis_location: str = "Singapore",
+        crisis_resource_status: str = "found",
     ) -> None:
         super().__init__()
         self.route = route
@@ -90,6 +93,9 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.preference_text = preference_text
         self.grounded_answer = grounded_answer
         self.grounded_status = grounded_status
+        self.crisis_location_status = crisis_location_status
+        self.crisis_location = crisis_location
+        self.crisis_resource_status = crisis_resource_status
 
     async def generate_structured(
         self,
@@ -150,6 +156,32 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 sources=["Official source"],
                 source_quality="official",
                 reasoning="scripted grounded result",
+            )
+        if schema_name == "CrisisLocationDecision":
+            return response_schema(
+                status=self.crisis_location_status,
+                location=(
+                    self.crisis_location
+                    if self.crisis_location_status == "provided"
+                    else ""
+                ),
+                reasoning="scripted crisis location",
+            )
+        if schema_name == "CrisisResourceLookupResult":
+            resources = []
+            if self.crisis_resource_status == "found":
+                resources = [
+                    {
+                        "name": "Samaritans of Singapore",
+                        "phone": "1767",
+                        "url": "https://www.sos.org.sg",
+                        "region": self.crisis_location,
+                    }
+                ]
+            return response_schema(
+                status=self.crisis_resource_status,
+                resources=resources,
+                reasoning="scripted crisis resources",
             )
         return await super().generate_structured(
             prompt=prompt,

@@ -7,6 +7,7 @@ import pytest
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 from agent.persistence import PersistentAgentRuntime
 from agent.text_runtime import openai_adapter
+from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
@@ -129,6 +130,96 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_app_service(
         }
         assert runner.run_calls == []
         assert runner.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Level 2/3 crisis turns should be owned by the OpenAI crisis agent."""
+
+    runner = FakeOpenAISDKRunner("Please contact local emergency services now.")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-crisis",
+            user_id="user-1",
+            message="I'm in Singapore and I will end my life tonight.",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                crisis_level=3,
+            ),
+        )
+
+        assert result.output.response_type.value == "crisis"
+        assert result.output.response_style == "crisis_response"
+        assert (
+            result.output.response_text
+            == "Please contact local emergency services now."
+        )
+        assert (
+            result.output.diagnostics["openai_text_runtime_mode"] == "crisis_response"
+        )
+        assert result.output.diagnostics["openai_selected_agent"] == CRISIS_AGENT_NAME
+        assert result.output.diagnostics["extract_facts_reason"] == (
+            "skipped: crisis_path"
+        )
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+        state = await runtime.get_state("thread-crisis")
+        assert state is not None
+        assert state["route"] == "crisis"
+        assert state["resource_lookup_status"] == "found"
+        assert state["found_resources"][0]["phone"] == "1767"
+        assert runner.run_calls
+        assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ambiguous level-1 safety turns should not fall back to LangGraph."""
+
+    runner = FakeOpenAISDKRunner("Are you in immediate danger right now?")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-crisis-check",
+            user_id="user-1",
+            message="I might hurt myself.",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                crisis_level=1,
+            ),
+        )
+
+        assert result.output.response_type.value == "therapeutic"
+        assert result.output.response_style == "clarifying"
+        assert result.output.response_text == "Are you in immediate danger right now?"
+        assert (
+            result.output.diagnostics["openai_text_runtime_mode"]
+            == "crisis_clarification"
+        )
+        assert result.output.diagnostics["openai_selected_agent"] == CRISIS_AGENT_NAME
+        assert await runtime.crisis_log_backend.arecord_count() == 0
+        state = await runtime.get_state("thread-crisis-check")
+        assert state is not None
+        assert state["route"] == "therapeutic"
+        assert state["crisis"].level == 1
+        assert runner.run_calls
+        assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
 
 
 @pytest.mark.asyncio

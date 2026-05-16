@@ -597,7 +597,7 @@ async def test_crisis_resource_lookup_channel_contract() -> None:
     ) -> tuple[str, list[dict[str, str]], str]:
         return "", [], "no_location"
 
-    with patch("agent.nodes.crisis_resource_lookup.find_crisis_resources", _lookup):
+    with patch("agent.crisis_branch.find_crisis_resources", _lookup):
         delta = await run_crisis_resource_lookup_node(
             state,
             cast(

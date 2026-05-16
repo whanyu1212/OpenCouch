@@ -21,7 +21,7 @@ from agent.text_runtime import (
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
 )
-from agent.text_runtime.openai_agents import THERAPEUTIC_AGENT_NAME
+from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME, THERAPEUTIC_AGENT_NAME
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM as _RouteLLM,
@@ -308,20 +308,59 @@ async def test_openai_adapter_falls_back_for_explicit_memory_reference() -> None
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_falls_back_for_crisis_or_clarification() -> None:
+async def test_openai_adapter_uses_crisis_agent_for_safety_clarification() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner()
+    runner = FakeOpenAISDKRunner("Are you in immediate danger right now?")
     adapter = _adapter(workflow, runner)
+    context = _context(_RouteLLM(route="therapeutic", crisis_level=1))
 
     result = await adapter.run_turn(
         cast(Any, _initial_state("I might hurt myself")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(_RouteLLM(route="therapeutic", crisis_level=1)),
+        context=context,
     )
 
-    assert result == {"response_text": "fallback reply"}
-    assert workflow.ainvoke_calls == 1
-    assert runner.run_calls == []
+    assert result["route"] == "therapeutic"
+    assert result["response_text"] == "Are you in immediate danger right now?"
+    assert result["response_style"] == "clarifying"
+    assert result["crisis"].level == 1
+    assert result["diagnostics"]["text_agent_runtime"] == "openai"
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "crisis_clarification"
+    assert result["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
+    assert runner.run_calls
+    assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+    assert "Safety-check override" in runner.run_calls[0]["agent"].instructions
+    assert workflow.ainvoke_calls == 0
+    assert await context.crisis_log_backend.arecord_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_uses_crisis_agent_for_crisis_response() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("Please call local emergency services now.")
+    adapter = _adapter(workflow, runner)
+    context = _context(_RouteLLM(route="therapeutic", crisis_level=3))
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("I'm in Singapore and I will kill myself tonight.")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    assert result["route"] == "crisis"
+    assert result["response_text"] == "Please call local emergency services now."
+    assert result["response_style"] == "crisis_response"
+    assert result["crisis"].level == 3
+    assert result["resource_lookup_status"] == "found"
+    assert result["found_resources"][0]["phone"] == "1767"
+    assert result["diagnostics"]["text_agent_runtime"] == "openai"
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "crisis_response"
+    assert result["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
+    assert runner.run_calls
+    assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+    assert "Verified local crisis resources" in runner.run_calls[0]["input_text"]
+    assert workflow.ainvoke_calls == 0
+    assert await context.crisis_log_backend.arecord_count() == 1
 
 
 @pytest.mark.asyncio
@@ -374,6 +413,33 @@ async def test_openai_adapter_shadow_reports_app_owned_branch_eligibility() -> N
 
 
 @pytest.mark.asyncio
+async def test_openai_adapter_shadow_reports_crisis_agent_without_side_effects() -> (
+    None
+):
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+    context = _context(_RouteLLM(route="therapeutic", crisis_level=2))
+
+    result = await adapter.run_shadow_turn(
+        cast(Any, _initial_state("I want to end my life.")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    assert result.status == "eligible"
+    assert result.eligible is True
+    assert result.crisis_level == 2
+    assert result.needs_crisis_response is True
+    assert result.selected_agent == CRISIS_AGENT_NAME
+    assert result.response_text_length is None
+    assert runner.run_calls == []
+    assert workflow.ainvoke_calls == 0
+    assert workflow.state is None
+    assert await context.crisis_log_backend.arecord_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_openai_adapter_streams_safe_therapeutic_turn() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner("streamed reply")
@@ -397,6 +463,37 @@ async def test_openai_adapter_streams_safe_therapeutic_turn() -> None:
     assert isinstance(events[-1], TextRuntimeStateEvent)
     assert events[-1].state["response_text"] == "streamed reply"
     assert runner.stream_calls
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_streams_crisis_response_turn() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("streamed crisis reply")
+    adapter = _adapter(workflow, runner)
+    context = _context(_RouteLLM(route="therapeutic", crisis_level=3))
+
+    events = [
+        event
+        async for event in adapter.run_turn_stream(
+            cast(Any, _initial_state("I'm in Singapore and I may act tonight.")),
+            config={"configurable": {"thread_id": "thread-1"}},
+            context=context,
+        )
+    ]
+
+    assert events[:3] == [
+        TextRuntimeStatusEvent(stage="crisis_resource_lookup", turn_finalized=False),
+        TextRuntimeStatusEvent(stage="crisis_response", turn_finalized=False),
+        TextRuntimeChunkEvent(text="streamed crisis reply"),
+    ]
+    assert TextRuntimeStatusEvent(stage="crisis_log", turn_finalized=False) in events
+    assert events[-2] == TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+    assert isinstance(events[-1], TextRuntimeStateEvent)
+    assert events[-1].state["route"] == "crisis"
+    assert events[-1].state["response_style"] == "crisis_response"
+    assert events[-1].state["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
+    assert runner.stream_calls
+    assert await context.crisis_log_backend.arecord_count() == 1
 
 
 @pytest.mark.asyncio

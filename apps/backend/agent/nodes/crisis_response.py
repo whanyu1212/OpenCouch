@@ -12,6 +12,7 @@ from agent.gates.safety.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
 )
+from agent.crisis_branch import crisis_response_delta
 from agent.state import AgentState
 
 
@@ -44,8 +45,4 @@ async def run_crisis_response_node(
         writer({"type": "chunk", "text": chunk})
     response_text = "".join(chunks)
 
-    return {
-        "route": "crisis",
-        "response_style": "crisis_response",
-        "response_text": response_text,
-    }
+    return crisis_response_delta(response_text)

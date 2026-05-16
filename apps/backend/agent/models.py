@@ -110,6 +110,7 @@ STAGE_LABELS: dict[str, str] = {
     "grounded_lookup": "looking up factual answer",
     "crisis_resource_lookup": "looking up crisis resources",
     "crisis_response": "generating crisis reply",
+    "crisis_clarification": "checking immediate safety",
     "crisis_log": "writing crisis log",
     "therapeutic": "generating therapeutic reply",
     "extract_facts": "extracting facts",

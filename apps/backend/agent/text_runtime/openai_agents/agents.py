@@ -37,9 +37,10 @@ application-owned until later migration slices attach tested tools or handoffs.
 
 CRISIS_AGENT_INSTRUCTIONS = """\
 You are the OpenCouch crisis response specialist. The application runtime must
-select you only after its own crisis assessment determines a level 2 or level 3
-branch. Do not classify crisis risk yourself. Provide direct, supportive,
-safety-oriented language and follow any runtime-provided resource guidance.
+select you only after its own crisis assessment determines either a level 1
+safety clarification turn or a level 2/3 crisis response branch. Do not
+classify crisis risk yourself. Provide direct, supportive, safety-oriented
+language and follow any runtime-provided resource guidance.
 """
 
 
@@ -128,10 +129,20 @@ def build_therapeutic_agent(
 def build_crisis_response_agent(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
+    instructions: str | None = None,
 ) -> Agent[OpenAITextRunContext]:
-    """Build the dormant crisis response specialist definition."""
+    """Build the crisis response specialist definition."""
 
-    return _build_agent(_CRISIS_DEFINITION, model=model)
+    definition = (
+        _CRISIS_DEFINITION
+        if instructions is None
+        else _AgentDefinition(
+            name=_CRISIS_DEFINITION.name,
+            handoff_description=_CRISIS_DEFINITION.handoff_description,
+            instructions=instructions,
+        )
+    )
+    return _build_agent(definition, model=model)
 
 
 def build_guided_exercise_agent(

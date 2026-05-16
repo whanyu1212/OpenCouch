@@ -6,11 +6,9 @@ from typing import Any
 
 from langgraph.runtime import Runtime
 
+from agent.crisis_branch import build_crisis_resource_lookup_delta
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.tools.grounded_search import (
-    find_crisis_resources,
-)
 
 
 async def run_crisis_resource_lookup_node(
@@ -28,18 +26,4 @@ async def run_crisis_resource_lookup_node(
         and lookup status.
     """
 
-    llm_client = runtime.context.llm_client
-    if llm_client is None:
-        raise RuntimeError("crisis_resource_lookup_node requires an LLM client.")
-
-    (
-        inferred_location,
-        found_resources,
-        resource_lookup_status,
-    ) = await find_crisis_resources(state, llm_client=llm_client)
-
-    return {
-        "inferred_location": inferred_location,
-        "found_resources": found_resources,
-        "resource_lookup_status": resource_lookup_status,
-    }
+    return await build_crisis_resource_lookup_delta(state, runtime.context)
