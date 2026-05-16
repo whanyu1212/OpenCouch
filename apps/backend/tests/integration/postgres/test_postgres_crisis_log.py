@@ -13,18 +13,19 @@ from agent.audit.models import CrisisLogRecord
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
 
 
 def _postgres_database_url() -> str | None:
-    """Return the opt-in Postgres DSN for backend integration tests.
+    """Return the explicitly enabled Postgres DSN for backend integration tests.
 
     Returns:
         str | None: Configured Postgres DSN, or ``None`` when unavailable.
     """
 
-    return os.getenv(_POSTGRES_TEST_URL_ENV) or os.getenv(
-        "OPENCOUCH_MEMORY_DATABASE_URL"
-    )
+    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
+        return None
+    return os.getenv(_POSTGRES_TEST_URL_ENV)
 
 
 def _crisis_record(
@@ -88,8 +89,9 @@ async def test_postgres_crisis_log_round_trip_preserves_order() -> None:
     dsn = _postgres_database_url()
     if not dsn:
         pytest.skip(
-            "Postgres integration DSN not configured; set "
-            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
         )
 
     record_ids = [f"crisis-log-{uuid4()}" for _ in range(3)]
@@ -130,8 +132,9 @@ async def test_postgres_crisis_log_persists_across_close_and_reopen() -> None:
     dsn = _postgres_database_url()
     if not dsn:
         pytest.skip(
-            "Postgres integration DSN not configured; set "
-            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
         )
 
     record_id = f"crisis-log-{uuid4()}"

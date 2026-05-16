@@ -204,19 +204,20 @@ def _trigger_supporting_summarization_result(
 
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
 
 
 def _postgres_memory_database_url() -> str | None:
-    """Return the Postgres DSN for opt-in persistence integration tests.
+    """Return the explicitly enabled DSN for Postgres persistence tests.
 
     Returns:
         str | None: Configured Postgres DSN, or ``None`` when the
             integration environment is not available.
     """
 
-    return os.getenv(_POSTGRES_TEST_URL_ENV) or os.getenv(
-        "OPENCOUCH_MEMORY_DATABASE_URL"
-    )
+    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
+        return None
+    return os.getenv(_POSTGRES_TEST_URL_ENV)
 
 
 # ─── Smoke tests ───────────────────────────────────────────────────────
@@ -287,15 +288,16 @@ async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
     """Postgres-backed memory should preserve semantic facts across runtime restarts.
 
     This is an opt-in integration test: it requires a running Postgres
-    instance and a configured DSN via ``OPENCOUCH_TEST_POSTGRES_URL`` or
-    ``OPENCOUCH_MEMORY_DATABASE_URL``.
+    instance plus ``OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1`` and
+    ``OPENCOUCH_TEST_POSTGRES_URL``.
     """
 
     memory_database_url = _postgres_memory_database_url()
     if not memory_database_url:
         pytest.skip(
-            "Postgres integration DSN not configured; set "
-            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
         )
 
     paths = runtime_paths(tmp_path)
@@ -707,8 +709,9 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
     memory_database_url = _postgres_memory_database_url()
     if not memory_database_url:
         pytest.skip(
-            "Postgres integration DSN not configured; set "
-            "OPENCOUCH_TEST_POSTGRES_URL or OPENCOUCH_MEMORY_DATABASE_URL"
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
         )
 
     paths = runtime_paths(tmp_path)

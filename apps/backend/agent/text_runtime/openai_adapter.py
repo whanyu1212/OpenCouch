@@ -17,6 +17,7 @@ from agent.crisis_branch import (
     crisis_response_delta,
     write_crisis_log,
 )
+from agent.gates.memory_control.service import execute_memory_control_action
 from agent.gates.safety.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
@@ -33,6 +34,7 @@ from agent.text_runtime.openai_agents import (
     CRISIS_AGENT_NAME,
     GUIDED_EXERCISE_AGENT_NAME,
     THERAPEUTIC_AGENT_NAME,
+    MemoryReadActionType,
     OpenAITextRunContext,
     build_crisis_response_agent,
     build_guided_exercise_agent,
@@ -76,12 +78,21 @@ _DICT_REDUCER_KEYS = {
     "diagnostics",
 }
 
+_READ_ONLY_MEMORY_ACTIONS = frozenset({"list", "status"})
+
 _RUNTIME_THERAPEUTIC_INSTRUCTIONS = """\
 You are the OpenCouch therapeutic text agent for an already-classified safe
 turn. The application runtime owns crisis assessment, memory mutation,
 grounded lookup, guided-exercise state, persistence, and audit logging.
-No SDK tools are attached in this migration slice; answer only the current
-safe therapeutic turn using the provided prompt context.
+
+Read-only memory tools may be attached:
+- Call show_saved_memory only when the prompt explicitly requires it or the
+  user asks what saved memory contains.
+- Call show_memory_status only when the prompt explicitly requires it or the
+  user asks whether memory is enabled, how many memories exist, or whether
+  proactive recall is on.
+- Never use read-only memory tools to save, delete, update, infer, or invent
+  memory. Mutating memory remains application-owned.
 """
 
 _RUNTIME_CRISIS_INSTRUCTIONS = """\
@@ -295,6 +306,16 @@ class OpenAITextAgentAdapter:
                 streamed=False,
             )
 
+        memory_read_action = _read_only_memory_action_type(prepared)
+        if memory_read_action is not None:
+            return await self._run_memory_read_tool_turn(
+                prepared.state,
+                action_type=memory_read_action,
+                config=config,
+                context=context,
+                streamed=False,
+            )
+
         branch_mode = _app_owned_branch_mode(prepared)
         if branch_mode is not None:
             return await self._run_app_owned_branch_turn(
@@ -364,6 +385,20 @@ class OpenAITextAgentAdapter:
                 runtime_mode=crisis_mode,
             ):
                 yield event
+            return
+
+        memory_read_action = _read_only_memory_action_type(prepared)
+        if memory_read_action is not None:
+            yield TextRuntimeStatusEvent(stage="memory_control")
+            final_state = await self._run_memory_read_tool_turn(
+                prepared.state,
+                action_type=memory_read_action,
+                config=config,
+                context=context,
+                streamed=True,
+            )
+            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+            yield TextRuntimeStateEvent(state=final_state)
             return
 
         branch_mode = _app_owned_branch_mode(prepared)
@@ -460,6 +495,15 @@ class OpenAITextAgentAdapter:
                     prepared,
                     status="eligible",
                     selected_agent=CRISIS_AGENT_NAME,
+                    shadow_duration_ms=elapsed_ms(shadow_start),
+                )
+
+            memory_read_action = _read_only_memory_action_type(prepared)
+            if memory_read_action is not None:
+                return _shadow_result(
+                    prepared,
+                    status="eligible",
+                    selected_agent=THERAPEUTIC_AGENT_NAME,
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
@@ -631,6 +675,62 @@ class OpenAITextAgentAdapter:
             response_style=str(state.get("response_style") or runtime_mode),
             selected_agent=None,
             sdk_duration_ms=None,
+            streamed=streamed,
+        )
+
+    async def _run_memory_read_tool_turn(
+        self,
+        state: AgentState,
+        *,
+        action_type: MemoryReadActionType,
+        config: RunnableConfig,
+        context: WorkflowContext,
+        streamed: bool,
+    ) -> AgentState:
+        run_context = self._run_context_for_state(state, config, context)
+        agent = self._build_agent(state)
+        response_text, sdk_duration_ms = await self._run_openai_agent_with(
+            state,
+            agent=agent,
+            input_text=self._memory_read_input_text_for_state(state, action_type),
+            run_context=run_context,
+        )
+        tool_result = run_context.latest_memory_tool_result(action_type)
+        diagnostics: dict[str, Any] = {
+            **dict(state.get("diagnostics", {}) or {}),
+            "openai_memory_tool_expected": _memory_tool_name(action_type),
+            "openai_memory_tool_calls": [
+                call.tool_name for call in run_context.memory_tool_calls
+            ],
+        }
+
+        if tool_result is None:
+            fallback_result = await execute_memory_control_action(
+                run_context.agent_state_for_memory_action({"type": action_type}),
+                context,
+            )
+            response_text = fallback_result.response_text
+            memory_control = fallback_result.memory_control
+            diagnostics["openai_memory_tool_fallback"] = True
+        else:
+            memory_control = tool_result.memory_control
+            diagnostics["openai_memory_tool_fallback"] = False
+
+        _apply_delta(
+            state,
+            {
+                "memory_control": memory_control,
+                "diagnostics": diagnostics,
+            },
+        )
+        return await self._finalize_openai_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode="memory_control",
+            response_style="memory_control",
+            selected_agent=THERAPEUTIC_AGENT_NAME,
+            sdk_duration_ms=sdk_duration_ms,
             streamed=streamed,
         )
 
@@ -969,7 +1069,6 @@ class OpenAITextAgentAdapter:
         )
         return build_therapeutic_agent(
             model=self._model,
-            tools=[],
             instructions=instructions,
         )
 
@@ -991,6 +1090,22 @@ class OpenAITextAgentAdapter:
         return build_therapeutic_response_prompt(
             state,
             response_style="supportive",
+        )
+
+    def _memory_read_input_text_for_state(
+        self,
+        state: AgentState,
+        action_type: MemoryReadActionType,
+    ) -> str:
+        tool_name = _memory_tool_name(action_type)
+        return (
+            "The current user turn is an explicit saved-memory inspection "
+            "request.\n\n"
+            f"Required tool: {tool_name}\n"
+            "Call the required tool exactly once before answering. Then answer "
+            "using only the tool result's response_text. Do not save, delete, "
+            "update, infer, or invent memory.\n\n"
+            f'Current user message: "{state.get("message", "")}"'
         )
 
     def _crisis_input_text_for_state(
@@ -1079,18 +1194,46 @@ def _fallback_reason(plan: TurnDispatchPlan) -> str:
         return ""
     if plan.active_flow != "none" or plan.active_flow_action != "none":
         return f"active_flow:{plan.active_flow}:{plan.active_flow_action}"
-    if plan.memory_reference_mode != "none":
-        return f"memory_reference:{plan.memory_reference_mode}"
     return ""
+
+
+def _memory_action_type_from_plan(plan: TurnDispatchPlan | None) -> str | None:
+    if plan is None or plan.memory_action is None:
+        return None
+    action = plan.memory_action.to_state_action()
+    action_type = action.get("type")
+    return str(action_type) if action_type is not None else None
+
+
+def _read_only_memory_action_type(
+    prepared: _PreparedTurn,
+) -> MemoryReadActionType | None:
+    plan = prepared.dispatch_plan
+    if plan is None or plan.route != "memory_control":
+        return None
+    action_type = _memory_action_type_from_plan(plan)
+    if action_type in _READ_ONLY_MEMORY_ACTIONS:
+        return cast(MemoryReadActionType, action_type)
+    return None
 
 
 def _app_owned_branch_mode(prepared: _PreparedTurn) -> str | None:
     plan = prepared.dispatch_plan
     if plan is None:
         return None
-    if plan.route in {"memory_control", "grounded_lookup"}:
-        return plan.route
+    if plan.route == "memory_control":
+        if _memory_action_type_from_plan(plan) in _READ_ONLY_MEMORY_ACTIONS:
+            return None
+        return "memory_control"
+    if plan.route == "grounded_lookup":
+        return "grounded_lookup"
     return None
+
+
+def _memory_tool_name(action_type: MemoryReadActionType) -> str:
+    if action_type == "list":
+        return "show_saved_memory"
+    return "show_memory_status"
 
 
 def _crisis_runtime_mode(prepared: _PreparedTurn) -> str | None:

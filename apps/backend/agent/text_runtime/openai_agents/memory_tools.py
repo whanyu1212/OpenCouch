@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
 from agent.gates.memory_control.service import execute_memory_control_action
-from agent.text_runtime.openai_agents.context import OpenAITextRunContext
+from agent.text_runtime.openai_agents.context import (
+    MemoryReadActionType,
+    OpenAITextRunContext,
+)
 
 
 class MemoryReadToolResult(BaseModel):
@@ -35,19 +38,29 @@ async def execute_read_only_memory_action(
 ) -> MemoryReadToolResult:
     """Execute a read-only memory action through the existing service layer."""
 
+    action_type = action.get("type")
+    if action_type not in {"list", "status"}:
+        raise ValueError(f"Unsupported read-only memory action: {action_type!r}")
+
     result = await execute_memory_control_action(
         context.agent_state_for_memory_action(action),
         context.workflow_context,
     )
-    return MemoryReadToolResult(
+    tool_result = MemoryReadToolResult(
         response_text=result.response_text,
         memory_control=result.memory_control,
     )
+    context.record_memory_tool_result(
+        action_type=cast(MemoryReadActionType, action_type),
+        response_text=tool_result.response_text,
+        memory_control=tool_result.memory_control,
+    )
+    return tool_result
 
 
 async def _execute_memory_tool(
     wrapper: RunContextWrapper[OpenAITextRunContext],
-    action_type: Literal["list", "status"],
+    action_type: MemoryReadActionType,
 ) -> MemoryReadToolResult:
     """Execute one read-only memory tool action from SDK local context."""
 

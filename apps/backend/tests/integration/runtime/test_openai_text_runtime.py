@@ -7,7 +7,7 @@ import pytest
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 from agent.persistence import PersistentAgentRuntime
 from agent.text_runtime import openai_adapter
-from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME
+from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME, THERAPEUTIC_AGENT_NAME
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
@@ -59,13 +59,17 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
 
 
 @pytest.mark.asyncio
-async def test_persistent_runtime_openai_memory_control_uses_app_service(
+async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Memory-control turns should not ask the SDK model to improvise replies."""
+    """Read-only memory-control turns should run through the SDK memory tool."""
 
-    runner = FakeOpenAISDKRunner("unused sdk reply")
+    runner = FakeOpenAISDKRunner(
+        "unused sdk reply",
+        invoke_required_tool=True,
+        tool_response_as_final=True,
+    )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
@@ -83,11 +87,17 @@ async def test_persistent_runtime_openai_memory_control_uses_app_service(
         assert result.output.response_style == "memory_control"
         assert "Memory status:" in result.output.response_text
         assert result.output.diagnostics["openai_text_runtime_mode"] == "memory_control"
+        assert (
+            result.output.diagnostics["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
+        )
+        assert result.output.diagnostics["openai_memory_tool_calls"] == [
+            "show_memory_status"
+        ]
         state = await runtime.get_state("thread-memory-control")
         assert state is not None
         assert state["route"] == "memory_control"
         assert state["memory_control"]["pending_action"] is None
-        assert runner.run_calls == []
+        assert runner.run_calls
         assert runner.stream_calls == []
 
 
@@ -265,9 +275,13 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """App-owned OpenAI branch turns should still emit the public stream surface."""
+    """Memory-tool turns should still emit the public stream surface."""
 
-    runner = FakeOpenAISDKRunner("unused sdk reply")
+    runner = FakeOpenAISDKRunner(
+        "unused sdk reply",
+        invoke_required_tool=True,
+        tool_response_as_final=True,
+    )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
@@ -292,9 +306,12 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
         ready = [event for event in events if isinstance(event, ResponseReadyEvent)]
         assert len(ready) == 1
         assert ready[0].output.response_style == "memory_control"
+        assert ready[0].output.diagnostics["openai_memory_tool_calls"] == [
+            "show_memory_status"
+        ]
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].output.response_style == "memory_control"
-        assert runner.run_calls == []
+        assert runner.run_calls
         assert runner.stream_calls == []
 
 
