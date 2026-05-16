@@ -19,7 +19,10 @@ from agent.therapeutic.dispatch.prompt import (
     build_therapeutic_dispatch_prompt,
     build_therapeutic_dispatch_system_prompt,
 )
-from agent.therapeutic.dispatch.node import run_therapeutic_dispatch_node
+from agent.therapeutic.dispatch.node import (
+    build_therapeutic_dispatch_update,
+    run_therapeutic_dispatch_node,
+)
 from agent.therapeutic.dispatch.planner import DispatchPlan, plan_therapeutic_route
 
 __all__ = [
@@ -31,6 +34,7 @@ __all__ = [
     "_format_prompt_trigger_phrases",
     "build_therapeutic_dispatch_prompt",
     "build_therapeutic_dispatch_system_prompt",
+    "build_therapeutic_dispatch_update",
     "node_for_response_style",
     "plan_therapeutic_route",
     "run_therapeutic_dispatch_node",

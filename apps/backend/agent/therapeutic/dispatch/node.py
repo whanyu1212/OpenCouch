@@ -62,18 +62,14 @@ def _style_update(plan: DispatchPlan) -> dict:
     return update
 
 
-def _to_command(
+def build_therapeutic_dispatch_update(
     state: AgentState,
     plan: DispatchPlan,
-) -> Command[TherapeuticNodeName]:
-    """Convert a dispatch plan into the LangGraph command.
+) -> dict:
+    """Build the state delta for a therapeutic dispatch plan.
 
-    Args:
-        state: Current graph state.
-        plan: Internal routing plan.
-
-    Returns:
-        LangGraph command for the planned response-style node.
+    Alternate text runtimes use this to share the LangGraph dispatch policy
+    without depending on LangGraph ``Command`` objects.
     """
 
     update = (
@@ -102,6 +98,24 @@ def _to_command(
                 "guidance_permission": plan.guidance_permission,
             },
         )
+    return update
+
+
+def _to_command(
+    state: AgentState,
+    plan: DispatchPlan,
+) -> Command[TherapeuticNodeName]:
+    """Convert a dispatch plan into the LangGraph command.
+
+    Args:
+        state: Current graph state.
+        plan: Internal routing plan.
+
+    Returns:
+        LangGraph command for the planned response-style node.
+    """
+
+    update = build_therapeutic_dispatch_update(state, plan)
     return Command(
         update=update,
         goto=node_for_response_style(plan.response_style),

@@ -69,6 +69,11 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         memory_reference_mode: str = "none",
         memory_action_type: str = "status",
         active_flow_action: str = "none",
+        therapeutic_response_style: str = "supportive",
+        therapeutic_approach: str = "none",
+        exercise_start_basis: str = "ambiguous_or_none",
+        exercise_type: str = "grounding_5_4_3_2_1",
+        exercise_step_state: str = "complete",
         enabled: bool = True,
         target_kind: str = "fact",
         target_index: int = 1,
@@ -86,6 +91,11 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.memory_reference_mode = memory_reference_mode
         self.memory_action_type = memory_action_type
         self.active_flow_action = active_flow_action
+        self.therapeutic_response_style = therapeutic_response_style
+        self.therapeutic_approach = therapeutic_approach
+        self.exercise_start_basis = exercise_start_basis
+        self.exercise_type = exercise_type
+        self.exercise_step_state = exercise_step_state
         self.enabled = enabled
         self.target_kind = target_kind
         self.target_index = target_index
@@ -136,6 +146,26 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
             if self.route == "grounded_lookup":
                 kwargs["query"] = "grounded query"
             return response_schema(**kwargs)
+        if schema_name == "DispatchDecision":
+            return response_schema(
+                response_style=self.therapeutic_response_style,
+                therapeutic_approach=self.therapeutic_approach,
+                exercise_start_basis=self.exercise_start_basis,
+                reasoning="scripted therapeutic dispatch",
+                confidence="high",
+            )
+        if schema_name == "ExerciseSelectionDecision":
+            return response_schema(
+                exercise_type=self.exercise_type,
+                reasoning="scripted exercise selection",
+                confidence="high",
+            )
+        if schema_name == "ExerciseStepDecision":
+            return response_schema(
+                step_state=self.exercise_step_state,
+                reasoning="scripted exercise step state",
+                confidence="high",
+            )
         if schema_name == "PreferenceRuleDecision":
             return response_schema(
                 rule_text="You prefer direct answers when you are spiraling.",

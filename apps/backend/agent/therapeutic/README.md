@@ -59,6 +59,7 @@ therapeutic/
     step_classifier.py        Step completion, hold, stuck, and exit classifier
     responses.py              Exercise response generation and deltas
     state.py                  Exercise state mutation helpers
+    skills.py                 Prompt-local exercise skill rendering
     registry.py               Exercise catalog and availability filtering
     types.py                  Exercise dataclasses and classifier schemas
     memory.py                 Exercise completion memory writes
@@ -212,6 +213,10 @@ is enabled, then the exercise state is cleared.
 ### Exercise Definition Fields
 
 Exercises are plain dataclasses registered in `registry.py`.
+`skills.py` renders a single runtime-selected definition into a compact,
+prompt-local skill block for response generation. This keeps the model focused
+on the selected exercise without exposing an arbitrary user-selectable skill
+catalog.
 
 ```python
 ExerciseDefinition(
