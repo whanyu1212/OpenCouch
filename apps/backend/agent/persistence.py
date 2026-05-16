@@ -43,13 +43,22 @@ from agent.runtime.session import (
     turn_count_from_state,
 )
 from agent.runtime.streaming import (
-    chunk_event_from_custom_payload,
     messages_from_transcript,
     response_ready_output,
     stamp_turn_total_ms,
-    status_stage_for_node,
 )
 from agent.runtime.turn_extraction import TurnExtractionCoordinator
+from agent.text_runtime import (
+    AgentWorkflow,
+    LangGraphTextAgentAdapter,
+    TextAgentAdapter,
+    TextAgentRuntimeName,
+    TextRuntimeChunkEvent,
+    TextRuntimeStateEvent,
+    TextRuntimeStatusEvent,
+    create_text_agent_adapter,
+    resolve_text_agent_runtime,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
@@ -67,6 +76,7 @@ from agent.runtime.checkpointer import (
 from agent.models import (
     AgentInput,
     Channel,
+    ChunkEvent,
     DoneEvent,
     Message,
     ResponseReadyEvent,
@@ -83,20 +93,12 @@ from agent.runtime.types import (
     ThreadSummary,
 )
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentGraphInputState, AgentGraphOutputState, AgentState
+from agent.state import AgentGraphInputState, AgentState
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph.graph.state import CompiledStateGraph
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
-
-AgentWorkflow = CompiledStateGraph[
-    AgentState,
-    WorkflowContext,
-    AgentGraphInputState,
-    AgentGraphOutputState,
-]
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _STORE_DIR = BACKEND_ROOT / ".store"
@@ -139,6 +141,7 @@ class PersistentAgentRuntime:
         auto_finalize_excluded: Callable[[str], bool] | None = None,
         speculative_memory_prefetch: bool = True,
         extract_in_foreground: bool = False,
+        text_agent_runtime: TextAgentRuntimeName | str | None = None,
     ) -> None:
         """Initialize the runtime.
 
@@ -189,6 +192,9 @@ class PersistentAgentRuntime:
                 or the extraction diagnostics should set it. Production
                 runtimes leave it ``False`` (the default) to keep extraction
                 off the user-visible turn path.
+            text_agent_runtime: Optional text-agent implementation selector.
+                Defaults to ``OPENCOUCH_TEXT_AGENT_RUNTIME`` and currently
+                supports only ``"langgraph"``.
         """
 
         self.memory_mode = memory_mode
@@ -212,6 +218,8 @@ class PersistentAgentRuntime:
         self._saver_cm: AbstractAsyncContextManager[Any] | None = None
         self._checkpointer: AsyncSqliteSaver | AsyncPostgresSaver | None = None
         self._graph: AgentWorkflow | None = None
+        self._text_agent_runtime = resolve_text_agent_runtime(text_agent_runtime)
+        self._text_agent_adapter: TextAgentAdapter | None = None
         self._default_llm_client = default_llm_client
         self._session_timeout = session_timeout
         self._session_sweep_interval_seconds = max(
@@ -387,7 +395,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        self._get_graph()
+        self._get_text_agent_adapter()
 
         try:
             await asyncio.wait_for(self._embedding_provider.awarmup(), timeout=5.0)
@@ -558,6 +566,7 @@ class PersistentAgentRuntime:
     async def _persist_runtime_session_tracking(
         self,
         thread_id: str,
+        session_buffer: SessionMemoryBuffer | None = None,
         *,
         last_active_at: str | None = None,
     ) -> None:
@@ -565,6 +574,10 @@ class PersistentAgentRuntime:
 
         Args:
             thread_id: The thread identifier to persist.
+            session_buffer: Optional session buffer captured by a background
+                extraction task. When in-process tracking has been cleared but
+                a persisted active-session row still exists, this lets the
+                task update that row without losing held candidates.
             last_active_at: Optional explicit last-active timestamp.
 
         Returns:
@@ -575,6 +588,31 @@ class PersistentAgentRuntime:
             thread_id,
             last_active_at=last_active_at or _iso_now(),
         )
+        if session is None and session_buffer is not None:
+            persisted = (
+                await self._active_session_manager.load_persisted_active_session(
+                    thread_id
+                )
+            )
+            if persisted is None:
+                return
+            session = PersistedActiveSessionState(
+                thread_id=persisted.thread_id,
+                started_at=persisted.started_at,
+                last_active_at=last_active_at or persisted.last_active_at,
+                transcript_start_index=persisted.transcript_start_index,
+                max_crisis_level=persisted.max_crisis_level,
+                session_buffer=session_buffer.model_copy(deep=True),
+            )
+        elif session is not None and session_buffer is not None:
+            session = PersistedActiveSessionState(
+                thread_id=session.thread_id,
+                started_at=session.started_at,
+                last_active_at=session.last_active_at,
+                transcript_start_index=session.transcript_start_index,
+                max_crisis_level=session.max_crisis_level,
+                session_buffer=session_buffer.model_copy(deep=True),
+            )
         if session is None:
             return
         await self._active_session_manager.save_persisted_active_session(session)
@@ -830,7 +868,7 @@ class PersistentAgentRuntime:
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None = None,
     ) -> WorkflowContext:
-        """Build the LangGraph runtime context for one turn.
+        """Build the agent workflow runtime context for one turn.
 
         Args:
             thread_id: The thread identifier.
@@ -918,17 +956,35 @@ class PersistentAgentRuntime:
             name=f"memory-prefetch:{thread_id}",
         )
 
+    def _get_text_agent_adapter(self) -> TextAgentAdapter:
+        """Return the configured text-agent adapter for this runtime.
+
+        Returns:
+            The initialized text-agent adapter.
+        """
+
+        checkpointer = self._ensure_open()
+        if self._text_agent_adapter is None:
+            self._text_agent_adapter = create_text_agent_adapter(
+                checkpointer=checkpointer,
+                graph_builder=build_agent_workflow,
+                runtime_name=self._text_agent_runtime,
+            )
+            if isinstance(self._text_agent_adapter, LangGraphTextAgentAdapter):
+                self._graph = self._text_agent_adapter.workflow
+        return self._text_agent_adapter
+
     def _get_graph(self) -> AgentWorkflow:
-        """Return the compiled LangGraph workflow for this runtime.
+        """Return the compiled LangGraph workflow for compatibility callers.
 
         Returns:
             The compiled workflow instance.
         """
 
-        checkpointer = self._ensure_open()
-        if self._graph is None:
-            self._graph = build_agent_workflow(checkpointer=checkpointer)
-        return self._graph
+        adapter = self._get_text_agent_adapter()
+        if not isinstance(adapter, LangGraphTextAgentAdapter):
+            raise RuntimeError("The active text-agent runtime is not LangGraph.")
+        return adapter.workflow
 
     async def get_state(self, thread_id: str) -> AgentState | None:
         """Load the latest persisted state snapshot for a thread.
@@ -940,12 +996,8 @@ class PersistentAgentRuntime:
             The latest checkpointed state, if any.
         """
 
-        graph = self._get_graph()
-        snapshot = await graph.aget_state(self._config_for_thread(thread_id))
-        values = snapshot.values or None
-        if values is None:
-            return None
-        return cast(AgentState, dict(values))
+        adapter = self._get_text_agent_adapter()
+        return await adapter.get_state(self._config_for_thread(thread_id))
 
     async def get_history(self, thread_id: str) -> list[Message]:
         """Load the full persisted transcript for a thread.
@@ -1173,7 +1225,7 @@ class PersistentAgentRuntime:
         """
 
         async with self._thread_lock(thread_id):
-            graph = self._get_graph()
+            adapter = self._get_text_agent_adapter()
             self._remember_llm_client(thread_id, llm_client)
 
             # Reducers restore transcript; only turn_count is needed here.
@@ -1200,7 +1252,7 @@ class PersistentAgentRuntime:
                 mutation_kind="turn",
             ) as mutation_token:
                 turn_start = time.monotonic()
-                graph_output = await graph.ainvoke(
+                turn_output = await adapter.run_turn(
                     initial_state,
                     config=self._config_for_thread(
                         thread_id,
@@ -1220,7 +1272,7 @@ class PersistentAgentRuntime:
                 final_state = await self.get_state(thread_id)
                 if final_state is None:
                     final_state = cast(
-                        AgentState, {**dict(initial_state), **dict(graph_output)}
+                        AgentState, {**dict(initial_state), **dict(turn_output)}
                     )
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
@@ -1589,7 +1641,7 @@ class PersistentAgentRuntime:
         """
 
         async with self._thread_lock(thread_id):
-            graph = self._get_graph()
+            adapter = self._get_text_agent_adapter()
             self._remember_llm_client(thread_id, llm_client)
 
             # Reducers restore transcript; only turn_count is needed here.
@@ -1621,7 +1673,7 @@ class PersistentAgentRuntime:
                 thread_id,
                 mutation_kind="turn",
             ) as mutation_token:
-                async for chunk in graph.astream(
+                async for event in adapter.run_turn_stream(
                     initial_state,
                     config=self._config_for_thread(
                         thread_id,
@@ -1637,40 +1689,27 @@ class PersistentAgentRuntime:
                         llm_client=llm_client,
                         response_llm_client=response_llm_client,
                     ),
-                    stream_mode=("custom", "updates", "values"),
-                    subgraphs=True,
-                    version="v2",
                 ):
-                    if chunk["type"] == "custom":
-                        # Forward token chunks from any namespace.
-                        event = chunk_event_from_custom_payload(chunk["data"])
-                        if event is not None:
-                            yield event
-                            chunks_emitted = True
-                    elif chunk["type"] == "updates" and chunk["ns"] == ():
-                        # Skip subgraph internals to avoid duplicate status events.
-                        for node_name in chunk["data"]:
-                            yield StatusEvent(stage=status_stage_for_node(node_name))
-                            if node_name == FINALIZE_TURN_NODE:
-                                finalize_seen = True
-                                ready_output = response_ready_output(
-                                    final_state,
-                                    finalize_seen=finalize_seen,
-                                    response_ready_emitted=response_ready_emitted,
-                                )
-                                if ready_output is not None:
-                                    if not chunks_emitted:
-                                        yield chunk_event_from_custom_payload(
-                                            {
-                                                "type": "chunk",
-                                                "text": ready_output.response_text,
-                                            }
-                                        )
-                                        chunks_emitted = True
-                                    yield ResponseReadyEvent(output=ready_output)
-                                    response_ready_emitted = True
-                    elif chunk["type"] == "values" and chunk["ns"] == ():
-                        final_state = cast(AgentState, chunk["data"])
+                    if isinstance(event, TextRuntimeChunkEvent):
+                        yield ChunkEvent(text=event.text)
+                        chunks_emitted = True
+                    elif isinstance(event, TextRuntimeStatusEvent):
+                        yield StatusEvent(stage=event.stage)
+                        if event.turn_finalized:
+                            finalize_seen = True
+                            ready_output = response_ready_output(
+                                final_state,
+                                finalize_seen=finalize_seen,
+                                response_ready_emitted=response_ready_emitted,
+                            )
+                            if ready_output is not None:
+                                if not chunks_emitted:
+                                    yield ChunkEvent(text=ready_output.response_text)
+                                    chunks_emitted = True
+                                yield ResponseReadyEvent(output=ready_output)
+                                response_ready_emitted = True
+                    elif isinstance(event, TextRuntimeStateEvent):
+                        final_state = event.state
                         ready_output = response_ready_output(
                             final_state,
                             finalize_seen=finalize_seen,
@@ -1678,12 +1717,7 @@ class PersistentAgentRuntime:
                         )
                         if ready_output is not None:
                             if not chunks_emitted:
-                                yield chunk_event_from_custom_payload(
-                                    {
-                                        "type": "chunk",
-                                        "text": ready_output.response_text,
-                                    }
-                                )
+                                yield ChunkEvent(text=ready_output.response_text)
                                 chunks_emitted = True
                             yield ResponseReadyEvent(output=ready_output)
                             response_ready_emitted = True
@@ -1693,7 +1727,7 @@ class PersistentAgentRuntime:
                     fallback = await self.get_state(thread_id)
                     if fallback is None:
                         raise RuntimeError(
-                            "run_turn_stream: graph stream yielded no values chunks "
+                            "run_turn_stream: text runtime stream yielded no state "
                             "and no checkpoint was found for this thread."
                         )
                     final_state = fallback
