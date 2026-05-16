@@ -9,6 +9,7 @@ from agent.text_runtime.langgraph_adapter import (
     AgentWorkflowBuilder,
     LangGraphTextAgentAdapter,
 )
+from agent.text_runtime.openai_adapter import OpenAITextAgentAdapter
 from agent.text_runtime.types import (
     TextAgentAdapter,
     TextAgentRuntimeName,
@@ -25,9 +26,11 @@ def resolve_text_agent_runtime(value: str | None = None) -> TextAgentRuntimeName
     runtime = (raw or DEFAULT_TEXT_AGENT_RUNTIME).strip().lower()
     if runtime == "langgraph":
         return "langgraph"
+    if runtime == "openai":
+        return "openai"
     raise ValueError(
         f"Unsupported {TEXT_AGENT_RUNTIME_ENV}={runtime!r}. "
-        "Supported values: langgraph."
+        "Supported values: langgraph, openai."
     )
 
 
@@ -41,4 +44,8 @@ def create_text_agent_adapter(
 
     if runtime_name == "langgraph":
         return LangGraphTextAgentAdapter(graph_builder(checkpointer=checkpointer))
+    if runtime_name == "openai":
+        return OpenAITextAgentAdapter(
+            fallback=LangGraphTextAgentAdapter(graph_builder(checkpointer=checkpointer))
+        )
     raise ValueError(f"Unsupported text-agent runtime {runtime_name!r}.")

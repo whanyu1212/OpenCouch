@@ -13,6 +13,7 @@ from agent.persistence import PersistentAgentRuntime
 from agent.text_runtime import (
     DEFAULT_TEXT_AGENT_RUNTIME,
     LangGraphTextAgentAdapter,
+    OpenAITextAgentAdapter,
     TextRuntimeChunkEvent,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
@@ -65,6 +66,19 @@ class _FakeWorkflow:
             "data": {"response_text": "hello"},
         }
 
+    async def aupdate_state(
+        self,
+        config: dict[str, Any],
+        values: dict[str, Any],
+        *,
+        as_node: str | None = None,
+    ) -> None:
+        self.updated_state = {
+            "config": config,
+            "values": values,
+            "as_node": as_node,
+        }
+
 
 def test_resolve_text_agent_runtime_defaults_to_langgraph(
     monkeypatch: pytest.MonkeyPatch,
@@ -87,18 +101,25 @@ def test_resolve_text_agent_runtime_normalizes_env(
     assert resolve_text_agent_runtime() == "langgraph"
 
 
+def test_resolve_text_agent_runtime_accepts_openai_value() -> None:
+    """The OpenAI runtime can be selected explicitly for hybrid testing."""
+
+    assert resolve_text_agent_runtime("openai") == "openai"
+
+
 def test_resolve_text_agent_runtime_rejects_unknown_value() -> None:
     """Unsupported runtimes should fail loudly before a turn starts."""
 
-    with pytest.raises(ValueError, match="Supported values: langgraph"):
-        resolve_text_agent_runtime("openai")
+    with pytest.raises(ValueError, match="Supported values: langgraph, openai"):
+        resolve_text_agent_runtime("unknown")
 
 
-def test_persistent_runtime_rejects_unknown_text_runtime() -> None:
+def test_persistent_runtime_accepts_openai_text_runtime() -> None:
     """PersistentAgentRuntime should validate the selector during construction."""
 
-    with pytest.raises(ValueError, match="OPENCOUCH_TEXT_AGENT_RUNTIME"):
-        PersistentAgentRuntime(text_agent_runtime="openai")
+    runtime = PersistentAgentRuntime(text_agent_runtime="openai")
+
+    assert runtime._text_agent_runtime == "openai"
 
 
 def test_create_text_agent_adapter_builds_langgraph_adapter() -> None:
@@ -113,6 +134,21 @@ def test_create_text_agent_adapter_builds_langgraph_adapter() -> None:
 
     assert isinstance(adapter, LangGraphTextAgentAdapter)
     assert adapter.workflow is workflow
+
+
+def test_create_text_agent_adapter_builds_openai_adapter() -> None:
+    """The factory should wire OpenAI with a LangGraph checkpoint fallback."""
+
+    workflow = _FakeWorkflow()
+
+    adapter = create_text_agent_adapter(
+        checkpointer=object(),
+        graph_builder=lambda **_: workflow,  # type: ignore[arg-type]
+        runtime_name="openai",
+    )
+
+    assert isinstance(adapter, OpenAITextAgentAdapter)
+    assert adapter.checkpoint_workflow is workflow
 
 
 @pytest.mark.asyncio

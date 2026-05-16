@@ -9,6 +9,7 @@ from agent.text_runtime.langgraph_adapter import (
     AgentWorkflow,
     LangGraphTextAgentAdapter,
 )
+from agent.text_runtime.openai_adapter import OpenAITextAgentAdapter
 from agent.text_runtime.types import (
     TextAgentAdapter,
     TextAgentRuntimeName,
@@ -22,6 +23,7 @@ __all__ = [
     "DEFAULT_TEXT_AGENT_RUNTIME",
     "AgentWorkflow",
     "LangGraphTextAgentAdapter",
+    "OpenAITextAgentAdapter",
     "TextAgentAdapter",
     "TextAgentRuntimeName",
     "TextRuntimeChunkEvent",

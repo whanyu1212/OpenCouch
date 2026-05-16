@@ -29,7 +29,7 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
-from agent.nodes.crisis_gate import _build_crisis_delta
+from agent.gates.safety.turn_gate import build_crisis_gate_delta
 from agent.nodes.load_memory import run_load_memory_node
 from agent.models import CrisisAssessment
 from tests.support.persistence import FakeCrossRestartLLM
@@ -167,13 +167,13 @@ async def test_load_memory_node_does_not_spread_diagnostics() -> None:
     assert "load_memory_ms" in diag
 
 
-def test_crisis_gate_build_delta_does_not_spread_diagnostics() -> None:
-    """_build_crisis_delta should return only its own diagnostics keys.
+def test_crisis_gate_delta_does_not_spread_diagnostics() -> None:
+    """build_crisis_gate_delta should return only its own diagnostics keys.
 
-    Uses the helper directly since the full crisis_gate_node returns a
+    Uses the shared safety helper since the full crisis_gate_node returns a
     Command object (harder to call in isolation).
     """
-    delta = _build_crisis_delta(
+    delta = build_crisis_gate_delta(
         CrisisAssessment(),
         override_kind="none",
         classifier_path="llm_primary",
@@ -181,7 +181,7 @@ def test_crisis_gate_build_delta_does_not_spread_diagnostics() -> None:
         duration_ms=5.0,
     )
     diag = delta.get("diagnostics", {})
-    _assert_no_spread(diag, "_build_crisis_delta")
+    _assert_no_spread(diag, "build_crisis_gate_delta")
     assert "crisis_gate_ms" in diag
 
 

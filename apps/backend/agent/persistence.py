@@ -493,8 +493,8 @@ class PersistentAgentRuntime:
             return
 
         try:
-            graph = self._get_graph()
-            await graph.aupdate_state(
+            adapter = self._get_text_agent_adapter()
+            await adapter.update_state(
                 self._config_for_thread(thread_id),
                 delta,
                 as_node=FINALIZE_TURN_NODE,

@@ -105,11 +105,21 @@ def build_therapeutic_agent(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
     tools: Sequence[Any] | None = None,
+    instructions: str | None = None,
 ) -> Agent[OpenAITextRunContext]:
     """Build the initial safe-turn OpenAI therapeutic agent definition."""
 
+    definition = (
+        _THERAPEUTIC_DEFINITION
+        if instructions is None
+        else _AgentDefinition(
+            name=_THERAPEUTIC_DEFINITION.name,
+            handoff_description=_THERAPEUTIC_DEFINITION.handoff_description,
+            instructions=instructions,
+        )
+    )
     return _build_agent(
-        _THERAPEUTIC_DEFINITION,
+        definition,
         model=model,
         tools=tools if tools is not None else build_read_only_memory_tools(),
     )

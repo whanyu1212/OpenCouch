@@ -40,7 +40,16 @@ async def run_load_memory_node(
             memory metadata, and diagnostics.
     """
 
-    if runtime.context.memory_mode == MemoryMode.INCOGNITO:
+    return await build_load_memory_delta(state, runtime.context)
+
+
+async def build_load_memory_delta(
+    state: AgentState,
+    context: WorkflowContext,
+) -> dict[str, Any]:
+    """Retrieve turn memory and shape a state delta for any text runtime."""
+
+    if context.memory_mode == MemoryMode.INCOGNITO:
         return {
             "working_memory": [],
             "session_memory": {
@@ -56,7 +65,7 @@ async def run_load_memory_node(
     transcript = state.get("transcript", [])
     owner_id = resolve_owner_id(state)
     result, speculation_used, speculation_wait_ms = await _resolve_memory_result(
-        runtime=runtime,
+        context=context,
         owner_id=owner_id,
         query=state["message"],
         is_first_turn=len(transcript) == 1,
@@ -82,7 +91,7 @@ async def run_load_memory_node(
 
 async def _resolve_memory_result(
     *,
-    runtime: Runtime[WorkflowContext],
+    context: WorkflowContext,
     owner_id: str,
     query: str,
     is_first_turn: bool,
@@ -103,7 +112,7 @@ async def _resolve_memory_result(
         ran, larger when the gates outran the pre-fetch).
     """
 
-    pre_fetched = runtime.context.pre_fetched_memory
+    pre_fetched = context.pre_fetched_memory
     if pre_fetched is not None:
         await_start = time.monotonic()
         try:
@@ -118,8 +127,8 @@ async def _resolve_memory_result(
             )
 
     result = await load_memory_for_turn(
-        memory_store=runtime.context.memory_store,
-        embedding_provider=runtime.context.embedding_provider,
+        memory_store=context.memory_store,
+        embedding_provider=context.embedding_provider,
         owner_id=owner_id,
         query=query,
         is_first_turn=is_first_turn,
