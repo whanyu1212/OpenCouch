@@ -13,73 +13,10 @@ from agent.graph_constants import (
     MEMORY_CONTROL_NODE,
     TurnDispatchNextNode,
 )
-from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.turn_dispatch import TurnDispatchPlan, plan_turn_route
-
-
-def _dispatch_update(
-    state: AgentState,
-    plan: TurnDispatchPlan,
-    *,
-    duration_ms: float,
-) -> dict[str, object]:
-    memory_action = (
-        plan.memory_action.to_state_action() if plan.memory_action is not None else {}
-    )
-    decision = plan.route
-    if plan.memory_action is not None:
-        decision = str(memory_action.get("type") or decision)
-
-    diagnostics = {
-        "turn_dispatch_ms": round(duration_ms, 2),
-        "turn_dispatch_classifier_path": "llm_primary",
-        "turn_dispatch_llm_failure_occurred": False,
-        **append_routing_trace(
-            state.get("diagnostics"),
-            {
-                "stage": "turn_dispatch",
-                "decision": decision,
-                "source": "llm_primary",
-                "reason": plan.reason,
-                "confidence": plan.confidence,
-                "active_flow": plan.active_flow,
-                "active_flow_action": plan.active_flow_action,
-                "memory_reference_mode": plan.memory_reference_mode,
-            },
-        ),
-    }
-
-    update: dict[str, object] = {
-        "route": plan.route,
-        "turn_lifecycle": {
-            "active_flow": plan.active_flow,
-            "action": plan.active_flow_action,
-        },
-        "memory_reference": {"mode": plan.memory_reference_mode},
-        "diagnostics": diagnostics,
-    }
-    active_flow_delta = dict(plan.active_flow_delta)
-    active_flow_memory_delta = active_flow_delta.pop("memory_control", None)
-    update.update(active_flow_delta)
-
-    memory_control: dict[str, object | None] = {"action": memory_action}
-    if isinstance(active_flow_memory_delta, dict):
-        memory_control.update(active_flow_memory_delta)
-
-    if plan.route == "grounded_lookup":
-        update["grounded_lookup"] = {
-            "query": plan.grounded_lookup_query or "",
-            "status": "not_attempted",
-        }
-        update["memory_control"] = memory_control
-        return update
-
-    update["grounded_lookup"] = {"query": "", "status": "not_attempted"}
-    update["memory_control"] = memory_control
-    return update
+from agent.turn_dispatch import build_turn_dispatch_update, plan_turn_route
 
 
 async def run_turn_dispatch_node(
@@ -102,7 +39,7 @@ async def run_turn_dispatch_node(
         state,
         llm_client=runtime.context.llm_client,
     )
-    update = _dispatch_update(
+    update = build_turn_dispatch_update(
         state,
         plan,
         duration_ms=elapsed_ms(start),

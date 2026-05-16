@@ -246,9 +246,7 @@ async def _invoke_parent_graph(
 
     workflow = build_agent_workflow()
     with (
-        patch(
-            "agent.nodes.grounded_answer.answer_factual_lookup", new=fake_factual_lookup
-        ),
+        patch("agent.turn_branches.answer_factual_lookup", new=fake_factual_lookup),
         patch(
             "agent.nodes.crisis_resource_lookup.find_crisis_resources",
             new=fake_crisis_resources,

@@ -7,7 +7,10 @@ import pytest
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 from agent.persistence import PersistentAgentRuntime
 from agent.text_runtime import openai_adapter
-from tests.support.openai_text import FakeOpenAISDKRunner
+from tests.support.openai_text import (
+    FakeOpenAISDKRunner,
+    ScriptedOpenAITextRouteLLM,
+)
 from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
 
@@ -55,6 +58,80 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_memory_control_uses_app_service(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Memory-control turns should not ask the SDK model to improvise replies."""
+
+    runner = FakeOpenAISDKRunner("unused sdk reply")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-memory-control",
+            user_id="user-1",
+            message="What is my memory status?",
+            llm_client=ScriptedOpenAITextRouteLLM(route="memory_control"),
+        )
+
+        assert result.output.response_style == "memory_control"
+        assert "Memory status:" in result.output.response_text
+        assert result.output.diagnostics["openai_text_runtime_mode"] == "memory_control"
+        state = await runtime.get_state("thread-memory-control")
+        assert state is not None
+        assert state["route"] == "memory_control"
+        assert state["memory_control"]["pending_action"] is None
+        assert runner.run_calls == []
+        assert runner.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_grounded_lookup_uses_app_service(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grounded lookup should use the existing search-backed service path."""
+
+    runner = FakeOpenAISDKRunner("unused sdk reply")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-grounded",
+            user_id="user-1",
+            message="Can you look up the current rule?",
+            llm_client=ScriptedOpenAITextRouteLLM(route="grounded_lookup"),
+        )
+
+        assert result.output.response_style == "grounded_lookup"
+        assert (
+            result.output.response_text
+            == "Official answer.\n\nSources:\n- Official source"
+        )
+        assert (
+            result.output.diagnostics["openai_text_runtime_mode"] == "grounded_lookup"
+        )
+        state = await runtime.get_state("thread-grounded")
+        assert state is not None
+        assert state["route"] == "grounded_lookup"
+        assert state["grounded_lookup"] == {
+            "query": "grounded query",
+            "status": "answered",
+        }
+        assert runner.run_calls == []
+        assert runner.stream_calls == []
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_streaming_surface(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -93,6 +170,44 @@ async def test_persistent_runtime_openai_streaming_surface(
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_memory_control_streaming_surface(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """App-owned OpenAI branch turns should still emit the public stream surface."""
+
+    runner = FakeOpenAISDKRunner("unused sdk reply")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        events = [
+            event
+            async for event in runtime.run_turn_stream(
+                thread_id="thread-memory-stream",
+                user_id="user-1",
+                message="What is my memory status?",
+                llm_client=ScriptedOpenAITextRouteLLM(route="memory_control"),
+            )
+        ]
+
+        assert any(
+            isinstance(event, ChunkEvent) and "Memory status:" in event.text
+            for event in events
+        )
+        ready = [event for event in events if isinstance(event, ResponseReadyEvent)]
+        assert len(ready) == 1
+        assert ready[0].output.response_style == "memory_control"
+        assert isinstance(events[-1], DoneEvent)
+        assert events[-1].output.response_style == "memory_control"
+        assert runner.run_calls == []
+        assert runner.stream_calls == []
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -117,5 +232,6 @@ async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
         assert result.eligible is True
         assert result.response_text_length == len("shadow-only reply")
         assert runner.run_calls
+        assert (await runtime.session_status("thread-shadow")).value == "absent"
         assert await runtime.get_state("thread-shadow") is None
         assert await runtime.get_history("thread-shadow") == []

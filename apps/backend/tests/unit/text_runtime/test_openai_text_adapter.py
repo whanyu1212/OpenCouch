@@ -22,7 +22,10 @@ from agent.text_runtime import (
     TextRuntimeStatusEvent,
 )
 from agent.text_runtime.openai_agents import THERAPEUTIC_AGENT_NAME
-from tests.support.openai_text import FakeOpenAISDKRunner
+from tests.support.openai_text import (
+    FakeOpenAISDKRunner,
+    ScriptedOpenAITextRouteLLM as _RouteLLM,
+)
 from tests.support.persistence import FakeCrossRestartLLM
 
 
@@ -91,55 +94,6 @@ class _StatefulWorkflow:
         self.state = updated
 
 
-class _RouteLLM(FakeCrossRestartLLM):
-    def __init__(
-        self,
-        *,
-        route: str,
-        crisis_level: int = 0,
-        memory_reference_mode: str = "none",
-    ) -> None:
-        super().__init__()
-        self.route = route
-        self.crisis_level = crisis_level
-        self.memory_reference_mode = memory_reference_mode
-
-    async def generate_structured(
-        self,
-        *,
-        prompt: str,
-        response_schema: type[Any],
-        system_instruction: str | None = None,
-    ) -> Any:
-        schema_name = response_schema.__name__
-        if schema_name == "CrisisAssessmentSchema":
-            return response_schema(
-                level=self.crisis_level,
-                confidence="high",
-                reason="scripted crisis verdict",
-                needs_crisis_response=self.crisis_level >= 2,
-                needs_clarification=self.crisis_level == 1,
-            )
-        if schema_name == "TurnDispatchDecision":
-            kwargs: dict[str, Any] = {
-                "route": self.route,
-                "active_flow_action": "none",
-                "reasoning": f"scripted {self.route} route",
-                "confidence": "high",
-                "memory_reference_mode": self.memory_reference_mode,
-            }
-            if self.route == "memory_control":
-                kwargs["memory_action_type"] = "status"
-            if self.route == "grounded_lookup":
-                kwargs["query"] = "grounded query"
-            return response_schema(**kwargs)
-        return await super().generate_structured(
-            prompt=prompt,
-            response_schema=response_schema,
-            system_instruction=system_instruction,
-        )
-
-
 def _adapter(
     workflow: _StatefulWorkflow,
     runner: FakeOpenAISDKRunner,
@@ -200,7 +154,7 @@ async def test_openai_adapter_runs_safe_therapeutic_turn_and_persists_state() ->
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_falls_back_for_unsupported_safe_route() -> None:
+async def test_openai_adapter_runs_memory_control_without_sdk_generation() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner()
     adapter = _adapter(workflow, runner)
@@ -209,6 +163,124 @@ async def test_openai_adapter_falls_back_for_unsupported_safe_route() -> None:
         cast(Any, _initial_state("What do you remember about me?")),
         config={"configurable": {"thread_id": "thread-1"}},
         context=_context(_RouteLLM(route="memory_control")),
+    )
+
+    assert result["route"] == "memory_control"
+    assert result["response_style"] == "memory_control"
+    assert "Memory status:" in result["response_text"]
+    assert result["diagnostics"]["text_agent_runtime"] == "openai"
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "memory_control"
+    assert result["diagnostics"]["openai_selected_agent"] is None
+    assert result["memory_control"]["pending_action"] is None
+    assert workflow.ainvoke_calls == 0
+    assert runner.run_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_runs_memory_recall_update_without_sdk_generation() -> (
+    None
+):
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("Turn proactive recall on.")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="memory_control",
+                memory_action_type="set_recall",
+                enabled=True,
+            )
+        ),
+    )
+
+    assert result["route"] == "memory_control"
+    assert "I turned proactive recall on." in result["response_text"]
+    assert result["procedural_profile"]["proactive_recall_enabled"] is True
+    assert result["memory_control"]["pending_action"] is None
+    assert workflow.ainvoke_calls == 0
+    assert runner.run_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_runs_grounded_lookup_without_sdk_generation() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("Can you look up the current rule?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(_RouteLLM(route="grounded_lookup")),
+    )
+
+    assert result["route"] == "grounded_lookup"
+    assert result["response_style"] == "grounded_lookup"
+    assert result["response_text"] == "Official answer.\n\nSources:\n- Official source"
+    assert result["grounded_lookup"]["query"] == "grounded query"
+    assert result["grounded_lookup"]["status"] == "answered"
+    assert result["diagnostics"]["text_agent_runtime"] == "openai"
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "grounded_lookup"
+    assert result["diagnostics"]["openai_selected_agent"] is None
+    assert workflow.ainvoke_calls == 0
+    assert runner.run_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_handles_pending_memory_cancel() -> None:
+    workflow = _StatefulWorkflow()
+    workflow.state = _initial_state("Please delete that saved fact")
+    workflow.state["memory_control"] = {
+        "pending_action": {
+            "type": "delete",
+            "target": {
+                "kind": "fact",
+                "id": "fact-1",
+                "preview": "Presentations make me anxious.",
+            },
+        },
+    }
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("cancel that")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="memory_control",
+                memory_action_type="cancel_pending",
+                active_flow_action="continue",
+            )
+        ),
+    )
+
+    assert result["route"] == "memory_control"
+    assert result["response_text"] == "Cancelled. I didn't change your memory."
+    assert result["memory_control"]["pending_action"] is None
+    assert workflow.ainvoke_calls == 0
+    assert runner.run_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_falls_back_for_guided_exercise_active_flow() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+    state = _initial_state("Can you look this up before we continue?")
+    state["exercise_state"] = {
+        "exercise_type": "breathing",
+        "exercise_step": 1,
+    }
+
+    result = await adapter.run_turn(
+        cast(Any, state),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(route="grounded_lookup", active_flow_action="preserve")
+        ),
     )
 
     assert result == {"response_text": "fallback reply"}
@@ -278,7 +350,7 @@ async def test_openai_adapter_shadow_runs_without_persisting_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_shadow_reports_fallback_reason() -> None:
+async def test_openai_adapter_shadow_reports_app_owned_branch_eligibility() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner()
     adapter = _adapter(workflow, runner)
@@ -289,12 +361,13 @@ async def test_openai_adapter_shadow_reports_fallback_reason() -> None:
         context=_context(_RouteLLM(route="memory_control")),
     )
 
-    assert result.status == "fallback"
-    assert result.eligible is False
-    assert result.fallback_reason == "unsupported_route:memory_control"
+    assert result.status == "eligible"
+    assert result.eligible is True
+    assert result.fallback_reason is None
     assert result.route == "memory_control"
     assert result.memory_action_type == "status"
     assert result.selected_agent is None
+    assert result.response_text_length is None
     assert runner.run_calls == []
     assert workflow.ainvoke_calls == 0
     assert workflow.state is None
@@ -324,3 +397,32 @@ async def test_openai_adapter_streams_safe_therapeutic_turn() -> None:
     assert isinstance(events[-1], TextRuntimeStateEvent)
     assert events[-1].state["response_text"] == "streamed reply"
     assert runner.stream_calls
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_streams_memory_control_turn_without_sdk_generation() -> (
+    None
+):
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+
+    events = [
+        event
+        async for event in adapter.run_turn_stream(
+            cast(Any, _initial_state("What is my memory status?")),
+            config={"configurable": {"thread_id": "thread-1"}},
+            context=_context(_RouteLLM(route="memory_control")),
+        )
+    ]
+
+    assert events[0] == TextRuntimeStatusEvent(
+        stage="memory_control",
+        turn_finalized=False,
+    )
+    assert events[-2] == TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+    assert isinstance(events[-1], TextRuntimeStateEvent)
+    assert events[-1].state["route"] == "memory_control"
+    assert "Memory status:" in events[-1].state["response_text"]
+    assert runner.run_calls == []
+    assert runner.stream_calls == []

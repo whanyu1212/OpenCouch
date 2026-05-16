@@ -435,7 +435,7 @@ class RuntimePersistenceTrajectoryEvaluator(BaseEvaluator[RuntimePersistenceCase
 
             with (
                 patch(
-                    "agent.nodes.grounded_answer.answer_factual_lookup",
+                    "agent.turn_branches.answer_factual_lookup",
                     new=fake_factual_lookup,
                 ),
                 patch(

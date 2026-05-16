@@ -74,6 +74,7 @@ class FakeCrossRestartLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
         schema_name = response_schema.__name__
 
