@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from importlib.metadata import version
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -20,24 +21,33 @@ from agent.text_runtime.openai_agents import (
     CRISIS_AGENT_NAME,
     GUIDED_EXERCISE_AGENT_NAME,
     THERAPEUTIC_AGENT_NAME,
+    GroundedLookupToolResult,
     MemoryReadToolResult,
+    MemoryToolResult,
     MemoryToolCallRecord,
     OpenAITextRunContext,
+    answer_grounded_lookup,
+    build_memory_tools,
     build_openai_text_agent_roster,
     build_read_only_memory_tools,
+    execute_grounded_lookup_tool,
+    save_response_preference,
+    set_proactive_memory_recall,
     execute_read_only_memory_action,
     show_memory_status,
     show_saved_memory,
 )
+from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 
 
 def _workflow_context(
     *,
     store: OpenCouchMemoryStore | None = None,
     memory_mode: MemoryMode = MemoryMode.LOCAL,
+    llm: Any | None = None,
 ) -> WorkflowContext:
     return WorkflowContext(
-        llm_client=None,
+        llm_client=llm,
         memory_store=store or OpenCouchMemoryStore(),
         crisis_log_backend=InMemoryCrisisLogBackend(),
         memory_mode=memory_mode,
@@ -49,13 +59,18 @@ def _run_context(
     store: OpenCouchMemoryStore | None = None,
     memory_mode: MemoryMode = MemoryMode.LOCAL,
     user_id: str | None = "user-1",
+    llm: Any | None = None,
 ) -> OpenAITextRunContext:
     return OpenAITextRunContext(
         thread_id="thread-1",
         user_id=user_id,
         session_id="session-1",
         current_user_message="What do you remember about me?",
-        workflow_context=_workflow_context(store=store, memory_mode=memory_mode),
+        workflow_context=_workflow_context(
+            store=store,
+            memory_mode=memory_mode,
+            llm=llm,
+        ),
     )
 
 
@@ -82,15 +97,20 @@ async def _seeded_context() -> tuple[OpenAITextRunContext, OpenCouchMemoryStore,
     )
 
 
-async def _invoke_tool(tool: Any, context: OpenAITextRunContext) -> Any:
+async def _invoke_tool(
+    tool: Any,
+    context: OpenAITextRunContext,
+    arguments: dict[str, Any] | None = None,
+) -> Any:
+    payload = json.dumps(arguments or {})
     return await tool.on_invoke_tool(
         ToolContext(
             context,
             tool_name=tool.name,
             tool_call_id="call-test",
-            tool_arguments="{}",
+            tool_arguments=payload,
         ),
-        "{}",
+        payload,
     )
 
 
@@ -133,6 +153,13 @@ def test_agent_roster_builds_dormant_specialists() -> None:
     assert [tool.name for tool in roster.therapeutic_agent.tools] == [
         "show_saved_memory",
         "show_memory_status",
+        "set_proactive_memory_recall",
+        "save_response_preference",
+        "prepare_memory_deletion_by_index",
+        "prepare_memory_deletion_by_query",
+        "confirm_memory_deletion",
+        "cancel_memory_deletion",
+        "answer_grounded_lookup",
     ]
     assert roster.therapeutic_agent.handoffs == []
 
@@ -152,6 +179,28 @@ def test_read_only_memory_tool_metadata_is_explicit() -> None:
         assert tool.strict_json_schema is True
         assert tool.params_json_schema["additionalProperties"] is False
         assert tool.params_json_schema["required"] == []
+
+
+def test_operational_tool_metadata_is_explicit() -> None:
+    """Operational tools should state side effects and retry safety."""
+
+    tools = build_memory_tools()
+
+    assert [tool.name for tool in tools] == [
+        "show_saved_memory",
+        "show_memory_status",
+        "set_proactive_memory_recall",
+        "save_response_preference",
+        "prepare_memory_deletion_by_index",
+        "prepare_memory_deletion_by_query",
+        "confirm_memory_deletion",
+        "cancel_memory_deletion",
+    ]
+    for tool in tools:
+        assert "Side effects:" in tool.description
+        assert "Retry safety:" in tool.description
+        assert tool.strict_json_schema is True
+        assert tool.params_json_schema["additionalProperties"] is False
 
 
 def test_local_context_adapts_to_memory_service_state_without_clients() -> None:
@@ -224,3 +273,85 @@ async def test_show_saved_memory_tool_respects_incognito_mode() -> None:
     assert isinstance(result, MemoryReadToolResult)
     assert "guest mode" in result.response_text
     assert result.memory_control == {"pending_action": None}
+
+
+@pytest.mark.asyncio
+async def test_set_proactive_memory_recall_tool_updates_profile() -> None:
+    """Mutating memory tools should reuse the app-owned service implementation."""
+
+    context = _run_context()
+
+    result = await _invoke_tool(
+        set_proactive_memory_recall,
+        context,
+        {"enabled": True},
+    )
+
+    assert isinstance(result, MemoryToolResult)
+    assert "I turned proactive recall on." in result.response_text
+    assert result.memory_control == {"pending_action": None}
+    assert result.procedural_profile == {"proactive_recall_enabled": True}
+    assert result.side_effect == "procedural_profile_update"
+    assert result.retry_safe is True
+    assert context.memory_tool_calls[-1].tool_name == "set_proactive_memory_recall"
+
+
+@pytest.mark.asyncio
+async def test_save_response_preference_tool_writes_procedural_memory() -> None:
+    """Preference saves should stay service-owned but be invocable as SDK tools."""
+
+    store = OpenCouchMemoryStore()
+    context = _run_context(
+        store=store,
+        llm=ScriptedOpenAITextRouteLLM(route="memory_control"),
+    )
+
+    result = await _invoke_tool(
+        save_response_preference,
+        context,
+        {"preference_text": "direct answers when I am spiraling"},
+    )
+
+    assert isinstance(result, MemoryToolResult)
+    assert result.response_text.startswith("Saved:")
+    assert result.side_effect == "procedural_profile_update"
+    assert result.retry_safe is False
+    assert await store.arecord_count(("user-1", "procedural")) == 1
+
+
+@pytest.mark.asyncio
+async def test_grounded_lookup_tool_records_lookup_result() -> None:
+    """Grounded lookup tools should reuse the existing search service."""
+
+    context = _run_context(llm=ScriptedOpenAITextRouteLLM(route="grounded_lookup"))
+
+    result = await execute_grounded_lookup_tool(
+        context,
+        query="grounded query",
+    )
+
+    assert isinstance(result, GroundedLookupToolResult)
+    assert result.response_text == "Official answer.\n\nSources:\n- Official source"
+    assert result.grounded_lookup == {
+        "query": "grounded query",
+        "status": "answered",
+    }
+    assert context.grounded_tool_calls[-1].tool_name == "answer_grounded_lookup"
+
+
+@pytest.mark.asyncio
+async def test_grounded_lookup_function_tool_invokes_with_context() -> None:
+    """The SDK function tool wrapper should pass arguments into local context."""
+
+    context = _run_context(llm=ScriptedOpenAITextRouteLLM(route="grounded_lookup"))
+
+    result = await _invoke_tool(
+        answer_grounded_lookup,
+        context,
+        {"query": "grounded query"},
+    )
+
+    assert isinstance(result, GroundedLookupToolResult)
+    assert result.status == "answered"
+    assert result.side_effect == "none"
+    assert result.retry_safe is True

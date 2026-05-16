@@ -147,6 +147,13 @@ async def test_openai_adapter_runs_safe_therapeutic_turn_and_persists_state() ->
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
         "show_saved_memory",
         "show_memory_status",
+        "set_proactive_memory_recall",
+        "save_response_preference",
+        "prepare_memory_deletion_by_index",
+        "prepare_memory_deletion_by_query",
+        "confirm_memory_deletion",
+        "cancel_memory_deletion",
+        "answer_grounded_lookup",
     ]
     assert "Write the next assistant message" in runner.run_calls[0]["input_text"]
     assert state["response_text"] == "openai reply"
@@ -231,11 +238,9 @@ async def test_openai_adapter_runs_saved_memory_list_through_sdk_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_runs_memory_recall_update_without_sdk_generation() -> (
-    None
-):
+async def test_openai_adapter_runs_memory_recall_update_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner()
+    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_turn(
@@ -254,14 +259,50 @@ async def test_openai_adapter_runs_memory_recall_update_without_sdk_generation()
     assert "I turned proactive recall on." in result["response_text"]
     assert result["procedural_profile"]["proactive_recall_enabled"] is True
     assert result["memory_control"]["pending_action"] is None
+    assert result["diagnostics"]["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
+    assert (
+        result["diagnostics"]["openai_memory_tool_expected"]
+        == "set_proactive_memory_recall"
+    )
+    assert result["diagnostics"]["openai_memory_tool_calls"] == [
+        "set_proactive_memory_recall"
+    ]
     assert workflow.ainvoke_calls == 0
-    assert runner.run_calls == []
+    assert runner.run_calls
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_runs_grounded_lookup_without_sdk_generation() -> None:
+async def test_openai_adapter_runs_preference_save_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner()
+    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
+    adapter = _adapter(workflow, runner)
+    context = _context(
+        _RouteLLM(route="memory_control", memory_action_type="save_preference")
+    )
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("Please give me direct answers when I spiral.")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    assert result["route"] == "memory_control"
+    assert result["response_text"].startswith("Saved:")
+    assert result["diagnostics"]["openai_memory_tool_expected"] == (
+        "save_response_preference"
+    )
+    assert result["diagnostics"]["openai_memory_tool_side_effects"] == [
+        "procedural_profile_update"
+    ]
+    assert await context.memory_store.arecord_count(("user-1", "procedural")) == 1
+    assert workflow.ainvoke_calls == 0
+    assert runner.run_calls
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_runs_grounded_lookup_through_sdk_tool() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_turn(
@@ -277,9 +318,16 @@ async def test_openai_adapter_runs_grounded_lookup_without_sdk_generation() -> N
     assert result["grounded_lookup"]["status"] == "answered"
     assert result["diagnostics"]["text_agent_runtime"] == "openai"
     assert result["diagnostics"]["openai_text_runtime_mode"] == "grounded_lookup"
-    assert result["diagnostics"]["openai_selected_agent"] is None
+    assert result["diagnostics"]["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
+    assert (
+        result["diagnostics"]["openai_grounded_tool_expected"]
+        == "answer_grounded_lookup"
+    )
+    assert result["diagnostics"]["openai_grounded_tool_calls"] == [
+        "answer_grounded_lookup"
+    ]
     assert workflow.ainvoke_calls == 0
-    assert runner.run_calls == []
+    assert runner.run_calls
 
 
 @pytest.mark.asyncio
@@ -292,11 +340,13 @@ async def test_openai_adapter_handles_pending_memory_cancel() -> None:
             "target": {
                 "kind": "fact",
                 "id": "fact-1",
+                "key": "fact-1",
+                "namespace": ["user-1", "semantic"],
                 "preview": "Presentations make me anxious.",
             },
         },
     }
-    runner = FakeOpenAISDKRunner()
+    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_turn(
@@ -314,14 +364,72 @@ async def test_openai_adapter_handles_pending_memory_cancel() -> None:
     assert result["route"] == "memory_control"
     assert result["response_text"] == "Cancelled. I didn't change your memory."
     assert result["memory_control"]["pending_action"] is None
+    assert result["diagnostics"]["openai_memory_tool_expected"] == (
+        "cancel_memory_deletion"
+    )
     assert workflow.ainvoke_calls == 0
-    assert runner.run_calls == []
+    assert runner.run_calls
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_confirms_pending_memory_deletion_through_sdk_tool() -> (
+    None
+):
+    workflow = _StatefulWorkflow()
+    workflow.state = _initial_state("Please delete that saved fact")
+    workflow.state["memory_control"] = {
+        "pending_action": {
+            "type": "delete",
+            "target": {
+                "kind": "fact",
+                "id": "fact-1",
+                "key": "fact-1",
+                "namespace": ["user-1", "semantic"],
+                "preview": "Presentations make me anxious.",
+            },
+        },
+    }
+    context = _context(
+        _RouteLLM(
+            route="memory_control",
+            memory_action_type="confirm_pending",
+            active_flow_action="continue",
+        )
+    )
+    await context.memory_store.aput(
+        ("user-1", "semantic"),
+        "fact-1",
+        {
+            "category": "trigger",
+            "predicate": "WORRIES_ABOUT",
+            "object": {"identifier": "presentations"},
+            "evidence_quote": "Presentations make me anxious.",
+        },
+    )
+    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_turn(
+        cast(Any, _initial_state("yes, delete it")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    assert result["route"] == "memory_control"
+    assert result["response_text"] == "Deleted that saved fact."
+    assert result["diagnostics"]["openai_memory_tool_expected"] == (
+        "confirm_memory_deletion"
+    )
+    assert result["diagnostics"]["openai_memory_tool_side_effects"] == ["delete_memory"]
+    assert await context.memory_store.arecord_count(("user-1", "semantic")) == 0
+    assert workflow.ainvoke_calls == 0
+    assert runner.run_calls
 
 
 @pytest.mark.asyncio
 async def test_openai_adapter_preserves_exercise_during_app_owned_side_turn() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner()
+    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
     adapter = _adapter(workflow, runner)
     state = _initial_state("Can you look this up before we continue?")
     state["exercise_state"] = {
@@ -342,8 +450,9 @@ async def test_openai_adapter_preserves_exercise_during_app_owned_side_turn() ->
     assert result["exercise_state"]["exercise_type"] == "grounding_5_4_3_2_1"
     assert result["exercise_state"]["exercise_step"] == 1
     assert result["diagnostics"]["openai_text_runtime_mode"] == "grounded_lookup"
+    assert result["diagnostics"]["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
     assert workflow.ainvoke_calls == 0
-    assert runner.run_calls == []
+    assert runner.run_calls
     assert runner.stream_calls == []
 
 

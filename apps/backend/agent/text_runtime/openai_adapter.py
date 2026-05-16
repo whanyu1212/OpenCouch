@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from agent.text_runtime.openai_agents import (
     CRISIS_AGENT_NAME,
     GUIDED_EXERCISE_AGENT_NAME,
     THERAPEUTIC_AGENT_NAME,
-    MemoryReadActionType,
+    MemoryActionType,
     OpenAITextRunContext,
     build_crisis_response_agent,
     build_guided_exercise_agent,
@@ -58,7 +59,7 @@ from agent.therapeutic.dispatch import (
     plan_therapeutic_route,
 )
 from agent.therapeutic.exercises.runner import ExerciseRunner
-from agent.turn_branches import build_grounded_lookup_delta, build_memory_control_delta
+from agent.turn_branches import build_grounded_lookup_delta
 from agent.turn_dispatch import (
     TurnDispatchPlan,
     build_turn_dispatch_update,
@@ -78,21 +79,25 @@ _DICT_REDUCER_KEYS = {
     "diagnostics",
 }
 
-_READ_ONLY_MEMORY_ACTIONS = frozenset({"list", "status"})
-
 _RUNTIME_THERAPEUTIC_INSTRUCTIONS = """\
 You are the OpenCouch therapeutic text agent for an already-classified safe
 turn. The application runtime owns crisis assessment, memory mutation,
-grounded lookup, guided-exercise state, persistence, and audit logging.
+guided-exercise state, persistence, and audit logging.
 
-Read-only memory tools may be attached:
+Operational tools may be attached:
 - Call show_saved_memory only when the prompt explicitly requires it or the
   user asks what saved memory contains.
 - Call show_memory_status only when the prompt explicitly requires it or the
   user asks whether memory is enabled, how many memories exist, or whether
   proactive recall is on.
-- Never use read-only memory tools to save, delete, update, infer, or invent
-  memory. Mutating memory remains application-owned.
+- Call mutating memory tools only when the prompt explicitly requires the
+  matching action or the user clearly asks to change saved memory.
+- Preserve deletion confirmation semantics: prepare deletion first, then
+  confirm or cancel only when a pending deletion exists.
+- Call answer_grounded_lookup only when the prompt explicitly requires it or
+  the user asks for external, source-backed, current, official, factual, or
+  resource information.
+- Never invent tool results or claim a side effect happened without the tool.
 """
 
 _RUNTIME_CRISIS_INSTRUCTIONS = """\
@@ -306,23 +311,23 @@ class OpenAITextAgentAdapter:
                 streamed=False,
             )
 
-        memory_read_action = _read_only_memory_action_type(prepared)
-        if memory_read_action is not None:
-            return await self._run_memory_read_tool_turn(
+        memory_action = _memory_action_type(prepared)
+        if memory_action is not None:
+            return await self._run_memory_tool_turn(
                 prepared.state,
-                action_type=memory_read_action,
+                action_type=memory_action,
                 config=config,
                 context=context,
                 streamed=False,
             )
 
-        branch_mode = _app_owned_branch_mode(prepared)
-        if branch_mode is not None:
-            return await self._run_app_owned_branch_turn(
+        grounded_query = _grounded_lookup_query(prepared)
+        if grounded_query is not None:
+            return await self._run_grounded_lookup_tool_turn(
                 prepared.state,
+                query=grounded_query,
                 config=config,
                 context=context,
-                runtime_mode=branch_mode,
                 streamed=False,
             )
 
@@ -387,12 +392,12 @@ class OpenAITextAgentAdapter:
                 yield event
             return
 
-        memory_read_action = _read_only_memory_action_type(prepared)
-        if memory_read_action is not None:
+        memory_action = _memory_action_type(prepared)
+        if memory_action is not None:
             yield TextRuntimeStatusEvent(stage="memory_control")
-            final_state = await self._run_memory_read_tool_turn(
+            final_state = await self._run_memory_tool_turn(
                 prepared.state,
-                action_type=memory_read_action,
+                action_type=memory_action,
                 config=config,
                 context=context,
                 streamed=True,
@@ -401,14 +406,14 @@ class OpenAITextAgentAdapter:
             yield TextRuntimeStateEvent(state=final_state)
             return
 
-        branch_mode = _app_owned_branch_mode(prepared)
-        if branch_mode is not None:
-            yield TextRuntimeStatusEvent(stage=branch_mode)
-            final_state = await self._run_app_owned_branch_turn(
+        grounded_query = _grounded_lookup_query(prepared)
+        if grounded_query is not None:
+            yield TextRuntimeStatusEvent(stage="grounded_lookup")
+            final_state = await self._run_grounded_lookup_tool_turn(
                 prepared.state,
+                query=grounded_query,
                 config=config,
                 context=context,
-                runtime_mode=branch_mode,
                 streamed=True,
             )
             yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
@@ -498,8 +503,7 @@ class OpenAITextAgentAdapter:
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
-            memory_read_action = _read_only_memory_action_type(prepared)
-            if memory_read_action is not None:
+            if _memory_action_type(prepared) is not None:
                 return _shadow_result(
                     prepared,
                     status="eligible",
@@ -507,11 +511,11 @@ class OpenAITextAgentAdapter:
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
-            branch_mode = _app_owned_branch_mode(prepared)
-            if branch_mode is not None:
+            if _grounded_lookup_query(prepared) is not None:
                 return _shadow_result(
                     prepared,
                     status="eligible",
+                    selected_agent=THERAPEUTIC_AGENT_NAME,
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
@@ -647,52 +651,22 @@ class OpenAITextAgentAdapter:
         _apply_delta(state, dispatch_update)
         return state, True
 
-    async def _run_app_owned_branch_turn(
+    async def _run_memory_tool_turn(
         self,
         state: AgentState,
         *,
-        config: RunnableConfig,
-        context: WorkflowContext,
-        runtime_mode: str,
-        streamed: bool,
-    ) -> AgentState:
-        if runtime_mode == "memory_control":
-            delta = await build_memory_control_delta(state, context)
-        elif runtime_mode == "grounded_lookup":
-            delta = await build_grounded_lookup_delta(state, context)
-        else:
-            raise ValueError(f"Unsupported app-owned OpenAI branch: {runtime_mode}")
-
-        _apply_delta(state, delta)
-        response_text = str(state.get("response_text") or "")
-        if not response_text:
-            raise ValueError(f"{runtime_mode} returned an empty response.")
-        return await self._finalize_openai_turn(
-            state,
-            response_text=response_text,
-            config=config,
-            runtime_mode=runtime_mode,
-            response_style=str(state.get("response_style") or runtime_mode),
-            selected_agent=None,
-            sdk_duration_ms=None,
-            streamed=streamed,
-        )
-
-    async def _run_memory_read_tool_turn(
-        self,
-        state: AgentState,
-        *,
-        action_type: MemoryReadActionType,
+        action_type: MemoryActionType,
         config: RunnableConfig,
         context: WorkflowContext,
         streamed: bool,
     ) -> AgentState:
+        action = _memory_action_payload_from_state(state)
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
-        response_text, sdk_duration_ms = await self._run_openai_agent_with(
+        _, sdk_duration_ms = await self._run_openai_agent_with(
             state,
             agent=agent,
-            input_text=self._memory_read_input_text_for_state(state, action_type),
+            input_text=self._memory_tool_input_text_for_state(state, action),
             run_context=run_context,
         )
         tool_result = run_context.latest_memory_tool_result(action_type)
@@ -702,33 +676,97 @@ class OpenAITextAgentAdapter:
             "openai_memory_tool_calls": [
                 call.tool_name for call in run_context.memory_tool_calls
             ],
+            "openai_memory_tool_side_effects": [
+                call.side_effect for call in run_context.memory_tool_calls
+            ],
         }
 
         if tool_result is None:
             fallback_result = await execute_memory_control_action(
-                run_context.agent_state_for_memory_action({"type": action_type}),
+                run_context.agent_state_for_memory_action(action),
                 context,
             )
             response_text = fallback_result.response_text
             memory_control = fallback_result.memory_control
+            procedural_profile = fallback_result.procedural_profile
             diagnostics["openai_memory_tool_fallback"] = True
         else:
+            response_text = tool_result.response_text
             memory_control = tool_result.memory_control
+            procedural_profile = tool_result.procedural_profile
             diagnostics["openai_memory_tool_fallback"] = False
 
-        _apply_delta(
-            state,
-            {
-                "memory_control": memory_control,
-                "diagnostics": diagnostics,
-            },
-        )
+        delta: dict[str, Any] = {
+            "memory_control": memory_control,
+            "diagnostics": diagnostics,
+        }
+        if procedural_profile is not None:
+            delta["procedural_profile"] = procedural_profile
+        _apply_delta(state, delta)
         return await self._finalize_openai_turn(
             state,
             response_text=response_text,
             config=config,
             runtime_mode="memory_control",
             response_style="memory_control",
+            selected_agent=THERAPEUTIC_AGENT_NAME,
+            sdk_duration_ms=sdk_duration_ms,
+            streamed=streamed,
+        )
+
+    async def _run_grounded_lookup_tool_turn(
+        self,
+        state: AgentState,
+        *,
+        query: str,
+        config: RunnableConfig,
+        context: WorkflowContext,
+        streamed: bool,
+    ) -> AgentState:
+        run_context = self._run_context_for_state(state, config, context)
+        agent = self._build_agent(state)
+        _, sdk_duration_ms = await self._run_openai_agent_with(
+            state,
+            agent=agent,
+            input_text=self._grounded_lookup_input_text_for_state(state, query),
+            run_context=run_context,
+        )
+        tool_result = run_context.latest_grounded_tool_result()
+        diagnostics: dict[str, Any] = {
+            **dict(state.get("diagnostics", {}) or {}),
+            "openai_grounded_tool_expected": "answer_grounded_lookup",
+            "openai_grounded_tool_calls": [
+                call.tool_name for call in run_context.grounded_tool_calls
+            ],
+        }
+
+        if tool_result is None:
+            fallback_delta = await build_grounded_lookup_delta(state, context)
+            _apply_delta(state, fallback_delta)
+            response_text = str(state.get("response_text") or "")
+            if not response_text:
+                raise ValueError("grounded_lookup returned an empty response.")
+            diagnostics["openai_grounded_tool_fallback"] = True
+            diagnostics.update(dict(state.get("diagnostics", {}) or {}))
+            diagnostics["openai_grounded_tool_fallback"] = True
+            _apply_delta(state, {"diagnostics": diagnostics})
+        else:
+            response_text = tool_result.response_text
+            diagnostics["openai_grounded_tool_fallback"] = False
+            _apply_delta(
+                state,
+                {
+                    "grounded_lookup": tool_result.grounded_lookup,
+                    "diagnostics": diagnostics,
+                },
+            )
+
+        return await self._finalize_openai_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode="grounded_lookup",
+            response_style="grounded_lookup",
             selected_agent=THERAPEUTIC_AGENT_NAME,
             sdk_duration_ms=sdk_duration_ms,
             streamed=streamed,
@@ -1092,19 +1130,38 @@ class OpenAITextAgentAdapter:
             response_style="supportive",
         )
 
-    def _memory_read_input_text_for_state(
+    def _memory_tool_input_text_for_state(
         self,
         state: AgentState,
-        action_type: MemoryReadActionType,
+        action: Mapping[str, Any],
     ) -> str:
+        action_type = cast(MemoryActionType, str(action.get("type") or ""))
         tool_name = _memory_tool_name(action_type)
+        arguments = _memory_tool_arguments(action)
         return (
-            "The current user turn is an explicit saved-memory inspection "
-            "request.\n\n"
+            "The current user turn is an explicit saved-memory management "
+            "request selected by the OpenCouch runtime.\n\n"
             f"Required tool: {tool_name}\n"
+            f"Required tool arguments: {json.dumps(arguments, sort_keys=True)}\n"
             "Call the required tool exactly once before answering. Then answer "
-            "using only the tool result's response_text. Do not save, delete, "
-            "update, infer, or invent memory.\n\n"
+            "using only the tool result's response_text. Do not call a different "
+            "memory tool. Do not infer or invent memory.\n\n"
+            f'Current user message: "{state.get("message", "")}"'
+        )
+
+    def _grounded_lookup_input_text_for_state(
+        self,
+        state: AgentState,
+        query: str,
+    ) -> str:
+        return (
+            "The current user turn is an explicit grounded lookup request "
+            "selected by the OpenCouch runtime.\n\n"
+            "Required tool: answer_grounded_lookup\n"
+            f"Required tool arguments: {json.dumps({'query': query}, sort_keys=True)}\n"
+            "Call the required tool exactly once before answering. Then answer "
+            "using only the tool result's response_text. Do not provide "
+            "ungrounded factual claims.\n\n"
             f'Current user message: "{state.get("message", "")}"'
         )
 
@@ -1197,43 +1254,83 @@ def _fallback_reason(plan: TurnDispatchPlan) -> str:
     return ""
 
 
-def _memory_action_type_from_plan(plan: TurnDispatchPlan | None) -> str | None:
+def _memory_action_type_from_plan(
+    plan: TurnDispatchPlan | None,
+) -> MemoryActionType | None:
     if plan is None or plan.memory_action is None:
         return None
     action = plan.memory_action.to_state_action()
     action_type = action.get("type")
-    return str(action_type) if action_type is not None else None
+    if action_type in {
+        "list",
+        "status",
+        "set_recall",
+        "save_preference",
+        "forget_by_index",
+        "forget_by_query",
+        "confirm_pending",
+        "cancel_pending",
+    }:
+        return cast(MemoryActionType, action_type)
+    return None
 
 
-def _read_only_memory_action_type(
+def _memory_action_type(
     prepared: _PreparedTurn,
-) -> MemoryReadActionType | None:
+) -> MemoryActionType | None:
     plan = prepared.dispatch_plan
     if plan is None or plan.route != "memory_control":
         return None
-    action_type = _memory_action_type_from_plan(plan)
-    if action_type in _READ_ONLY_MEMORY_ACTIONS:
-        return cast(MemoryReadActionType, action_type)
-    return None
+    return _memory_action_type_from_plan(plan)
 
 
-def _app_owned_branch_mode(prepared: _PreparedTurn) -> str | None:
+def _grounded_lookup_query(prepared: _PreparedTurn) -> str | None:
     plan = prepared.dispatch_plan
-    if plan is None:
+    if plan is None or plan.route != "grounded_lookup":
         return None
-    if plan.route == "memory_control":
-        if _memory_action_type_from_plan(plan) in _READ_ONLY_MEMORY_ACTIONS:
-            return None
-        return "memory_control"
-    if plan.route == "grounded_lookup":
-        return "grounded_lookup"
-    return None
+    query = (plan.grounded_lookup_query or "").strip()
+    return query or None
 
 
-def _memory_tool_name(action_type: MemoryReadActionType) -> str:
-    if action_type == "list":
-        return "show_saved_memory"
-    return "show_memory_status"
+def _memory_action_payload_from_state(state: AgentState) -> dict[str, Any]:
+    memory_control = state.get("memory_control", {}) or {}
+    action = (
+        memory_control.get("action", {}) if isinstance(memory_control, dict) else {}
+    )
+    if not isinstance(action, dict) or "type" not in action:
+        raise ValueError("memory_control.action requires a type.")
+    return dict(action)
+
+
+def _memory_tool_name(action_type: MemoryActionType) -> str:
+    return {
+        "list": "show_saved_memory",
+        "status": "show_memory_status",
+        "set_recall": "set_proactive_memory_recall",
+        "save_preference": "save_response_preference",
+        "forget_by_index": "prepare_memory_deletion_by_index",
+        "forget_by_query": "prepare_memory_deletion_by_query",
+        "confirm_pending": "confirm_memory_deletion",
+        "cancel_pending": "cancel_memory_deletion",
+    }[action_type]
+
+
+def _memory_tool_arguments(action: Mapping[str, Any]) -> dict[str, Any]:
+    action_type = str(action.get("type") or "")
+    if action_type in {"list", "status", "confirm_pending", "cancel_pending"}:
+        return {}
+    if action_type == "set_recall":
+        return {"enabled": bool(action.get("enabled"))}
+    if action_type == "save_preference":
+        return {"preference_text": str(action.get("preference_text") or "")}
+    if action_type == "forget_by_index":
+        return {
+            "target_kind": str(action.get("target_kind") or ""),
+            "target_index": int(action.get("target_index") or 0),
+        }
+    if action_type == "forget_by_query":
+        return {"query": str(action.get("query") or "")}
+    raise ValueError(f"Unsupported memory tool action: {action_type}")
 
 
 def _crisis_runtime_mode(prepared: _PreparedTurn) -> str | None:
