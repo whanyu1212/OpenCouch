@@ -21,6 +21,7 @@ from agent.text_runtime import (
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
 )
+from agent.text_runtime.openai_agents import THERAPEUTIC_AGENT_NAME
 from tests.support.openai_text import FakeOpenAISDKRunner
 from tests.support.persistence import FakeCrossRestartLLM
 
@@ -249,6 +250,54 @@ async def test_openai_adapter_falls_back_for_crisis_or_clarification() -> None:
     assert result == {"response_text": "fallback reply"}
     assert workflow.ainvoke_calls == 1
     assert runner.run_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_shadow_runs_without_persisting_state() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("shadow reply")
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_shadow_turn(
+        cast(Any, _initial_state()),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(),
+    )
+
+    assert result.status == "eligible"
+    assert result.eligible is True
+    assert result.selected_agent == THERAPEUTIC_AGENT_NAME
+    assert result.response_text_length == len("shadow reply")
+    assert result.response_text_preview == "shadow reply"
+    assert result.response_text_sha256 is not None
+    assert result.sdk_duration_ms is not None
+    assert result.shadow_duration_ms is not None
+    assert runner.run_calls
+    assert workflow.ainvoke_calls == 0
+    assert workflow.state is None
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_shadow_reports_fallback_reason() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    adapter = _adapter(workflow, runner)
+
+    result = await adapter.run_shadow_turn(
+        cast(Any, _initial_state("What do you remember about me?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(_RouteLLM(route="memory_control")),
+    )
+
+    assert result.status == "fallback"
+    assert result.eligible is False
+    assert result.fallback_reason == "unsupported_route:memory_control"
+    assert result.route == "memory_control"
+    assert result.memory_action_type == "status"
+    assert result.selected_agent is None
+    assert runner.run_calls == []
+    assert workflow.ainvoke_calls == 0
+    assert workflow.state is None
 
 
 @pytest.mark.asyncio

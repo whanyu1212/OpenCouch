@@ -15,6 +15,8 @@ from agent.text_runtime.types import (
     TextAgentRuntimeName,
     TextRuntimeChunkEvent,
     TextRuntimeStateEvent,
+    TextRuntimeShadowResult,
+    TextRuntimeShadowStatus,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
 )
@@ -28,6 +30,8 @@ __all__ = [
     "TextAgentRuntimeName",
     "TextRuntimeChunkEvent",
     "TextRuntimeStateEvent",
+    "TextRuntimeShadowResult",
+    "TextRuntimeShadowStatus",
     "TextRuntimeStatusEvent",
     "TextRuntimeStreamEvent",
     "create_text_agent_adapter",
