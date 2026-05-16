@@ -256,6 +256,7 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
         database_url: str | None,
         judge_mode: str,
         min_judge_score: float | None,
+        openai_shadow: bool = False,
     ) -> None:
         super().__init__(
             dataset_path=dataset_path,
@@ -266,6 +267,7 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
         self.database_url = database_url
         self.judge_mode = judge_mode
         self.min_judge_score = min_judge_score
+        self.openai_shadow = openai_shadow
         self._live_llms: tuple[Any, Any] | None = None
 
     def load_cases(self) -> list[TextHarnessCase]:
@@ -504,6 +506,14 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
         control_llm, response_llm = self._llms_for_step(step, run_id=run_id)
         before = await _before_counts(runtime, tool_calls)
         message = _required_formatted(step.message, "message", run_id)
+        openai_shadow = await self._run_openai_shadow(
+            runtime,
+            step=step,
+            thread_id=thread_id,
+            user_id=user_id,
+            run_id=run_id,
+            message=message,
+        )
         try:
             result = await runtime.run_turn(
                 thread_id=thread_id,
@@ -527,7 +537,7 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
                 run_id=run_id,
             )
         after = await _after_counts(runtime, tool_calls)
-        return _turn_artifact(
+        artifact = _turn_artifact(
             step=step,
             step_index=step_index,
             run_id=run_id,
@@ -541,6 +551,9 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
             control_llm=control_llm,
             response_llm=response_llm,
         )
+        if openai_shadow is not None:
+            artifact["openai_shadow"] = _shadow_comparison(openai_shadow, artifact)
+        return artifact
 
     async def _run_stream_turn(
         self,
@@ -558,6 +571,14 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
         control_llm, response_llm = self._llms_for_step(step, run_id=run_id)
         before = await _before_counts(runtime, tool_calls)
         message = _required_formatted(step.message, "message", run_id)
+        openai_shadow = await self._run_openai_shadow(
+            runtime,
+            step=step,
+            thread_id=thread_id,
+            user_id=user_id,
+            run_id=run_id,
+            message=message,
+        )
         statuses: list[str] = []
         chunks: list[str] = []
         ready_count = 0
@@ -619,6 +640,41 @@ class TextAgentHarnessTrajectoryEvaluator(BaseEvaluator[TextHarnessCase]):
             "response_ready_count": ready_count,
             "done_count": done_count,
         }
+        if openai_shadow is not None:
+            artifact["openai_shadow"] = _shadow_comparison(openai_shadow, artifact)
+        return artifact
+
+    async def _run_openai_shadow(
+        self,
+        runtime: Any,
+        *,
+        step: TextHarnessStep,
+        thread_id: str,
+        user_id: str | None,
+        run_id: str,
+        message: str,
+    ) -> dict[str, Any] | None:
+        if not self.openai_shadow:
+            return None
+
+        control_llm, response_llm = self._llms_for_step(step, run_id=run_id)
+        before_state = await runtime.get_state(thread_id)
+        result = await runtime.run_openai_text_shadow_turn(
+            thread_id=thread_id,
+            message=message,
+            user_id=user_id,
+            llm_client=control_llm,
+            response_llm_client=response_llm,
+        )
+        after_state = await runtime.get_state(thread_id)
+        before_summary = _state_summary(before_state or {})
+        after_summary = _state_summary(after_state or {})
+        artifact = result.to_artifact()
+        artifact["state_mutated"] = before_summary != after_summary
+        artifact["structured_calls"] = dict(
+            getattr(control_llm, "structured_calls", {})
+        )
+        artifact["prompt_texts"] = _prompt_texts(control_llm, response_llm)
         return artifact
 
     async def _end_session(
@@ -769,6 +825,56 @@ def _turn_artifact(
         "expected": _format_templates(step.expected, run_id),
         **state_summary,
     }
+
+
+def _shadow_comparison(
+    shadow: Mapping[str, Any],
+    served: Mapping[str, Any],
+) -> dict[str, Any]:
+    served_route = served.get("route")
+    shadow_route = shadow.get("route")
+    served_tool_intent = _served_tool_intent(served)
+    shadow_tool_intent = _shadow_tool_intent(shadow)
+    return {
+        **dict(shadow),
+        "served_route": served_route,
+        "route_matches_served": shadow_route == served_route,
+        "served_response_style": served.get("response_style"),
+        "served_tool_intent": served_tool_intent,
+        "shadow_tool_intent": shadow_tool_intent,
+        "tool_intent_matches_served": shadow_tool_intent == served_tool_intent,
+    }
+
+
+def _served_tool_intent(artifact: Mapping[str, Any]) -> dict[str, Any]:
+    route = artifact.get("route")
+    if route == "memory_control":
+        memory_control = artifact.get("memory_control")
+        action = (
+            memory_control.get("action")
+            if isinstance(memory_control, Mapping)
+            else None
+        )
+        action_type = action.get("type") if isinstance(action, Mapping) else None
+        return {"route": route, "action_type": action_type}
+    if route == "grounded_lookup":
+        grounded_lookup = artifact.get("grounded_lookup")
+        query = (
+            grounded_lookup.get("query")
+            if isinstance(grounded_lookup, Mapping)
+            else None
+        )
+        return {"route": route, "query": query}
+    return {"route": route}
+
+
+def _shadow_tool_intent(shadow: Mapping[str, Any]) -> dict[str, Any]:
+    route = shadow.get("route")
+    if route == "memory_control":
+        return {"route": route, "action_type": shadow.get("memory_action_type")}
+    if route == "grounded_lookup":
+        return {"route": route, "query": shadow.get("grounded_lookup_query")}
+    return {"route": route}
 
 
 def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -1662,6 +1768,7 @@ def _build_evaluator(args: argparse.Namespace) -> TextAgentHarnessTrajectoryEval
         database_url=_resolve_database_url(args.backend, args.database_url),
         judge_mode=args.judge_mode,
         min_judge_score=args.min_judge_score,
+        openai_shadow=args.openai_shadow,
     )
 
 
@@ -1695,6 +1802,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override the minimum LLM judge score.",
+    )
+    parser.add_argument(
+        "--openai-shadow",
+        action="store_true",
+        help=(
+            "Run a non-serving OpenAI text-runtime shadow comparison for each "
+            "turn and include the artifact in eval details."
+        ),
     )
     return parser
 

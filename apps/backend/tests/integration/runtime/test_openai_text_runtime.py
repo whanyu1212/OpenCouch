@@ -90,3 +90,32 @@ async def test_persistent_runtime_openai_streaming_surface(
         assert state is not None
         assert len(state["transcript"]) == 2
         assert runner.stream_calls
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shadow comparison should not write checkpoints or transcript turns."""
+
+    runner = FakeOpenAISDKRunner("shadow-only reply")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        extract_in_foreground=True,
+    ) as runtime:
+        result = await runtime.run_openai_text_shadow_turn(
+            thread_id="thread-shadow",
+            user_id="user-1",
+            message="I need help settling down before work.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        assert result.status == "eligible"
+        assert result.eligible is True
+        assert result.response_text_length == len("shadow-only reply")
+        assert runner.run_calls
+        assert await runtime.get_state("thread-shadow") is None
+        assert await runtime.get_history("thread-shadow") == []

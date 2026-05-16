@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from hashlib import sha256
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
@@ -25,6 +26,8 @@ from agent.text_runtime.openai_agents import (
 )
 from agent.text_runtime.types import (
     TextRuntimeChunkEvent,
+    TextRuntimeShadowResult,
+    TextRuntimeShadowStatus,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
@@ -97,6 +100,7 @@ class OpenAIAgentsSDKRunner:
 
 
 _DEFAULT_OPENAI_RUNNER = OpenAIAgentsSDKRunner()
+_PRIOR_STATE_NOT_PROVIDED = object()
 
 
 class OpenAITextAgentAdapter:
@@ -220,14 +224,71 @@ class OpenAITextAgentAdapter:
         yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
         yield TextRuntimeStateEvent(state=final_state)
 
+    async def run_shadow_turn(
+        self,
+        initial_state: AgentGraphInputState,
+        *,
+        config: RunnableConfig,
+        context: WorkflowContext,
+        prior_state: AgentState | None = None,
+    ) -> TextRuntimeShadowResult:
+        """Evaluate the OpenAI path without serving output or writing state."""
+
+        shadow_start = time.monotonic()
+        try:
+            prepared = await self._prepare_turn(
+                initial_state,
+                config=config,
+                context=context,
+                prior_state=prior_state,
+            )
+            if not prepared.eligible:
+                return _shadow_result(
+                    prepared,
+                    status="fallback",
+                    shadow_duration_ms=elapsed_ms(shadow_start),
+                )
+
+            state = await self._load_turn_memory(prepared.state, context)
+            run_context = self._run_context_for_state(state, config, context)
+            agent = self._build_agent(state)
+            input_text = self._input_text_for_state(state)
+
+            run_start = time.monotonic()
+            result = await self._runner.run(
+                agent=agent,
+                input_text=input_text,
+                context=run_context,
+            )
+            response_text = _final_output_text(getattr(result, "final_output", None))
+            return _shadow_result(
+                prepared,
+                status="eligible",
+                selected_agent=THERAPEUTIC_AGENT_NAME,
+                sdk_duration_ms=elapsed_ms(run_start),
+                shadow_duration_ms=elapsed_ms(shadow_start),
+                response_text=response_text,
+            )
+        except Exception as exc:  # noqa: BLE001 - shadow must not break serving
+            return TextRuntimeShadowResult(
+                runtime="openai",
+                status="error",
+                eligible=False,
+                shadow_duration_ms=elapsed_ms(shadow_start),
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+
     async def _prepare_turn(
         self,
         initial_state: AgentGraphInputState,
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        prior_state: AgentState | None | object = _PRIOR_STATE_NOT_PROVIDED,
     ) -> _PreparedTurn:
-        prior_state = await self.get_state(config)
+        if prior_state is _PRIOR_STATE_NOT_PROVIDED:
+            prior_state = await self.get_state(config)
         state = _effective_turn_state(prior_state, initial_state)
 
         crisis_result = await assess_crisis_gate(
@@ -447,6 +508,60 @@ def _fallback_reason(plan: TurnDispatchPlan) -> str:
     if plan.memory_reference_mode != "none":
         return f"memory_reference:{plan.memory_reference_mode}"
     return ""
+
+
+def _shadow_result(
+    prepared: _PreparedTurn,
+    *,
+    status: TextRuntimeShadowStatus,
+    selected_agent: str | None = None,
+    sdk_duration_ms: float | None = None,
+    shadow_duration_ms: float | None = None,
+    response_text: str | None = None,
+) -> TextRuntimeShadowResult:
+    assessment = prepared.state.get("crisis")
+    plan = prepared.dispatch_plan
+    memory_action_type = None
+    if plan is not None and plan.memory_action is not None:
+        memory_action_type = str(plan.memory_action.payload.get("type") or "")
+    summary = _response_text_summary(response_text)
+    return TextRuntimeShadowResult(
+        runtime="openai",
+        status=status,
+        eligible=prepared.eligible,
+        fallback_reason=prepared.fallback_reason or None,
+        route=plan.route if plan is not None else prepared.state.get("route"),
+        active_flow=plan.active_flow if plan is not None else None,
+        active_flow_action=plan.active_flow_action if plan is not None else None,
+        memory_reference_mode=(
+            plan.memory_reference_mode if plan is not None else None
+        ),
+        memory_action_type=memory_action_type or None,
+        grounded_lookup_query=(
+            plan.grounded_lookup_query if plan is not None else None
+        ),
+        crisis_level=getattr(assessment, "level", None),
+        needs_crisis_response=getattr(assessment, "needs_crisis_response", None),
+        needs_crisis_clarification=getattr(assessment, "needs_clarification", None),
+        selected_agent=selected_agent,
+        sdk_duration_ms=sdk_duration_ms,
+        shadow_duration_ms=shadow_duration_ms,
+        **summary,
+    )
+
+
+def _response_text_summary(text: str | None) -> dict[str, Any]:
+    if not text:
+        return {
+            "response_text_length": None,
+            "response_text_preview": None,
+            "response_text_sha256": None,
+        }
+    return {
+        "response_text_length": len(text),
+        "response_text_preview": text[:160],
+        "response_text_sha256": sha256(text.encode("utf-8")).hexdigest(),
+    }
 
 
 def _thread_id_from_config(config: RunnableConfig, state: Mapping[str, Any]) -> str:

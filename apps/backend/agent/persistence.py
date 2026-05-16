@@ -51,9 +51,11 @@ from agent.runtime.turn_extraction import TurnExtractionCoordinator
 from agent.text_runtime import (
     AgentWorkflow,
     LangGraphTextAgentAdapter,
+    OpenAITextAgentAdapter,
     TextAgentAdapter,
     TextAgentRuntimeName,
     TextRuntimeChunkEvent,
+    TextRuntimeShadowResult,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     create_text_agent_adapter,
@@ -194,7 +196,7 @@ class PersistentAgentRuntime:
                 off the user-visible turn path.
             text_agent_runtime: Optional text-agent implementation selector.
                 Defaults to ``OPENCOUCH_TEXT_AGENT_RUNTIME`` and currently
-                supports only ``"langgraph"``.
+                supports ``"langgraph"`` and ``"openai"``.
         """
 
         self.memory_mode = memory_mode
@@ -220,6 +222,7 @@ class PersistentAgentRuntime:
         self._graph: AgentWorkflow | None = None
         self._text_agent_runtime = resolve_text_agent_runtime(text_agent_runtime)
         self._text_agent_adapter: TextAgentAdapter | None = None
+        self._openai_shadow_adapter: OpenAITextAgentAdapter | None = None
         self._default_llm_client = default_llm_client
         self._session_timeout = session_timeout
         self._session_sweep_interval_seconds = max(
@@ -974,6 +977,18 @@ class PersistentAgentRuntime:
                 self._graph = self._text_agent_adapter.workflow
         return self._text_agent_adapter
 
+    def _get_openai_shadow_adapter(self) -> OpenAITextAgentAdapter:
+        """Return a non-serving OpenAI adapter for shadow comparisons."""
+
+        checkpointer = self._ensure_open()
+        if self._openai_shadow_adapter is None:
+            self._openai_shadow_adapter = OpenAITextAgentAdapter(
+                fallback=LangGraphTextAgentAdapter(
+                    build_agent_workflow(checkpointer=checkpointer)
+                )
+            )
+        return self._openai_shadow_adapter
+
     def _get_graph(self) -> AgentWorkflow:
         """Return the compiled LangGraph workflow for compatibility callers.
 
@@ -1192,6 +1207,55 @@ class PersistentAgentRuntime:
             ),
             prior_turn_count=prior_turn_count,
         )
+
+    async def run_openai_text_shadow_turn(
+        self,
+        *,
+        thread_id: str,
+        message: str,
+        channel: Channel = Channel.TEST,
+        user_id: str | None = None,
+        installed_skills: list[str] | None = None,
+        llm_client: BaseLLMClient | None = None,
+        response_llm_client: BaseLLMClient | None = None,
+    ) -> TextRuntimeShadowResult:
+        """Evaluate the OpenAI text runtime without mutating served state.
+
+        The shadow path is for evals and dogfood observability. It uses the
+        same initial-turn construction and app-owned context as a normal turn,
+        but it does not prepare active sessions, write checkpoints, append
+        transcript entries, schedule extraction, or return output to users.
+        """
+
+        async with self._thread_lock(thread_id):
+            prior_state = await self.get_state(thread_id)
+            prior_turn_count = turn_count_from_state(prior_state)
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
+                message=message,
+                channel=channel,
+                user_id=user_id,
+                installed_skills=installed_skills,
+                prior_turn_count=prior_turn_count,
+            )
+            return await self._get_openai_shadow_adapter().run_shadow_turn(
+                initial_state,
+                config=self._config_for_thread(
+                    thread_id,
+                    channel=channel,
+                    user_id=user_id,
+                    streaming=False,
+                ),
+                context=self._context_for_turn(
+                    thread_id=thread_id,
+                    message=message,
+                    prior_state=prior_state,
+                    user_id=user_id,
+                    llm_client=llm_client,
+                    response_llm_client=response_llm_client,
+                ),
+                prior_state=prior_state,
+            )
 
     async def run_turn(
         self,

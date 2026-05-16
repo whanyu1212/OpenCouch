@@ -144,6 +144,7 @@ apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
 apps/backend/.venv/bin/python -m eval.runners.agent_session_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --backend sqlite
+apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --backend sqlite --openai-shadow
 apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --mode live --judge-mode live
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval
 apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --backend sqlite
@@ -174,6 +175,9 @@ Useful flags:
 - `--backend postgres|sqlite`: select the persistence backend for runtime
   trajectory evals. Postgres is the primary application backend and the
   default.
+- `--openai-shadow`: add non-serving OpenAI text-runtime comparison artifacts
+  to text-agent harness trajectories without changing the served runtime output;
+  eligible turns call the OpenAI Agents SDK when credentials are configured.
 - `--dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live
   --judge-mode live`: run the small live LLM session suite over the primary
   runtime persistence backend.
