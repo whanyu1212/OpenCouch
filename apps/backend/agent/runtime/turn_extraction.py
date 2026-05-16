@@ -71,7 +71,7 @@ class TurnExtractionCoordinator:
         embedding_provider: EmbeddingProvider | None,
         memory_mode: MemoryMode,
         session_buffer_for: Callable[[str], SessionMemoryBuffer],
-        persist_after_extraction: Callable[[str], Awaitable[None]],
+        persist_after_extraction: Callable[[str, SessionMemoryBuffer], Awaitable[None]],
     ) -> None:
         """Build the coordinator with explicit runtime dependencies.
 
@@ -89,10 +89,11 @@ class TurnExtractionCoordinator:
                 ``end_session`` reads from.
             persist_after_extraction: Coroutine factory called after
                 background extraction completes to re-persist the
-                runtime's active-session record. Without this, an
-                ``end_session`` between turns would hydrate from the
-                pre-extraction snapshot and clobber the in-memory
-                buffer just populated by extraction.
+                runtime's active-session record with the session buffer
+                captured by this task. Without this, an ``end_session``
+                between turns would hydrate from the pre-extraction
+                snapshot and clobber the buffer just populated by
+                extraction.
         """
 
         self._memory_store = memory_store
@@ -103,6 +104,7 @@ class TurnExtractionCoordinator:
         # Per-thread in-flight extraction tasks. Drained by ``drain``
         # (next turn) and ``drain_all`` (shutdown).
         self._pending: dict[str, asyncio.Task[None]] = {}
+        self._completed_buffers: dict[str, SessionMemoryBuffer] = {}
 
     async def run_pair(
         self,
@@ -189,13 +191,16 @@ class TurnExtractionCoordinator:
                     llm_client=llm_client,
                     session_buffer=session_buffer,
                 )
+                self._completed_buffers[thread_id] = session_buffer.model_copy(
+                    deep=True
+                )
                 # Re-persist the active-session record so the buffer's
                 # newly-added candidates survive past this point. Without
                 # this, end_session called between turns would hydrate
                 # from the pre-extraction snapshot and clobber the
                 # in-memory buffer that just got populated.
                 try:
-                    await self._persist_after_extraction(thread_id)
+                    await self._persist_after_extraction(thread_id, session_buffer)
                 except Exception:
                     logger.warning(
                         "Background extraction post-persist failed for thread %s; "
@@ -212,6 +217,22 @@ class TurnExtractionCoordinator:
 
         task = asyncio.create_task(_run(), name=f"extract:{thread_id}")
         self._pending[thread_id] = task
+
+    async def _persist_completed_buffer(self, thread_id: str) -> None:
+        """Re-persist a completed extraction buffer during an explicit drain."""
+
+        session_buffer = self._completed_buffers.pop(thread_id, None)
+        if session_buffer is None:
+            return
+        try:
+            await self._persist_after_extraction(thread_id, session_buffer)
+        except Exception:
+            logger.warning(
+                "Background extraction drain post-persist failed for thread %s; "
+                "proceeding with the last persisted active-session snapshot.",
+                thread_id,
+                exc_info=True,
+            )
 
     async def drain(self, thread_id: str) -> None:
         """Block until the prior turn's extraction task for this thread completes.
@@ -237,12 +258,14 @@ class TurnExtractionCoordinator:
         task = self._pending.get(thread_id)
         if task is None or task.done():
             self._pending.pop(thread_id, None)
+            await self._persist_completed_buffer(thread_id)
             return
         try:
             await asyncio.wait_for(
                 asyncio.shield(task),
                 timeout=EXTRACTION_DRAIN_TIMEOUT_SECONDS,
             )
+            await self._persist_completed_buffer(thread_id)
         except asyncio.TimeoutError:
             logger.warning(
                 "Extraction drain exceeded %.1fs for thread %s; cancelling "
@@ -276,6 +299,7 @@ class TurnExtractionCoordinator:
         """
 
         if not self._pending:
+            self._completed_buffers.clear()
             return
         tasks = list(self._pending.values())
         self._pending.clear()
@@ -298,6 +322,8 @@ class TurnExtractionCoordinator:
             # pending!" warnings. Suppress exceptions because cancelled
             # tasks raise CancelledError here.
             await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            self._completed_buffers.clear()
 
     @property
     def pending(self) -> dict[str, asyncio.Task[None]]:
