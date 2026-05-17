@@ -995,7 +995,7 @@ class PersistentAgentRuntime:
         checkpointer = self._ensure_open()
         if self._openai_shadow_adapter is None:
             self._openai_shadow_adapter = OpenAITextAgentAdapter(
-                fallback=LangGraphTextAgentAdapter(
+                checkpoint_adapter=LangGraphTextAgentAdapter(
                     build_agent_workflow(checkpointer=checkpointer)
                 )
             )

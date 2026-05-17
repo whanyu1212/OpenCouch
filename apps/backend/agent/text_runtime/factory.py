@@ -15,7 +15,7 @@ from agent.text_runtime.types import (
     TextAgentRuntimeName,
 )
 
-DEFAULT_TEXT_AGENT_RUNTIME: TextAgentRuntimeName = "langgraph"
+DEFAULT_TEXT_AGENT_RUNTIME: TextAgentRuntimeName = "openai"
 TEXT_AGENT_RUNTIME_ENV = "OPENCOUCH_TEXT_AGENT_RUNTIME"
 
 
@@ -46,6 +46,8 @@ def create_text_agent_adapter(
         return LangGraphTextAgentAdapter(graph_builder(checkpointer=checkpointer))
     if runtime_name == "openai":
         return OpenAITextAgentAdapter(
-            fallback=LangGraphTextAgentAdapter(graph_builder(checkpointer=checkpointer))
+            checkpoint_adapter=LangGraphTextAgentAdapter(
+                graph_builder(checkpointer=checkpointer)
+            )
         )
     raise ValueError(f"Unsupported text-agent runtime {runtime_name!r}.")
