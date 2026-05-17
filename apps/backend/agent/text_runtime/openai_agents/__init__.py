@@ -11,12 +11,27 @@ from agent.text_runtime.openai_agents.agents import (
     build_therapeutic_agent,
 )
 from agent.text_runtime.openai_agents.context import (
+    CrisisResourceToolCallRecord,
+    CrisisResourceToolStatus,
+    GuidedExerciseSkillToolCallRecord,
     GroundedToolCallRecord,
     GroundedToolStatus,
     MemoryActionType,
     MemoryReadActionType,
     MemoryToolCallRecord,
     OpenAITextRunContext,
+)
+from agent.text_runtime.openai_agents.crisis_tools import (
+    CrisisResourceLookupToolResult,
+    build_crisis_response_tools,
+    execute_crisis_resource_lookup_tool,
+    lookup_crisis_resources,
+)
+from agent.text_runtime.openai_agents.exercise_tools import (
+    GuidedExerciseSkillToolResult,
+    build_guided_exercise_tools,
+    execute_guided_exercise_skill_tool,
+    load_guided_exercise_skill,
 )
 from agent.text_runtime.openai_agents.grounded_tools import (
     GroundedLookupToolResult,
@@ -45,6 +60,11 @@ __all__ = [
     "CRISIS_AGENT_NAME",
     "GUIDED_EXERCISE_AGENT_NAME",
     "THERAPEUTIC_AGENT_NAME",
+    "CrisisResourceLookupToolResult",
+    "CrisisResourceToolCallRecord",
+    "CrisisResourceToolStatus",
+    "GuidedExerciseSkillToolCallRecord",
+    "GuidedExerciseSkillToolResult",
     "GroundedLookupToolResult",
     "GroundedToolCallRecord",
     "GroundedToolStatus",
@@ -57,6 +77,8 @@ __all__ = [
     "OpenAITextRunContext",
     "answer_grounded_lookup",
     "build_crisis_response_agent",
+    "build_crisis_response_tools",
+    "build_guided_exercise_tools",
     "build_guided_exercise_agent",
     "build_grounded_lookup_tools",
     "build_memory_tools",
@@ -65,9 +87,13 @@ __all__ = [
     "build_therapeutic_agent",
     "cancel_memory_deletion",
     "confirm_memory_deletion",
+    "execute_crisis_resource_lookup_tool",
+    "execute_guided_exercise_skill_tool",
     "execute_grounded_lookup_tool",
     "execute_memory_tool_action",
     "execute_read_only_memory_action",
+    "load_guided_exercise_skill",
+    "lookup_crisis_resources",
     "prepare_memory_deletion_by_index",
     "prepare_memory_deletion_by_query",
     "save_response_preference",

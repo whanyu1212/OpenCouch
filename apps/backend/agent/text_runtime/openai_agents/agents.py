@@ -9,6 +9,8 @@ from agents import Agent
 
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 from agent.text_runtime.openai_agents.context import OpenAITextRunContext
+from agent.text_runtime.openai_agents.crisis_tools import build_crisis_response_tools
+from agent.text_runtime.openai_agents.exercise_tools import build_guided_exercise_tools
 from agent.text_runtime.openai_agents.grounded_tools import build_grounded_lookup_tools
 from agent.text_runtime.openai_agents.memory_tools import build_memory_tools
 
@@ -48,6 +50,12 @@ select you only after its own crisis assessment determines either a level 1
 safety clarification turn or a level 2/3 crisis response branch. Do not
 classify crisis risk yourself. Provide direct, supportive, safety-oriented
 language and follow any runtime-provided resource guidance.
+
+Crisis tools:
+- Call lookup_crisis_resources only when the runtime prompt requires it for a
+  level 2/3 crisis response.
+- Do not call crisis-resource tools for level 1 safety clarification.
+- Never invent phone numbers or resource names.
 """
 
 
@@ -56,6 +64,12 @@ You are the OpenCouch guided exercise specialist. The application runtime owns
 exercise consent, exercise id validation, step state, exit behavior, and
 completion. Follow runtime-provided exercise state exactly and do not invent
 unsupported steps or start an exercise without runtime state.
+
+Guided-exercise tools:
+- Call load_guided_exercise_skill when the runtime prompt requires it.
+- Use only the returned skill_context plus the runtime task for the current
+  exercise reply.
+- Do not browse, offer a menu, change exercise, skip steps, or add steps.
 """
 
 
@@ -140,6 +154,7 @@ def build_therapeutic_agent(
 def build_crisis_response_agent(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
+    tools: Sequence[Any] | None = None,
     instructions: str | None = None,
 ) -> Agent[OpenAITextRunContext]:
     """Build the crisis response specialist definition."""
@@ -153,12 +168,17 @@ def build_crisis_response_agent(
             instructions=instructions,
         )
     )
-    return _build_agent(definition, model=model)
+    return _build_agent(
+        definition,
+        model=model,
+        tools=tools if tools is not None else build_crisis_response_tools(),
+    )
 
 
 def build_guided_exercise_agent(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
+    tools: Sequence[Any] | None = None,
     instructions: str | None = None,
 ) -> Agent[OpenAITextRunContext]:
     """Build the guided exercise specialist definition."""
@@ -172,7 +192,11 @@ def build_guided_exercise_agent(
             instructions=instructions,
         )
     )
-    return _build_agent(definition, model=model)
+    return _build_agent(
+        definition,
+        model=model,
+        tools=tools if tools is not None else build_guided_exercise_tools(),
+    )
 
 
 def build_openai_text_agent_roster(
