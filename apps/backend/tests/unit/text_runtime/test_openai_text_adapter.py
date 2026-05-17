@@ -536,7 +536,19 @@ async def test_openai_adapter_preserves_exercise_during_app_owned_side_turn() ->
 @pytest.mark.asyncio
 async def test_openai_adapter_starts_guided_exercise_with_guided_agent() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner("guided start")
+    runner = FakeOpenAISDKRunner(
+        "guided start",
+        tool_calls=[
+            (
+                "load_guided_exercise_skill",
+                {
+                    "exercise_type": "grounding_box_breathing",
+                    "current_step_index": 0,
+                    "runtime_action": "start",
+                },
+            )
+        ],
+    )
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_turn(
@@ -563,14 +575,33 @@ async def test_openai_adapter_starts_guided_exercise_with_guided_agent() -> None
     assert runner.stream_calls
     sdk_call = runner.stream_calls[0]
     assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
-    assert "Exercise skill:" in sdk_call["input_text"]
+    assert [tool.name for tool in sdk_call["agent"].tools] == [
+        "load_guided_exercise_skill"
+    ]
+    assert "Required tool: load_guided_exercise_skill" in sdk_call["input_text"]
     assert "grounding_box_breathing" in sdk_call["input_text"]
+    assert result["diagnostics"]["openai_guided_exercise_tool_calls"] == [
+        "load_guided_exercise_skill"
+    ]
+    assert result["diagnostics"]["openai_guided_exercise_tool_fallback"] is False
 
 
 @pytest.mark.asyncio
 async def test_openai_adapter_continues_active_guided_exercise() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner("next step")
+    runner = FakeOpenAISDKRunner(
+        "next step",
+        tool_calls=[
+            (
+                "load_guided_exercise_skill",
+                {
+                    "exercise_type": "grounding_5_4_3_2_1",
+                    "current_step_index": 1,
+                    "runtime_action": "advance",
+                },
+            )
+        ],
+    )
     adapter = _adapter(workflow, runner)
     state = _initial_state("lamp, window, mug")
     state["exercise_state"] = {
@@ -592,6 +623,12 @@ async def test_openai_adapter_continues_active_guided_exercise() -> None:
     assert result["exercise_state"]["exercise_step"] == 1
     assert result["exercise_state"]["exercise_step_id"] == "hear"
     assert result["diagnostics"]["openai_selected_agent"] == GUIDED_EXERCISE_AGENT_NAME
+    assert result["diagnostics"]["openai_guided_exercise_tool_calls"] == [
+        "load_guided_exercise_skill"
+    ]
+    assert result["diagnostics"]["openai_guided_exercise_tool_runtime_action"] == (
+        "advance"
+    )
     assert workflow.ainvoke_calls == 0
     assert runner.stream_calls
 
@@ -639,6 +676,7 @@ async def test_openai_adapter_uses_crisis_agent_for_safety_clarification() -> No
     assert result["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+    assert runner.run_calls[0]["agent"].tools == []
     assert "Safety-check override" in runner.run_calls[0]["agent"].instructions
     assert workflow.ainvoke_calls == 0
     assert await context.crisis_log_backend.arecord_count() == 0
@@ -647,7 +685,10 @@ async def test_openai_adapter_uses_crisis_agent_for_safety_clarification() -> No
 @pytest.mark.asyncio
 async def test_openai_adapter_uses_crisis_agent_for_crisis_response() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner("Please call local emergency services now.")
+    runner = FakeOpenAISDKRunner(
+        "Please call local emergency services now.",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
     adapter = _adapter(workflow, runner)
     context = _context(_RouteLLM(route="therapeutic", crisis_level=3))
 
@@ -666,9 +707,19 @@ async def test_openai_adapter_uses_crisis_agent_for_crisis_response() -> None:
     assert result["diagnostics"]["text_agent_runtime"] == "openai"
     assert result["diagnostics"]["openai_text_runtime_mode"] == "crisis_response"
     assert result["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
+    assert result["diagnostics"]["openai_crisis_tool_expected"] == (
+        "lookup_crisis_resources"
+    )
+    assert result["diagnostics"]["openai_crisis_tool_calls"] == [
+        "lookup_crisis_resources"
+    ]
+    assert result["diagnostics"]["openai_crisis_tool_fallback"] is False
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
-    assert "Verified local crisis resources" in runner.run_calls[0]["input_text"]
+    assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
+        "lookup_crisis_resources"
+    ]
+    assert "Required tool: lookup_crisis_resources" in runner.run_calls[0]["input_text"]
     assert workflow.ainvoke_calls == 0
     assert await context.crisis_log_backend.arecord_count() == 1
 
@@ -808,7 +859,19 @@ async def test_openai_adapter_streams_safe_therapeutic_turn() -> None:
 @pytest.mark.asyncio
 async def test_openai_adapter_streams_guided_exercise_turn() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner("guided chunk")
+    runner = FakeOpenAISDKRunner(
+        "guided chunk",
+        tool_calls=[
+            (
+                "load_guided_exercise_skill",
+                {
+                    "exercise_type": "grounding_5_4_3_2_1",
+                    "current_step_index": 0,
+                    "runtime_action": "start",
+                },
+            )
+        ],
+    )
     adapter = _adapter(workflow, runner)
 
     events = [
@@ -839,13 +902,19 @@ async def test_openai_adapter_streams_guided_exercise_turn() -> None:
         events[-1].state["diagnostics"]["openai_selected_agent"]
         == GUIDED_EXERCISE_AGENT_NAME
     )
+    assert events[-1].state["diagnostics"]["openai_guided_exercise_tool_calls"] == [
+        "load_guided_exercise_skill"
+    ]
     assert runner.stream_calls
 
 
 @pytest.mark.asyncio
 async def test_openai_adapter_streams_crisis_response_turn() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner("streamed crisis reply")
+    runner = FakeOpenAISDKRunner(
+        "streamed crisis reply",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
     adapter = _adapter(workflow, runner)
     context = _context(_RouteLLM(route="therapeutic", crisis_level=3))
 
@@ -869,6 +938,10 @@ async def test_openai_adapter_streams_crisis_response_turn() -> None:
     assert events[-1].state["route"] == "crisis"
     assert events[-1].state["response_style"] == "crisis_response"
     assert events[-1].state["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
+    assert events[-1].state["diagnostics"]["openai_crisis_tool_calls"] == [
+        "lookup_crisis_resources"
+    ]
+    assert events[-1].state["diagnostics"]["openai_crisis_tool_fallback"] is False
     assert runner.stream_calls
     assert await context.crisis_log_backend.arecord_count() == 1
 

@@ -137,6 +137,8 @@ def _required_tool_name(input_text: str) -> str | None:
         "confirm_memory_deletion",
         "cancel_memory_deletion",
         "answer_grounded_lookup",
+        "lookup_crisis_resources",
+        "load_guided_exercise_skill",
     ):
         if f"Required tool: {tool_name}" in input_text:
             return tool_name

@@ -30,6 +30,13 @@ MemoryToolSideEffect = Literal[
     "cancel_pending",
 ]
 GroundedToolStatus = Literal["answered", "no_verified_answer"]
+CrisisResourceToolStatus = Literal[
+    "not_attempted",
+    "found",
+    "no_location",
+    "location_refused",
+    "no_verified_results",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +65,32 @@ class GroundedToolCallRecord:
     retry_safe: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class CrisisResourceToolCallRecord:
+    """One crisis-resource lookup result captured from an SDK run."""
+
+    tool_name: str
+    response_text: str
+    inferred_location: str
+    found_resources: list[dict[str, str]]
+    resource_lookup_status: CrisisResourceToolStatus
+    side_effect: Literal["none"] = "none"
+    retry_safe: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class GuidedExerciseSkillToolCallRecord:
+    """One guided-exercise skill load captured from an SDK run."""
+
+    tool_name: str
+    exercise_type: str
+    current_step_index: int | None
+    runtime_action: str
+    skill_context: str
+    side_effect: Literal["none"] = "none"
+    retry_safe: bool = True
+
+
 @dataclass(slots=True)
 class OpenAITextRunContext:
     """Application-owned context passed to OpenAI text agents.
@@ -75,9 +108,16 @@ class OpenAITextRunContext:
     channel: Channel = Channel.TEST
     pending_memory_action: Mapping[str, Any] | None = None
     installed_skills: list[str] = field(default_factory=list)
+    transcript: list[dict[str, Any]] = field(default_factory=list)
     turn_count: int = 0
     memory_tool_calls: list[MemoryToolCallRecord] = field(default_factory=list)
     grounded_tool_calls: list[GroundedToolCallRecord] = field(default_factory=list)
+    crisis_resource_tool_calls: list[CrisisResourceToolCallRecord] = field(
+        default_factory=list
+    )
+    guided_exercise_skill_tool_calls: list[GuidedExerciseSkillToolCallRecord] = field(
+        default_factory=list
+    )
 
     def record_memory_tool_result(
         self,
@@ -141,6 +181,68 @@ class OpenAITextRunContext:
 
         return self.grounded_tool_calls[-1] if self.grounded_tool_calls else None
 
+    def record_crisis_resource_tool_result(
+        self,
+        *,
+        response_text: str,
+        inferred_location: str,
+        found_resources: list[dict[str, str]],
+        resource_lookup_status: CrisisResourceToolStatus,
+    ) -> None:
+        """Remember a crisis-resource lookup result for state merge."""
+
+        self.crisis_resource_tool_calls.append(
+            CrisisResourceToolCallRecord(
+                tool_name="lookup_crisis_resources",
+                response_text=response_text,
+                inferred_location=inferred_location,
+                found_resources=[dict(resource) for resource in found_resources],
+                resource_lookup_status=resource_lookup_status,
+            )
+        )
+
+    def latest_crisis_resource_tool_result(
+        self,
+    ) -> CrisisResourceToolCallRecord | None:
+        """Return the latest crisis-resource lookup tool result."""
+
+        return (
+            self.crisis_resource_tool_calls[-1]
+            if self.crisis_resource_tool_calls
+            else None
+        )
+
+    def record_guided_exercise_skill_tool_result(
+        self,
+        *,
+        exercise_type: str,
+        current_step_index: int | None,
+        runtime_action: str,
+        skill_context: str,
+    ) -> None:
+        """Remember a guided-exercise skill load for diagnostics."""
+
+        self.guided_exercise_skill_tool_calls.append(
+            GuidedExerciseSkillToolCallRecord(
+                tool_name="load_guided_exercise_skill",
+                exercise_type=exercise_type,
+                current_step_index=current_step_index,
+                runtime_action=runtime_action,
+                skill_context=skill_context,
+            )
+        )
+
+    def latest_guided_exercise_skill_tool_result(
+        self,
+    ) -> GuidedExerciseSkillToolCallRecord | None:
+        """Return the latest guided-exercise skill tool result."""
+
+        return (
+            self.guided_exercise_skill_tool_calls[-1]
+            if self.guided_exercise_skill_tool_calls
+            else None
+        )
+
     def agent_state_for_memory_action(self, action: Mapping[str, Any]) -> AgentState:
         """Return a minimal LangGraph-state-shaped payload for memory services.
 
@@ -158,6 +260,7 @@ class OpenAITextRunContext:
             AgentState,
             {
                 "message": self.current_user_message,
+                "transcript": list(self.transcript),
                 "channel": self.channel,
                 "user_id": self.user_id,
                 "session_id": self.session_id or self.thread_id,
@@ -185,6 +288,7 @@ class OpenAITextRunContext:
             AgentState,
             {
                 "message": self.current_user_message,
+                "transcript": list(self.transcript),
                 "channel": self.channel,
                 "user_id": self.user_id,
                 "session_id": self.session_id or self.thread_id,
@@ -206,6 +310,40 @@ class OpenAITextRunContext:
                     )
                 },
                 "grounded_lookup": {"query": query, "status": "not_attempted"},
+                "crisis": CrisisAssessment(),
+                "diagnostics": {},
+            },
+        )
+
+    def agent_state_for_crisis_resources(self) -> AgentState:
+        """Return a minimal state payload for crisis-resource lookup."""
+
+        return cast(
+            AgentState,
+            {
+                "message": self.current_user_message,
+                "transcript": list(self.transcript),
+                "channel": self.channel,
+                "user_id": self.user_id,
+                "session_id": self.session_id or self.thread_id,
+                "installed_skills": list(self.installed_skills),
+                "working_memory": [],
+                "session_memory": {"summary": ""},
+                "procedural_profile": {},
+                "session_progress": {
+                    "turn_count": self.turn_count,
+                    "is_guest": self.workflow_context.memory_mode
+                    == MemoryMode.INCOGNITO,
+                },
+                "exercise_state": {},
+                "memory_control": {
+                    "pending_action": (
+                        dict(self.pending_memory_action)
+                        if self.pending_memory_action is not None
+                        else None
+                    )
+                },
+                "grounded_lookup": {"query": "", "status": "not_attempted"},
                 "crisis": CrisisAssessment(),
                 "diagnostics": {},
             },

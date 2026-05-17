@@ -163,7 +163,10 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
 ) -> None:
     """Level 2/3 crisis turns should be owned by the OpenAI crisis agent."""
 
-    runner = FakeOpenAISDKRunner("Please contact local emergency services now.")
+    runner = FakeOpenAISDKRunner(
+        "Please contact local emergency services now.",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
@@ -191,6 +194,10 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
             result.output.diagnostics["openai_text_runtime_mode"] == "crisis_response"
         )
         assert result.output.diagnostics["openai_selected_agent"] == CRISIS_AGENT_NAME
+        assert result.output.diagnostics["openai_crisis_tool_calls"] == [
+            "lookup_crisis_resources"
+        ]
+        assert result.output.diagnostics["openai_crisis_tool_fallback"] is False
         assert result.output.diagnostics["extract_facts_reason"] == (
             "skipped: crisis_path"
         )
@@ -202,6 +209,9 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
         assert state["found_resources"][0]["phone"] == "1767"
         assert runner.run_calls
         assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+        assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
+            "lookup_crisis_resources"
+        ]
 
 
 @pytest.mark.asyncio
@@ -244,6 +254,7 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
         assert state["crisis"].level == 1
         assert runner.run_calls
         assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+        assert runner.run_calls[0]["agent"].tools == []
 
 
 @pytest.mark.asyncio

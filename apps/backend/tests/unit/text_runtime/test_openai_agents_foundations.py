@@ -19,7 +19,9 @@ from agent.state import resolve_owner_id
 from agent.text_runtime import resolve_text_agent_runtime
 from agent.text_runtime.openai_agents import (
     CRISIS_AGENT_NAME,
+    CrisisResourceLookupToolResult,
     GUIDED_EXERCISE_AGENT_NAME,
+    GuidedExerciseSkillToolResult,
     THERAPEUTIC_AGENT_NAME,
     GroundedLookupToolResult,
     MemoryReadToolResult,
@@ -30,10 +32,14 @@ from agent.text_runtime.openai_agents import (
     build_memory_tools,
     build_openai_text_agent_roster,
     build_read_only_memory_tools,
+    execute_crisis_resource_lookup_tool,
+    execute_guided_exercise_skill_tool,
     execute_grounded_lookup_tool,
     save_response_preference,
     set_proactive_memory_recall,
     execute_read_only_memory_action,
+    load_guided_exercise_skill,
+    lookup_crisis_resources,
     show_memory_status,
     show_saved_memory,
 )
@@ -163,6 +169,12 @@ def test_agent_roster_builds_dormant_specialists() -> None:
         "confirm_memory_deletion",
         "cancel_memory_deletion",
         "answer_grounded_lookup",
+    ]
+    assert [tool.name for tool in roster.crisis_agent.tools] == [
+        "lookup_crisis_resources"
+    ]
+    assert [tool.name for tool in roster.guided_exercise_agent.tools] == [
+        "load_guided_exercise_skill"
     ]
     assert roster.therapeutic_agent.handoffs == []
 
@@ -358,3 +370,84 @@ async def test_grounded_lookup_function_tool_invokes_with_context() -> None:
     assert result.status == "answered"
     assert result.side_effect == "none"
     assert result.retry_safe is True
+
+
+@pytest.mark.asyncio
+async def test_crisis_resource_tool_records_lookup_result() -> None:
+    """CrisisResponseAgent should own crisis-resource lookup as an SDK tool."""
+
+    context = _run_context(
+        llm=ScriptedOpenAITextRouteLLM(route="therapeutic", crisis_level=3)
+    )
+
+    result = await execute_crisis_resource_lookup_tool(context)
+
+    assert isinstance(result, CrisisResourceLookupToolResult)
+    assert result.resource_lookup_status == "found"
+    assert result.found_resources[0]["phone"] == "1767"
+    assert "Verified local crisis resources for Singapore" in result.response_text
+    assert context.crisis_resource_tool_calls[-1].tool_name == (
+        "lookup_crisis_resources"
+    )
+
+
+@pytest.mark.asyncio
+async def test_crisis_resource_function_tool_invokes_with_context() -> None:
+    """The SDK crisis-resource tool wrapper should use local context."""
+
+    context = _run_context(
+        llm=ScriptedOpenAITextRouteLLM(route="therapeutic", crisis_level=3)
+    )
+
+    result = await _invoke_tool(lookup_crisis_resources, context)
+
+    assert isinstance(result, CrisisResourceLookupToolResult)
+    assert result.resource_lookup_status == "found"
+    assert result.side_effect == "none"
+    assert result.retry_safe is True
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_skill_tool_records_skill_context() -> None:
+    """GuidedExerciseAgent should own loading exercise skill context."""
+
+    context = _run_context()
+
+    result = await execute_guided_exercise_skill_tool(
+        context,
+        exercise_type="grounding_5_4_3_2_1",
+        current_step_index=0,
+        runtime_action="start",
+    )
+
+    assert isinstance(result, GuidedExerciseSkillToolResult)
+    assert result.exercise_type == "grounding_5_4_3_2_1"
+    assert result.current_step_index == 0
+    assert result.runtime_action == "start"
+    assert "Exercise skill:" in result.skill_context
+    assert "grounding_5_4_3_2_1" in result.skill_context
+    assert context.guided_exercise_skill_tool_calls[-1].tool_name == (
+        "load_guided_exercise_skill"
+    )
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_skill_function_tool_invokes_with_context() -> None:
+    """The SDK exercise skill tool wrapper should pass runtime-selected args."""
+
+    context = _run_context()
+
+    result = await _invoke_tool(
+        load_guided_exercise_skill,
+        context,
+        {
+            "exercise_type": "grounding_5_4_3_2_1",
+            "current_step_index": 0,
+            "runtime_action": "start",
+        },
+    )
+
+    assert isinstance(result, GuidedExerciseSkillToolResult)
+    assert result.side_effect == "none"
+    assert result.retry_safe is True
+    assert result.skill_context.startswith("Exercise skill:")
