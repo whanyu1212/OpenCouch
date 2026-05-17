@@ -36,9 +36,15 @@ class FakeOpenAISDKRunner:
         agent: Any,
         input_text: str,
         context: Any,
+        session: Any | None = None,
     ) -> SimpleNamespace:
         self.run_calls.append(
-            {"agent": agent, "input_text": input_text, "context": context}
+            {
+                "agent": agent,
+                "input_text": input_text,
+                "context": context,
+                "session": session,
+            }
         )
         tool_result = None
         for tool_name, arguments in self.tool_calls:
@@ -61,9 +67,15 @@ class FakeOpenAISDKRunner:
         agent: Any,
         input_text: str,
         context: Any,
+        session: Any | None = None,
     ) -> "FakeOpenAIStream":
         self.stream_calls.append(
-            {"agent": agent, "input_text": input_text, "context": context}
+            {
+                "agent": agent,
+                "input_text": input_text,
+                "context": context,
+                "session": session,
+            }
         )
         return FakeOpenAIStream(
             self.final_output,

@@ -198,3 +198,21 @@ async def test_langgraph_adapter_normalizes_stream_events() -> None:
         TextRuntimeStatusEvent(stage="finalize", turn_finalized=True),
         TextRuntimeStateEvent(state=cast(Any, {"response_text": "hello"})),
     ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_reset_clears_openai_sdk_session_store(tmp_path) -> None:
+    """Thread reset should remove opt-in SDK session history too."""
+
+    async with PersistentAgentRuntime(
+        sqlite_path=tmp_path / "threads.sqlite3",
+        text_session_backend="sqlite",
+        text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+    ) as runtime:
+        assert runtime._text_session_store is not None
+        session = runtime._text_session_store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+
+        await runtime.reset_thread("thread-1")
+
+        assert await runtime._text_session_store.get_history("thread-1") == []

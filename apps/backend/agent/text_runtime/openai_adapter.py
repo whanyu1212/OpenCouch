@@ -148,12 +148,14 @@ class OpenAIAgentsSDKRunner:
         agent: Any,
         input_text: str,
         context: OpenAITextRunContext,
+        session: Any | None = None,
     ) -> Any:
         return await Runner.run(
             agent,
             input_text,
             context=context,
             max_turns=3,
+            session=session,
         )
 
     def run_streamed(
@@ -162,12 +164,14 @@ class OpenAIAgentsSDKRunner:
         agent: Any,
         input_text: str,
         context: OpenAITextRunContext,
+        session: Any | None = None,
     ) -> Any:
         return Runner.run_streamed(
             agent,
             input_text,
             context=context,
             max_turns=3,
+            session=session,
         )
 
 
@@ -180,10 +184,12 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         runner: OpenAIAgentsSDKRunner,
         model: str,
         run_context: OpenAITextRunContext,
+        session: Any | None = None,
     ) -> None:
         self._runner = runner
         self._model = model
         self._run_context = run_context
+        self._session = session
         self.last_duration_ms: float | None = None
 
     async def generate_text(
@@ -199,6 +205,7 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             agent=self._build_agent(system_instruction),
             input_text=prompt,
             context=self._run_context,
+            session=self._session,
         )
         self.last_duration_ms = elapsed_ms(run_start)
         return _final_output_text(getattr(result, "final_output", None))
@@ -214,6 +221,7 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             agent=self._build_agent(system_instruction),
             input_text=prompt,
             context=self._run_context,
+            session=self._session,
         )
         chunks: list[str] = []
         async for sdk_event in stream.stream_events():
@@ -302,6 +310,7 @@ class OpenAITextAgentAdapter:
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> Mapping[str, Any]:
         """Run one turn through the OpenAI text runtime."""
 
@@ -319,6 +328,7 @@ class OpenAITextAgentAdapter:
                 context=context,
                 runtime_mode=crisis_mode,
                 streamed=False,
+                session=session,
             )
 
         memory_action = _memory_action_type(prepared)
@@ -329,6 +339,7 @@ class OpenAITextAgentAdapter:
                 config=config,
                 context=context,
                 streamed=False,
+                session=session,
             )
 
         grounded_query = _grounded_lookup_query(prepared)
@@ -339,6 +350,7 @@ class OpenAITextAgentAdapter:
                 config=config,
                 context=context,
                 streamed=False,
+                session=session,
             )
 
         state, guided_exercise = await self._load_and_prepare_guided_exercise(
@@ -351,12 +363,14 @@ class OpenAITextAgentAdapter:
                 config=config,
                 context=context,
                 streamed=False,
+                session=session,
             )
 
         safe_result = await self._run_safe_agent_turn(
             state,
             config=config,
             context=context,
+            session=session,
         )
         return await self._finalize_openai_turn(
             state,
@@ -375,6 +389,7 @@ class OpenAITextAgentAdapter:
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming turn through the OpenAI text runtime."""
 
@@ -395,6 +410,7 @@ class OpenAITextAgentAdapter:
                 config=config,
                 context=context,
                 runtime_mode=crisis_mode,
+                session=session,
             ):
                 yield event
             return
@@ -408,6 +424,7 @@ class OpenAITextAgentAdapter:
                 config=config,
                 context=context,
                 streamed=True,
+                session=session,
             )
             yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
             yield TextRuntimeStateEvent(state=final_state)
@@ -422,6 +439,7 @@ class OpenAITextAgentAdapter:
                 config=config,
                 context=context,
                 streamed=True,
+                session=session,
             )
             yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
             yield TextRuntimeStateEvent(state=final_state)
@@ -437,6 +455,7 @@ class OpenAITextAgentAdapter:
                 state,
                 config=config,
                 context=context,
+                session=session,
             ):
                 yield event
             return
@@ -451,6 +470,7 @@ class OpenAITextAgentAdapter:
             agent=agent,
             input_text=input_text,
             context=run_context,
+            session=session,
         )
         chunks: list[str] = []
         async for sdk_event in stream.stream_events():
@@ -671,6 +691,7 @@ class OpenAITextAgentAdapter:
         config: RunnableConfig,
         context: WorkflowContext,
         streamed: bool,
+        session: Any | None = None,
     ) -> AgentState:
         action = _memory_action_payload_from_state(state)
         run_context = self._run_context_for_state(state, config, context)
@@ -680,6 +701,7 @@ class OpenAITextAgentAdapter:
             agent=agent,
             input_text=self._memory_tool_input_text_for_state(state, action),
             run_context=run_context,
+            session=session,
         )
         tool_result = run_context.latest_memory_tool_result(action_type)
         diagnostics: dict[str, Any] = {
@@ -734,6 +756,7 @@ class OpenAITextAgentAdapter:
         config: RunnableConfig,
         context: WorkflowContext,
         streamed: bool,
+        session: Any | None = None,
     ) -> AgentState:
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
@@ -742,6 +765,7 @@ class OpenAITextAgentAdapter:
             agent=agent,
             input_text=self._grounded_lookup_input_text_for_state(state, query),
             run_context=run_context,
+            session=session,
         )
         tool_result = run_context.latest_grounded_tool_result()
         diagnostics: dict[str, Any] = {
@@ -791,8 +815,14 @@ class OpenAITextAgentAdapter:
         config: RunnableConfig,
         context: WorkflowContext,
         streamed: bool,
+        session: Any | None = None,
     ) -> AgentState:
-        response_llm = self._guided_exercise_response_llm(state, config, context)
+        response_llm = self._guided_exercise_response_llm(
+            state,
+            config,
+            context,
+            session=session,
+        )
         runner = self._guided_exercise_runner(
             context,
             response_llm=response_llm,
@@ -819,6 +849,7 @@ class OpenAITextAgentAdapter:
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         yield TextRuntimeStatusEvent(stage="guided_exercise")
         queue: asyncio.Queue[str] = asyncio.Queue()
@@ -830,7 +861,12 @@ class OpenAITextAgentAdapter:
 
             return writer
 
-        response_llm = self._guided_exercise_response_llm(state, config, context)
+        response_llm = self._guided_exercise_response_llm(
+            state,
+            config,
+            context,
+            session=session,
+        )
         runner = self._guided_exercise_runner(
             context,
             response_llm=response_llm,
@@ -868,11 +904,14 @@ class OpenAITextAgentAdapter:
         state: AgentState,
         config: RunnableConfig,
         context: WorkflowContext,
+        *,
+        session: Any | None = None,
     ) -> _OpenAIGuidedExerciseResponseLLM:
         return _OpenAIGuidedExerciseResponseLLM(
             runner=self._runner,
             model=self._model,
             run_context=self._run_context_for_state(state, config, context),
+            session=session,
         )
 
     @staticmethod
@@ -901,6 +940,7 @@ class OpenAITextAgentAdapter:
         context: WorkflowContext,
         runtime_mode: str,
         streamed: bool,
+        session: Any | None = None,
     ) -> AgentState:
         if runtime_mode == "crisis_response":
             lookup_delta = await build_crisis_resource_lookup_delta(state, context)
@@ -921,6 +961,7 @@ class OpenAITextAgentAdapter:
             agent=agent,
             input_text=input_text,
             run_context=run_context,
+            session=session,
         )
 
         response_style = _response_style_for_crisis_mode(runtime_mode)
@@ -955,6 +996,7 @@ class OpenAITextAgentAdapter:
         config: RunnableConfig,
         context: WorkflowContext,
         runtime_mode: str,
+        session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         if runtime_mode == "crisis_response":
             lookup_delta = await build_crisis_resource_lookup_delta(state, context)
@@ -977,6 +1019,7 @@ class OpenAITextAgentAdapter:
             agent=agent,
             input_text=input_text,
             context=run_context,
+            session=session,
         )
         chunks: list[str] = []
         async for sdk_event in stream.stream_events():
@@ -1022,12 +1065,15 @@ class OpenAITextAgentAdapter:
         self,
         state: AgentState,
         run_context: OpenAITextRunContext,
+        *,
+        session: Any | None = None,
     ) -> str:
         text, _ = await self._run_openai_agent_with(
             state,
             agent=self._build_agent(state),
             input_text=self._input_text_for_state(state),
             run_context=run_context,
+            session=session,
         )
         return text
 
@@ -1037,6 +1083,7 @@ class OpenAITextAgentAdapter:
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> _SafeAgentResult:
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
@@ -1046,6 +1093,7 @@ class OpenAITextAgentAdapter:
             agent=agent,
             input_text=input_text,
             run_context=run_context,
+            session=session,
         )
         return self._resolve_safe_agent_result(
             state,
@@ -1081,12 +1129,14 @@ class OpenAITextAgentAdapter:
         agent: Any,
         input_text: str,
         run_context: OpenAITextRunContext,
+        session: Any | None = None,
     ) -> tuple[str, float]:
         run_start = time.monotonic()
         result = await self._runner.run(
             agent=agent,
             input_text=input_text,
             context=run_context,
+            session=session,
         )
         text = _final_output_text(getattr(result, "final_output", None))
         sdk_duration_ms = elapsed_ms(run_start)

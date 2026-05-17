@@ -58,7 +58,10 @@ from agent.text_runtime import (
     TextRuntimeShadowResult,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
+    TextSessionBackend,
+    TextSessionStore,
     create_text_agent_adapter,
+    create_text_session_store,
     resolve_text_agent_runtime,
 )
 from agent.memory.modes import MemoryMode
@@ -107,6 +110,7 @@ _STORE_DIR = BACKEND_ROOT / ".store"
 DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
 # Keep runtime-owned stores separate from the LangGraph checkpoint DB.
 DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
+DEFAULT_TEXT_SESSION_DB_PATH = _STORE_DIR / "text_sessions.sqlite3"
 DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
@@ -133,6 +137,11 @@ class PersistentAgentRuntime:
         session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
         session_feedback_database_url: str | None = None,
         memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
+        text_session_backend: TextSessionBackend = "disabled",
+        text_session_database_url: str | None = None,
+        text_session_sqlite_path: str | Path = DEFAULT_TEXT_SESSION_DB_PATH,
+        text_session_create_tables: bool = True,
+        text_session_history_limit: int | None = None,
         crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
         feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH,
         embedding_provider: "EmbeddingProvider | None" = None,
@@ -170,6 +179,14 @@ class PersistentAgentRuntime:
             session_feedback_database_url: PostgreSQL connection string used when
                 ``session_feedback_persistence_backend`` is ``"postgres"``.
             memory_sqlite_path: SQLite path for the default memory store.
+            text_session_backend: Optional OpenAI Agents SDK session backend
+                used for model-visible short-term conversation memory.
+            text_session_database_url: SQLAlchemy async-capable database URL
+                used when ``text_session_backend`` is ``"sqlalchemy"``.
+            text_session_sqlite_path: SQLite path for the SDK session store.
+            text_session_create_tables: Whether SQLAlchemy SDK sessions may
+                create their own tables when first used.
+            text_session_history_limit: Optional SDK session item limit.
             crisis_log_sqlite_path: SQLite path for the default crisis log.
             feedback_sqlite_path: SQLite path for the default feedback store.
             embedding_provider: Optional explicit embedding provider override.
@@ -223,6 +240,14 @@ class PersistentAgentRuntime:
         self._text_agent_runtime = resolve_text_agent_runtime(text_agent_runtime)
         self._text_agent_adapter: TextAgentAdapter | None = None
         self._openai_shadow_adapter: OpenAITextAgentAdapter | None = None
+        self._text_session_store: TextSessionStore | None = create_text_session_store(
+            memory_mode=memory_mode,
+            backend=text_session_backend,
+            sqlite_path=text_session_sqlite_path,
+            database_url=text_session_database_url,
+            create_tables=text_session_create_tables,
+            history_limit=text_session_history_limit,
+        )
         self._default_llm_client = default_llm_client
         self._session_timeout = session_timeout
         self._session_sweep_interval_seconds = max(
@@ -332,6 +357,8 @@ class PersistentAgentRuntime:
         await self._memory_store.aclose()
         await self._crisis_log_backend.aclose()
         await self._session_feedback_backend.aclose()
+        if self._text_session_store is not None:
+            await self._text_session_store.aclose()
         if self._saver_cm is not None:
             await self._saver_cm.__aexit__(exc_type, exc, tb)
 
@@ -1001,6 +1028,13 @@ class PersistentAgentRuntime:
             )
         return self._openai_shadow_adapter
 
+    def _openai_sdk_session_for_thread(self, thread_id: str) -> Any | None:
+        """Return the SDK session for OpenAI serving turns when enabled."""
+
+        if self._text_agent_runtime != "openai" or self._text_session_store is None:
+            return None
+        return self._text_session_store.session_for_thread(thread_id)
+
     def _get_graph(self) -> AgentWorkflow:
         """Return the compiled LangGraph workflow for compatibility callers.
 
@@ -1132,6 +1166,8 @@ class PersistentAgentRuntime:
 
             checkpointer = self._ensure_open()
             await checkpointer.adelete_thread(thread_id)
+            if self._text_session_store is not None:
+                await self._text_session_store.clear_thread(thread_id)
             await self._active_session_manager.delete_persisted_active_session(
                 thread_id
             )
@@ -1323,6 +1359,7 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
+            sdk_session = self._openai_sdk_session_for_thread(thread_id)
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -1345,6 +1382,7 @@ class PersistentAgentRuntime:
                         llm_client=llm_client,
                         response_llm_client=response_llm_client,
                     ),
+                    session=sdk_session,
                 )
                 final_state = await self.get_state(thread_id)
                 if final_state is None:
@@ -1739,6 +1777,7 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
+            sdk_session = self._openai_sdk_session_for_thread(thread_id)
 
             turn_start = time.monotonic()
             final_state: AgentState | None = None
@@ -1766,6 +1805,7 @@ class PersistentAgentRuntime:
                         llm_client=llm_client,
                         response_llm_client=response_llm_client,
                     ),
+                    session=sdk_session,
                 ):
                     if isinstance(event, TextRuntimeChunkEvent):
                         yield ChunkEvent(text=event.text)

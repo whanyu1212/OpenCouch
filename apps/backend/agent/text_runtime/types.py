@@ -86,6 +86,7 @@ class TextAgentAdapter(Protocol):
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> Mapping[str, Any]:
         """Run one non-streaming text turn."""
 
@@ -95,6 +96,7 @@ class TextAgentAdapter(Protocol):
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming text turn."""
 

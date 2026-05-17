@@ -1,0 +1,146 @@
+"""Tests for OpenAI Agents SDK text session storage."""
+
+from __future__ import annotations
+
+import pytest
+
+from agent.memory.modes import MemoryMode
+from agent.text_runtime.session_store import (
+    TextSessionStore,
+    TextSessionStoreConfig,
+    create_text_session_store,
+    messages_from_sdk_session_items,
+    normalize_sqlalchemy_async_url,
+)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_text_session_store_persists_by_thread_id(tmp_path) -> None:
+    """SQLite SDK sessions should survive store re-creation by thread id."""
+
+    db_path = tmp_path / "text-sessions.sqlite3"
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=db_path)
+    )
+    session = store.session_for_thread("thread-1")
+    await session.add_items(
+        [
+            {"role": "user", "content": "hello"},
+            {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hi"}],
+            },
+        ]
+    )
+    await store.aclose()
+
+    reloaded = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=db_path)
+    )
+    try:
+        history = await reloaded.get_history("thread-1")
+    finally:
+        await reloaded.aclose()
+
+    assert [(message.role.value, message.content) for message in history] == [
+        ("user", "hello"),
+        ("assistant", "hi"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_text_session_store_keeps_threads_separate(tmp_path) -> None:
+    """Session storage should not bleed history across thread ids."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        await store.session_for_thread("thread-a").add_items(
+            [{"role": "user", "content": "alpha"}]
+        )
+        await store.session_for_thread("thread-b").add_items(
+            [{"role": "user", "content": "beta"}]
+        )
+
+        history = await store.get_history("thread-a")
+    finally:
+        await store.aclose()
+
+    assert [message.content for message in history] == ["alpha"]
+
+
+@pytest.mark.asyncio
+async def test_clear_thread_removes_sdk_session_items(tmp_path) -> None:
+    """Thread reset should be able to clear SDK session history."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        await store.session_for_thread("thread-1").add_items(
+            [{"role": "user", "content": "hello"}]
+        )
+
+        await store.clear_thread("thread-1")
+
+        assert await store.get_history("thread-1") == []
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_incognito_text_session_store_uses_memory_sqlite() -> None:
+    """Incognito mode must not write SDK sessions to configured disk storage."""
+
+    store = create_text_session_store(
+        memory_mode=MemoryMode.INCOGNITO,
+        backend="sqlalchemy",
+        database_url="postgresql://opencouch:opencouch@localhost/opencouch",
+    )
+
+    try:
+        assert store is not None
+        assert store.backend == "sqlite"
+    finally:
+        if store is not None:
+            await store.aclose()
+
+
+def test_sqlalchemy_backend_requires_database_url() -> None:
+    """SQLAlchemy SDK sessions should fail fast without a URL."""
+
+    with pytest.raises(ValueError, match="text_session_database_url"):
+        TextSessionStore(TextSessionStoreConfig(backend="sqlalchemy"))
+
+
+def test_normalize_sqlalchemy_async_url_adapts_common_sync_urls() -> None:
+    """Runtime config may reuse the app's existing Postgres-style URL."""
+
+    assert normalize_sqlalchemy_async_url("postgresql://u:p@host/db") == (
+        "postgresql+asyncpg://u:p@host/db"
+    )
+    assert normalize_sqlalchemy_async_url("postgres://u:p@host/db") == (
+        "postgresql+asyncpg://u:p@host/db"
+    )
+    assert normalize_sqlalchemy_async_url("sqlite:///tmp/session.db") == (
+        "sqlite+aiosqlite:///tmp/session.db"
+    )
+
+
+def test_messages_from_sdk_session_items_skips_non_message_items() -> None:
+    """Public history conversion should ignore tool calls and empty messages."""
+
+    messages = messages_from_sdk_session_items(
+        [
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            {"type": "function_call", "name": "tool"},
+            {"role": "assistant", "content": ""},
+            {"role": "assistant", "content": "hello"},
+        ]
+    )
+
+    assert [(message.role.value, message.content) for message in messages] == [
+        ("user", "hi"),
+        ("assistant", "hello"),
+    ]

@@ -1041,6 +1041,8 @@ async def test_chat_loop_guest_mode_uses_ephemeral_sqlite_runtime(monkeypatch) -
         lambda: SimpleNamespace(
             persistence_backend="postgres",
             memory_database_url="postgresql://opencouch:opencouch@localhost/opencouch",
+            text_session_backend="disabled",
+            text_session_database_url=None,
         ),
     )
     monkeypatch.setattr(
@@ -1071,6 +1073,8 @@ async def test_chat_loop_guest_mode_uses_ephemeral_sqlite_runtime(monkeypatch) -
     assert kwargs["crisis_log_persistence_backend"] == "sqlite"
     assert kwargs["session_feedback_persistence_backend"] == "sqlite"
     assert kwargs["memory_database_url"] is None
+    assert kwargs["text_session_backend"] == "disabled"
+    assert kwargs["text_session_database_url"] is None
     assert kwargs["thread_database_url"] is None
     assert kwargs["crisis_log_database_url"] is None
     assert kwargs["session_feedback_database_url"] is None
@@ -1095,6 +1099,8 @@ async def test_chat_loop_renders_postgres_startup_hint(monkeypatch) -> None:
         lambda: SimpleNamespace(
             persistence_backend="postgres",
             memory_database_url="postgresql://opencouch:opencouch@localhost/opencouch",
+            text_session_backend="disabled",
+            text_session_database_url=None,
         ),
     )
     monkeypatch.setattr(

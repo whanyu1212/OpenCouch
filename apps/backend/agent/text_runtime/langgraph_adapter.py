@@ -53,9 +53,11 @@ class LangGraphTextAgentAdapter:
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> Mapping[str, Any]:
         """Run one non-streaming turn through LangGraph."""
 
+        del session
         return await self.workflow.ainvoke(
             initial_state,
             config=config,
@@ -68,9 +70,11 @@ class LangGraphTextAgentAdapter:
         *,
         config: RunnableConfig,
         context: WorkflowContext,
+        session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming turn and normalize LangGraph stream chunks."""
 
+        del session
         async for chunk in self.workflow.astream(
             initial_state,
             config=config,
