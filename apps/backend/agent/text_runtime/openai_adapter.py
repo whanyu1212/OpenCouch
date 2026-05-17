@@ -13,6 +13,7 @@ from typing import Any, cast
 from agents import Runner
 from langchain_core.runnables import RunnableConfig
 
+from agent.active_flow import detect_active_flow
 from agent.crisis_branch import (
     build_crisis_resource_lookup_delta,
     crisis_response_delta,
@@ -128,6 +129,14 @@ class _PreparedTurn:
     eligible: bool
     fallback_reason: str = ""
     dispatch_plan: TurnDispatchPlan | None = None
+
+
+@dataclass(frozen=True)
+class _SafeAgentResult:
+    response_text: str
+    runtime_mode: str
+    response_style: str
+    sdk_duration_ms: float
 
 
 class OpenAIAgentsSDKRunner:
@@ -343,16 +352,19 @@ class OpenAITextAgentAdapter:
                 streamed=False,
             )
 
-        run_context = self._run_context_for_state(state, config, context)
-        response_text = await self._run_openai_agent(state, run_context)
+        safe_result = await self._run_safe_agent_turn(
+            state,
+            config=config,
+            context=context,
+        )
         return await self._finalize_openai_turn(
             state,
-            response_text=response_text,
+            response_text=safe_result.response_text,
             config=config,
-            runtime_mode="safe_therapeutic",
-            response_style="supportive",
+            runtime_mode=safe_result.runtime_mode,
+            response_style=safe_result.response_style,
             selected_agent=THERAPEUTIC_AGENT_NAME,
-            sdk_duration_ms=None,
+            sdk_duration_ms=safe_result.sdk_duration_ms,
             streamed=False,
         )
 
@@ -456,14 +468,20 @@ class OpenAITextAgentAdapter:
             getattr(stream, "final_output", None),
             fallback="".join(chunks),
         )
+        safe_result = self._resolve_safe_agent_result(
+            state,
+            run_context=run_context,
+            response_text=response_text,
+            sdk_duration_ms=elapsed_ms(run_start),
+        )
         final_state = await self._finalize_openai_turn(
             state,
-            response_text=response_text,
+            response_text=safe_result.response_text,
             config=config,
-            runtime_mode="safe_therapeutic",
-            response_style="supportive",
+            runtime_mode=safe_result.runtime_mode,
+            response_style=safe_result.response_style,
             selected_agent=THERAPEUTIC_AGENT_NAME,
-            sdk_duration_ms=elapsed_ms(run_start),
+            sdk_duration_ms=safe_result.sdk_duration_ms,
             streamed=True,
         )
         yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
@@ -536,7 +554,7 @@ class OpenAITextAgentAdapter:
                 )
 
             run_context = self._run_context_for_state(state, config, context)
-            agent = self._build_agent(state)
+            agent = self._build_shadow_agent(state)
             input_text = self._input_text_for_state(state)
 
             run_start = time.monotonic()
@@ -583,6 +601,14 @@ class OpenAITextAgentAdapter:
         _apply_delta(state, crisis_result.delta)
         assessment = crisis_result.assessment
         if assessment.level != 0:
+            return _PreparedTurn(
+                state=state,
+                eligible=True,
+                dispatch_plan=None,
+            )
+
+        if detect_active_flow(state) == "none":
+            _apply_agent_primary_safe_turn_update(state)
             return _PreparedTurn(
                 state=state,
                 eligible=True,
@@ -1019,6 +1045,49 @@ class OpenAITextAgentAdapter:
         )
         return text
 
+    async def _run_safe_agent_turn(
+        self,
+        state: AgentState,
+        *,
+        config: RunnableConfig,
+        context: WorkflowContext,
+    ) -> _SafeAgentResult:
+        run_context = self._run_context_for_state(state, config, context)
+        agent = self._build_agent(state)
+        input_text = self._input_text_for_state(state)
+        response_text, sdk_duration_ms = await self._run_openai_agent_with(
+            state,
+            agent=agent,
+            input_text=input_text,
+            run_context=run_context,
+        )
+        return self._resolve_safe_agent_result(
+            state,
+            run_context=run_context,
+            response_text=response_text,
+            sdk_duration_ms=sdk_duration_ms,
+        )
+
+    def _resolve_safe_agent_result(
+        self,
+        state: AgentState,
+        *,
+        run_context: OpenAITextRunContext,
+        response_text: str,
+        sdk_duration_ms: float,
+    ) -> _SafeAgentResult:
+        runtime_mode, response_style, resolved_text = _merge_safe_agent_tool_results(
+            state,
+            run_context=run_context,
+            response_text=response_text,
+        )
+        return _SafeAgentResult(
+            response_text=resolved_text,
+            runtime_mode=runtime_mode,
+            response_style=response_style,
+            sdk_duration_ms=sdk_duration_ms,
+        )
+
     async def _run_openai_agent_with(
         self,
         state: AgentState,
@@ -1067,6 +1136,7 @@ class OpenAITextAgentAdapter:
         if sdk_duration_ms is not None:
             diagnostics["openai_sdk_ms"] = round(sdk_duration_ms, 2)
 
+        route = _route_for_runtime_mode(runtime_mode)
         final_values: dict[str, Any] = {
             **dict(state),
             "response_text": response_text,
@@ -1074,6 +1144,8 @@ class OpenAITextAgentAdapter:
             "diagnostics": diagnostics,
             "transcript": [*list(state.get("transcript", [])), assistant_turn],
         }
+        if route is not None:
+            final_values["route"] = route
         if runtime_mode in {"safe_therapeutic", "crisis_clarification"}:
             final_values.update(
                 {
@@ -1110,6 +1182,19 @@ class OpenAITextAgentAdapter:
             instructions=instructions,
         )
 
+    def _build_shadow_agent(self, state: AgentState) -> Any:
+        instructions = (
+            f"{_RUNTIME_THERAPEUTIC_INSTRUCTIONS}\n\n"
+            "Shadow runs must not call tools or create side effects. Produce a "
+            "best-effort safe therapeutic reply from the visible prompt only.\n\n"
+            f"{build_supportive_system_prompt(state)}"
+        )
+        return build_therapeutic_agent(
+            model=self._model,
+            instructions=instructions,
+            tools=[],
+        )
+
     def _build_crisis_agent(self, state: AgentState, *, runtime_mode: str) -> Any:
         if runtime_mode == "crisis_response":
             system_prompt = build_crisis_response_system_prompt()
@@ -1125,10 +1210,14 @@ class OpenAITextAgentAdapter:
         )
 
     def _input_text_for_state(self, state: AgentState) -> str:
-        return build_therapeutic_response_prompt(
+        prompt = build_therapeutic_response_prompt(
             state,
             response_style="supportive",
         )
+        operational_context = _operational_context_for_prompt(state)
+        if not operational_context:
+            return prompt
+        return f"{prompt}\n\n{operational_context}"
 
     def _memory_tool_input_text_for_state(
         self,
@@ -1239,18 +1328,161 @@ def _apply_delta(state: AgentState, delta: Mapping[str, Any]) -> None:
             state[key] = cast(Any, value)
 
 
+def _apply_agent_primary_safe_turn_update(state: AgentState) -> None:
+    """Set app-owned safe-turn context without invoking the graph router."""
+
+    _apply_delta(
+        state,
+        {
+            "route": "therapeutic",
+            "turn_lifecycle": {"active_flow": "none", "action": "none"},
+            "memory_reference": {
+                "mode": _memory_reference_mode_for_message(
+                    str(state.get("message") or "")
+                )
+            },
+            "diagnostics": {"openai_agent_primary_routing": True},
+        },
+    )
+
+
+def _memory_reference_mode_for_message(message: str) -> str:
+    text = " ".join(message.lower().split())
+    explicit_phrases = (
+        "what did we work out",
+        "what did we decide",
+        "where did we leave off",
+        "where we left off",
+        "last time we talked",
+        "last time we spoke",
+        "last session",
+        "previous session",
+        "what helped last time",
+        "continue from last time",
+        "continue where we left",
+    )
+    if any(phrase in text for phrase in explicit_phrases):
+        return "explicit"
+    return "none"
+
+
+def _merge_safe_agent_tool_results(
+    state: AgentState,
+    *,
+    run_context: OpenAITextRunContext,
+    response_text: str,
+) -> tuple[str, str, str]:
+    memory_calls = list(run_context.memory_tool_calls)
+    grounded_calls = list(run_context.grounded_tool_calls)
+    diagnostics: dict[str, Any] = {
+        **dict(state.get("diagnostics", {}) or {}),
+        "openai_agent_primary_routing": True,
+    }
+
+    for call in memory_calls:
+        delta: dict[str, Any] = {"memory_control": call.memory_control}
+        if call.procedural_profile is not None:
+            delta["procedural_profile"] = call.procedural_profile
+        _apply_delta(state, delta)
+
+    if memory_calls:
+        latest_memory_call = memory_calls[-1]
+        diagnostics.update(
+            {
+                "openai_memory_tool_expected": latest_memory_call.tool_name,
+                "openai_memory_tool_selected": latest_memory_call.tool_name,
+                "openai_memory_tool_calls": [call.tool_name for call in memory_calls],
+                "openai_memory_tool_side_effects": [
+                    call.side_effect for call in memory_calls
+                ],
+                "openai_memory_tool_fallback": False,
+            }
+        )
+
+    for call in grounded_calls:
+        _apply_delta(state, {"grounded_lookup": call.grounded_lookup})
+
+    if grounded_calls:
+        latest_grounded_call = grounded_calls[-1]
+        diagnostics.update(
+            {
+                "openai_grounded_tool_expected": latest_grounded_call.tool_name,
+                "openai_grounded_tool_selected": latest_grounded_call.tool_name,
+                "openai_grounded_tool_calls": [
+                    call.tool_name for call in grounded_calls
+                ],
+                "openai_grounded_tool_fallback": False,
+            }
+        )
+
+    _apply_delta(state, {"diagnostics": diagnostics})
+
+    if grounded_calls:
+        _apply_delta(state, {"route": "grounded_lookup"})
+        return "grounded_lookup", "grounded_lookup", grounded_calls[-1].response_text
+    if memory_calls:
+        _apply_delta(state, {"route": "memory_control"})
+        return "memory_control", "memory_control", memory_calls[-1].response_text
+
+    _apply_delta(state, {"route": "therapeutic"})
+    return "safe_therapeutic", "supportive", response_text
+
+
+def _route_for_runtime_mode(runtime_mode: str) -> str | None:
+    if runtime_mode in {"safe_therapeutic", "crisis_clarification"}:
+        return "therapeutic"
+    if runtime_mode == "memory_control":
+        return "memory_control"
+    if runtime_mode == "grounded_lookup":
+        return "grounded_lookup"
+    if runtime_mode == "crisis_response":
+        return "crisis"
+    return None
+
+
+def _operational_context_for_prompt(state: AgentState) -> str:
+    lines = [
+        "Operational context:",
+        "- The current turn has already passed the app-owned crisis gate.",
+        "- Decide whether to answer directly or call one attached tool when the "
+        "user explicitly asks for saved-memory management or grounded lookup.",
+    ]
+    memory_control = state.get("memory_control", {}) or {}
+    pending_action = (
+        memory_control.get("pending_action")
+        if isinstance(memory_control, Mapping)
+        else None
+    )
+    if isinstance(pending_action, Mapping):
+        preview = ""
+        target = pending_action.get("target")
+        if isinstance(target, Mapping):
+            preview = str(target.get("preview") or "").strip()
+        pending_line = (
+            "- Pending memory deletion exists. Call confirm_memory_deletion only "
+            "if the user clearly confirms; call cancel_memory_deletion only if "
+            "the user clearly declines."
+        )
+        if preview:
+            pending_line = f"{pending_line} Target preview: {preview}"
+        lines.append(pending_line)
+
+    memory_reference = state.get("memory_reference", {}) or {}
+    if (
+        isinstance(memory_reference, Mapping)
+        and memory_reference.get("mode") == "explicit"
+    ):
+        lines.append(
+            "- The user explicitly asked to use prior conversation context; use "
+            "retrieved memory context when it is available."
+        )
+
+    return "\n".join(lines)
+
+
 def _fallback_reason(plan: TurnDispatchPlan) -> str:
-    if plan.route in {"memory_control", "grounded_lookup"}:
-        return ""
-    if plan.route != "therapeutic":
+    if plan.route not in {"memory_control", "grounded_lookup", "therapeutic"}:
         return f"unsupported_route:{plan.route}"
-    if plan.active_flow == "guided_exercise" and plan.active_flow_action in {
-        "continue",
-        "resume",
-    }:
-        return ""
-    if plan.active_flow != "none" or plan.active_flow_action != "none":
-        return f"active_flow:{plan.active_flow}:{plan.active_flow_action}"
     return ""
 
 
