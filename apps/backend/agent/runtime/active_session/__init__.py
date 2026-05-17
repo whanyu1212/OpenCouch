@@ -1,16 +1,15 @@
 """Active-session lifecycle: durable state, store backends, manager.
 
 The active-session subsystem owns the runtime-side bookkeeping that
-sits alongside LangGraph's checkpointer: which thread is currently
-mid-session, when it was last touched, what mutation token it carries,
-and how that state survives a process restart. Three modules carry the
-load:
+sits alongside OpenAI SDK session history and runtime state snapshots: which
+thread is currently mid-session, when it was last touched, what mutation token
+it carries, and how that state survives a process restart. Three modules carry
+the load:
 
 - ``manager``: the in-process owner that orchestrates token rotation,
   expiry checks, and acquisition of session leases.
 - ``store``: the persistence Protocol plus the Postgres backend.
-- ``sqlite_store``: the SQLite backend that reuses the checkpointer
-  connection.
+- ``sqlite_store``: the SQLite backend with its own runtime-owned connection.
 
 The package is the public surface — callers should ``from
 agent.runtime.active_session import X`` rather than reaching into

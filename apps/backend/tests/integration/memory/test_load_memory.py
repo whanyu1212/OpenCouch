@@ -439,7 +439,7 @@ class TestLoadMemoryNode:
     async def test_preserves_other_session_memory_fields_via_spread(self) -> None:
         """When updating ``session_memory.summary``, the node preserves peers.
 
-        LangGraph's default reducer replaces whole dict values, so the
+        runtime's default reducer replaces whole dict values, so the
         node must spread the existing ``session_memory`` dict before
         overwriting ``summary``.
         """
@@ -1308,7 +1308,7 @@ class TestFinalizeTurnNode:
         The transcript is reducer-backed, so finalize_turn_node must emit
         ONLY the assistant turn. Returning the full reconstructed transcript
         would duplicate prior entries when the reducer merges the delta into
-        checkpointed state.
+        state snapshoted state.
         """
 
         state: dict[str, Any] = {

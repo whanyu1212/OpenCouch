@@ -1,9 +1,8 @@
-"""Therapeutic dispatch node — the routing entry point for the subgraph.
+"""Therapeutic dispatch adapter and shared update builder.
 
 The dispatcher is LLM-primary. Sibling modules own the pieces: ``planner``
-holds the framework-agnostic policy that returns a ``DispatchPlan``, this
-module turns that plan into a LangGraph ``Command``, ``prompt`` builds the
-classifier prompts, and ``constants`` holds the style → node-name map. The
+holds the framework-agnostic policy that returns a ``DispatchPlan``, ``prompt``
+builds the classifier prompts, and ``constants`` holds the style → node-name map. The
 public surface is re-exported by ``agent.therapeutic.dispatch``.
 
 Boundary invariant:
@@ -16,11 +15,10 @@ reused when the existing exercise route continues or clarifies.
 
 from __future__ import annotations
 
-from langgraph.runtime import Runtime
-from langgraph.types import Command
+from typing import Any
 
 from agent.observability.routing_trace import append_routing_trace
-from agent.runtime_context import WorkflowContext
+from agent.runtime.command import RuntimeCommand
 from agent.state import AgentState
 from agent.therapeutic.dispatch.constants import (
     TherapeuticNodeName,
@@ -68,8 +66,8 @@ def build_therapeutic_dispatch_update(
 ) -> dict:
     """Build the state delta for a therapeutic dispatch plan.
 
-    Alternate text runtimes use this to share the LangGraph dispatch policy
-    without depending on LangGraph ``Command`` objects.
+    Text runtimes use this to share the dispatch policy without depending on
+    routing adapter objects.
     """
 
     update = (
@@ -104,19 +102,19 @@ def build_therapeutic_dispatch_update(
 def _to_command(
     state: AgentState,
     plan: DispatchPlan,
-) -> Command[TherapeuticNodeName]:
-    """Convert a dispatch plan into the LangGraph command.
+) -> RuntimeCommand[TherapeuticNodeName]:
+    """Convert a dispatch plan into a compatibility routing command.
 
     Args:
         state: Current graph state.
         plan: Internal routing plan.
 
     Returns:
-        LangGraph command for the planned response-style node.
+        Routing command for the planned response-style node.
     """
 
     update = build_therapeutic_dispatch_update(state, plan)
-    return Command(
+    return RuntimeCommand(
         update=update,
         goto=node_for_response_style(plan.response_style),
     )
@@ -124,16 +122,16 @@ def _to_command(
 
 async def run_therapeutic_dispatch_node(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],
-) -> Command[TherapeuticNodeName]:
+    runtime: Any,
+) -> RuntimeCommand[TherapeuticNodeName]:
     """Route the current turn to the correct therapeutic response node.
 
     Args:
         state: The current agent state.
-        runtime: The LangGraph runtime carrying injected dependencies.
+        runtime: The runtime object carrying injected dependencies.
 
     Returns:
-        A ``Command`` pointing at the next therapeutic response node, with any
+        A command pointing at the next therapeutic response node, with any
         required routing or exercise-state updates.
     """
 

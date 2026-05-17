@@ -1,8 +1,7 @@
 """LLM-driven extraction services for semantic and procedural memory.
 
-Per AGENTS.md §6, the LangGraph nodes that surface memory extraction to
-the graph topology should stay thin — orchestration only. The actual
-work of building prompts, calling the LLM, and dispatching candidates
+The runtime surfaces memory extraction through thin orchestration only. The
+actual work of building prompts, calling the LLM, and dispatching candidates
 through ``TurnWriteService`` lives here as plain async services.
 
 Two parallel functions live in this module:
@@ -24,8 +23,8 @@ Both functions:
    extraction is a side-effect path; an extraction failure must not
    fail the parent turn or create fallback writes.
 3. Return a structured outcome carrying the duration, candidate
-   counts, write counts, and a reason string. The node wrappers
-   format these into LangGraph diagnostics deltas.
+   counts, write counts, and a reason string. Runtime callers format these
+   into diagnostics deltas.
 """
 
 from __future__ import annotations

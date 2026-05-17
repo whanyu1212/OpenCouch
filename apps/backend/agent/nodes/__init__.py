@@ -1,14 +1,12 @@
-"""LangGraph node modules for the OpenCouch workflow.
+"""Compatibility node adapters for direct service tests.
 
-The graph wires nodes via deep imports (``from agent.nodes.crisis_gate
-import run_crisis_gate_node``) rather than through this re-export
-surface, so these names are primarily a public-surface index for
-readers — they document which functions in this package are actual
-graph entry points.
+The active text runtime uses OpenAI Agents SDK orchestration and plain
+services. These adapters remain for direct tests and evals that call the old
+function names while the service modules are the canonical implementation.
 
-Memory extraction (semantic + procedural) is *not* a graph node. It runs
+Memory extraction (semantic + procedural) is not a node. It runs
 as a runtime-managed background task or, for one-shot ``run_agent``
-callers, synchronously after ``ainvoke`` — see
+callers, synchronously after the turn — see
 :mod:`agent.memory.extraction_service` and
 :class:`agent.persistence.PersistentAgentRuntime`.
 """

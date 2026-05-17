@@ -391,10 +391,9 @@ def build_turn_dispatch_update(
 ) -> dict[str, object]:
     """Build the state delta for a resolved turn-dispatch plan.
 
-    The LangGraph node and alternate text runtimes both need the same
-    route-specific payloads. Keeping this as plain dispatch logic prevents the
-    OpenAI runtime from reimplementing memory-control action shaping or
-    grounded-lookup query wiring.
+    Text-runtime branches need the same route-specific payloads. Keeping this
+    as plain dispatch logic prevents the OpenAI runtime from reimplementing
+    memory-control action shaping or grounded-lookup query wiring.
     """
 
     memory_action = (

@@ -42,7 +42,7 @@ def _noop_stream_writer_factory() -> Callable[[dict[str, str]], None]:
 
 @dataclass(frozen=True)
 class ExerciseRunner:
-    """Run one guided-exercise turn without depending on LangGraph."""
+    """Run one guided-exercise turn without depending on a graph framework."""
 
     classifier_llm: BaseLLMClient | None
     response_llm: BaseLLMClient | None

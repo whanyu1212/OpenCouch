@@ -117,10 +117,10 @@ async def _invoke_crisis_branch(
     mode: str,
 ) -> tuple[dict[str, Any], dict[str, list[Any]], int]:
     from agent.audit.crisis_log import InMemoryCrisisLogBackend
-    from agent.graph import build_agent_workflow
     from agent.memory.modes import MemoryMode
     from agent.memory.store import OpenCouchMemoryStore
     from agent.runtime_context import WorkflowContext
+    from agent.text_runtime.openai_adapter import OpenAITextAgentAdapter
     from config import create_configured_control_llm_client
 
     text_delegate = create_configured_control_llm_client() if mode == "live" else None
@@ -148,13 +148,13 @@ async def _invoke_crisis_branch(
         )
         return location, resources, status
 
-    workflow = build_agent_workflow()
     with patch(
         "agent.crisis_branch.find_crisis_resources",
         new=fake_crisis_resources,
     ):
-        output = await workflow.ainvoke(
+        output = await OpenAITextAgentAdapter().run_turn(
             state,
+            config=_runtime_config(case.id, MemoryMode.LOCAL),
             context=WorkflowContext(
                 llm_client=llm,
                 response_llm=llm,
@@ -164,6 +164,17 @@ async def _invoke_crisis_branch(
             ),
         )
     return dict(output), tool_calls, await crisis_log.arecord_count()
+
+
+def _runtime_config(thread_id: str, memory_mode: Any) -> dict[str, Any]:
+    return {
+        "configurable": {"thread_id": thread_id},
+        "metadata": {
+            "channel": "eval",
+            "memory_mode": memory_mode.value,
+            "streaming": False,
+        },
+    }
 
 
 def _grade_case(

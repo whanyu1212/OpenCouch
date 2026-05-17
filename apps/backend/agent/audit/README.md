@@ -19,22 +19,12 @@ recall toggles.
 | `session_feedback.py` | Defines `SessionFeedbackBackend` plus in-memory and null feedback implementations. Used for end-of-session thumbs feedback. |
 | `sqlite_session_feedback.py` | Legacy SQLite implementation of `SessionFeedbackBackend` for compatibility fallback and migration coverage. |
 
-## Graph Significance
+## Runtime Significance
 
-`crisis_log.py` is directly significant to the LangGraph flow. The top-level
-graph routes crisis turns through:
-
-```text
-crisis_resource_lookup_node
-  -> crisis_response_node
-  -> crisis_log_node
-  -> finalize_turn_node
-```
-
-`crisis_log_node` reads `runtime.context.crisis_log_backend` and appends one
-`CrisisLogRecord` for crisis turns. The node returns no meaningful state delta;
-its purpose is the audit side effect. This keeps safety observability separate
-from response generation and from normal memory extraction.
+The OpenAI text runtime writes one `CrisisLogRecord` for crisis-response turns
+through `agent.crisis_branch.write_crisis_log`. Its purpose is the audit side
+effect, keeping safety observability separate from response generation and
+normal memory extraction.
 
 The crisis log is always-on across memory modes:
 

@@ -18,7 +18,7 @@ from eval.runners.therapeutic_common import (
     build_live_therapeutic_llms,
     build_scripted_llm,
     grade_therapeutic_output,
-    invoke_therapeutic_subgraph,
+    invoke_therapeutic_branch,
     parse_therapeutic_case,
 )
 
@@ -73,14 +73,14 @@ class TherapeuticQualityEvaluator(BaseEvaluator[TherapeuticEvalCase]):
 
         if self.mode == "scripted":
             llm = build_scripted_llm(case)
-            output = await invoke_therapeutic_subgraph(
+            output = await invoke_therapeutic_branch(
                 case,
                 llm_client=llm,
                 response_llm=llm,
             )
         else:
             control_llm, response_llm = build_live_therapeutic_llms()
-            output = await invoke_therapeutic_subgraph(
+            output = await invoke_therapeutic_branch(
                 case,
                 llm_client=control_llm,
                 response_llm=response_llm,

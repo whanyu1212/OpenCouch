@@ -1,4 +1,4 @@
-"""Thin LangGraph-facing wrapper for session-end memory promotion."""
+"""Session-end memory promotion adapter."""
 
 from __future__ import annotations
 

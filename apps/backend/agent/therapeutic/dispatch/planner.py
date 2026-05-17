@@ -36,7 +36,7 @@ _CONSENT_GATE_RESPONSE_STYLE: TherapeuticResponseStyle = "supportive"
 
 @dataclass(frozen=True)
 class DispatchPlan:
-    """Routing plan produced before LangGraph command construction."""
+    """Routing plan produced before response branch selection."""
 
     response_style: TherapeuticResponseStyle
     therapeutic_approach: TherapeuticApproach

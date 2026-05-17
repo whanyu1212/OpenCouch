@@ -25,8 +25,8 @@ from typing import Any, Protocol, runtime_checkable
 from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
 
 # A namespace is typically ``(user_id, kind)`` where kind is one of
-# "semantic", "episodic", or "procedural". The tuple shape mirrors
-# LangGraph's BaseStore convention.
+# "semantic", "episodic", or "procedural". The tuple shape mirrors common
+# key-value memory store conventions.
 Namespace = tuple[str, ...]
 
 # Minimum query-token recall ratio for a record to count as a search hit.

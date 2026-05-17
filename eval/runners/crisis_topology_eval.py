@@ -102,10 +102,10 @@ async def _invoke_parent_graph(
     case: CrisisEvalCase,
 ) -> tuple[dict[str, Any], ScriptedCrisisLLM | None, dict[str, list[Any]], int]:
     from agent.audit.crisis_log import InMemoryCrisisLogBackend
-    from agent.graph import build_agent_workflow
     from agent.memory.modes import MemoryMode
     from agent.memory.store import OpenCouchMemoryStore
     from agent.runtime_context import WorkflowContext
+    from agent.text_runtime.openai_adapter import OpenAITextAgentAdapter
 
     state = build_graph_state(case)
     llm = None if case.scripted.get("no_llm") else ScriptedCrisisLLM(case)
@@ -148,7 +148,6 @@ async def _invoke_parent_graph(
         return location, resources, status
 
     crisis_log = InMemoryCrisisLogBackend()
-    workflow = build_agent_workflow()
     with (
         patch("agent.turn_branches.answer_factual_lookup", new=fake_factual_lookup),
         patch(
@@ -156,8 +155,9 @@ async def _invoke_parent_graph(
             new=fake_crisis_resources,
         ),
     ):
-        output = await workflow.ainvoke(
+        output = await OpenAITextAgentAdapter().run_turn(
             state,
+            config=_runtime_config(case.id, MemoryMode.LOCAL),
             context=WorkflowContext(
                 llm_client=llm,
                 response_llm=llm,
@@ -167,6 +167,17 @@ async def _invoke_parent_graph(
             ),
         )
     return dict(output), llm, tool_calls, await crisis_log.arecord_count()
+
+
+def _runtime_config(thread_id: str, memory_mode: Any) -> dict[str, Any]:
+    return {
+        "configurable": {"thread_id": thread_id},
+        "metadata": {
+            "channel": "eval",
+            "memory_mode": memory_mode.value,
+            "streaming": False,
+        },
+    }
 
 
 def _grade_case(

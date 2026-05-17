@@ -6,13 +6,11 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
-
-from langchain_core.runnables import RunnableConfig
 
 from agent.runtime.active_session import (
     ActiveSessionManager,
@@ -20,8 +18,7 @@ from agent.runtime.active_session import (
     PostgresActiveSessionStore,
     SqliteActiveSessionStore,
 )
-from agent.graph import build_agent_workflow, build_initial_state, state_to_output
-from agent.graph_constants import FINALIZE_TURN_NODE
+from agent.graph import build_initial_state, state_to_output
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.audit.session_feedback import SessionFeedbackBackend
@@ -49,11 +46,10 @@ from agent.runtime.streaming import (
 )
 from agent.runtime.turn_extraction import TurnExtractionCoordinator
 from agent.text_runtime import (
-    AgentWorkflow,
-    LangGraphTextAgentAdapter,
     OpenAITextAgentAdapter,
     TextAgentAdapter,
     TextAgentRuntimeName,
+    TextRuntimeConfig,
     TextRuntimeChunkEvent,
     TextRuntimeShadowResult,
     TextRuntimeStateEvent,
@@ -73,10 +69,9 @@ from agent.runtime.backends import (
     create_session_feedback_backend,
     effective_thread_persistence_backend,
 )
-from agent.runtime.checkpointer import (
-    ALLOWED_MSGPACK_MODULES as CHECKPOINT_ALLOWED_MSGPACK_MODULES,
-    open_checkpointer,
-    validate_thread_checkpointer_config,
+from agent.runtime.state_store import (
+    RuntimeStateStore,
+    create_runtime_state_store,
 )
 from agent.models import (
     AgentInput,
@@ -84,6 +79,7 @@ from agent.models import (
     ChunkEvent,
     DoneEvent,
     Message,
+    MessageRole,
     ResponseReadyEvent,
     StatusEvent,
     StreamEvent,
@@ -99,8 +95,6 @@ from agent.runtime.types import (
 )
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentState
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -108,12 +102,11 @@ logger = logging.getLogger(__name__)
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 _STORE_DIR = BACKEND_ROOT / ".store"
 DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
-# Keep runtime-owned stores separate from the LangGraph checkpoint DB.
 DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
 DEFAULT_TEXT_SESSION_DB_PATH = _STORE_DIR / "text_sessions.sqlite3"
 DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
-ALLOWED_MSGPACK_MODULES = CHECKPOINT_ALLOWED_MSGPACK_MODULES
+ALLOWED_MSGPACK_MODULES: tuple[str, ...] = ()
 SESSION_TIMEOUT = timedelta(minutes=20)
 
 
@@ -157,7 +150,7 @@ class PersistentAgentRuntime:
         """Initialize the runtime.
 
         Args:
-            sqlite_path: SQLite database path for LangGraph checkpoints.
+            sqlite_path: SQLite database path for runtime thread state.
                 Forced to ``:memory:`` in incognito mode.
             memory_store: Optional explicit memory-store override.
             crisis_log_backend: Optional explicit crisis-log override.
@@ -166,7 +159,7 @@ class PersistentAgentRuntime:
             memory_backend: Memory-store backend to use for persistent modes.
             memory_database_url: PostgreSQL connection string used when
                 ``memory_backend`` is ``"postgres"``.
-            thread_persistence_backend: Checkpointer backend to use for
+            thread_persistence_backend: Runtime thread-state backend to use for
                 persistent modes.
             thread_database_url: PostgreSQL connection string used when
                 ``thread_persistence_backend`` is ``"postgres"``.
@@ -184,8 +177,8 @@ class PersistentAgentRuntime:
             text_session_database_url: SQLAlchemy async-capable database URL
                 used when ``text_session_backend`` is ``"sqlalchemy"``.
             text_session_sqlite_path: SQLite path for the SDK session store.
-                Defaults to a ``text_sessions.sqlite3`` sibling of the thread
-                checkpoint database, and to ``:memory:`` for in-memory threads.
+                Defaults to a ``text_sessions.sqlite3`` sibling of the runtime
+                state database, and to ``:memory:`` for in-memory threads.
             text_session_create_tables: Whether SQLAlchemy SDK sessions may
                 create their own tables when first used.
             text_session_history_limit: Optional SDK session item limit.
@@ -214,8 +207,7 @@ class PersistentAgentRuntime:
                 runtimes leave it ``False`` (the default) to keep extraction
                 off the user-visible turn path.
             text_agent_runtime: Optional text-agent implementation selector.
-                Defaults to ``OPENCOUCH_TEXT_AGENT_RUNTIME`` and currently
-                supports ``"langgraph"`` and ``"openai"``.
+                OpenAI is the only supported text runtime.
         """
 
         self.memory_mode = memory_mode
@@ -239,17 +231,14 @@ class PersistentAgentRuntime:
             thread_persistence_backend=thread_persistence_backend,
         )
         self._thread_database_url = thread_database_url
-        validate_thread_checkpointer_config(
-            thread_persistence_backend=self._thread_persistence_backend,
-            thread_database_url=thread_database_url,
-        )
-
-        self._saver_cm: AbstractAsyncContextManager[Any] | None = None
-        self._checkpointer: AsyncSqliteSaver | AsyncPostgresSaver | None = None
-        self._graph: AgentWorkflow | None = None
         self._text_agent_runtime = resolve_text_agent_runtime(text_agent_runtime)
         self._text_agent_adapter: TextAgentAdapter | None = None
         self._openai_shadow_adapter: OpenAITextAgentAdapter | None = None
+        self._state_store: RuntimeStateStore = create_runtime_state_store(
+            backend=self._thread_persistence_backend,
+            sqlite_path=self.sqlite_path,
+            database_url=self._thread_database_url,
+        )
         self._text_session_store: TextSessionStore | None = create_text_session_store(
             memory_mode=memory_mode,
             text_agent_runtime=self._text_agent_runtime,
@@ -300,12 +289,17 @@ class PersistentAgentRuntime:
 
         self._session_tracker = RuntimeSessionTracker()
         if self._thread_persistence_backend == "postgres":
+            if not self._thread_database_url:
+                raise ValueError(
+                    "thread_database_url is required when "
+                    "thread_persistence_backend='postgres'"
+                )
             self._active_session_store = PostgresActiveSessionStore(
-                checkpointer_getter=self._ensure_postgres_open
+                dsn=self._thread_database_url
             )
         else:
             self._active_session_store = SqliteActiveSessionStore(
-                checkpointer_getter=self._ensure_sqlite_open
+                sqlite_path=self.sqlite_path
             )
         self._active_session_manager = ActiveSessionManager(
             store=self._active_session_store,
@@ -331,12 +325,6 @@ class PersistentAgentRuntime:
             The initialized runtime instance.
         """
 
-        self._saver_cm = open_checkpointer(
-            thread_persistence_backend=self._thread_persistence_backend,
-            sqlite_path=self.sqlite_path,
-            thread_database_url=self._thread_database_url,
-        )
-        self._checkpointer = await self._saver_cm.__aenter__()
         await self._ensure_runtime_schema()
         await self._prewarm()
         self._session_sweeper_task = asyncio.create_task(self._session_sweeper_loop())
@@ -370,54 +358,8 @@ class PersistentAgentRuntime:
         await self._session_feedback_backend.aclose()
         if self._text_session_store is not None:
             await self._text_session_store.aclose()
-        if self._saver_cm is not None:
-            await self._saver_cm.__aexit__(exc_type, exc, tb)
-
-    def _ensure_open(self) -> AsyncSqliteSaver | AsyncPostgresSaver:
-        """Raise when the runtime is used outside its async context.
-
-        Returns:
-            The active runtime checkpointer.
-
-        Raises:
-            RuntimeError: If the runtime has not been entered yet.
-        """
-
-        if self._checkpointer is None:
-            raise RuntimeError(
-                "PersistentAgentRuntime must be used inside 'async with'."
-            )
-        return self._checkpointer
-
-    def _ensure_sqlite_open(self) -> AsyncSqliteSaver:
-        """Return the active SQLite checkpointer.
-
-        Returns:
-            AsyncSqliteSaver: The active SQLite checkpointer.
-
-        Raises:
-            RuntimeError: If the runtime is not using the SQLite checkpointer.
-        """
-
-        checkpointer = self._ensure_open()
-        if not isinstance(checkpointer, AsyncSqliteSaver):
-            raise RuntimeError("PersistentAgentRuntime is not using SQLite threads.")
-        return checkpointer
-
-    def _ensure_postgres_open(self) -> AsyncPostgresSaver:
-        """Return the active Postgres checkpointer.
-
-        Returns:
-            AsyncPostgresSaver: The active Postgres checkpointer.
-
-        Raises:
-            RuntimeError: If the runtime is not using the Postgres checkpointer.
-        """
-
-        checkpointer = self._ensure_open()
-        if not isinstance(checkpointer, AsyncPostgresSaver):
-            raise RuntimeError("PersistentAgentRuntime is not using Postgres threads.")
-        return checkpointer
+        await self._state_store.aclose()
+        await self._active_session_store.aclose()
 
     async def _ensure_runtime_schema(self) -> None:
         """Create runtime-owned tables.
@@ -426,8 +368,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        checkpointer = self._ensure_open()
-        await checkpointer.setup()
+        await self._state_store.ensure_schema()
 
     async def _prewarm(self) -> None:
         """Warm runtime resources before the first user turn.
@@ -507,25 +448,25 @@ class PersistentAgentRuntime:
             return self._session_tracker.thread_ids()
         return await self._active_session_manager.list_persisted_active_session_ids()
 
-    async def _clear_session_continuity_in_checkpoint(
+    async def _clear_session_continuity_in_state(
         self,
         thread_id: str,
         state: AgentState | None,
         *,
         suppress_errors: bool = False,
     ) -> None:
-        """Clear session-scoped continuity fields from a persisted checkpoint.
+        """Clear session-scoped continuity fields from persisted runtime state.
 
         Args:
             thread_id: The thread identifier to update.
-            state: The current checkpointed state, if any.
-            suppress_errors: Whether checkpoint update failures should be logged.
+            state: The current persisted runtime state, if any.
+            suppress_errors: Whether state update failures should be logged.
 
         Returns:
             None.
 
         Raises:
-            Exception: Propagates checkpoint update failures when
+            Exception: Propagates state update failures when
                 ``suppress_errors`` is ``False``.
         """
 
@@ -534,12 +475,13 @@ class PersistentAgentRuntime:
             return
 
         try:
-            adapter = self._get_text_agent_adapter()
-            await adapter.update_state(
-                self._config_for_thread(thread_id),
-                delta,
-                as_node=FINALIZE_TURN_NODE,
-            )
+            updated = cast(AgentState, dict(state))
+            for key, value in delta.items():
+                if isinstance(value, Mapping) and isinstance(updated.get(key), Mapping):
+                    updated[key] = cast(Any, {**dict(updated.get(key, {})), **value})
+                else:
+                    updated[key] = cast(Any, value)
+            await self._state_store.save_state(thread_id, updated)
         except Exception:
             if suppress_errors:
                 logger.warning(
@@ -729,7 +671,7 @@ class PersistentAgentRuntime:
 
         Args:
             thread_id: The thread identifier being prepared.
-            prior_state: The last checkpointed state for the thread.
+            prior_state: The last persisted runtime state for the thread.
             llm_client: The LLM client for any timeout-driven finalization.
             expected_liveness: Optional caller-owned liveness expectation.
 
@@ -773,7 +715,7 @@ class PersistentAgentRuntime:
             return
 
         if persisted is None:
-            await self._clear_session_continuity_in_checkpoint(thread_id, prior_state)
+            await self._clear_session_continuity_in_state(thread_id, prior_state)
             now = _iso_now()
             self._session_tracker.start_session(
                 thread_id,
@@ -861,8 +803,8 @@ class PersistentAgentRuntime:
         channel: Channel | None = None,
         user_id: str | None = None,
         streaming: bool = False,
-    ) -> RunnableConfig:
-        """Build LangGraph config for one thread.
+    ) -> TextRuntimeConfig:
+        """Build text-runtime config for one thread.
 
         Args:
             thread_id: The thread identifier.
@@ -871,7 +813,7 @@ class PersistentAgentRuntime:
             streaming: Whether the graph run is streaming.
 
         Returns:
-            The LangGraph config payload.
+            The text-runtime config payload.
         """
 
         metadata = {
@@ -917,7 +859,7 @@ class PersistentAgentRuntime:
             message: The user message for this turn. Used to seed the
                 speculative memory pre-fetch with the same query the graph
                 will use.
-            prior_state: The last checkpointed state for this thread, used
+            prior_state: The last persisted runtime state for this thread, used
                 to compute ``is_first_turn`` for the pre-fetch.
             user_id: The optional user identifier. Together with ``thread_id``
                 it determines the memory owner the same way the graph does
@@ -934,7 +876,7 @@ class PersistentAgentRuntime:
 
         return WorkflowContext(
             llm_client=llm_client,
-            response_llm=response_llm_client or llm_client,
+            response_llm=response_llm_client,
             memory_store=self._memory_store,
             crisis_log_backend=self._crisis_log_backend,
             memory_mode=self.memory_mode,
@@ -978,7 +920,7 @@ class PersistentAgentRuntime:
                 ``thread_id`` for owner resolution to mirror
                 :func:`agent.state.resolve_owner_id`.
             message: User message text used as the retrieval query.
-            prior_state: Last checkpointed state for the thread; used to
+            prior_state: Last persisted runtime state for the thread; used to
                 compute ``is_first_turn``.
 
         Returns:
@@ -1016,39 +958,31 @@ class PersistentAgentRuntime:
             The initialized text-agent adapter.
         """
 
-        checkpointer = self._ensure_open()
         if self._text_agent_adapter is None:
             self._text_agent_adapter = create_text_agent_adapter(
-                checkpointer=checkpointer,
-                graph_builder=build_agent_workflow,
                 runtime_name=self._text_agent_runtime,
             )
-            if isinstance(self._text_agent_adapter, LangGraphTextAgentAdapter):
-                self._graph = self._text_agent_adapter.workflow
         return self._text_agent_adapter
 
     def _get_openai_shadow_adapter(self) -> OpenAITextAgentAdapter:
         """Return a non-serving OpenAI adapter for shadow comparisons."""
 
-        checkpointer = self._ensure_open()
         if self._openai_shadow_adapter is None:
-            self._openai_shadow_adapter = OpenAITextAgentAdapter(
-                checkpoint_adapter=LangGraphTextAgentAdapter(
-                    build_agent_workflow(checkpointer=checkpointer)
-                )
-            )
+            self._openai_shadow_adapter = OpenAITextAgentAdapter()
         return self._openai_shadow_adapter
 
-    def _openai_sdk_session_for_thread(
+    async def _openai_sdk_session_for_thread(
         self,
         thread_id: str,
         *,
         current_user_message: str,
+        prior_state: AgentState | None,
     ) -> Any | None:
         """Return the SDK session for OpenAI serving turns when enabled."""
 
         if self._text_agent_runtime != "openai" or self._text_session_store is None:
             return None
+        await self._seed_openai_sdk_session_from_state(thread_id, prior_state)
         return self._text_session_store.turn_session_for_thread(
             thread_id,
             current_user_message=current_user_message,
@@ -1057,16 +991,19 @@ class PersistentAgentRuntime:
     async def _seed_openai_sdk_session_from_state(
         self,
         thread_id: str,
-        state: AgentState | None,
-    ) -> None:
-        """Seed SDK session history from legacy checkpoints when needed."""
+        prior_state: AgentState | None,
+    ) -> bool:
+        """Seed an empty SDK session from persisted runtime transcript state."""
 
-        if self._text_agent_runtime != "openai" or self._text_session_store is None:
-            return
-        if state is None:
-            return
-        messages = messages_from_transcript(state.get("transcript", []))
-        await self._text_session_store.seed_thread_from_messages(thread_id, messages)
+        if self._text_session_store is None or prior_state is None:
+            return False
+        messages = messages_from_transcript(prior_state.get("transcript", []))
+        if not messages:
+            return False
+        return await self._text_session_store.seed_thread_from_messages(
+            thread_id,
+            messages,
+        )
 
     async def _ensure_openai_sdk_turn_recorded(
         self,
@@ -1099,20 +1036,8 @@ class PersistentAgentRuntime:
         ):
             history = await self._text_session_store.get_history(thread_id)
             if history:
-                return history
+                return _merge_history_response_styles(history, final_state)
         return messages_from_transcript(final_state.get("transcript", []))
-
-    def _get_graph(self) -> AgentWorkflow:
-        """Return the compiled LangGraph workflow for compatibility callers.
-
-        Returns:
-            The compiled workflow instance.
-        """
-
-        adapter = self._get_text_agent_adapter()
-        if not isinstance(adapter, LangGraphTextAgentAdapter):
-            raise RuntimeError("The active text-agent runtime is not LangGraph.")
-        return adapter.workflow
 
     async def get_state(self, thread_id: str) -> AgentState | None:
         """Load the latest persisted state snapshot for a thread.
@@ -1121,11 +1046,10 @@ class PersistentAgentRuntime:
             thread_id: The thread identifier.
 
         Returns:
-            The latest checkpointed state, if any.
+            The latest persisted runtime state, if any.
         """
 
-        adapter = self._get_text_agent_adapter()
-        return await adapter.get_state(self._config_for_thread(thread_id))
+        return await self._state_store.load_state(thread_id)
 
     async def get_history(self, thread_id: str) -> list[Message]:
         """Load the full persisted transcript for a thread.
@@ -1142,9 +1066,10 @@ class PersistentAgentRuntime:
             self._text_agent_runtime == "openai"
             and self._text_session_store is not None
         ):
-            await self._seed_openai_sdk_session_from_state(thread_id, state)
             history = await self._text_session_store.get_history(thread_id)
-            if history or state is None:
+            if history:
+                return _merge_history_response_styles(history, state)
+            if state is None:
                 return history
         if state is None:
             return []
@@ -1225,7 +1150,7 @@ class PersistentAgentRuntime:
         return await self.session_status(thread_id) == SessionStatus.ACTIVE
 
     async def reset_thread(self, thread_id: str) -> None:
-        """Delete all persisted checkpoints and session state for a thread.
+        """Delete all persisted runtime, SDK-session, and active-session state.
 
         Args:
             thread_id: The thread identifier.
@@ -1239,8 +1164,7 @@ class PersistentAgentRuntime:
             if status != SessionStatus.ABSENT:
                 raise ActiveSessionExists(thread_id, status)
 
-            checkpointer = self._ensure_open()
-            await checkpointer.adelete_thread(thread_id)
+            await self._state_store.delete_thread(thread_id)
             if self._text_session_store is not None:
                 await self._text_session_store.clear_thread(thread_id)
             await self._active_session_manager.delete_persisted_active_session(
@@ -1258,21 +1182,7 @@ class PersistentAgentRuntime:
             The most recent persisted thread summaries.
         """
 
-        checkpointer = self._ensure_open()
-        await checkpointer.setup()
-
-        thread_ids: list[str] = []
-        seen_thread_ids: set[str] = set()
-        async for checkpoint_tuple in checkpointer.alist(
-            None, limit=max(limit * 5, limit)
-        ):
-            thread_id = str(checkpoint_tuple.config["configurable"]["thread_id"])
-            if thread_id in seen_thread_ids:
-                continue
-            seen_thread_ids.add(thread_id)
-            thread_ids.append(thread_id)
-            if len(thread_ids) >= limit:
-                break
+        thread_ids = await self._state_store.list_thread_ids(limit=limit)
 
         summaries: list[ThreadSummary] = []
         for thread_id in thread_ids:
@@ -1344,7 +1254,7 @@ class PersistentAgentRuntime:
 
         The shadow path is for evals and dogfood observability. It uses the
         same initial-turn construction and app-owned context as a normal turn,
-        but it does not prepare active sessions, write checkpoints, append
+        but it does not prepare active sessions, write runtime state, append
         transcript entries, schedule extraction, or return output to users.
         """
 
@@ -1414,7 +1324,8 @@ class PersistentAgentRuntime:
             adapter = self._get_text_agent_adapter()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Reducers restore transcript; only turn_count is needed here.
+            # Runtime state restores transcript and can bootstrap an empty
+            # OpenAI SDK session during migration or local session-db loss.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
@@ -1423,7 +1334,6 @@ class PersistentAgentRuntime:
                 expected_liveness=expected_liveness,
             )
             prior_turn_count = turn_count_from_state(prior_state)
-            await self._seed_openai_sdk_session_from_state(thread_id, prior_state)
 
             initial_state = self._build_turn_initial_state(
                 thread_id=thread_id,
@@ -1433,9 +1343,10 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = self._openai_sdk_session_for_thread(
+            sdk_session = await self._openai_sdk_session_for_thread(
                 thread_id,
                 current_user_message=message,
+                prior_state=prior_state,
             )
 
             async with self._active_session_manager.active_session_mutation(
@@ -1460,17 +1371,9 @@ class PersistentAgentRuntime:
                         response_llm_client=response_llm_client,
                     ),
                     session=sdk_session,
+                    prior_state=prior_state,
                 )
-                final_state = await self.get_state(thread_id)
-                if final_state is None:
-                    final_state = cast(
-                        AgentState, {**dict(initial_state), **dict(turn_output)}
-                    )
-                await self._ensure_openai_sdk_turn_recorded(
-                    thread_id,
-                    user_message=message,
-                    final_state=final_state,
-                )
+                final_state = cast(AgentState, dict(turn_output))
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
 
@@ -1518,6 +1421,13 @@ class PersistentAgentRuntime:
                         state=extraction_state,
                         llm_client=llm_client,
                     )
+
+                await self._state_store.save_state(thread_id, final_state)
+                await self._ensure_openai_sdk_turn_recorded(
+                    thread_id,
+                    user_message=message,
+                    final_state=final_state,
+                )
 
                 result = PersistentTurnResult(
                     output=state_to_output(final_state),
@@ -1637,7 +1547,7 @@ class PersistentAgentRuntime:
                     memory_mode=self.memory_mode,
                     embedding_provider=self._embedding_provider,
                 )
-                await self._clear_session_continuity_in_checkpoint(
+                await self._clear_session_continuity_in_state(
                     thread_id,
                     state,
                     suppress_errors=True,
@@ -1841,7 +1751,8 @@ class PersistentAgentRuntime:
             adapter = self._get_text_agent_adapter()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Reducers restore transcript; only turn_count is needed here.
+            # Runtime state restores transcript and can bootstrap an empty
+            # OpenAI SDK session during migration or local session-db loss.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
@@ -1850,7 +1761,6 @@ class PersistentAgentRuntime:
                 expected_liveness=expected_liveness,
             )
             prior_turn_count = turn_count_from_state(prior_state)
-            await self._seed_openai_sdk_session_from_state(thread_id, prior_state)
 
             initial_state = self._build_turn_initial_state(
                 thread_id=thread_id,
@@ -1860,9 +1770,10 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = self._openai_sdk_session_for_thread(
+            sdk_session = await self._openai_sdk_session_for_thread(
                 thread_id,
                 current_user_message=message,
+                prior_state=prior_state,
             )
 
             turn_start = time.monotonic()
@@ -1892,6 +1803,7 @@ class PersistentAgentRuntime:
                         response_llm_client=response_llm_client,
                     ),
                     session=sdk_session,
+                    prior_state=prior_state,
                 ):
                     if isinstance(event, TextRuntimeChunkEvent):
                         yield ChunkEvent(text=event.text)
@@ -1925,20 +1837,10 @@ class PersistentAgentRuntime:
                             yield ResponseReadyEvent(output=ready_output)
                             response_ready_emitted = True
 
-                # Fall back to the checkpoint if the stream never yielded state values.
                 if final_state is None:
-                    fallback = await self.get_state(thread_id)
-                    if fallback is None:
-                        raise RuntimeError(
-                            "run_turn_stream: text runtime stream yielded no state "
-                            "and no checkpoint was found for this thread."
-                        )
-                    final_state = fallback
-                await self._ensure_openai_sdk_turn_recorded(
-                    thread_id,
-                    user_message=message,
-                    final_state=final_state,
-                )
+                    raise RuntimeError(
+                        "run_turn_stream: text runtime stream yielded no final state."
+                    )
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
 
@@ -1974,7 +1876,55 @@ class PersistentAgentRuntime:
                         llm_client=llm_client,
                     )
 
+                await self._state_store.save_state(thread_id, final_state)
+                await self._ensure_openai_sdk_turn_recorded(
+                    thread_id,
+                    user_message=message,
+                    final_state=final_state,
+                )
+
                 await self._active_session_manager.clear_active_session_mutation(
                     thread_id, mutation_token
                 )
                 yield DoneEvent(output=state_to_output(final_state))
+
+
+def _merge_history_response_styles(
+    history: list[Message],
+    state: AgentState | None,
+) -> list[Message]:
+    """Overlay assistant response styles from runtime transcript onto history."""
+
+    if state is None:
+        return history
+    transcript_messages = messages_from_transcript(state.get("transcript", []))
+    transcript_assistants = [
+        message
+        for message in transcript_messages
+        if message.role == MessageRole.ASSISTANT
+    ]
+    if not transcript_assistants:
+        return history
+
+    enriched: list[Message] = []
+    assistant_index = 0
+    for message in history:
+        if message.role != MessageRole.ASSISTANT or message.response_style is not None:
+            enriched.append(message)
+            continue
+
+        response_style = None
+        while assistant_index < len(transcript_assistants):
+            candidate = transcript_assistants[assistant_index]
+            assistant_index += 1
+            if candidate.content == message.content:
+                response_style = candidate.response_style
+                break
+        enriched.append(
+            Message(
+                role=message.role,
+                content=message.content,
+                response_style=response_style,
+            )
+        )
+    return enriched

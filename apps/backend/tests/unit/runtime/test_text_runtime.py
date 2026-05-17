@@ -1,89 +1,22 @@
-"""Tests for the text-agent runtime adapter seam."""
+"""Tests for the OpenAI text-agent runtime seam."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from types import SimpleNamespace
-from typing import Any, cast
-
 import pytest
 
-from agent.graph_constants import FINALIZE_TURN_NODE
 from agent.persistence import PersistentAgentRuntime
 from agent.text_runtime import (
     DEFAULT_TEXT_AGENT_RUNTIME,
-    LangGraphTextAgentAdapter,
     OpenAITextAgentAdapter,
-    TextRuntimeChunkEvent,
-    TextRuntimeStateEvent,
-    TextRuntimeStatusEvent,
     create_text_agent_adapter,
     resolve_text_agent_runtime,
 )
-from agent.state import AgentGraphInputState
-
-
-class _FakeWorkflow:
-    """Small LangGraph-shaped workflow fake for adapter unit tests."""
-
-    def __init__(self) -> None:
-        self.ainvoke_calls: list[tuple[Any, dict[str, Any]]] = []
-
-    async def aget_state(self, config: dict[str, Any]) -> SimpleNamespace:
-        return SimpleNamespace(values={"response_text": "persisted"})
-
-    async def ainvoke(
-        self,
-        initial_state: AgentGraphInputState,
-        *,
-        config: dict[str, Any],
-        context: Any,
-    ) -> dict[str, Any]:
-        self.ainvoke_calls.append(
-            (initial_state, {"config": config, "context": context})
-        )
-        return {"response_text": "done"}
-
-    async def astream(
-        self,
-        initial_state: AgentGraphInputState,
-        *,
-        config: dict[str, Any],
-        context: Any,
-        stream_mode: tuple[str, ...],
-        subgraphs: bool,
-        version: str,
-    ) -> AsyncIterator[dict[str, Any]]:
-        yield {"type": "custom", "data": {"type": "chunk", "text": "hello"}}
-        yield {
-            "type": "updates",
-            "ns": (),
-            "data": {FINALIZE_TURN_NODE: {"transcript": []}},
-        }
-        yield {
-            "type": "values",
-            "ns": (),
-            "data": {"response_text": "hello"},
-        }
-
-    async def aupdate_state(
-        self,
-        config: dict[str, Any],
-        values: dict[str, Any],
-        *,
-        as_node: str | None = None,
-    ) -> None:
-        self.updated_state = {
-            "config": config,
-            "values": values,
-            "as_node": as_node,
-        }
 
 
 def test_resolve_text_agent_runtime_defaults_to_openai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The default text runtime should now be OpenAI."""
+    """The default text runtime is OpenAI."""
 
     monkeypatch.delenv("OPENCOUCH_TEXT_AGENT_RUNTIME", raising=False)
 
@@ -91,35 +24,28 @@ def test_resolve_text_agent_runtime_defaults_to_openai(
     assert resolve_text_agent_runtime() == "openai"
 
 
-def test_resolve_text_agent_runtime_normalizes_env(
+def test_resolve_text_agent_runtime_accepts_openai_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Runtime selection should tolerate common env formatting noise."""
+    """Runtime selection tolerates common env formatting noise."""
 
-    monkeypatch.setenv("OPENCOUCH_TEXT_AGENT_RUNTIME", " LangGraph ")
+    monkeypatch.setenv("OPENCOUCH_TEXT_AGENT_RUNTIME", " OpenAI ")
 
-    assert resolve_text_agent_runtime() == "langgraph"
+    assert resolve_text_agent_runtime() == "openai"
 
 
-def test_resolve_text_agent_runtime_accepts_openai_value() -> None:
-    """The OpenAI runtime can be selected explicitly for hybrid testing."""
+def test_resolve_text_agent_runtime_rejects_langgraph_value() -> None:
+    """Stale LangGraph runtime config should fail loudly."""
 
-    assert resolve_text_agent_runtime("openai") == "openai"
+    with pytest.raises(ValueError, match="Supported value: openai"):
+        resolve_text_agent_runtime("langgraph")
 
 
 def test_resolve_text_agent_runtime_rejects_unknown_value() -> None:
-    """Unsupported runtimes should fail loudly before a turn starts."""
+    """Unsupported runtimes should fail before a turn starts."""
 
-    with pytest.raises(ValueError, match="Supported values: langgraph, openai"):
+    with pytest.raises(ValueError, match="Supported value: openai"):
         resolve_text_agent_runtime("unknown")
-
-
-def test_persistent_runtime_accepts_openai_text_runtime() -> None:
-    """PersistentAgentRuntime should validate the selector during construction."""
-
-    runtime = PersistentAgentRuntime(text_agent_runtime="openai")
-
-    assert runtime._text_agent_runtime == "openai"
 
 
 def test_persistent_runtime_defaults_to_openai_text_runtime(
@@ -135,123 +61,65 @@ def test_persistent_runtime_defaults_to_openai_text_runtime(
     assert runtime._text_session_store is not None
 
 
-def test_create_text_agent_adapter_builds_openai_adapter_by_default() -> None:
-    """The factory should make OpenAI the default serving adapter."""
-
-    workflow = _FakeWorkflow()
-
-    adapter = create_text_agent_adapter(
-        checkpointer=object(),
-        graph_builder=lambda **_: workflow,  # type: ignore[arg-type]
-    )
-
-    assert isinstance(adapter, OpenAITextAgentAdapter)
-    assert adapter.checkpoint_workflow is workflow
-
-
-def test_create_text_agent_adapter_builds_langgraph_adapter() -> None:
-    """The factory should keep LangGraph available as an explicit rollback."""
-
-    workflow = _FakeWorkflow()
-
-    adapter = create_text_agent_adapter(
-        checkpointer=object(),
-        graph_builder=lambda **_: workflow,  # type: ignore[arg-type]
-        runtime_name="langgraph",
-    )
-
-    assert isinstance(adapter, LangGraphTextAgentAdapter)
-    assert adapter.workflow is workflow
-
-
 def test_create_text_agent_adapter_builds_openai_adapter() -> None:
-    """The factory should wire OpenAI with a LangGraph checkpoint adapter."""
+    """The factory should make OpenAI the only serving adapter."""
 
-    workflow = _FakeWorkflow()
-
-    adapter = create_text_agent_adapter(
-        checkpointer=object(),
-        graph_builder=lambda **_: workflow,  # type: ignore[arg-type]
-        runtime_name="openai",
-    )
+    adapter = create_text_agent_adapter()
 
     assert isinstance(adapter, OpenAITextAgentAdapter)
-    assert adapter.checkpoint_workflow is workflow
 
 
 @pytest.mark.asyncio
-async def test_langgraph_adapter_normalizes_stream_events() -> None:
-    """LangGraph stream chunks should map to provider-neutral runtime events."""
-
-    adapter = LangGraphTextAgentAdapter(cast(Any, _FakeWorkflow()))
-
-    events = [
-        event
-        async for event in adapter.run_turn_stream(
-            cast(AgentGraphInputState, {}),
-            config={},
-            context=object(),  # type: ignore[arg-type]
-        )
-    ]
-
-    assert events == [
-        TextRuntimeChunkEvent(text="hello"),
-        TextRuntimeStatusEvent(stage="finalize", turn_finalized=True),
-        TextRuntimeStateEvent(state=cast(Any, {"response_text": "hello"})),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_runtime_reset_clears_openai_sdk_session_store(tmp_path) -> None:
-    """Thread reset should remove opt-in SDK session history too."""
+async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> None:
+    """Thread reset should remove runtime state and SDK session history."""
 
     async with PersistentAgentRuntime(
         sqlite_path=tmp_path / "threads.sqlite3",
         text_session_backend="sqlite",
         text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
     ) as runtime:
+        await runtime._state_store.save_state(
+            "thread-1",
+            {
+                "transcript": [{"role": "user", "content": "hello"}],
+                "session_progress": {"turn_count": 1},
+            },
+        )
         assert runtime._text_session_store is not None
         session = runtime._text_session_store.session_for_thread("thread-1")
         await session.add_items([{"role": "user", "content": "hello"}])
 
         await runtime.reset_thread("thread-1")
 
+        assert await runtime.get_state("thread-1") is None
         assert await runtime._text_session_store.get_history("thread-1") == []
 
 
 @pytest.mark.asyncio
-async def test_runtime_history_seeds_sdk_session_from_legacy_checkpoint(
-    tmp_path,
-) -> None:
-    """Existing checkpoint transcripts should migrate into SDK history on read."""
+async def test_runtime_history_falls_back_to_runtime_state_transcript(tmp_path) -> None:
+    """History remains available from app-owned runtime state snapshots."""
 
     async with PersistentAgentRuntime(
         sqlite_path=tmp_path / "threads.sqlite3",
         text_session_backend="sqlite",
         text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
     ) as runtime:
-        adapter = runtime._get_text_agent_adapter()
-        await adapter.update_state(
-            runtime._config_for_thread("thread-1"),
+        await runtime._state_store.save_state(
+            "thread-1",
             {
                 "transcript": [
-                    {"role": "user", "content": "legacy user"},
-                    {"role": "assistant", "content": "legacy assistant"},
+                    {"role": "user", "content": "saved user"},
+                    {"role": "assistant", "content": "saved assistant"},
                 ],
                 "session_progress": {"turn_count": 1},
             },
-            as_node=FINALIZE_TURN_NODE,
         )
 
         history = await runtime.get_history("thread-1")
 
         assert [(message.role.value, message.content) for message in history] == [
-            ("user", "legacy user"),
-            ("assistant", "legacy assistant"),
+            ("user", "saved user"),
+            ("assistant", "saved assistant"),
         ]
         assert runtime._text_session_store is not None
-        sdk_history = await runtime._text_session_store.get_history("thread-1")
-        assert [message.content for message in sdk_history] == [
-            "legacy user",
-            "legacy assistant",
-        ]
+        assert await runtime._text_session_store.get_history("thread-1") == []

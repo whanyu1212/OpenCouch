@@ -141,13 +141,13 @@ async def test_zero_state_thread_records_turn_count_zero() -> None:
 
 @pytest.mark.asyncio
 async def test_incognito_scrubs_user_id_to_null() -> None:
-    """Even if the checkpointed state somehow carries a user_id (via
+    """Even if runtime state somehow carries a user_id (via
     a caller passing one to ``run_turn``), the feedback record must
     scrub it to ``None`` in incognito mode. This matches the
     crisis_log incognito contract."""
 
     async with _runtime(memory_mode=MemoryMode.INCOGNITO) as rt:
-        # Simulate a turn that wrote user_id into the checkpoint.
+        # Simulate a turn that wrote user_id into runtime state.
         await rt.run_turn(
             thread_id="incog",
             message="hi",
@@ -218,13 +218,13 @@ async def test_backend_failure_returns_none_and_does_not_raise(
 async def test_state_lookup_failure_returns_none_and_does_not_raise(
     monkeypatch, caplog
 ) -> None:
-    """If ``get_state`` itself raises (e.g., a checkpointer issue),
+    """If ``get_state`` itself raises (e.g., a state-store issue),
     the method must still return ``None`` rather than propagate."""
 
     async with _runtime() as rt:
 
         async def _raising_get_state(thread_id: str) -> Any:
-            raise RuntimeError("simulated checkpointer crash")
+            raise RuntimeError("simulated state-store crash")
 
         monkeypatch.setattr(rt, "get_state", _raising_get_state)
 

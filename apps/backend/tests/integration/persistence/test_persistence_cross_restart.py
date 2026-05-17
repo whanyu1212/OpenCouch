@@ -10,7 +10,7 @@ It exercises the entire stack:
 
 - ``PersistentAgentRuntime.__init__`` picking SqliteMemoryStore +
   SqliteCrisisLogBackend based on memory_mode (Stage D wiring)
-- ``run_turn`` invoking the full LangGraph workflow, which calls
+- ``run_turn`` invoking the full OpenAI text runtime, which calls
   ``load_memory_node``, the therapeutic dispatcher, a response
   node, and ``extract_semantic_facts_node`` (Stage B reads/writes)
 - ``end_session`` invoking the summarizer, which writes an episodic
@@ -448,7 +448,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
     tmp_path: Path,
 ) -> None:
     """End-to-end test exercising all three persistence layers in
-    one go: LangGraph thread checkpointer, memory store, crisis log.
+    one go: runtime state store, memory store, crisis log.
     This is the authoritative "does v0.8 actually work" test — if
     this passes, the v0.8 promise is kept.
 
@@ -457,7 +457,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
     2. Runtime A: end session (writes episodic arc)
     3. Runtime A: close
     4. Runtime B: open same files
-    5. Verify thread-a's transcript was restored by LangGraph
+    5. Verify thread-a's transcript was restored by runtime
     6. Verify the 1 semantic fact is in the memory store
     7. Verify the 1 episodic arc is in the memory store
     8. Run a new turn on thread-a via runtime B to exercise the
@@ -513,7 +513,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
         **paths,
         memory_mode=MemoryMode.LOCAL,
     ) as runtime_b:
-        # LangGraph thread checkpointer restored the transcript
+        # runtime state store restored the transcript
         history = await runtime_b.get_history("thread-a")
         # The transcript should have at least the 2 user turns and
         # 2 assistant replies from runtime A. It may also have the
@@ -788,10 +788,10 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
 
 
 @pytest.mark.asyncio
-async def test_end_session_clears_session_continuity_from_checkpoint(
+async def test_end_session_clears_session_continuity_from_runtime_state(
     tmp_path: Path,
 ) -> None:
-    """Ending a session should clear exercise continuity in the checkpoint."""
+    """Ending a session should clear exercise continuity in runtime state."""
 
     paths = runtime_paths(tmp_path)
     llm = FakeCrossRestartLLM(
@@ -812,12 +812,15 @@ async def test_end_session_clears_session_continuity_from_checkpoint(
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm,
+            response_llm_client=llm,
         )
 
-        graph = runtime._get_graph()
-        await graph.aupdate_state(
-            runtime._config_for_thread("thread-end"),
+        state = await runtime.get_state("thread-end")
+        assert state is not None
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "thread-end",
             {
+                **dict(state),
                 "exercise_state": {
                     "exercise_type": "grounding_5_4_3_2_1",
                     "exercise_step": 1,
@@ -825,7 +828,6 @@ async def test_end_session_clears_session_continuity_from_checkpoint(
                 },
                 "therapeutic_approach": "cbt",
             },
-            as_node="finalize_turn_node",
         )
 
         stored_arc = await runtime.end_session("thread-end", llm_client=llm)
@@ -866,13 +868,15 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm,
+            response_llm_client=llm,
         )
         prior_state = await runtime.get_state("thread-timeout")
         prior_transcript_len = len((prior_state or {}).get("transcript", []))
-        graph = runtime._get_graph()
-        await graph.aupdate_state(
-            runtime._config_for_thread("thread-timeout"),
+        assert prior_state is not None
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "thread-timeout",
             {
+                **dict(prior_state),
                 "exercise_state": {
                     "exercise_type": "grounding_5_4_3_2_1",
                     "exercise_step": 2,
@@ -880,7 +884,6 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
                 },
                 "therapeutic_approach": "cbt",
             },
-            as_node="finalize_turn_node",
         )
 
         persisted = await runtime._active_session_manager.load_persisted_active_session(
@@ -906,6 +909,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm,
+            response_llm_client=llm,
         )
 
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
@@ -944,6 +948,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm,
+            response_llm_client=llm,
         )
 
         assert first.output.response_style == "guided_exercise"
@@ -969,6 +974,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm,
+            response_llm_client=llm,
         )
 
         assert second.output.response_style == "clarifying"
@@ -987,6 +993,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm,
+            response_llm_client=llm,
         )
 
         assert third.output.response_style == "guided_exercise"
@@ -1201,7 +1208,7 @@ async def test_incognito_runtime_does_not_persist_to_disk(
         assert not isinstance(runtime.memory_store, SqliteMemoryStore)
 
     # After the runtime closes, the SQLite files should NOT exist.
-    # The LangGraph thread checkpointer in incognito mode uses
+    # The runtime state store in incognito mode uses
     # ``:memory:`` as its sqlite_path, so no file is created.
     # The memory store and crisis log are in-memory only, so their
     # files are never opened either.
@@ -1227,8 +1234,8 @@ async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
             **paths,
             memory_mode=MemoryMode.LOCAL,
         ) as runtime:
-            # Use a unique thread_id per iteration so the LangGraph
-            # checkpointer doesn't accumulate cross-thread state.
+            # Use a unique thread_id per iteration so the runtime
+            # state store doesn't accumulate cross-thread state.
             await runtime.run_turn(
                 thread_id=f"thread-{i}",
                 message=f"iteration {i} message",

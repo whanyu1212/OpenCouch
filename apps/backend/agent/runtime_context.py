@@ -1,15 +1,13 @@
-"""Runtime dependency contract for the OpenCouch LangGraph workflow.
+"""Runtime dependency contract for OpenCouch text-agent services.
 
-Graph state in ``agent.state`` stores checkpointable conversation channels:
-messages, routing outputs, prompt-visible memory, and diagnostics. This module
-defines the separate runtime context for process-owned services that should not
-be serialized into checkpoints.
+Agent state in ``agent.state`` stores conversation channels: messages, routing
+outputs, prompt-visible memory, and diagnostics. This module defines the
+separate runtime context for process-owned services that should not be
+serialized into runtime state snapshots.
 
-``agent.graph`` and ``agent.therapeutic.graph`` register ``WorkflowContext`` as
-their LangGraph ``context_schema``. Nodes then read dependencies from
-``runtime.context``. One-shot calls build the context in ``agent.graph``;
-thread-persistent sessions build it in ``agent.persistence`` so each thread can
-share runtime stores while keeping graph state scoped to the checkpoint.
+One-shot calls build the context in ``agent.graph``; thread-persistent sessions
+build it in ``agent.persistence`` so each thread can share runtime stores while
+keeping state snapshots scoped to the thread.
 """
 
 from __future__ import annotations

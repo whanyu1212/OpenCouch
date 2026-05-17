@@ -1,4 +1,4 @@
-"""Evaluate the therapeutic subgraph contract."""
+"""Evaluate the therapeutic branch contract."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from eval.runners.therapeutic_common import (
     TherapeuticEvalCase,
     build_scripted_llm,
     grade_therapeutic_output,
-    invoke_therapeutic_subgraph,
+    invoke_therapeutic_branch,
     parse_therapeutic_case,
 )
 
@@ -25,7 +25,7 @@ _DEFAULT_DATASET = _REPO_ROOT / "eval" / "datasets" / "therapeutic" / "contract_
 
 
 class TherapeuticContractEvaluator(BaseEvaluator[TherapeuticEvalCase]):
-    """Run deterministic therapeutic subgraph contract checks."""
+    """Run deterministic therapeutic branch contract checks."""
 
     def __init__(self, *, dataset_path: str | Path) -> None:
         super().__init__(
@@ -71,7 +71,7 @@ class TherapeuticContractEvaluator(BaseEvaluator[TherapeuticEvalCase]):
         expected_error = case.expected.get("error_contains")
         try:
             llm = build_scripted_llm(case) if case.scripted else None
-            output = await invoke_therapeutic_subgraph(
+            output = await invoke_therapeutic_branch(
                 case,
                 llm_client=llm,
                 response_llm=llm,
@@ -106,7 +106,7 @@ class TherapeuticContractEvaluator(BaseEvaluator[TherapeuticEvalCase]):
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = build_base_arg_parser("Evaluate the therapeutic subgraph contract.")
+    parser = build_base_arg_parser("Evaluate the therapeutic branch contract.")
     parser.set_defaults(dataset=_DEFAULT_DATASET)
     return parser
 

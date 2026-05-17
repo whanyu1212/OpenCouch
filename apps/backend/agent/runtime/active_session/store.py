@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import logging
 from typing import Any, Protocol
 
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+import psycopg
+from psycopg.rows import dict_row
+
+logger = logging.getLogger(__name__)
 
 ACTIVE_SESSION_STATE_DDL = """
 CREATE TABLE IF NOT EXISTS opencouch_active_sessions (
@@ -62,32 +66,54 @@ class ActiveSessionStore(Protocol):
     async def delete_session(self, thread_id: str) -> None:
         """Delete one persisted active-session row."""
 
+    async def aclose(self) -> None:
+        """Close store resources."""
+
 
 class PostgresActiveSessionStore:
-    """Postgres-backed active-session store using the runtime checkpointer connection."""
+    """Postgres-backed active-session store using a runtime-owned connection."""
 
     def __init__(
         self,
         *,
-        checkpointer_getter: Callable[[], AsyncPostgresSaver],
+        dsn: str,
     ) -> None:
-        """Initialize the Postgres-backed active-session store.
+        self.dsn = dsn
+        self._connection: psycopg.AsyncConnection[dict[str, Any]] | None = None
+        self._closed = False
+        self._connect_lock = asyncio.Lock()
 
-        Args:
-            checkpointer_getter: Callback returning the open runtime checkpointer.
+    async def _ensure_connection(self) -> psycopg.AsyncConnection[dict[str, Any]]:
+        if self._closed:
+            raise RuntimeError("PostgresActiveSessionStore is closed.")
+        if self._connection is not None:
+            return self._connection
 
-        Returns:
-            None: Stores the checkpointer getter for lazy access.
-        """
+        async with self._connect_lock:
+            if self._closed:
+                raise RuntimeError("PostgresActiveSessionStore is closed.")
+            if self._connection is not None:
+                return self._connection
 
-        self._checkpointer_getter = checkpointer_getter
+            conn = await psycopg.AsyncConnection.connect(
+                self.dsn,
+                row_factory=dict_row,
+                autocommit=True,
+            )
+            try:
+                await self._ensure_schema(conn)
+            except BaseException:
+                await conn.close()
+                raise
+            self._connection = conn
+            return self._connection
 
-    async def ensure_schema(self) -> None:
-        """Create or migrate the active-session table."""
-
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
+    @staticmethod
+    async def _ensure_schema(
+        conn: psycopg.AsyncConnection[dict[str, Any]],
+    ) -> None:
+        async with conn.transaction():
+            async with conn.cursor() as cursor:
                 await cursor.execute(ACTIVE_SESSION_STATE_DDL)
                 await cursor.execute(
                     """
@@ -106,29 +132,33 @@ class PostgresActiveSessionStore:
                         f"ADD COLUMN {column_name} {column_ddl}"
                     )
 
+    async def ensure_schema(self) -> None:
+        """Create or migrate the active-session table."""
+
+        await self._ensure_connection()
+
     async def load_row(
         self,
         thread_id: str,
     ) -> tuple[str, str | None, str | None, bool, str | None] | None:
         """Load one persisted active-session row."""
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    SELECT
-                        payload_json,
-                        mutation_token,
-                        mutation_kind,
-                        rotate_after_this_turn,
-                        finalize_required_reason
-                    FROM opencouch_active_sessions
-                    WHERE thread_id = %s
-                    """,
-                    (thread_id,),
-                )
-                row = await cursor.fetchone()
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                SELECT
+                    payload_json,
+                    mutation_token,
+                    mutation_kind,
+                    rotate_after_this_turn,
+                    finalize_required_reason
+                FROM opencouch_active_sessions
+                WHERE thread_id = %s
+                """,
+                (thread_id,),
+            )
+            row = await cursor.fetchone()
         if row is None:
             return None
         return (
@@ -146,34 +176,32 @@ class PostgresActiveSessionStore:
     async def list_ids(self) -> list[str]:
         """List thread ids with unresolved active sessions."""
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    SELECT thread_id
-                    FROM opencouch_active_sessions
-                    ORDER BY thread_id
-                    """
-                )
-                rows = await cursor.fetchall()
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                SELECT thread_id
+                FROM opencouch_active_sessions
+                ORDER BY thread_id
+                """
+            )
+            rows = await cursor.fetchall()
         return [str(row["thread_id"]) for row in rows]
 
     async def save_payload(self, thread_id: str, payload_json: str) -> None:
         """Upsert one serialized active-session payload."""
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    INSERT INTO opencouch_active_sessions(thread_id, payload_json)
-                    VALUES(%s, %s)
-                    ON CONFLICT(thread_id) DO UPDATE SET
-                        payload_json = excluded.payload_json
-                    """,
-                    (thread_id, payload_json),
-                )
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                INSERT INTO opencouch_active_sessions(thread_id, payload_json)
+                VALUES(%s, %s)
+                ON CONFLICT(thread_id) DO UPDATE SET
+                    payload_json = excluded.payload_json
+                """,
+                (thread_id, payload_json),
+            )
 
     async def set_mutation(
         self,
@@ -185,7 +213,6 @@ class PostgresActiveSessionStore:
     ) -> None:
         """Persist mutation-coordination metadata for one thread."""
 
-        checkpointer = self._checkpointer_getter()
         if finalize_required_reason is None:
             sql = """
                 UPDATE opencouch_active_sessions
@@ -208,53 +235,67 @@ class PostgresActiveSessionStore:
                 finalize_required_reason,
                 thread_id,
             )
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(sql, params)
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(sql, params)
 
     async def clear_mutation(self, thread_id: str, mutation_token: str) -> None:
         """Clear mutation metadata when the current token still owns it."""
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    UPDATE opencouch_active_sessions
-                    SET mutation_token = NULL, mutation_kind = NULL
-                    WHERE thread_id = %s AND mutation_token = %s
-                    """,
-                    (thread_id, mutation_token),
-                )
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                UPDATE opencouch_active_sessions
+                SET mutation_token = NULL, mutation_kind = NULL
+                WHERE thread_id = %s AND mutation_token = %s
+                """,
+                (thread_id, mutation_token),
+            )
 
     async def set_rotation_required(self, thread_id: str) -> None:
         """Mark one persisted active session for channel-level rotation."""
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    UPDATE opencouch_active_sessions
-                    SET rotate_after_this_turn = 1
-                    WHERE thread_id = %s
-                    """,
-                    (thread_id,),
-                )
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                UPDATE opencouch_active_sessions
+                SET rotate_after_this_turn = 1
+                WHERE thread_id = %s
+                """,
+                (thread_id,),
+            )
 
     async def delete_session(self, thread_id: str) -> None:
         """Delete one persisted active-session row."""
 
-        checkpointer = self._checkpointer_getter()
-        async with checkpointer.lock:
-            async with checkpointer.conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    DELETE FROM opencouch_active_sessions
-                    WHERE thread_id = %s
-                    """,
-                    (thread_id,),
+        conn = await self._ensure_connection()
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                DELETE FROM opencouch_active_sessions
+                WHERE thread_id = %s
+                """,
+                (thread_id,),
+            )
+
+    async def aclose(self) -> None:
+        """Close the PostgreSQL connection."""
+
+        if self._closed:
+            return
+        self._closed = True
+        if self._connection is not None:
+            try:
+                await self._connection.close()
+            except Exception:
+                logger.warning(
+                    "PostgresActiveSessionStore: connection close raised; ignoring",
+                    exc_info=True,
                 )
+            finally:
+                self._connection = None
 
 
 __all__ = [

@@ -131,7 +131,7 @@ async def test_turn_session_stores_raw_user_message_not_runtime_prompt(
 
 @pytest.mark.asyncio
 async def test_seed_thread_from_messages_only_seeds_empty_session(tmp_path) -> None:
-    """Legacy checkpoint transcripts can bootstrap an empty SDK session."""
+    """Persisted transcripts can bootstrap an empty SDK session."""
 
     store = TextSessionStore(
         TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")

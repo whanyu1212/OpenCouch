@@ -1,31 +1,29 @@
-"""LangGraph adapter for guided therapeutic exercises."""
+"""Compatibility adapter for guided therapeutic exercises."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from langgraph.config import get_stream_writer
-from langgraph.runtime import Runtime
-
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.exercises.responses import StreamWriterFactory
+from agent.therapeutic.exercises.responses import (
+    StreamWriterFactory,
+    _noop_stream_writer_factory,
+)
 from agent.therapeutic.exercises.runner import ExerciseRunner
 
 
 async def run_guided_exercise_response_node(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],
+    runtime: Any,
     *,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Drive a multi-turn guided exercise.
 
     Args:
         state: Current graph state.
-        runtime: LangGraph runtime carrying configured dependencies.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        runtime: Runtime object carrying configured dependencies.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response and state delta for the exercise turn.

@@ -1,6 +1,6 @@
 {
   "name": "therapeutic_contract_v1",
-  "description": "CI-safe contract checks for the simplified therapeutic subgraph.",
+  "description": "CI-safe contract checks for the therapeutic branch services.",
   "cases": [
     {
       "id": "supportive-basic",
@@ -360,7 +360,7 @@
     },
     {
       "id": "missing-control-llm-errors",
-      "description": "The subgraph surfaces a missing control LLM instead of silently falling back.",
+      "description": "The therapeutic branch surfaces a missing control LLM instead of silently falling back.",
       "message": "I feel tense and need support.",
       "scripted": null,
       "expected": {
