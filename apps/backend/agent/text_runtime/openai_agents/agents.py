@@ -9,7 +9,8 @@ from agents import Agent
 
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 from agent.text_runtime.openai_agents.context import OpenAITextRunContext
-from agent.text_runtime.openai_agents.memory_tools import build_read_only_memory_tools
+from agent.text_runtime.openai_agents.grounded_tools import build_grounded_lookup_tools
+from agent.text_runtime.openai_agents.memory_tools import build_memory_tools
 
 
 THERAPEUTIC_AGENT_NAME = "OpenCouch therapeutic text agent"
@@ -27,11 +28,17 @@ Memory tools:
   remembered, or known about them.
 - Call show_memory_status only when the user asks whether memory is enabled,
   how much memory exists, or whether proactive recall is on.
-- Read-only memory tools do not save, delete, or update memory.
+- Call mutating memory tools only when the runtime prompt explicitly requires
+  the matching action or the user clearly asks to change saved memory.
+- Deletion tools preserve OpenCouch confirmation semantics: prepare first, then
+  confirm or cancel only when a pending deletion exists.
 
-Do not claim to own crisis classification, durable memory writes, deletion
-confirmation, grounded lookup, or guided-exercise state. Those remain
-application-owned until later migration slices attach tested tools or handoffs.
+Grounded lookup:
+- Call answer_grounded_lookup only when the user explicitly asks for current,
+  factual, official, source-backed, or external resource information.
+
+Do not claim to own crisis classification or guided-exercise state. Those
+remain application-owned.
 """
 
 
@@ -122,7 +129,11 @@ def build_therapeutic_agent(
     return _build_agent(
         definition,
         model=model,
-        tools=tools if tools is not None else build_read_only_memory_tools(),
+        tools=(
+            tools
+            if tools is not None
+            else [*build_memory_tools(), *build_grounded_lookup_tools()]
+        ),
     )
 
 

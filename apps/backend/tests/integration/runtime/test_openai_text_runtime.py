@@ -102,13 +102,17 @@ async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
 
 
 @pytest.mark.asyncio
-async def test_persistent_runtime_openai_grounded_lookup_uses_app_service(
+async def test_persistent_runtime_openai_grounded_lookup_uses_sdk_tool(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Grounded lookup should use the existing search-backed service path."""
+    """Grounded lookup should run through the SDK tool wrapper."""
 
-    runner = FakeOpenAISDKRunner("unused sdk reply")
+    runner = FakeOpenAISDKRunner(
+        "unused sdk reply",
+        invoke_required_tool=True,
+        tool_response_as_final=True,
+    )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
@@ -131,6 +135,12 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_app_service(
         assert (
             result.output.diagnostics["openai_text_runtime_mode"] == "grounded_lookup"
         )
+        assert (
+            result.output.diagnostics["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
+        )
+        assert result.output.diagnostics["openai_grounded_tool_calls"] == [
+            "answer_grounded_lookup"
+        ]
         state = await runtime.get_state("thread-grounded")
         assert state is not None
         assert state["route"] == "grounded_lookup"
@@ -138,7 +148,7 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_app_service(
             "query": "grounded query",
             "status": "answered",
         }
-        assert runner.run_calls == []
+        assert runner.run_calls
         assert runner.stream_calls == []
 
 

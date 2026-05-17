@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -75,10 +76,28 @@ class FakeOpenAIStream:
 
 
 def _required_tool_name(input_text: str) -> str | None:
-    for tool_name in ("show_saved_memory", "show_memory_status"):
+    for tool_name in (
+        "show_saved_memory",
+        "show_memory_status",
+        "set_proactive_memory_recall",
+        "save_response_preference",
+        "prepare_memory_deletion_by_index",
+        "prepare_memory_deletion_by_query",
+        "confirm_memory_deletion",
+        "cancel_memory_deletion",
+        "answer_grounded_lookup",
+    ):
         if f"Required tool: {tool_name}" in input_text:
             return tool_name
     return None
+
+
+def _required_tool_arguments(input_text: str) -> str:
+    marker = "Required tool arguments: "
+    for line in input_text.splitlines():
+        if line.startswith(marker):
+            return json.dumps(json.loads(line.removeprefix(marker)))
+    return "{}"
 
 
 async def _invoke_required_tool(
@@ -87,6 +106,7 @@ async def _invoke_required_tool(
     tool_name = _required_tool_name(input_text)
     if tool_name is None:
         return None
+    arguments = _required_tool_arguments(input_text)
     for tool in getattr(agent, "tools", []):
         if getattr(tool, "name", None) != tool_name:
             continue
@@ -95,9 +115,9 @@ async def _invoke_required_tool(
                 context,
                 tool_name=tool.name,
                 tool_call_id=f"call-{tool.name}",
-                tool_arguments="{}",
+                tool_arguments=arguments,
             ),
-            "{}",
+            arguments,
         )
     raise AssertionError(f"Required tool {tool_name!r} was not attached to agent.")
 
