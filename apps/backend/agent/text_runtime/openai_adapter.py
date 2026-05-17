@@ -11,6 +11,7 @@ from hashlib import sha256
 from typing import Any, cast
 
 from agents import Runner
+from openai import APIConnectionError, OpenAIError
 
 from agent.active_flow import detect_active_flow
 from agent.conversation import format_recent_history
@@ -148,6 +149,10 @@ class _ExerciseSkillToolRequest:
     exercise_type: str
     runtime_action: str
     current_step_index: int | None
+
+
+_OPENAI_API_KEY_FALLBACK_REASON = "missing_openai_api_key"
+_OPENAI_CONNECTION_FALLBACK_REASON = "openai_api_connection_error"
 
 
 class OpenAIAgentsSDKRunner:
@@ -567,36 +572,13 @@ class OpenAITextAgentAdapter:
 
         if context.response_llm is not None:
             yield TextRuntimeStatusEvent(stage="therapeutic")
-            run_start = time.monotonic()
-            chunks: list[str] = []
-            async for chunk in context.response_llm.generate_text_stream(
-                prompt=self._input_text_for_state(
-                    state,
-                    include_recent_history=session is None,
-                ),
-                system_instruction=_therapeutic_system_prompt_for_state(state),
-            ):
-                chunks.append(chunk)
-                if chunk:
-                    yield TextRuntimeChunkEvent(text=chunk)
-            response_text = "".join(chunks)
-            diagnostics = {
-                **dict(state.get("diagnostics", {}) or {}),
-                "openai_response_llm_override": True,
-            }
-            _apply_delta(state, {"diagnostics": diagnostics})
-            final_state = await self._finalize_openai_turn(
+            async for event in self._run_safe_response_llm_stream(
                 state,
-                response_text=response_text,
                 config=config,
-                runtime_mode="safe_therapeutic",
-                response_style=_response_style_from_state(state),
-                selected_agent=THERAPEUTIC_AGENT_NAME,
-                sdk_duration_ms=elapsed_ms(run_start),
-                streamed=True,
-            )
-            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-            yield TextRuntimeStateEvent(state=final_state)
+                llm_client=context.response_llm,
+                session=session,
+            ):
+                yield event
             return
 
         run_context = self._run_context_for_state(state, config, context)
@@ -608,18 +590,31 @@ class OpenAITextAgentAdapter:
 
         yield TextRuntimeStatusEvent(stage="therapeutic")
         run_start = time.monotonic()
-        stream = self._runner.run_streamed(
-            agent=agent,
-            input_text=input_text,
-            context=run_context,
-            session=session,
-        )
         chunks: list[str] = []
-        async for sdk_event in stream.stream_events():
-            chunk = _chunk_from_sdk_event(sdk_event)
-            if chunk:
-                chunks.append(chunk)
-                yield TextRuntimeChunkEvent(text=chunk)
+        try:
+            stream = self._runner.run_streamed(
+                agent=agent,
+                input_text=input_text,
+                context=run_context,
+                session=session,
+            )
+            async for sdk_event in stream.stream_events():
+                chunk = _chunk_from_sdk_event(sdk_event)
+                if chunk:
+                    chunks.append(chunk)
+                    yield TextRuntimeChunkEvent(text=chunk)
+        except Exception as exc:
+            if not _can_fallback_to_control_response(exc, context):
+                raise
+            async for event in self._run_safe_response_llm_stream(
+                state,
+                config=config,
+                llm_client=cast(BaseLLMClient, context.llm_client),
+                session=session,
+                fallback_reason=cast(str, _openai_sdk_fallback_reason(exc)),
+            ):
+                yield event
+            return
 
         response_text = _final_output_text(
             getattr(stream, "final_output", None),
@@ -1385,6 +1380,78 @@ class OpenAITextAgentAdapter:
         )
         return text
 
+    async def _run_safe_response_llm_turn(
+        self,
+        state: AgentState,
+        *,
+        llm_client: BaseLLMClient,
+        session: Any | None,
+        fallback_reason: str | None = None,
+    ) -> _SafeAgentResult:
+        run_start = time.monotonic()
+        response_text = await llm_client.generate_text(
+            prompt=self._input_text_for_state(
+                state,
+                include_recent_history=session is None,
+            ),
+            system_instruction=_therapeutic_system_prompt_for_state(state),
+        )
+        diagnostics = {
+            **dict(state.get("diagnostics", {}) or {}),
+            "openai_response_llm_override": True,
+        }
+        if fallback_reason is not None:
+            diagnostics["openai_sdk_fallback_reason"] = fallback_reason
+        _apply_delta(state, {"diagnostics": diagnostics})
+        return _SafeAgentResult(
+            response_text=response_text,
+            runtime_mode="safe_therapeutic",
+            response_style=_response_style_from_state(state),
+            sdk_duration_ms=elapsed_ms(run_start),
+        )
+
+    async def _run_safe_response_llm_stream(
+        self,
+        state: AgentState,
+        *,
+        config: TextRuntimeConfig,
+        llm_client: BaseLLMClient,
+        session: Any | None,
+        fallback_reason: str | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        run_start = time.monotonic()
+        chunks: list[str] = []
+        async for chunk in llm_client.generate_text_stream(
+            prompt=self._input_text_for_state(
+                state,
+                include_recent_history=session is None,
+            ),
+            system_instruction=_therapeutic_system_prompt_for_state(state),
+        ):
+            chunks.append(chunk)
+            if chunk:
+                yield TextRuntimeChunkEvent(text=chunk)
+        response_text = "".join(chunks)
+        diagnostics = {
+            **dict(state.get("diagnostics", {}) or {}),
+            "openai_response_llm_override": True,
+        }
+        if fallback_reason is not None:
+            diagnostics["openai_sdk_fallback_reason"] = fallback_reason
+        _apply_delta(state, {"diagnostics": diagnostics})
+        final_state = await self._finalize_openai_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode="safe_therapeutic",
+            response_style=_response_style_from_state(state),
+            selected_agent=THERAPEUTIC_AGENT_NAME,
+            sdk_duration_ms=elapsed_ms(run_start),
+            streamed=True,
+        )
+        yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+        yield TextRuntimeStateEvent(state=final_state)
+
     async def _run_safe_agent_turn(
         self,
         state: AgentState,
@@ -1394,24 +1461,10 @@ class OpenAITextAgentAdapter:
         session: Any | None = None,
     ) -> _SafeAgentResult:
         if context.response_llm is not None:
-            run_start = time.monotonic()
-            response_text = await context.response_llm.generate_text(
-                prompt=self._input_text_for_state(
-                    state,
-                    include_recent_history=session is None,
-                ),
-                system_instruction=_therapeutic_system_prompt_for_state(state),
-            )
-            diagnostics = {
-                **dict(state.get("diagnostics", {}) or {}),
-                "openai_response_llm_override": True,
-            }
-            _apply_delta(state, {"diagnostics": diagnostics})
-            return _SafeAgentResult(
-                response_text=response_text,
-                runtime_mode="safe_therapeutic",
-                response_style=_response_style_from_state(state),
-                sdk_duration_ms=elapsed_ms(run_start),
+            return await self._run_safe_response_llm_turn(
+                state,
+                llm_client=context.response_llm,
+                session=session,
             )
 
         run_context = self._run_context_for_state(state, config, context)
@@ -1420,13 +1473,23 @@ class OpenAITextAgentAdapter:
             state,
             include_recent_history=session is None,
         )
-        response_text, sdk_duration_ms = await self._run_openai_agent_with(
-            state,
-            agent=agent,
-            input_text=input_text,
-            run_context=run_context,
-            session=session,
-        )
+        try:
+            response_text, sdk_duration_ms = await self._run_openai_agent_with(
+                state,
+                agent=agent,
+                input_text=input_text,
+                run_context=run_context,
+                session=session,
+            )
+        except Exception as exc:
+            if not _can_fallback_to_control_response(exc, context):
+                raise
+            return await self._run_safe_response_llm_turn(
+                state,
+                llm_client=cast(BaseLLMClient, context.llm_client),
+                session=session,
+                fallback_reason=cast(str, _openai_sdk_fallback_reason(exc)),
+            )
         return self._resolve_safe_agent_result(
             state,
             run_context=run_context,
@@ -1959,6 +2022,30 @@ def _therapeutic_system_prompt_for_state(state: AgentState) -> str:
     if _response_style_from_state(state) == "clarifying":
         return build_clarifying_system_prompt(state)
     return build_supportive_system_prompt(state)
+
+
+def _can_fallback_to_control_response(
+    exc: Exception,
+    context: WorkflowContext,
+) -> bool:
+    return (
+        context.llm_client is not None and _openai_sdk_fallback_reason(exc) is not None
+    )
+
+
+def _openai_sdk_fallback_reason(exc: Exception) -> str | None:
+    if _is_missing_openai_api_key_error(exc):
+        return _OPENAI_API_KEY_FALLBACK_REASON
+    if isinstance(exc, APIConnectionError):
+        return _OPENAI_CONNECTION_FALLBACK_REASON
+    return None
+
+
+def _is_missing_openai_api_key_error(exc: Exception) -> bool:
+    if not isinstance(exc, OpenAIError):
+        return False
+    message = str(exc)
+    return "OPENAI_API_KEY" in message and "api_key" in message
 
 
 def _memory_reference_mode_for_message(message: str) -> str:
