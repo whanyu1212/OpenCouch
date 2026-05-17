@@ -1,8 +1,8 @@
 """Typed memory-control action payloads.
 
-The graph stores memory-control actions as plain dicts for LangGraph state
-serialization. These models give service and routing code one validated shape
-to produce and consume.
+The runtime stores memory-control actions as plain dicts in app-owned state.
+These models give service and routing code one validated shape to produce and
+consume.
 """
 
 from __future__ import annotations

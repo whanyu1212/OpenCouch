@@ -12,7 +12,7 @@ What these tests DON'T cover:
   SQLite backends' own behavior)
 
 Test strategy: construct the runtime without entering its async
-context (no checkpointer connection needed), check the concrete
+context (no network provider call needed), check the concrete
 type of ``runtime.memory_store`` and ``runtime.crisis_log_backend``.
 The selection logic lives entirely in ``__init__``, so we don't
 need to await anything to verify it.
@@ -54,16 +54,12 @@ from agent.persistence import (
 
 
 def test_default_memory_db_path_is_distinct_from_thread_db() -> None:
-    """The v0.8 memory SQLite file must NOT share a path with the
-    LangGraph thread checkpointer file. Mixing our tables with
-    LangGraph's risks namespace collisions when LangGraph bumps
-    its schema."""
+    """The memory SQLite file must not share a path with runtime state."""
 
     from agent.persistence import DEFAULT_THREAD_DB_PATH
 
-    # All four OpenCouch-owned SQLite files must be distinct from
-    # each other AND from the LangGraph thread DB. Crossed paths
-    # would mix schemas in ways that break on future migrations.
+    # All four OpenCouch-owned SQLite files must be distinct so schemas
+    # cannot collide across stores.
     paths = {
         DEFAULT_THREAD_DB_PATH,
         DEFAULT_MEMORY_DB_PATH,
@@ -118,9 +114,7 @@ def test_incognito_mode_uses_in_memory_crisis_log_by_default() -> None:
 
 
 def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
-    """The LangGraph thread checkpointer path should be ``:memory:``
-    in incognito mode regardless of what the caller passed. This is
-    the pre-v0.8 behavior; v0.8 just preserves it."""
+    """The runtime state path should be ``:memory:`` in incognito mode."""
 
     runtime = PersistentAgentRuntime(
         sqlite_path="/tmp/should-be-ignored.sqlite3",
@@ -519,7 +513,7 @@ async def test_aexit_closes_feedback_backend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aenter_prewarms_embedding_provider_and_graph(monkeypatch) -> None:
+async def test_aenter_prewarms_embedding_provider_and_text_adapter() -> None:
     """``__aenter__`` should finish warmup before the runtime is usable."""
 
     class _WarmableEmbeddingProvider(NullEmbeddingProvider):
@@ -530,12 +524,6 @@ async def test_aenter_prewarms_embedding_provider_and_graph(monkeypatch) -> None
             self.warmup_calls += 1
 
     embedding_provider = _WarmableEmbeddingProvider()
-    compiled_graph = object()
-
-    monkeypatch.setattr(
-        "agent.persistence.build_agent_workflow",
-        lambda checkpointer: compiled_graph,
-    )
 
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
@@ -547,4 +535,4 @@ async def test_aenter_prewarms_embedding_provider_and_graph(monkeypatch) -> None
 
     async with runtime:
         assert embedding_provider.warmup_calls == 1
-        assert runtime._graph is compiled_graph  # noqa: SLF001
+        assert runtime._text_agent_adapter is not None  # noqa: SLF001

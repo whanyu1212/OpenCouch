@@ -95,7 +95,7 @@ def _command_update(command: Any) -> dict[str, Any]:
     """Return a non-optional command update for assertions.
 
     Args:
-        command: LangGraph command returned by a routing gate.
+        command: runtime command returned by a routing gate.
 
     Returns:
         Command update cast to a concrete dictionary.

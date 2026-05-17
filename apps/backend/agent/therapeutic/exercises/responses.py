@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from langgraph.config import get_stream_writer
-
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.state import AgentState
@@ -25,6 +23,7 @@ from agent.therapeutic.exercises.state import (
 from agent.therapeutic.prompts import build_guided_exercise_system_prompt
 from agent.therapeutic.response_styles import (
     StreamWriterFactory,
+    _noop_stream_writer_factory,
     generate_streamed_therapeutic_text,
     therapeutic_response_delta,
 )
@@ -36,7 +35,7 @@ async def _build_start_delta(
     *,
     llm_client: BaseLLMClient | None,
     exercise_type: str,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for starting a guided exercise.
 
@@ -44,8 +43,7 @@ async def _build_start_delta(
         state: Current graph state.
         llm_client: Response LLM client.
         exercise_type: Exercise identifier to start.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response and state delta for the first exercise step.
@@ -88,15 +86,14 @@ async def _build_exit_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for an exit.
 
     Args:
         state: Current graph state.
         llm_client: Response LLM client.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response and state delta that clears the active exercise.
@@ -135,15 +132,14 @@ async def _build_resume_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for resuming an active exercise after a side turn.
 
     Args:
         state: Current graph state.
         llm_client: Response LLM client, if configured.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response delta that preserves the current exercise step.
@@ -185,15 +181,14 @@ async def _build_stuck_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for a stuck classification.
 
     Args:
         state: Current graph state.
         llm_client: Response LLM client, if configured.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response delta that keeps the user on the current step.
@@ -234,15 +229,14 @@ async def _build_hold_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for a hold classification.
 
     Args:
         state: Current graph state.
         llm_client: Response LLM client, if configured.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response delta that preserves the current exercise step.
@@ -286,7 +280,7 @@ async def _build_advance_delta(
     llm_client: BaseLLMClient | None,
     exercise_type: str,
     next_step_index: int,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for advancing to the next step.
 
@@ -298,8 +292,7 @@ async def _build_advance_delta(
         llm_client: Response LLM client, if configured.
         exercise_type: Active exercise identifier.
         next_step_index: Step index to advance to.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response and state delta for the next exercise step.
@@ -346,7 +339,7 @@ async def _build_complete_delta(
     llm_client: BaseLLMClient | None,
     memory_store: MemoryStore | None = None,
     memory_mode: MemoryMode | None = None,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for natural completion of the exercise.
 
@@ -358,8 +351,7 @@ async def _build_complete_delta(
         llm_client: Response LLM client, if configured.
         memory_store: Memory store used for completion facts, if configured.
         memory_mode: Current memory mode.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Response and state delta for natural exercise completion.

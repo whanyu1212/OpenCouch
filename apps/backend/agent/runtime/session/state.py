@@ -65,7 +65,7 @@ def session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
     """Build a delta that clears session-scoped continuity fields.
 
     Args:
-        state (AgentState | None): Current checkpointed state, if any.
+        state (AgentState | None): Current runtime state, if any.
 
     Returns:
         dict[str, Any]: Partial state update that clears stale session
@@ -93,10 +93,10 @@ def session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
 
 
 def turn_count_from_state(state: AgentState | None) -> int:
-    """Extract the persisted turn count from a checkpoint snapshot.
+    """Extract the persisted turn count from a runtime state snapshot.
 
     Args:
-        state (AgentState | None): Checkpointed state snapshot, if any.
+        state (AgentState | None): Runtime state snapshot, if any.
 
     Returns:
         int: Persisted turn count.

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -17,15 +18,16 @@ from agent.persistence import (
 from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
 
-class _FailingGraph:
-    async def aget_state(self, config):  # noqa: ANN001
-        return SimpleNamespace(values=None)
+class _FailingTextAdapter:
+    async def run_turn(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("adapter failed")
 
-    async def ainvoke(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        raise RuntimeError("graph failed")
-
-    async def astream(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        raise RuntimeError("graph failed")
+    async def run_turn_stream(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        raise RuntimeError("adapter failed")
         yield
 
 
@@ -115,14 +117,15 @@ async def test_failed_run_turn_leaves_interrupted_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "agent.persistence.build_agent_workflow", lambda checkpointer: _FailingGraph()
+        "agent.persistence.create_text_agent_adapter",
+        lambda *, runtime_name: _FailingTextAdapter(),  # noqa: ARG005
     )
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
-        with pytest.raises(RuntimeError, match="graph failed"):
+        with pytest.raises(RuntimeError, match="adapter failed"):
             await runtime.run_turn(thread_id="thread-failed-turn", message="hello")
 
         assert await runtime.session_status("thread-failed-turn") == (

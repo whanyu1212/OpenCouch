@@ -32,15 +32,15 @@ def effective_thread_persistence_backend(
     memory_mode: MemoryMode,
     thread_persistence_backend: PersistenceBackend,
 ) -> PersistenceBackend:
-    """Return the effective thread-checkpoint backend for a memory mode.
+    """Return the effective runtime-state backend for a memory mode.
 
     Args:
         memory_mode (MemoryMode): Runtime memory mode.
         thread_persistence_backend (PersistenceBackend): Configured persistent
-            thread-checkpoint backend.
+            thread-state backend.
 
     Returns:
-        PersistenceBackend: Backend to use for thread checkpoints.
+        PersistenceBackend: Backend to use for thread state snapshots.
     """
 
     if memory_mode == MemoryMode.INCOGNITO:

@@ -1,24 +1,13 @@
 """Session summarizer that runs once per session at session end.
 
-Unlike the other files in ``agent/nodes/``, this module does NOT export
-a LangGraph node function. It exports a standalone async function
-:func:`run_summarize_session` that's invoked directly by
+This module exports a standalone async function
+:func:`run_summarize_session` invoked directly by
 :class:`agent.persistence.PersistentAgentRuntime` when a session ends
 (via the CLI's ``/end`` command or a ``/exit`` confirmation).
 
-Why not a graph node:
-
-    Summarization runs at **session boundaries**, not per-turn. LangGraph's
-    value - multi-node orchestration, per-turn state reducers, conditional
-    routing - does not apply to a single end-of-session LLM call. Compiling
-    a throwaway one-node graph for this work would add ceremony without
-    any benefit. A bare async function with the same signature pattern as
-    the extraction node is cleaner. The runtime already owns the store
-    and the LLM client, so it can invoke the summarizer directly.
-
-    This file lives in ``agent/nodes/`` anyway (not ``agent/memory/``)
-    because it participates in the node-layer memory workflow alongside
-    the per-turn extractor.
+Summarization runs at **session boundaries**, not per-turn. The runtime already
+owns the store, state snapshot, and LLM client, so a direct service call keeps
+the boundary explicit.
 
 Design rules (mirror the extract_facts conventions):
 
@@ -88,8 +77,7 @@ async def run_summarize_session(
 ) -> StoredSessionArc | None:
     """Summarize a completed session and write the arc to episodic memory.
 
-    Runs once per session at session end, invoked by the runtime rather
-    than by the LangGraph compiled graph. Returns the written
+    Runs once per session at session end, invoked by the runtime. Returns the written
     :class:`StoredSessionArc` on success, or ``None`` on any of the
     legitimate skip conditions: incognito mode, no LLM client, LLM
     returned ``arc=None``, LLM call failed, store write failed.
@@ -99,9 +87,9 @@ async def run_summarize_session(
     in the common case.
 
     Args:
-        state: Current graph state at session end. Reads ``transcript``
+        state: Current runtime state at session end. Reads ``transcript``
             and ``user_id`` / ``session_id``. The transcript is the full
-            session history (checkpointer-restored), not a window.
+            session history, not a window.
         llm_client: The runtime's LLM client, passed explicitly rather
             than pulled from ``runtime.context`` (since this isn't a
             graph node). When ``None``, the summarizer skips silently.

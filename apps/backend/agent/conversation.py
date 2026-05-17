@@ -1,7 +1,7 @@
 """Conversation transcript access helpers.
 
 These helpers make ``transcript`` the preferred source of conversation context
-while retaining ``history`` as a compatibility fallback for older checkpoints
+while retaining ``history`` as a compatibility fallback for older state shapes
 and focused tests.
 """
 

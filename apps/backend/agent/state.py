@@ -1,15 +1,13 @@
-"""Typed state contracts for the OpenCouch LangGraph workflow.
+"""Typed state contracts for the OpenCouch text runtime.
 
-The top-level graph in ``agent.graph`` uses ``AgentGraphInputState`` as its
-input schema, ``AgentState`` as its internal schema, and
-``AgentGraphOutputState`` as its public output schema. The therapeutic subgraph
-imports the smaller state fragments below to define its own input and output
-boundaries.
+``AgentGraphInputState`` and related names remain for compatibility with older
+callers, but the active runtime is OpenAI Agents SDK based. ``AgentState`` is
+the internal product snapshot persisted by ``PersistentAgentRuntime``.
 
-LangGraph treats each top-level key as a channel. Reducer-backed channels can
-receive partial deltas from multiple nodes or turns: ``transcript`` appends
-list entries with ``operator.add``, while grouped dict channels use
-``_merge_dicts`` so nodes can update only the nested fields they own.
+The ``Annotated`` reducer metadata is retained as documentation for how turn
+deltas are merged: ``transcript`` appends list entries with ``operator.add``,
+while grouped dict channels use ``_merge_dicts`` so services can update only
+the nested fields they own.
 """
 
 from __future__ import annotations
@@ -93,11 +91,11 @@ class SessionProgressState(TypedDict):
     """Session-level counters and arc signals.
 
     ``build_initial_state`` seeds ``turn_count`` for each turn, using
-    checkpointed state when available. Persistent runtime summaries, feedback
+    persisted runtime state when available. Persistent runtime summaries, feedback
     records, and memory extractors read ``turn_count`` for provenance. The
     therapeutic dispatcher may also write ``session_intent`` and
     ``session_stage`` to keep response generation aware of the conversation arc
-    without adding graph nodes.
+    without adding extra runtime branches.
     """
 
     turn_count: int
@@ -221,10 +219,9 @@ class AgentConversationState(TypedDict):
     """Conversation and working-memory channels used during a turn.
 
     ``build_initial_state`` emits the current user turn into ``transcript``.
-    ``finalize_turn_node`` appends the assistant turn. The transcript uses
-    ``operator.add`` so checkpointed conversation is extended instead of
-    overwritten. ``load_memory_node`` owns ``working_memory`` for prompt-time
-    semantic and episodic recall.
+    The text adapter appends the assistant turn. The transcript uses
+    ``operator.add`` metadata to document append semantics. Turn memory owns
+    ``working_memory`` for prompt-time semantic and episodic recall.
     """
 
     transcript: NotRequired[Annotated[list[dict[str, str]], operator.add]]
@@ -232,10 +229,10 @@ class AgentConversationState(TypedDict):
 
 
 class AgentPersistentState(TypedDict):
-    """Reducer-backed continuity channels persisted by checkpoints.
+    """Continuity channels persisted in runtime state snapshots.
 
-    These grouped dicts are the long-lived channels inside LangGraph state.
-    Nodes should return partial nested deltas for only the fields they own; the
+    These grouped dicts are long-lived text-runtime state. Services should
+    return partial nested deltas for only the fields they own; the
     dict reducers preserve existing sibling keys from prior turns.
     """
 
@@ -248,9 +245,9 @@ class AgentPersistentState(TypedDict):
 
 
 class AgentCrisisState(TypedDict):
-    """Current-turn crisis assessment shared by both graph branches.
+    """Current-turn crisis assessment shared by runtime branches.
 
-    ``crisis_gate_node`` owns this field. Crisis response, crisis logging, and
+    The crisis gate owns this field. Crisis response, crisis logging, and
     downstream output conversion read it; therapeutic turns keep the safe
     assessment so callers still receive explicit safety metadata.
     """
@@ -259,12 +256,11 @@ class AgentCrisisState(TypedDict):
 
 
 class AgentGraphOutputState(AgentCrisisState, TypedDict):
-    """Public parent-graph output channels.
+    """Public text-runtime output channels.
 
-    ``agent.graph`` registers this as the top-level output schema. Response
-    nodes own the response fields, ``guided_exercise`` may set
-    ``should_persist_memory`` on completion, and each observability-producing
-    node contributes to ``diagnostics`` through the merge reducer.
+    Response branches own the response fields, ``guided_exercise`` may set
+    ``should_persist_memory`` on completion, and observability-producing
+    services contribute to ``diagnostics`` through merge semantics.
     """
 
     therapeutic_approach: NotRequired[str | None]
@@ -278,12 +274,12 @@ class AgentGraphOutputState(AgentCrisisState, TypedDict):
 class AgentPrivateState(TypedDict):
     """Internal-only routing, audit, and scratch channels.
 
-    These fields are available to nodes during graph execution but are not part
-    of the public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
+    These fields are available during runtime execution but are not part of the
+    public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
     ``turn_lifecycle`` carries current-turn active-flow behavior from dispatch
     to downstream nodes, ``memory_reference`` controls one-turn permission to
     cite retrieved memories, ``crisis_audit`` feeds the crisis log, and
-    ``crisis_resource_lookup_node`` writes ``inferred_location`` /
+    crisis resource lookup writes ``inferred_location`` /
     ``found_resources`` / ``resource_lookup_status`` for crisis-resource lookup
     turns.
     """
@@ -305,20 +301,20 @@ class AgentGraphInputState(
     AgentGraphOutputState,
     AgentPrivateState,
 ):
-    """Top-level graph input schema produced by ``build_initial_state``.
+    """Top-level turn input schema produced by ``build_initial_state``.
 
     The input schema includes the current user turn, clean defaults for
-    turn-scoped channels, and reducer-backed continuity groups. When a
-    checkpointer is active, LangGraph merges these inputs with the prior
-    checkpoint so persistent channels are preserved instead of reset.
+    turn-scoped channels, and continuity groups. The OpenAI adapter merges this
+    turn input with prior runtime state so persistent channels are preserved
+    instead of reset.
     """
 
 
 class AgentState(AgentGraphInputState):
-    """Full internal state schema used by graph nodes.
+    """Full internal state schema used by text-runtime services.
 
-    Top-level nodes, therapeutic response nodes, prompt builders, tests, and
-    evals use this type when reading or returning state-like dictionaries. It
-    is not a public API response shape; use ``AgentGraphOutputState`` and
+    Runtime branches, prompt builders, tests, and evals use this type when
+    reading or returning state-like dictionaries. It is not a public API
+    response shape; use ``AgentGraphOutputState`` and
     ``agent.graph.state_to_output`` for caller-facing data.
     """

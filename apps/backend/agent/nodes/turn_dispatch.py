@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import time
-
-from langgraph.runtime import Runtime
-from langgraph.types import Command
+from typing import Any
 
 from agent.graph_constants import (
     GROUNDED_ANSWER_NODE,
@@ -14,24 +12,23 @@ from agent.graph_constants import (
     TurnDispatchNextNode,
 )
 from agent.observability.timing import elapsed_ms
-from agent.runtime_context import WorkflowContext
+from agent.runtime.command import RuntimeCommand
 from agent.state import AgentState
 from agent.turn_dispatch import build_turn_dispatch_update, plan_turn_route
 
 
 async def run_turn_dispatch_node(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],
-) -> Command[TurnDispatchNextNode]:
+    runtime: Any,
+) -> RuntimeCommand[TurnDispatchNextNode]:
     """Route a safe user turn to the next lifecycle node.
 
     Args:
         state (AgentState): Current graph state after crisis classification.
-        runtime (Runtime[WorkflowContext]): LangGraph runtime carrying workflow
-            dependencies.
+        runtime: Runtime object carrying workflow dependencies.
 
     Returns:
-        Command[TurnDispatchNextNode]: State update plus the next node to run.
+        RuntimeCommand[TurnDispatchNextNode]: State update plus the next node to run.
     """
 
     start = time.monotonic()
@@ -52,4 +49,4 @@ async def run_turn_dispatch_node(
     else:
         next_node = LOAD_MEMORY_NODE
 
-    return Command(update=update, goto=next_node)
+    return RuntimeCommand(update=update, goto=next_node)

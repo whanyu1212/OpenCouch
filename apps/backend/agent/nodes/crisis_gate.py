@@ -1,9 +1,8 @@
-"""LLM-only crisis gate node for the OpenCouch graph."""
+"""LLM-only crisis gate compatibility adapter."""
 
 from __future__ import annotations
 
-from langgraph.runtime import Runtime
-from langgraph.types import Command
+from typing import Any
 
 from agent.gates.safety.turn_gate import assess_crisis_gate
 from agent.graph_constants import (
@@ -11,19 +10,19 @@ from agent.graph_constants import (
     TURN_DISPATCH_NODE,
     CrisisGateNextNode,
 )
-from agent.runtime_context import WorkflowContext
+from agent.runtime.command import RuntimeCommand
 from agent.state import AgentState
 
 
 async def run_crisis_gate_node(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],
-) -> Command[CrisisGateNextNode]:
+    runtime: Any,
+) -> RuntimeCommand[CrisisGateNextNode]:
     """Run the crisis gate for the current turn.
 
     Args:
         state: Current graph state for the turn being processed.
-        runtime: LangGraph runtime carrying the workflow context.
+        runtime: Runtime object carrying the workflow context.
 
     Returns:
         State update plus the next node to run.
@@ -39,4 +38,4 @@ async def run_crisis_gate_node(
         if assessment.needs_crisis_response
         else TURN_DISPATCH_NODE
     )
-    return Command(update=result.delta, goto=next_node)
+    return RuntimeCommand(update=result.delta, goto=next_node)

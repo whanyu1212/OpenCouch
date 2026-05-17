@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -15,7 +13,6 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
 from agent.runtime_context import WorkflowContext
 from agent.text_runtime import (
-    LangGraphTextAgentAdapter,
     OpenAITextAgentAdapter,
     TextRuntimeChunkEvent,
     TextRuntimeStateEvent,
@@ -36,74 +33,13 @@ from tests.support.persistence import FakeCrossRestartLLM
 class _StatefulWorkflow:
     def __init__(self) -> None:
         self.state: dict[str, Any] | None = None
-        self.ainvoke_calls = 0
-
-    async def aget_state(self, config: dict[str, Any]) -> SimpleNamespace:
-        return SimpleNamespace(values=self.state)
-
-    async def ainvoke(
-        self,
-        initial_state: dict[str, Any],
-        *,
-        config: dict[str, Any],
-        context: WorkflowContext,
-    ) -> dict[str, Any]:
-        self.ainvoke_calls += 1
-        return {"response_text": "fallback reply"}
-
-    async def astream(
-        self,
-        initial_state: dict[str, Any],
-        *,
-        config: dict[str, Any],
-        context: WorkflowContext,
-        stream_mode: tuple[str, ...],
-        subgraphs: bool,
-        version: str,
-    ) -> AsyncIterator[dict[str, Any]]:
-        self.ainvoke_calls += 1
-        yield {"type": "custom", "data": {"type": "chunk", "text": "fallback"}}
-        yield {
-            "type": "values",
-            "ns": (),
-            "data": {"response_text": "fallback reply"},
-        }
-
-    async def aupdate_state(
-        self,
-        config: dict[str, Any],
-        values: dict[str, Any],
-        *,
-        as_node: str | None = None,
-    ) -> None:
-        if self.state is None:
-            self.state = dict(values)
-            return
-        updated = dict(self.state)
-        for key, value in values.items():
-            if key == "transcript":
-                updated[key] = [*updated.get(key, []), *value]
-            elif key in {
-                "session_memory",
-                "procedural_profile",
-                "session_progress",
-                "exercise_state",
-                "memory_control",
-                "grounded_lookup",
-                "diagnostics",
-            }:
-                updated[key] = {**updated.get(key, {}), **value}
-            else:
-                updated[key] = value
-        self.state = updated
 
 
 def _adapter(
-    workflow: _StatefulWorkflow,
+    workflow: _StatefulWorkflow,  # noqa: ARG001 - keeps tests concise
     runner: FakeOpenAISDKRunner,
 ) -> OpenAITextAgentAdapter:
     return OpenAITextAgentAdapter(
-        checkpoint_adapter=LangGraphTextAgentAdapter(cast(Any, workflow)),
         runner=cast(Any, runner),
         model="gpt-test",
     )
@@ -142,7 +78,6 @@ async def test_openai_adapter_runs_safe_therapeutic_turn_and_persists_state() ->
         context=_context(),
     )
 
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
         "show_saved_memory",
@@ -160,8 +95,7 @@ async def test_openai_adapter_runs_safe_therapeutic_turn_and_persists_state() ->
     assert state["response_style"] == "supportive"
     assert state["therapeutic_approach"] == "none"
     assert state["diagnostics"]["text_agent_runtime"] == "openai"
-    assert workflow.state is not None
-    assert [turn["role"] for turn in workflow.state["transcript"]] == [
+    assert [turn["role"] for turn in state["transcript"]] == [
         "user",
         "assistant",
     ]
@@ -187,7 +121,7 @@ async def test_openai_adapter_passes_sdk_session_to_safe_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_omits_checkpoint_history_when_sdk_session_is_used() -> (
+async def test_openai_adapter_omits_prior_state_history_when_sdk_session_is_used() -> (
     None
 ):
     """SDK sessions should own prior chat context for OpenAI model input."""
@@ -206,6 +140,7 @@ async def test_openai_adapter_omits_checkpoint_history_when_sdk_session_is_used(
         config={"configurable": {"thread_id": "thread-1"}},
         context=_context(),
         session=object(),
+        prior_state=cast(Any, workflow.state),
     )
 
     prompt = runner.run_calls[0]["input_text"]
@@ -263,7 +198,6 @@ async def test_openai_adapter_runs_memory_status_through_sdk_tool() -> None:
     assert result["diagnostics"]["openai_memory_tool_calls"] == ["show_memory_status"]
     assert result["diagnostics"]["openai_memory_tool_fallback"] is False
     assert result["memory_control"]["pending_action"] is None
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
     assert "Required tool:" not in runner.run_calls[0]["input_text"]
@@ -303,7 +237,6 @@ async def test_openai_adapter_runs_saved_memory_list_through_sdk_tool() -> None:
     assert result["diagnostics"]["openai_memory_tool_expected"] == "show_saved_memory"
     assert result["diagnostics"]["openai_memory_tool_calls"] == ["show_saved_memory"]
     assert result["memory_control"]["pending_action"] is None
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
     assert "Required tool:" not in runner.run_calls[0]["input_text"]
 
@@ -335,7 +268,6 @@ async def test_openai_adapter_runs_memory_recall_update_through_sdk_tool() -> No
     assert result["diagnostics"]["openai_memory_tool_calls"] == [
         "set_proactive_memory_recall"
     ]
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
 
 
@@ -369,7 +301,6 @@ async def test_openai_adapter_runs_preference_save_through_sdk_tool() -> None:
         "procedural_profile_update"
     ]
     assert await context.memory_store.arecord_count(("user-1", "procedural")) == 1
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
 
 
@@ -403,7 +334,6 @@ async def test_openai_adapter_runs_grounded_lookup_through_sdk_tool() -> None:
     assert result["diagnostics"]["openai_grounded_tool_calls"] == [
         "answer_grounded_lookup"
     ]
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
 
 
@@ -436,6 +366,7 @@ async def test_openai_adapter_handles_pending_memory_cancel() -> None:
                 active_flow_action="continue",
             )
         ),
+        prior_state=cast(Any, workflow.state),
     )
 
     assert result["route"] == "memory_control"
@@ -444,7 +375,6 @@ async def test_openai_adapter_handles_pending_memory_cancel() -> None:
     assert result["diagnostics"]["openai_memory_tool_expected"] == (
         "cancel_memory_deletion"
     )
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
 
 
@@ -490,6 +420,7 @@ async def test_openai_adapter_confirms_pending_memory_deletion_through_sdk_tool(
         cast(Any, _initial_state("yes, delete it")),
         config={"configurable": {"thread_id": "thread-1"}},
         context=context,
+        prior_state=cast(Any, workflow.state),
     )
 
     assert result["route"] == "memory_control"
@@ -499,7 +430,6 @@ async def test_openai_adapter_confirms_pending_memory_deletion_through_sdk_tool(
     )
     assert result["diagnostics"]["openai_memory_tool_side_effects"] == ["delete_memory"]
     assert await context.memory_store.arecord_count(("user-1", "semantic")) == 0
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
 
 
@@ -528,7 +458,6 @@ async def test_openai_adapter_preserves_exercise_during_app_owned_side_turn() ->
     assert result["exercise_state"]["exercise_step"] == 1
     assert result["diagnostics"]["openai_text_runtime_mode"] == "grounded_lookup"
     assert result["diagnostics"]["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
     assert runner.stream_calls == []
 
@@ -571,7 +500,6 @@ async def test_openai_adapter_starts_guided_exercise_with_guided_agent() -> None
     assert result["exercise_state"]["exercise_step_id"] == "inhale"
     assert result["diagnostics"]["openai_text_runtime_mode"] == "guided_exercise"
     assert result["diagnostics"]["openai_selected_agent"] == GUIDED_EXERCISE_AGENT_NAME
-    assert workflow.ainvoke_calls == 0
     assert runner.stream_calls
     sdk_call = runner.stream_calls[0]
     assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
@@ -629,7 +557,6 @@ async def test_openai_adapter_continues_active_guided_exercise() -> None:
     assert result["diagnostics"]["openai_guided_exercise_tool_runtime_action"] == (
         "advance"
     )
-    assert workflow.ainvoke_calls == 0
     assert runner.stream_calls
 
 
@@ -650,7 +577,6 @@ async def test_openai_adapter_handles_explicit_memory_reference_on_sdk_path() ->
     assert result["response_style"] == "supportive"
     assert result["memory_reference"]["mode"] == "explicit"
     assert result["diagnostics"]["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
-    assert workflow.ainvoke_calls == 0
     assert runner.run_calls
 
 
@@ -678,7 +604,6 @@ async def test_openai_adapter_uses_crisis_agent_for_safety_clarification() -> No
     assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
     assert runner.run_calls[0]["agent"].tools == []
     assert "Safety-check override" in runner.run_calls[0]["agent"].instructions
-    assert workflow.ainvoke_calls == 0
     assert await context.crisis_log_backend.arecord_count() == 0
 
 
@@ -720,7 +645,6 @@ async def test_openai_adapter_uses_crisis_agent_for_crisis_response() -> None:
         "lookup_crisis_resources"
     ]
     assert "Required tool: lookup_crisis_resources" in runner.run_calls[0]["input_text"]
-    assert workflow.ainvoke_calls == 0
     assert await context.crisis_log_backend.arecord_count() == 1
 
 
@@ -746,8 +670,6 @@ async def test_openai_adapter_shadow_runs_without_persisting_state() -> None:
     assert result.shadow_duration_ms is not None
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].tools == []
-    assert workflow.ainvoke_calls == 0
-    assert workflow.state is None
 
 
 @pytest.mark.asyncio
@@ -771,8 +693,6 @@ async def test_openai_adapter_shadow_keeps_tools_disabled_for_memory_requests() 
     assert result.response_text_length == len("shadow memory reply")
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].tools == []
-    assert workflow.ainvoke_calls == 0
-    assert workflow.state is None
 
 
 @pytest.mark.asyncio
@@ -799,8 +719,6 @@ async def test_openai_adapter_shadow_reports_guided_exercise_agent() -> None:
     assert result.response_text_length is None
     assert runner.run_calls == []
     assert runner.stream_calls == []
-    assert workflow.ainvoke_calls == 0
-    assert workflow.state is None
 
 
 @pytest.mark.asyncio
@@ -825,8 +743,6 @@ async def test_openai_adapter_shadow_reports_crisis_agent_without_side_effects()
     assert result.selected_agent == CRISIS_AGENT_NAME
     assert result.response_text_length is None
     assert runner.run_calls == []
-    assert workflow.ainvoke_calls == 0
-    assert workflow.state is None
     assert await context.crisis_log_backend.arecord_count() == 0
 
 

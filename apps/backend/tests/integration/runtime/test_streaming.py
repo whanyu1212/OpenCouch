@@ -211,11 +211,9 @@ class TestRunTurnStreamStages:
         # Linear pre-finalize stages must appear in this exact order.
         # Memory extraction stages are no longer emitted by the graph —
         # extraction runs as a runtime-managed background task after
-        # finalize, outside the LangGraph status stream. ``finalize`` is
+        # finalize, outside the runtime status stream. ``finalize`` is
         # the terminal graph stage.
         assert stage_names == [
-            "crisis_gate",
-            "turn_dispatch",
             "load_memory",
             "therapeutic",
             "finalize",
@@ -464,7 +462,7 @@ class TestRunTurnStreamParity:
 
         This protects against subtle divergence (e.g., one path forgetting
         to stamp turn_total_ms, or one path clobbering state in a way the
-        other doesn't). Uses two separate threads so the checkpoints
+        other doesn't). Uses two separate threads so the state snapshots
         don't interfere.
         """
 

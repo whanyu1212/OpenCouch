@@ -219,7 +219,7 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ambiguous level-1 safety turns should not fall back to LangGraph."""
+    """Ambiguous level-1 safety turns should not fall back to runtime."""
 
     runner = FakeOpenAISDKRunner("Are you in immediate danger right now?")
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
@@ -345,7 +345,7 @@ async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Shadow comparison should not write checkpoints or transcript turns."""
+    """Shadow comparison should not write state snapshots or transcript turns."""
 
     runner = FakeOpenAISDKRunner("shadow-only reply")
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)

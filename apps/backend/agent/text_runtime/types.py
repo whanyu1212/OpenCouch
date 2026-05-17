@@ -6,12 +6,11 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, Protocol
 
-from langchain_core.runnables import RunnableConfig
-
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentGraphInputState, AgentState
 
-TextAgentRuntimeName = Literal["langgraph", "openai"]
+TextAgentRuntimeName = Literal["openai"]
+TextRuntimeConfig = Mapping[str, Any]
 TextRuntimeShadowStatus = Literal["eligible", "fallback", "error"]
 
 
@@ -77,16 +76,14 @@ TextRuntimeStreamEvent = (
 class TextAgentAdapter(Protocol):
     """Adapter boundary between persistent runtime and agent implementation."""
 
-    async def get_state(self, config: RunnableConfig) -> AgentState | None:
-        """Return the latest persisted state snapshot for a thread."""
-
     async def run_turn(
         self,
         initial_state: AgentGraphInputState,
         *,
-        config: RunnableConfig,
+        config: TextRuntimeConfig,
         context: WorkflowContext,
         session: Any | None = None,
+        prior_state: AgentState | None = None,
     ) -> Mapping[str, Any]:
         """Run one non-streaming text turn."""
 
@@ -94,17 +91,9 @@ class TextAgentAdapter(Protocol):
         self,
         initial_state: AgentGraphInputState,
         *,
-        config: RunnableConfig,
+        config: TextRuntimeConfig,
         context: WorkflowContext,
         session: Any | None = None,
+        prior_state: AgentState | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming text turn."""
-
-    async def update_state(
-        self,
-        config: RunnableConfig,
-        values: Mapping[str, Any],
-        *,
-        as_node: str | None = None,
-    ) -> None:
-        """Persist a state update through the runtime's checkpoint backend."""

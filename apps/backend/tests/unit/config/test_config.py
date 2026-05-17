@@ -13,7 +13,7 @@ def test_get_settings_defaults_to_postgres_backend(
     """Unset persistence env vars resolve to the Postgres backend with a null URL.
 
     The postgres-without-URL combination is rejected later by the runtime
-    constructor (see `validate_thread_checkpointer_config`); `get_settings`
+    constructor (see `validate_thread_state store_config`); `get_settings`
     itself returns a DTO and does not enforce the URL contract.
     """
 

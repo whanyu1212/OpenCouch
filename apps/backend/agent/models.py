@@ -137,9 +137,7 @@ def friendly_stage(stage: str) -> str:
 class ChunkEvent(BaseModel):
     """Incremental text chunk from response generation.
 
-    Mode nodes call ``get_stream_writer()`` to push chunks through
-    LangGraph's custom stream channel, which ``run_turn_stream`` maps to
-    ``ChunkEvent`` values.
+    Text runtimes emit these while streaming response text.
     """
 
     type: Literal["chunk"] = "chunk"

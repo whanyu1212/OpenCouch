@@ -5,15 +5,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from langgraph.config import get_stream_writer
-from langgraph.runtime import Runtime
-
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.therapeutic.prompts import build_therapeutic_response_prompt
 
 StreamWriterFactory = Callable[[], Callable[[dict[str, str]], None]]
 SystemPromptBuilder = Callable[[AgentState], str]
+
+
+def _noop_stream_writer_factory() -> Callable[[dict[str, str]], None]:
+    """Return a no-op stream writer for non-graph runtimes."""
+
+    return lambda _payload: None
 
 
 def therapeutic_response_delta(
@@ -39,21 +41,20 @@ def therapeutic_response_delta(
 
 async def run_streamed_response_style(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],
+    runtime: Any,
     *,
     response_style: str,
     system_prompt_builder: SystemPromptBuilder,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Run a therapeutic response style with streaming.
 
     Args:
         state: Current graph state for the turn.
-        runtime: LangGraph runtime carrying configured dependencies.
+        runtime: Runtime object carrying configured dependencies.
         response_style: Therapeutic response style name.
         system_prompt_builder: Function that builds the system prompt.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Parent-graph response delta for the therapeutic turn.
@@ -81,7 +82,7 @@ async def generate_streamed_therapeutic_text(
     response_style: str,
     system_prompt_builder: SystemPromptBuilder,
     step_directive: str | None = None,
-    stream_writer_factory: StreamWriterFactory = get_stream_writer,
+    stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> str:
     """Generate therapeutic response text with streaming.
 
@@ -92,8 +93,7 @@ async def generate_streamed_therapeutic_text(
         system_prompt_builder: Function that builds the system prompt.
         step_directive: Optional guided-exercise directive to pass into the
             shared therapeutic response prompt.
-        stream_writer_factory: Factory that returns the current LangGraph
-            stream writer.
+        stream_writer_factory: Factory that returns the current stream writer.
 
     Returns:
         Generated response text.

@@ -1,10 +1,9 @@
-"""Tests for therapeutic dispatch, response-style nodes, and subgraph wiring.
+"""Tests for therapeutic dispatch, response-style services, and one-shot routing.
 
 Covers three concerns:
     1. ``run_therapeutic_dispatch_node`` with mocked runtime + fake LLM
-    2. ``build_therapeutic_subgraph`` compiles to the expected shape
-    3. End-to-end via ``run_agent`` — each response style reaches its terminal
-       node with the right routing metadata and a non-empty response
+    2. End-to-end via ``run_agent`` — each response style reaches the right
+       runtime branch with routing metadata and a non-empty response
 
 These are unit/integration tests that run in the default pytest suite.
 Dataset-driven evals and live-API tests live in Stage G2.
@@ -37,11 +36,6 @@ from agent.therapeutic.exercises.node import (
     run_guided_exercise_response_node as _run_guided_exercise_response_node,
 )
 from agent.therapeutic.exercises.types import ExerciseStepDecision
-from agent.therapeutic.graph import (
-    TherapeuticSubgraphInput,
-    TherapeuticSubgraphOutput,
-    build_therapeutic_subgraph,
-)
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -282,7 +276,7 @@ class _FakeStepStateLLM(BaseLLMClient):
 class _MockRuntime:
     """Minimal runtime stand-in exposing only ``.context``.
 
-    LangGraph's real ``Runtime`` has many fields (store, stream_writer,
+    runtime's real ``Runtime`` has many fields (store, stream_writer,
     execution_info, etc.) but the dispatcher only reads ``context``,
     so a plain object suffices for these unit tests.
     """
@@ -773,35 +767,7 @@ class TestDispatchNode:
         assert cmd.update["therapeutic_approach"] == "motivational_interviewing"
 
 
-# ─── 3. build_therapeutic_subgraph compile tests ─────────────────────────
-
-
-class TestSubgraphCompile:
-    """Sanity checks on the compiled subgraph's shape."""
-
-    def test_subgraph_compiles_with_expected_nodes(self) -> None:
-        """The subgraph should compile and expose its simplified internal nodes."""
-
-        subgraph = build_therapeutic_subgraph()
-        node_names = set(subgraph.nodes.keys())
-
-        expected = {
-            "__start__",
-            "therapeutic_dispatch_node",
-            THERAPEUTIC_RESPONSE_NODE,
-            "guided_exercise_response_node",
-        }
-        assert expected.issubset(node_names), f"missing nodes: {expected - node_names}"
-
-    def test_subgraph_declares_explicit_input_and_output_schemas(self) -> None:
-        """The therapeutic subgraph should narrow its LangGraph boundary."""
-
-        subgraph = build_therapeutic_subgraph()
-        assert subgraph.builder.input_schema is TherapeuticSubgraphInput
-        assert subgraph.builder.output_schema is TherapeuticSubgraphOutput
-
-
-# ─── 4. End-to-end routing via run_agent ─────────────────────────────────
+# ─── 3. End-to-end routing via run_agent ─────────────────────────────────
 
 
 class TestEndToEndRouting:
@@ -813,12 +779,12 @@ class TestEndToEndRouting:
 
         result = await run_agent(
             AgentInput(message="I had a really rough day at work today."),
-            llm_client=_FakeDispatchLLM(),
+            llm_client=_FakeDispatchLLM(crisis_level=0),
         )
 
         assert result.response_type == ResponseCategory.THERAPEUTIC
         assert result.response_style == "supportive"
-        assert result.response_text == "fake"
+        assert result.response_text == "fake text"
 
     @pytest.mark.asyncio
     async def test_end_to_end_diagnostics_include_dispatch_trace(self) -> None:
@@ -826,13 +792,11 @@ class TestEndToEndRouting:
 
         result = await run_agent(
             AgentInput(message="I had a really rough day."),
-            llm_client=_FakeDispatchLLM(),
+            llm_client=_FakeDispatchLLM(crisis_level=0),
         )
-        trace = result.diagnostics["routing_trace"]
 
-        assert any(entry["stage"] == "dispatch" for entry in trace)
-        assert trace[-1]["stage"] == "dispatch"
-        assert trace[-1]["decision"].startswith("supportive")
+        assert result.diagnostics["openai_agent_primary_routing"] is True
+        assert result.diagnostics["openai_response_llm_override"] is True
 
     @pytest.mark.asyncio
     async def test_reflective_node_preserves_clean_reflection_when_llm_omits_question(
@@ -1052,7 +1016,7 @@ class TestEndToEndRouting:
         # HOLD: exercise_state is NOT in the delta (no state change), OR
         # exercise_state.exercise_step is still 0 if it IS in the delta.
         # The current implementation omits exercise_state on HOLD to signal
-        # "no state change," which is the idiomatic LangGraph pattern
+        # "no state change," which is the idiomatic runtime pattern
         # — but we tolerate either for robustness.
         if "exercise_state" in delta:
             assert delta["exercise_state"]["exercise_step"] == 0

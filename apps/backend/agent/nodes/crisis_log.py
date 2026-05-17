@@ -19,10 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langgraph.runtime import Runtime
-
 from agent.crisis_branch import _hash_session_id, write_crisis_log
-from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 
 # Keep ``_hash_session_id`` re-exported for existing imports; the canonical
@@ -32,13 +29,13 @@ __all__ = ["_hash_session_id", "run_crisis_log_node"]
 
 async def run_crisis_log_node(
     state: AgentState,
-    runtime: Runtime[WorkflowContext],
+    runtime: Any,
 ) -> dict[str, Any]:
     """Write a crisis event record to the crisis log backend.
 
     Args:
         state: Current graph state for the turn being processed.
-        runtime: LangGraph runtime carrying the crisis log backend.
+        runtime: Runtime object carrying the crisis log backend.
 
     Returns:
         An empty state delta. The node only performs the audit-log side effect.
