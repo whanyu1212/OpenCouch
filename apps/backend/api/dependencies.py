@@ -126,6 +126,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
         sqlite_path=str(DEFAULT_THREAD_DB_PATH),
         memory_backend=settings.persistence_backend,
         memory_database_url=settings.memory_database_url,
+        text_session_backend=settings.text_session_backend,
+        text_session_database_url=(
+            settings.text_session_database_url or settings.memory_database_url
+        ),
         thread_persistence_backend=settings.persistence_backend,
         thread_database_url=settings.memory_database_url,
         crisis_log_persistence_backend=settings.persistence_backend,

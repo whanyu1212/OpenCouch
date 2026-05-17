@@ -3905,6 +3905,11 @@ async def chat_loop(
         "sqlite" if is_guest_mode else settings.persistence_backend
     )
     runtime_database_url = None if is_guest_mode else settings.memory_database_url
+    runtime_text_session_database_url = (
+        None
+        if is_guest_mode
+        else settings.text_session_database_url or settings.memory_database_url
+    )
     # In guest mode, --user-id is meaningless (no long-term storage to
     # namespace). We don't reject it at the CLI layer because that would
     # require a pre-parse check, but we do drop it from the session so
@@ -3936,6 +3941,8 @@ async def chat_loop(
                         memory_mode=runtime_memory_mode,
                         memory_backend=runtime_persistence_backend,
                         memory_database_url=runtime_database_url,
+                        text_session_backend=settings.text_session_backend,
+                        text_session_database_url=runtime_text_session_database_url,
                         thread_persistence_backend=runtime_persistence_backend,
                         thread_database_url=runtime_database_url,
                         crisis_log_persistence_backend=runtime_persistence_backend,

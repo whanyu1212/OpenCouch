@@ -168,6 +168,48 @@ async def test_openai_adapter_runs_safe_therapeutic_turn_and_persists_state() ->
 
 
 @pytest.mark.asyncio
+async def test_openai_adapter_passes_sdk_session_to_safe_turn() -> None:
+    """OpenAI serving turns should pass the configured SDK session through."""
+
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("openai reply")
+    adapter = _adapter(workflow, runner)
+    sdk_session = object()
+
+    await adapter.run_turn(
+        cast(Any, _initial_state()),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(),
+        session=sdk_session,
+    )
+
+    assert runner.run_calls[0]["session"] is sdk_session
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_passes_sdk_session_to_streamed_safe_turn() -> None:
+    """Streaming OpenAI serving turns should also use the SDK session."""
+
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("openai reply")
+    adapter = _adapter(workflow, runner)
+    sdk_session = object()
+
+    events = [
+        event
+        async for event in adapter.run_turn_stream(
+            cast(Any, _initial_state()),
+            config={"configurable": {"thread_id": "thread-1"}},
+            context=_context(),
+            session=sdk_session,
+        )
+    ]
+
+    assert any(isinstance(event, TextRuntimeStateEvent) for event in events)
+    assert runner.stream_calls[0]["session"] is sdk_session
+
+
+@pytest.mark.asyncio
 async def test_openai_adapter_runs_memory_status_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner(

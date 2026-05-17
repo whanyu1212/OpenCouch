@@ -129,8 +129,11 @@ async def _assert_semantic_count_unchanged(
 def test_openai_agents_dependency_imports() -> None:
     """The backend venv should expose the SDK package this slice depends on."""
 
+    from agents.extensions.memory.sqlalchemy_session import SQLAlchemySession
+
     assert version("openai-agents") >= "0.17.2"
     assert Agent.__name__ == "Agent"
+    assert SQLAlchemySession.__name__ == "SQLAlchemySession"
 
 
 def test_openai_runtime_selector_is_enabled_for_hybrid_slice() -> None:

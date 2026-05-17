@@ -17,6 +17,7 @@ from llm.openai_client import DEFAULT_OPENAI_MODEL
 LLMProvider = Literal["gemini", "openai"]
 ResponseModelTier = Literal["fast", "quality"]
 PersistenceBackend = Literal["sqlite", "postgres"]
+TextSessionBackend = Literal["disabled", "sqlite", "sqlalchemy"]
 
 # Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
@@ -82,6 +83,8 @@ class Settings:
     response_quality_openai_model: str = DEFAULT_OPENAI_QUALITY_MODEL
     persistence_backend: PersistenceBackend = DEFAULT_PERSISTENCE_BACKEND
     memory_database_url: str | None = None
+    text_session_backend: TextSessionBackend = "disabled"
+    text_session_database_url: str | None = None
     langsmith_tracing: bool = False
     langsmith_endpoint: str | None = None
     langsmith_api_key: str | None = None
@@ -117,6 +120,10 @@ def get_settings() -> Settings:
         "OPENCOUCH_PERSISTENCE_BACKEND",
         DEFAULT_PERSISTENCE_BACKEND,
     )
+    text_session_backend = _read_text_session_backend_env(
+        "OPENCOUCH_TEXT_SESSION_BACKEND",
+        "disabled",
+    )
 
     return Settings(
         llm_provider=provider,
@@ -142,6 +149,8 @@ def get_settings() -> Settings:
         ),
         persistence_backend=persistence_backend,
         memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
+        text_session_backend=text_session_backend,
+        text_session_database_url=os.getenv("OPENCOUCH_TEXT_SESSION_DATABASE_URL"),
         langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
         in {"1", "true", "yes", "on"},
         langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),
@@ -178,6 +187,25 @@ def _read_persistence_backend_env(
     if raw == "postgres":
         return "postgres"
     raise ValueError(f"Unsupported {name} value: {raw}")
+
+
+def _read_text_session_backend_env(
+    name: str,
+    fallback: TextSessionBackend,
+) -> TextSessionBackend:
+    """Read and validate the OpenAI SDK text-session backend."""
+
+    raw = os.getenv(name, fallback).strip().lower()
+    if raw == "disabled":
+        return "disabled"
+    if raw == "sqlite":
+        return "sqlite"
+    if raw == "sqlalchemy":
+        return "sqlalchemy"
+    raise ValueError(
+        f"Unsupported {name} value: {raw}. "
+        "Supported values: disabled, sqlite, sqlalchemy."
+    )
 
 
 def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
