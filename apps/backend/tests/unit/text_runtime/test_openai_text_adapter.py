@@ -171,7 +171,7 @@ async def test_openai_adapter_runs_safe_therapeutic_turn_and_persists_state() ->
 async def test_openai_adapter_runs_memory_status_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner(
-        invoke_required_tool=True,
+        tool_calls=[("show_memory_status", {})],
         tool_response_as_final=True,
     )
     adapter = _adapter(workflow, runner)
@@ -179,7 +179,7 @@ async def test_openai_adapter_runs_memory_status_through_sdk_tool() -> None:
     result = await adapter.run_turn(
         cast(Any, _initial_state("What do you remember about me?")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(_RouteLLM(route="memory_control")),
+        context=_context(),
     )
 
     assert result["route"] == "memory_control"
@@ -195,18 +195,18 @@ async def test_openai_adapter_runs_memory_status_through_sdk_tool() -> None:
     assert workflow.ainvoke_calls == 0
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
-    assert "Required tool: show_memory_status" in runner.run_calls[0]["input_text"]
+    assert "Required tool:" not in runner.run_calls[0]["input_text"]
 
 
 @pytest.mark.asyncio
 async def test_openai_adapter_runs_saved_memory_list_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner(
-        invoke_required_tool=True,
+        tool_calls=[("show_saved_memory", {})],
         tool_response_as_final=True,
     )
     adapter = _adapter(workflow, runner)
-    context = _context(_RouteLLM(route="memory_control", memory_action_type="list"))
+    context = _context()
     await context.memory_store.aput(
         ("user-1", "semantic"),
         "fact-presentations",
@@ -234,25 +234,22 @@ async def test_openai_adapter_runs_saved_memory_list_through_sdk_tool() -> None:
     assert result["memory_control"]["pending_action"] is None
     assert workflow.ainvoke_calls == 0
     assert runner.run_calls
-    assert "Required tool: show_saved_memory" in runner.run_calls[0]["input_text"]
+    assert "Required tool:" not in runner.run_calls[0]["input_text"]
 
 
 @pytest.mark.asyncio
 async def test_openai_adapter_runs_memory_recall_update_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
+    runner = FakeOpenAISDKRunner(
+        tool_calls=[("set_proactive_memory_recall", {"enabled": True})],
+        tool_response_as_final=True,
+    )
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_turn(
         cast(Any, _initial_state("Turn proactive recall on.")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(
-            _RouteLLM(
-                route="memory_control",
-                memory_action_type="set_recall",
-                enabled=True,
-            )
-        ),
+        context=_context(),
     )
 
     assert result["route"] == "memory_control"
@@ -274,11 +271,17 @@ async def test_openai_adapter_runs_memory_recall_update_through_sdk_tool() -> No
 @pytest.mark.asyncio
 async def test_openai_adapter_runs_preference_save_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
-    adapter = _adapter(workflow, runner)
-    context = _context(
-        _RouteLLM(route="memory_control", memory_action_type="save_preference")
+    runner = FakeOpenAISDKRunner(
+        tool_calls=[
+            (
+                "save_response_preference",
+                {"preference_text": "direct answers when I am spiraling"},
+            )
+        ],
+        tool_response_as_final=True,
     )
+    adapter = _adapter(workflow, runner)
+    context = _context(_RouteLLM(route="therapeutic"))
 
     result = await adapter.run_turn(
         cast(Any, _initial_state("Please give me direct answers when I spiral.")),
@@ -302,7 +305,10 @@ async def test_openai_adapter_runs_preference_save_through_sdk_tool() -> None:
 @pytest.mark.asyncio
 async def test_openai_adapter_runs_grounded_lookup_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner(invoke_required_tool=True)
+    runner = FakeOpenAISDKRunner(
+        tool_calls=[("answer_grounded_lookup", {"query": "grounded query"})],
+        tool_response_as_final=True,
+    )
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_turn(
@@ -528,9 +534,7 @@ async def test_openai_adapter_handles_explicit_memory_reference_on_sdk_path() ->
     result = await adapter.run_turn(
         cast(Any, _initial_state("What did we work out last time?")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(
-            _RouteLLM(route="therapeutic", memory_reference_mode="explicit")
-        ),
+        context=_context(),
     )
 
     assert result["route"] == "therapeutic"
@@ -619,30 +623,32 @@ async def test_openai_adapter_shadow_runs_without_persisting_state() -> None:
     assert result.sdk_duration_ms is not None
     assert result.shadow_duration_ms is not None
     assert runner.run_calls
+    assert runner.run_calls[0]["agent"].tools == []
     assert workflow.ainvoke_calls == 0
     assert workflow.state is None
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_shadow_reports_memory_tool_eligibility() -> None:
+async def test_openai_adapter_shadow_keeps_tools_disabled_for_memory_requests() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner()
+    runner = FakeOpenAISDKRunner("shadow memory reply")
     adapter = _adapter(workflow, runner)
 
     result = await adapter.run_shadow_turn(
         cast(Any, _initial_state("What do you remember about me?")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(_RouteLLM(route="memory_control")),
+        context=_context(),
     )
 
     assert result.status == "eligible"
     assert result.eligible is True
     assert result.fallback_reason is None
-    assert result.route == "memory_control"
-    assert result.memory_action_type == "status"
+    assert result.route == "therapeutic"
+    assert result.memory_action_type is None
     assert result.selected_agent == THERAPEUTIC_AGENT_NAME
-    assert result.response_text_length is None
-    assert runner.run_calls == []
+    assert result.response_text_length == len("shadow memory reply")
+    assert runner.run_calls
+    assert runner.run_calls[0]["agent"].tools == []
     assert workflow.ainvoke_calls == 0
     assert workflow.state is None
 
@@ -800,7 +806,7 @@ async def test_openai_adapter_streams_crisis_response_turn() -> None:
 async def test_openai_adapter_streams_memory_control_turn_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner(
-        invoke_required_tool=True,
+        tool_calls=[("show_memory_status", {})],
         tool_response_as_final=True,
     )
     adapter = _adapter(workflow, runner)
@@ -810,12 +816,12 @@ async def test_openai_adapter_streams_memory_control_turn_through_sdk_tool() -> 
         async for event in adapter.run_turn_stream(
             cast(Any, _initial_state("What is my memory status?")),
             config={"configurable": {"thread_id": "thread-1"}},
-            context=_context(_RouteLLM(route="memory_control")),
+            context=_context(),
         )
     ]
 
     assert events[0] == TextRuntimeStatusEvent(
-        stage="memory_control",
+        stage="load_memory",
         turn_finalized=False,
     )
     assert events[-2] == TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
@@ -828,5 +834,5 @@ async def test_openai_adapter_streams_memory_control_turn_through_sdk_tool() -> 
     assert events[-1].state["diagnostics"]["openai_memory_tool_calls"] == [
         "show_memory_status"
     ]
-    assert runner.run_calls
-    assert runner.stream_calls == []
+    assert runner.run_calls == []
+    assert runner.stream_calls

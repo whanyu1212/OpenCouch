@@ -67,7 +67,7 @@ async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
 
     runner = FakeOpenAISDKRunner(
         "unused sdk reply",
-        invoke_required_tool=True,
+        tool_calls=[("show_memory_status", {})],
         tool_response_as_final=True,
     )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
@@ -110,7 +110,7 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_sdk_tool(
 
     runner = FakeOpenAISDKRunner(
         "unused sdk reply",
-        invoke_required_tool=True,
+        tool_calls=[("answer_grounded_lookup", {"query": "grounded query"})],
         tool_response_as_final=True,
     )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
@@ -289,7 +289,7 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
 
     runner = FakeOpenAISDKRunner(
         "unused sdk reply",
-        invoke_required_tool=True,
+        tool_calls=[("show_memory_status", {})],
         tool_response_as_final=True,
     )
     monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
@@ -321,8 +321,8 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
         ]
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].output.response_style == "memory_control"
-        assert runner.run_calls
-        assert runner.stream_calls == []
+        assert runner.run_calls == []
+        assert runner.stream_calls
 
 
 @pytest.mark.asyncio

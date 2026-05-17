@@ -20,10 +20,12 @@ class FakeOpenAISDKRunner:
         final_output: str = "openai reply",
         *,
         invoke_required_tool: bool = False,
+        tool_calls: list[tuple[str, dict[str, Any]]] | None = None,
         tool_response_as_final: bool = False,
     ) -> None:
         self.final_output = final_output
         self.invoke_required_tool = invoke_required_tool
+        self.tool_calls = list(tool_calls or [])
         self.tool_response_as_final = tool_response_as_final
         self.run_calls: list[dict[str, Any]] = []
         self.stream_calls: list[dict[str, Any]] = []
@@ -39,6 +41,13 @@ class FakeOpenAISDKRunner:
             {"agent": agent, "input_text": input_text, "context": context}
         )
         tool_result = None
+        for tool_name, arguments in self.tool_calls:
+            tool_result = await _invoke_named_tool(
+                agent,
+                context,
+                tool_name,
+                arguments,
+            )
         if self.invoke_required_tool:
             tool_result = await _invoke_required_tool(agent, input_text, context)
         final_output = self.final_output
@@ -56,16 +65,46 @@ class FakeOpenAISDKRunner:
         self.stream_calls.append(
             {"agent": agent, "input_text": input_text, "context": context}
         )
-        return FakeOpenAIStream(self.final_output)
+        return FakeOpenAIStream(
+            self.final_output,
+            agent=agent,
+            context=context,
+            tool_calls=self.tool_calls,
+            tool_response_as_final=self.tool_response_as_final,
+        )
 
 
 class FakeOpenAIStream:
     """Deterministic streaming result fake for the Agents SDK."""
 
-    def __init__(self, final_output: str) -> None:
+    def __init__(
+        self,
+        final_output: str,
+        *,
+        agent: Any,
+        context: Any,
+        tool_calls: list[tuple[str, dict[str, Any]]],
+        tool_response_as_final: bool,
+    ) -> None:
         self.final_output = final_output
+        self._agent = agent
+        self._context = context
+        self._tool_calls = list(tool_calls)
+        self._tool_response_as_final = tool_response_as_final
 
     async def stream_events(self) -> AsyncIterator[SimpleNamespace]:
+        tool_result = None
+        for tool_name, arguments in self._tool_calls:
+            tool_result = await _invoke_named_tool(
+                self._agent,
+                self._context,
+                tool_name,
+                arguments,
+            )
+        if self._tool_response_as_final and tool_result is not None:
+            self.final_output = str(
+                getattr(tool_result, "response_text", self.final_output)
+            )
         yield SimpleNamespace(
             type="raw_response_event",
             data=SimpleNamespace(
@@ -106,7 +145,17 @@ async def _invoke_required_tool(
     tool_name = _required_tool_name(input_text)
     if tool_name is None:
         return None
-    arguments = _required_tool_arguments(input_text)
+    arguments = json.loads(_required_tool_arguments(input_text))
+    return await _invoke_named_tool(agent, context, tool_name, arguments)
+
+
+async def _invoke_named_tool(
+    agent: Any,
+    context: Any,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> Any:
+    payload = json.dumps(arguments)
     for tool in getattr(agent, "tools", []):
         if getattr(tool, "name", None) != tool_name:
             continue
@@ -115,9 +164,9 @@ async def _invoke_required_tool(
                 context,
                 tool_name=tool.name,
                 tool_call_id=f"call-{tool.name}",
-                tool_arguments=arguments,
+                tool_arguments=payload,
             ),
-            arguments,
+            payload,
         )
     raise AssertionError(f"Required tool {tool_name!r} was not attached to agent.")
 
