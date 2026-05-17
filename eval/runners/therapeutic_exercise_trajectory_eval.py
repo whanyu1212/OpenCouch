@@ -23,8 +23,8 @@ from eval.runners.therapeutic_common import (
     ScriptedTherapeuticLLM,
     TherapeuticEvalCase,
     build_live_therapeutic_llms,
-    deep_update,
     grade_therapeutic_output,
+    invoke_therapeutic_branch,
     last_routing_decision,
     parse_therapeutic_case,
 )
@@ -193,15 +193,8 @@ class TherapeuticExerciseTrajectoryEvaluator(BaseEvaluator[ExerciseTrajectoryCas
         self,
         case: ExerciseTrajectoryCase,
     ) -> list[dict[str, Any]]:
-        from agent.audit.crisis_log import InMemoryCrisisLogBackend
-        from agent.graph import build_initial_state
-        from agent.memory.modes import MemoryMode
         from agent.memory.store import OpenCouchMemoryStore
-        from agent.models import AgentInput, Message
-        from agent.runtime_context import WorkflowContext
-        from agent.therapeutic.graph import build_therapeutic_subgraph
 
-        subgraph = build_therapeutic_subgraph()
         memory_store = OpenCouchMemoryStore()
         history: list[dict[str, str]] = []
         carried_state = dict(case.initial_state)
@@ -209,29 +202,19 @@ class TherapeuticExerciseTrajectoryEvaluator(BaseEvaluator[ExerciseTrajectoryCas
 
         for index, turn in enumerate(case.turns):
             llm_client, response_llm = self._turn_llms(turn)
-            state = dict(
-                build_initial_state(
-                    AgentInput(
-                        message=turn.message,
-                        history=[Message.model_validate(item) for item in history],
-                        session_id=case.id,
-                    ),
-                    include_input_history=True,
-                )
-            )
-            deep_update(state, carried_state)
-            exercise_state_before = dict(state.get("exercise_state") or {})
-            output = dict(
-                await subgraph.ainvoke(
-                    state,
-                    context=WorkflowContext(
-                        llm_client=llm_client,
-                        response_llm=response_llm,
-                        memory_store=memory_store,
-                        crisis_log_backend=InMemoryCrisisLogBackend(),
-                        memory_mode=MemoryMode.INCOGNITO,
-                    ),
-                )
+            exercise_state_before = dict(carried_state.get("exercise_state") or {})
+            output = await invoke_therapeutic_branch(
+                TherapeuticEvalCase(
+                    id=turn.case.id,
+                    message=turn.message,
+                    history=history,
+                    state=dict(carried_state),
+                    scripted=turn.case.scripted,
+                    expected=turn.expected,
+                ),
+                llm_client=llm_client,
+                response_llm=response_llm,
+                memory_store=memory_store,
             )
 
             _carry_forward(carried_state, output)

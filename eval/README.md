@@ -36,7 +36,7 @@ as pacing, coherence, adaptation, and therapeutic usefulness.
 
 Evals are split by purpose:
 
-- `therapeutic_contract_eval.py`: small CI-safe checks for graph boundary,
+- `therapeutic_contract_eval.py`: small CI-safe checks for branch boundaries,
   routing contract, state transitions, and expected hard failures.
 - `therapeutic_behavior_eval.py`: broader routing, exercise selection, and
   lifecycle behavior cases. Defaults to scripted mode; `--mode live` uses the
@@ -49,7 +49,7 @@ Evals are split by purpose:
   add an LLM judge with `--judge-mode live`.
 - `therapeutic_path_trajectory_eval.py`: parent-graph therapeutic trajectory
   checks for the normal non-crisis path through turn dispatch, memory loading,
-  therapeutic subgraph execution, guided-exercise continuity, cross-branch
+  therapeutic branch execution, guided-exercise continuity, cross-branch
   interruptions, and finalization.
 - `crisis_topology_eval.py`: CI-safe parent-graph checks for the LLM-only
   crisis gate, crisis/non-crisis branch isolation, and visible failure when the

@@ -10,9 +10,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 from uuid import uuid4
 
 from eval.runners.base import (
@@ -69,15 +67,12 @@ class RuntimePaths:
     feedback: Path
 
 
-class _FailingGraph:
-    async def aget_state(self, config: Any) -> SimpleNamespace:  # noqa: ANN401
-        return SimpleNamespace(values=None)
+class _FailingTextAdapter:
+    async def run_turn(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("scripted text-runtime failure")
 
-    async def ainvoke(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError("scripted graph failure")
-
-    async def astream(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("scripted graph failure")
+    async def run_turn_stream(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("scripted text-runtime failure")
         yield
 
 
@@ -263,13 +258,12 @@ class RuntimeRecoveryTrajectoryEvaluator(BaseEvaluator[RuntimeRecoveryCase]):
             )
 
         if step.type == "failed_turn":
-            runtime._graph = None  # noqa: SLF001
-            with patch(
-                "agent.persistence.build_agent_workflow",
-                lambda checkpointer: _FailingGraph(),  # noqa: ARG005
-            ):
+            previous_adapter = runtime._text_agent_adapter  # noqa: SLF001
+            runtime._text_agent_adapter = _FailingTextAdapter()  # noqa: SLF001
+            try:
                 artifact = await _run_turn(runtime, _step_as_turn(step), run_id=run_id)
-            runtime._graph = None  # noqa: SLF001
+            finally:
+                runtime._text_agent_adapter = previous_adapter  # noqa: SLF001
             return _step_artifact(
                 step,
                 step_index=step_index,

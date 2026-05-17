@@ -832,13 +832,21 @@ class OpenAITextAgentAdapter:
         action = _memory_action_payload_from_state(state)
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
-        _, sdk_duration_ms = await self._run_openai_agent_with(
-            state,
-            agent=agent,
-            input_text=self._memory_tool_input_text_for_state(state, action),
-            run_context=run_context,
-            session=session,
-        )
+        sdk_duration_ms: float | None
+        fallback_reason: str | None = None
+        try:
+            _, sdk_duration_ms = await self._run_openai_agent_with(
+                state,
+                agent=agent,
+                input_text=self._memory_tool_input_text_for_state(state, action),
+                run_context=run_context,
+                session=session,
+            )
+        except Exception as exc:
+            if not _can_fallback_to_control_response(exc, context):
+                raise
+            sdk_duration_ms = None
+            fallback_reason = _openai_sdk_fallback_reason(exc)
         tool_result = run_context.latest_memory_tool_result(action_type)
         diagnostics: dict[str, Any] = {
             **dict(state.get("diagnostics", {}) or {}),
@@ -850,6 +858,8 @@ class OpenAITextAgentAdapter:
                 call.side_effect for call in run_context.memory_tool_calls
             ],
         }
+        if fallback_reason is not None:
+            diagnostics["openai_sdk_fallback_reason"] = fallback_reason
 
         if tool_result is None:
             fallback_result = await execute_memory_control_request(
@@ -896,13 +906,21 @@ class OpenAITextAgentAdapter:
     ) -> AgentState:
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
-        _, sdk_duration_ms = await self._run_openai_agent_with(
-            state,
-            agent=agent,
-            input_text=self._grounded_lookup_input_text_for_state(state, query),
-            run_context=run_context,
-            session=session,
-        )
+        sdk_duration_ms: float | None
+        fallback_reason: str | None = None
+        try:
+            _, sdk_duration_ms = await self._run_openai_agent_with(
+                state,
+                agent=agent,
+                input_text=self._grounded_lookup_input_text_for_state(state, query),
+                run_context=run_context,
+                session=session,
+            )
+        except Exception as exc:
+            if not _can_fallback_to_control_response(exc, context):
+                raise
+            sdk_duration_ms = None
+            fallback_reason = _openai_sdk_fallback_reason(exc)
         tool_result = run_context.latest_grounded_tool_result()
         diagnostics: dict[str, Any] = {
             **dict(state.get("diagnostics", {}) or {}),
@@ -911,6 +929,8 @@ class OpenAITextAgentAdapter:
                 call.tool_name for call in run_context.grounded_tool_calls
             ],
         }
+        if fallback_reason is not None:
+            diagnostics["openai_sdk_fallback_reason"] = fallback_reason
 
         if tool_result is None:
             fallback_delta = await build_grounded_lookup_delta(state, context)

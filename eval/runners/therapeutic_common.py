@@ -6,6 +6,7 @@ import sys
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,16 @@ ALLOWED_THERAPEUTIC_OUTPUT_KEYS = {
     "response_guidance",
     "exercise_state",
     "diagnostics",
+}
+
+_DICT_REDUCER_KEYS = {
+    "diagnostics",
+    "exercise_state",
+    "grounded_lookup",
+    "memory_control",
+    "procedural_profile",
+    "session_memory",
+    "session_progress",
 }
 
 
@@ -159,30 +170,38 @@ def build_scripted_llm(case: TherapeuticEvalCase) -> ScriptedTherapeuticLLM:
     return ScriptedTherapeuticLLM(case.scripted)
 
 
-async def invoke_therapeutic_subgraph(
+async def invoke_therapeutic_branch(
     case: TherapeuticEvalCase,
     *,
     llm_client: Any | None,
     response_llm: Any | None = None,
+    memory_store: Any | None = None,
 ) -> dict[str, Any]:
-    """Invoke the real therapeutic subgraph for a case.
+    """Invoke the real therapeutic branch services for a case.
 
     Args:
         case (TherapeuticEvalCase): Parsed eval case.
         llm_client (Any | None): Control-plane LLM client.
         response_llm (Any | None): Response LLM client. Defaults to llm_client.
+        memory_store (Any | None): Optional shared memory store.
 
     Returns:
-        dict[str, Any]: Parent-visible subgraph output.
+        dict[str, Any]: Parent-visible therapeutic branch output.
     """
 
     from agent.audit.crisis_log import InMemoryCrisisLogBackend
     from agent.graph import build_initial_state
+    from agent.memory.load_turn import build_load_memory_delta
     from agent.memory.modes import MemoryMode
     from agent.memory.store import OpenCouchMemoryStore
     from agent.models import AgentInput, Message
     from agent.runtime_context import WorkflowContext
-    from agent.therapeutic.graph import build_therapeutic_subgraph
+    from agent.therapeutic.dispatch import (
+        build_therapeutic_dispatch_update,
+        plan_therapeutic_route,
+    )
+    from agent.therapeutic.exercises.runner import ExerciseRunner
+    from agent.therapeutic.response import run_therapeutic_response_node
 
     history = [Message.model_validate(item) for item in case.history]
     state = dict(
@@ -197,18 +216,35 @@ async def invoke_therapeutic_subgraph(
     )
     deep_update(state, case.state)
 
-    subgraph = build_therapeutic_subgraph()
-    raw_output = await subgraph.ainvoke(
-        state,
-        context=WorkflowContext(
-            llm_client=llm_client,
-            response_llm=response_llm or llm_client,
-            memory_store=OpenCouchMemoryStore(),
-            crisis_log_backend=InMemoryCrisisLogBackend(),
-            memory_mode=MemoryMode.INCOGNITO,
-        ),
+    context = WorkflowContext(
+        llm_client=llm_client,
+        response_llm=response_llm or llm_client,
+        memory_store=memory_store or OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.INCOGNITO,
     )
-    return dict(raw_output)
+    _apply_agent_delta(state, await build_load_memory_delta(state, context))
+
+    dispatch_plan = await plan_therapeutic_route(state, llm_client)
+    _apply_agent_delta(
+        state,
+        build_therapeutic_dispatch_update(state, dispatch_plan),
+    )
+
+    if state.get("response_style") == "guided_exercise":
+        delta = await ExerciseRunner(
+            classifier_llm=llm_client,
+            response_llm=response_llm or llm_client,
+            memory_store=context.memory_store,
+            memory_mode=context.memory_mode,
+        ).run(state)
+    else:
+        delta = await run_therapeutic_response_node(
+            state,
+            SimpleNamespace(context=context),
+        )
+    _apply_agent_delta(state, delta)
+    return {key: state[key] for key in ALLOWED_THERAPEUTIC_OUTPUT_KEYS if key in state}
 
 
 def grade_therapeutic_output(
@@ -387,6 +423,17 @@ def deep_update(target: dict[str, Any], patch: Mapping[str, Any]) -> None:
         current = target.get(key)
         if isinstance(current, dict) and isinstance(value, Mapping):
             deep_update(current, value)
+        else:
+            target[key] = value
+
+
+def _apply_agent_delta(target: dict[str, Any], delta: Mapping[str, Any]) -> None:
+    for key, value in delta.items():
+        if key in _DICT_REDUCER_KEYS:
+            target[key] = {
+                **dict(target.get(key, {}) or {}),
+                **dict(value or {}),
+            }
         else:
             target[key] = value
 
