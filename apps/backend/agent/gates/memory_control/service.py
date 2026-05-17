@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -52,6 +53,59 @@ class MemoryControlServiceResult:
     response_text: str
     memory_control: dict[str, Any]
     procedural_profile: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class MemoryControlRequest:
+    """Framework-neutral input for one memory-management action."""
+
+    owner_id: str | None
+    current_user_message: str
+    action: Mapping[str, Any]
+    pending_action: Mapping[str, Any] | None = None
+    session_id: str | None = None
+    turn_count: int = 0
+
+
+def memory_control_request_from_state(state: AgentState) -> MemoryControlRequest:
+    """Build a framework-neutral memory-control request from graph state."""
+
+    try:
+        owner_id = resolve_owner_id(state)
+    except ValueError:
+        owner_id = None
+
+    memory_control = state.get("memory_control", {}) or {}
+    raw_action = (
+        memory_control.get("action", {}) if isinstance(memory_control, Mapping) else {}
+    )
+    action = cast(Mapping[str, Any], raw_action)
+
+    raw_pending = (
+        memory_control.get("pending_action")
+        if isinstance(memory_control, Mapping)
+        else None
+    )
+    pending_action = raw_pending if isinstance(raw_pending, Mapping) else None
+
+    session_progress = state.get("session_progress", {}) or {}
+    raw_turn_count = (
+        session_progress.get("turn_count", 0)
+        if isinstance(session_progress, Mapping)
+        else 0
+    )
+    turn_count = raw_turn_count if isinstance(raw_turn_count, int) else 0
+
+    session_id = str(state.get("session_id") or "") or None
+
+    return MemoryControlRequest(
+        owner_id=owner_id,
+        current_user_message=str(state.get("message", "") or ""),
+        action=action,
+        pending_action=pending_action,
+        session_id=session_id,
+        turn_count=turn_count,
+    )
 
 
 def _empty_memory_reply() -> str:
@@ -147,25 +201,24 @@ def _incognito_reply() -> str:
     )
 
 
-async def _owner_or_reply(state: AgentState) -> tuple[str | None, str | None]:
+def _owner_or_reply(owner_id: str | None) -> tuple[str | None, str | None]:
     """Resolve the memory owner or return a user-facing failure reply.
 
     Args:
-        state (AgentState): Current graph state containing user/session identity.
+        owner_id: Stable memory owner for this request, when available.
 
     Returns:
         tuple[str | None, str | None]: ``(owner_id, None)`` on success,
             otherwise ``(None, reply)``.
     """
 
-    try:
-        return resolve_owner_id(state), None
-    except ValueError:
+    if owner_id is None:
         return (
             None,
             "I don't have a stable memory owner for this conversation, so I can't "
             "show or edit saved memory here.",
         )
+    return owner_id, None
 
 
 async def _handle_status(
@@ -198,13 +251,13 @@ async def _handle_status(
 
 def _build_preference_rule_prompt(
     *,
-    state: AgentState,
+    current_user_message: str,
     preference_text: str,
 ) -> str:
     """Build the focused rule-writing prompt for explicit preferences.
 
     Args:
-        state (AgentState): Current graph state.
+        current_user_message: Current user message used as evidence.
         preference_text (str): Preference phrase selected by turn dispatch.
 
     Returns:
@@ -228,7 +281,7 @@ def _build_preference_rule_prompt(
         "rule_text: Do not suggest journaling.\n\n"
         "preference_text: ask fewer questions\n"
         "rule_text: You prefer fewer questions.\n\n"
-        f'Current user message: "{state.get("message", "")}"\n'
+        f'Current user message: "{current_user_message}"\n'
         f'preference_text: "{preference_text}"'
     )
 
@@ -250,14 +303,14 @@ async def _write_preference_rule(
     *,
     action: SavePreferenceAction,
     context: WorkflowContext,
-    state: AgentState,
+    current_user_message: str,
 ) -> str:
     """Generate the final procedural rule for an explicit preference.
 
     Args:
         action (SavePreferenceAction): Save-preference action payload.
         context (WorkflowContext): Runtime context containing the control LLM.
-        state (AgentState): Current graph state for evidence.
+        current_user_message: Current user message used as evidence.
 
     Returns:
         str: Final rule text to persist.
@@ -271,7 +324,7 @@ async def _write_preference_rule(
 
     decision = await context.llm_client.generate_structured(
         prompt=_build_preference_rule_prompt(
-            state=state,
+            current_user_message=current_user_message,
             preference_text=action.preference_text,
         ),
         response_schema=PreferenceRuleDecision,
@@ -302,7 +355,7 @@ async def _handle_save_preference(
     action: SavePreferenceAction,
     context: WorkflowContext,
     owner_id: str,
-    state: AgentState,
+    request: MemoryControlRequest,
 ) -> MemoryControlServiceResult:
     if context.llm_client is None:
         raise RuntimeError("save_preference requires an LLM client.")
@@ -310,13 +363,13 @@ async def _handle_save_preference(
     rule_text = await _write_preference_rule(
         action=action,
         context=context,
-        state=state,
+        current_user_message=request.current_user_message,
     )
     saved_rule = await save_preference_rule(
         context.memory_store,
         owner_id=owner_id,
         rule_text=rule_text,
-        evidence=state.get("message", ""),
+        evidence=request.current_user_message,
         llm_client=context.llm_client,
     )
     return MemoryControlServiceResult(
@@ -369,9 +422,12 @@ async def _handle_forget_by_query(
 
 
 async def _handle_confirm_pending(
-    *, store: Any, owner_id: str, state: AgentState
+    *,
+    store: Any,
+    owner_id: str,
+    pending_action: Mapping[str, Any] | None,
 ) -> MemoryControlServiceResult:
-    pending = (state.get("memory_control", {}) or {}).get("pending_action") or {}
+    pending = pending_action or {}
     target = pending.get("target")
     if not isinstance(target, dict):
         return MemoryControlServiceResult(
@@ -411,23 +467,44 @@ async def execute_memory_control_action(
             updates.
     """
 
+    return await execute_memory_control_request(
+        memory_control_request_from_state(state),
+        context,
+    )
+
+
+async def execute_memory_control_request(
+    request: MemoryControlRequest,
+    context: WorkflowContext,
+) -> MemoryControlServiceResult:
+    """Execute an explicit memory-management action from neutral input.
+
+    Args:
+        request: Framework-neutral memory action request.
+        context: Workflow context carrying memory dependencies.
+
+    Returns:
+        MemoryControlServiceResult: User-facing reply plus memory-management state
+            updates.
+    """
+
     if context.memory_mode == MemoryMode.INCOGNITO:
         return MemoryControlServiceResult(
             response_text=_incognito_reply(),
             memory_control={"pending_action": None},
         )
 
-    owner_id, failure_reply = await _owner_or_reply(state)
+    owner_id, failure_reply = _owner_or_reply(request.owner_id)
     if owner_id is None:
         return MemoryControlServiceResult(
             response_text=failure_reply or _empty_memory_reply(),
             memory_control={"pending_action": None},
         )
 
-    raw_action = (state.get("memory_control", {}) or {}).get("action", {}) or {}
-    if not isinstance(raw_action, dict):
+    raw_action = request.action or {}
+    if not isinstance(raw_action, Mapping):
         raise ValueError("memory_control.action must be a mapping.")
-    action = parse_memory_control_action(raw_action)
+    action = parse_memory_control_action(dict(raw_action))
 
     store = context.memory_store
 
@@ -449,7 +526,10 @@ async def execute_memory_control_action(
             )
         case SavePreferenceAction():
             return await _handle_save_preference(
-                action=action, context=context, owner_id=owner_id, state=state
+                action=action,
+                context=context,
+                owner_id=owner_id,
+                request=request,
             )
         case ForgetByIndexAction():
             return await _handle_forget_by_index(
@@ -461,7 +541,9 @@ async def execute_memory_control_action(
             )
         case ConfirmPendingAction():
             return await _handle_confirm_pending(
-                store=store, owner_id=owner_id, state=state
+                store=store,
+                owner_id=owner_id,
+                pending_action=request.pending_action,
             )
         case CancelPendingAction():
             return MemoryControlServiceResult(

@@ -17,7 +17,11 @@ from agent.nodes.turn_dispatch import run_turn_dispatch_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.turn_dispatch import build_turn_dispatch_prompt
-from agent.tools.grounded_search import answer_factual_lookup
+from agent.tools.grounded_search import (
+    GroundedLookupRequest,
+    answer_factual_lookup,
+    answer_factual_lookup_request,
+)
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -262,6 +266,39 @@ async def test_answer_factual_lookup_uses_search_grounding() -> None:
         "GroundedLookupResult",
     ]
     assert [call["use_search"] for call in llm.structured_calls] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_answer_factual_lookup_accepts_neutral_request() -> None:
+    llm = _FakeSearchLLM(
+        [
+            {
+                "status": "search",
+                "search_query": "current rule",
+                "answer": "",
+                "reasoning": "Specific factual lookup.",
+            },
+            {
+                "status": "answered",
+                "answer": "Official answer.",
+                "sources": ["Official source"],
+                "source_quality": "official",
+                "reasoning": "Official source found.",
+            },
+        ]
+    )
+
+    answer, status = await answer_factual_lookup_request(
+        GroundedLookupRequest(
+            query="Can you look up the current rule?",
+            current_user_message="Can you look up the current rule?",
+            transcript=(),
+        ),
+        llm_client=llm,
+    )
+
+    assert status == "answered"
+    assert answer == "Official answer.\n\nSources:\n- Official source"
 
 
 @pytest.mark.asyncio

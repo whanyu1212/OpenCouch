@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, cast
+from typing import Any, Literal, Mapping
 
-from agent.memory.modes import MemoryMode
-from agent.models import Channel, CrisisAssessment
+from agent.models import Channel
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
 
 
 MemoryActionType = Literal[
@@ -241,112 +239,6 @@ class OpenAITextRunContext:
             self.guided_exercise_skill_tool_calls[-1]
             if self.guided_exercise_skill_tool_calls
             else None
-        )
-
-    def agent_state_for_memory_action(self, action: Mapping[str, Any]) -> AgentState:
-        """Return a minimal LangGraph-state-shaped payload for memory services.
-
-        The OpenAI tools reuse existing memory-control services instead of
-        duplicating behavior. Those services currently accept ``AgentState``,
-        so this adapter builds only the fields they need plus safe defaults for
-        persistent channels.
-        """
-
-        memory_control: dict[str, Any] = {"action": dict(action)}
-        if self.pending_memory_action is not None:
-            memory_control["pending_action"] = dict(self.pending_memory_action)
-
-        return cast(
-            AgentState,
-            {
-                "message": self.current_user_message,
-                "transcript": list(self.transcript),
-                "channel": self.channel,
-                "user_id": self.user_id,
-                "session_id": self.session_id or self.thread_id,
-                "installed_skills": list(self.installed_skills),
-                "working_memory": [],
-                "session_memory": {"summary": ""},
-                "procedural_profile": {},
-                "session_progress": {
-                    "turn_count": self.turn_count,
-                    "is_guest": self.workflow_context.memory_mode
-                    == MemoryMode.INCOGNITO,
-                },
-                "exercise_state": {},
-                "memory_control": memory_control,
-                "grounded_lookup": {"query": "", "status": "not_attempted"},
-                "crisis": CrisisAssessment(),
-                "diagnostics": {},
-            },
-        )
-
-    def agent_state_for_grounded_lookup(self, query: str) -> AgentState:
-        """Return a minimal state payload for grounded lookup services."""
-
-        return cast(
-            AgentState,
-            {
-                "message": self.current_user_message,
-                "transcript": list(self.transcript),
-                "channel": self.channel,
-                "user_id": self.user_id,
-                "session_id": self.session_id or self.thread_id,
-                "installed_skills": list(self.installed_skills),
-                "working_memory": [],
-                "session_memory": {"summary": ""},
-                "procedural_profile": {},
-                "session_progress": {
-                    "turn_count": self.turn_count,
-                    "is_guest": self.workflow_context.memory_mode
-                    == MemoryMode.INCOGNITO,
-                },
-                "exercise_state": {},
-                "memory_control": {
-                    "pending_action": (
-                        dict(self.pending_memory_action)
-                        if self.pending_memory_action is not None
-                        else None
-                    )
-                },
-                "grounded_lookup": {"query": query, "status": "not_attempted"},
-                "crisis": CrisisAssessment(),
-                "diagnostics": {},
-            },
-        )
-
-    def agent_state_for_crisis_resources(self) -> AgentState:
-        """Return a minimal state payload for crisis-resource lookup."""
-
-        return cast(
-            AgentState,
-            {
-                "message": self.current_user_message,
-                "transcript": list(self.transcript),
-                "channel": self.channel,
-                "user_id": self.user_id,
-                "session_id": self.session_id or self.thread_id,
-                "installed_skills": list(self.installed_skills),
-                "working_memory": [],
-                "session_memory": {"summary": ""},
-                "procedural_profile": {},
-                "session_progress": {
-                    "turn_count": self.turn_count,
-                    "is_guest": self.workflow_context.memory_mode
-                    == MemoryMode.INCOGNITO,
-                },
-                "exercise_state": {},
-                "memory_control": {
-                    "pending_action": (
-                        dict(self.pending_memory_action)
-                        if self.pending_memory_action is not None
-                        else None
-                    )
-                },
-                "grounded_lookup": {"query": "", "status": "not_attempted"},
-                "crisis": CrisisAssessment(),
-                "diagnostics": {},
-            },
         )
 
 
