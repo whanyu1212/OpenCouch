@@ -37,6 +37,10 @@ from agent.therapeutic.exercises.types import ExerciseDefinition, ExerciseStep
 from agent.therapeutic.exercises.node import (
     run_guided_exercise_response_node as _run_guided_exercise_response_node,
 )
+from agent.therapeutic.exercises.memory import (
+    ExerciseCompletionMemoryRequest,
+    write_exercise_completion_fact,
+)
 
 # ── Helper ────────────────────────────────────────────────────────────
 
@@ -667,6 +671,28 @@ class TestExerciseCompletionMemory:
         assert fact["predicate"] == "USES"
         assert "box_breathing" in fact["object"]["identifier"]
         assert fact["confidence"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_completion_write_accepts_neutral_request(self) -> None:
+        store = _RecordingMemoryStore()
+
+        await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=3,
+                exercise_type=EXERCISE_BOX_BREATHING,
+                display_name="box breathing",
+            ),
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+        assert len(store.writes) == 1
+        fact = store.writes[0]["value"]
+        assert fact["subject"]["identifier"] == "test-user"
+        assert fact["source_session_id"] == "test-session"
+        assert fact["source_turn_index"] == 3
 
     @pytest.mark.asyncio
     async def test_exit_does_not_write_fact(self) -> None:

@@ -11,7 +11,10 @@ from agent.text_runtime.openai_agents.context import (
     CrisisResourceToolStatus,
     OpenAITextRunContext,
 )
-from agent.tools.grounded_search import find_crisis_resources
+from agent.tools.grounded_search import (
+    CrisisResourceLookupRequest,
+    find_crisis_resources_for_request,
+)
 
 
 class CrisisResourceLookupToolResult(BaseModel):
@@ -50,8 +53,15 @@ async def execute_crisis_resource_lookup_tool(
     if llm_client is None:
         raise RuntimeError("lookup_crisis_resources requires an LLM client.")
 
-    inferred_location, found_resources, status = await find_crisis_resources(
-        context.agent_state_for_crisis_resources(),
+    (
+        inferred_location,
+        found_resources,
+        status,
+    ) = await find_crisis_resources_for_request(
+        CrisisResourceLookupRequest(
+            current_user_message=context.current_user_message,
+            transcript=tuple(context.transcript),
+        ),
         llm_client=llm_client,
     )
     result = CrisisResourceLookupToolResult(

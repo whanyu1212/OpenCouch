@@ -39,8 +39,11 @@ if TYPE_CHECKING:
         parse_memory_control_action,
     )
     from agent.gates.memory_control.service import (
+        MemoryControlRequest,
         MemoryControlServiceResult,
         execute_memory_control_action,
+        execute_memory_control_request,
+        memory_control_request_from_state,
     )
 
 
@@ -62,8 +65,11 @@ _LAZY_ACTION_SYMBOLS = frozenset(
 
 _LAZY_SERVICE_SYMBOLS = frozenset(
     {
+        "MemoryControlRequest",
         "MemoryControlServiceResult",
         "execute_memory_control_action",
+        "execute_memory_control_request",
+        "memory_control_request_from_state",
     }
 )
 
@@ -101,6 +107,7 @@ __all__ = [
     "ForgetByQueryAction",
     "ListAction",
     "MemoryControlAction",
+    "MemoryControlRequest",
     "MemoryControlServiceResult",
     "MemoryControlTarget",
     "SavePreferenceAction",
@@ -109,9 +116,11 @@ __all__ = [
     "TypedMemoryAction",
     "delete_memory_target",
     "execute_memory_control_action",
+    "execute_memory_control_request",
     "find_memory_target_by_index",
     "find_memory_targets",
     "list_memory_for_owner",
+    "memory_control_request_from_state",
     "parse_memory_control_action",
     "save_preference_rule",
     "set_memory_recall",

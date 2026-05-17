@@ -9,8 +9,10 @@ import pytest
 
 from agent.state import AgentState
 from agent.tools.grounded_search import (
+    CrisisResourceLookupRequest,
     _normalize_extracted_location,
     find_crisis_resources,
+    find_crisis_resources_for_request,
 )
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -173,6 +175,43 @@ async def test_lookup_returns_found_for_verified_singapore_resource() -> None:
         }
     ]
     assert [call["use_search"] for call in llm.calls] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_lookup_accepts_neutral_request() -> None:
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            {
+                "status": "provided",
+                "location": "Singapore",
+                "reasoning": "User stated location.",
+            },
+            {
+                "status": "found",
+                "resources": [
+                    {
+                        "name": "Samaritans of Singapore",
+                        "phone": "1767",
+                        "url": "https://www.sos.org.sg",
+                        "region": "Singapore",
+                    }
+                ],
+                "reasoning": "Verified official resource.",
+            },
+        ],
+    )
+
+    location, resources, status = await find_crisis_resources_for_request(
+        CrisisResourceLookupRequest(
+            current_user_message="I'm scared and I'm in Singapore.",
+            transcript=(),
+        ),
+        llm_client=llm,
+    )
+
+    assert location == "Singapore"
+    assert status == "found"
+    assert resources[0]["phone"] == "1767"
 
 
 @pytest.mark.asyncio

@@ -7,11 +7,13 @@ selection, not this execution layer.
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent.conversation import format_recent_history
+from agent.conversation import get_transcript
 from agent.state import AgentState
 from llm.base import BaseLLMClient
 
@@ -31,6 +33,23 @@ LookupPreflightStatus = Literal["search", "no_verified_answer"]
 LookupSourceQuality = Literal["official", "reputable", "weak", "none"]
 CrisisLocationStatus = Literal["provided", "not_provided", "refused"]
 CrisisResourceSearchStatus = Literal["found", "no_verified_results"]
+
+
+@dataclass(frozen=True)
+class GroundedLookupRequest:
+    """Framework-neutral input for one grounded factual lookup."""
+
+    query: str
+    current_user_message: str
+    transcript: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class CrisisResourceLookupRequest:
+    """Framework-neutral input for one crisis-resource lookup."""
+
+    current_user_message: str
+    transcript: tuple[Mapping[str, Any], ...] = ()
 
 
 class LookupPreflightDecision(BaseModel):
@@ -207,8 +226,21 @@ async def answer_factual_lookup(
         non-empty.
     """
 
+    return await answer_factual_lookup_request(
+        grounded_lookup_request_from_state(state, query=query),
+        llm_client=llm_client,
+    )
+
+
+async def answer_factual_lookup_request(
+    request: GroundedLookupRequest,
+    *,
+    llm_client: BaseLLMClient,
+) -> tuple[str, FactualLookupStatus]:
+    """Answer one factual lookup request from framework-neutral input."""
+
     preflight = await llm_client.generate_structured(
-        prompt=_build_lookup_preflight_prompt(state, query=query),
+        prompt=_build_lookup_preflight_prompt(request),
         response_schema=LookupPreflightDecision,
         system_instruction=_FACTUAL_PREFLIGHT_SYSTEM,
     )
@@ -221,14 +253,13 @@ async def answer_factual_lookup(
             )
         return answer, "no_verified_answer"
 
-    search_query = preflight.search_query.strip() or query.strip()
+    search_query = preflight.search_query.strip() or request.query.strip()
     if not search_query:
         return "", "no_verified_answer"
 
     result = await llm_client.generate_structured(
         prompt=_build_factual_lookup_prompt(
-            state,
-            query=query,
+            request,
             search_query=search_query,
         ),
         response_schema=GroundedLookupResult,
@@ -263,7 +294,21 @@ async def find_crisis_resources(
         whether lookup succeeded, lacked a user-stated location, or produced no
         verified actionable resources.
     """
-    location, location_status = await _extract_location(state, llm_client=llm_client)
+
+    return await find_crisis_resources_for_request(
+        crisis_resource_lookup_request_from_state(state),
+        llm_client=llm_client,
+    )
+
+
+async def find_crisis_resources_for_request(
+    request: CrisisResourceLookupRequest,
+    *,
+    llm_client: BaseLLMClient,
+) -> tuple[str, list[dict[str, str]], CrisisResourceLookupStatus]:
+    """Find verified crisis resources from framework-neutral input."""
+
+    location, location_status = await _extract_location(request, llm_client=llm_client)
     if location_status == "refused":
         return "", [], "location_refused"
     if location_status != "provided" or not location:
@@ -272,18 +317,42 @@ async def find_crisis_resources(
     return location, resources, status
 
 
-def _build_lookup_preflight_prompt(state: AgentState, *, query: str) -> str:
+def grounded_lookup_request_from_state(
+    state: AgentState,
+    *,
+    query: str,
+) -> GroundedLookupRequest:
+    """Build a neutral grounded-lookup request from graph state."""
+
+    return GroundedLookupRequest(
+        query=query,
+        current_user_message=str(state.get("message", "") or ""),
+        transcript=tuple(get_transcript(state)),
+    )
+
+
+def crisis_resource_lookup_request_from_state(
+    state: AgentState,
+) -> CrisisResourceLookupRequest:
+    """Build a neutral crisis-resource request from graph state."""
+
+    return CrisisResourceLookupRequest(
+        current_user_message=str(state.get("message", "") or ""),
+        transcript=tuple(get_transcript(state)),
+    )
+
+
+def _build_lookup_preflight_prompt(request: GroundedLookupRequest) -> str:
     """Build the structured preflight prompt for a factual lookup.
 
     Args:
-        state: Current graph state.
-        query: User's factual lookup request.
+        request: Framework-neutral grounded lookup request.
 
     Returns:
         Prompt text for a pre-search structured decision.
     """
 
-    history_text = format_recent_history(state, limit=4, empty="(none)")
+    history_text = _format_recent_turns(request.transcript, limit=4, empty="(none)")
     return (
         "Decide whether this explicit lookup request should be searched.\n\n"
         "Return status='search' when the request is externally verifiable and "
@@ -299,28 +368,26 @@ def _build_lookup_preflight_prompt(state: AgentState, *, query: str) -> str:
         "leave answer empty. When status='no_verified_answer', leave search_query "
         "empty and provide a concise user-facing answer.\n\n"
         f"Recent conversation for reference:\n{history_text or '(none)'}\n\n"
-        f"Lookup request:\n{query}"
+        f"Lookup request:\n{request.query}"
     )
 
 
 def _build_factual_lookup_prompt(
-    state: AgentState,
+    request: GroundedLookupRequest,
     *,
-    query: str,
     search_query: str,
 ) -> str:
     """Build the user prompt for a structured factual lookup.
 
     Args:
-        state: Current graph state.
-        query: User's original factual lookup request.
+        request: Framework-neutral grounded lookup request.
         search_query: Search query approved by preflight.
 
     Returns:
         Prompt text for provider-native search grounding.
     """
 
-    history_text = format_recent_history(state, limit=4, empty="(none)")
+    history_text = _format_recent_turns(request.transcript, limit=4, empty="(none)")
     return (
         "Use search grounding and answer only the user's factual lookup request. "
         "Return status='answered' only when the answer is verified well enough "
@@ -348,7 +415,7 @@ def _build_factual_lookup_prompt(
         "the same source names or URLs. If status='no_verified_answer', do not "
         "broaden into general claims about adjacent entities.\n\n"
         f"Recent conversation for reference:\n{history_text or '(none)'}\n\n"
-        f"Original lookup request:\n{query}\n\n"
+        f"Original lookup request:\n{request.query}\n\n"
         f"Search query:\n{search_query}"
     )
 
@@ -394,22 +461,22 @@ def _has_source_signal(text: str) -> bool:
 
 
 async def _extract_location(
-    state: AgentState,
+    request: CrisisResourceLookupRequest,
     *,
     llm_client: BaseLLMClient,
 ) -> tuple[str, CrisisLocationStatus]:
     """Extract the user's stated location from recent conversation turns.
 
     Args:
-        state: Current graph state containing the user message and history.
+        request: Framework-neutral crisis-resource lookup request.
         llm_client: Provider client used for text generation.
 
     Returns:
         A ``(location, status)`` tuple.
     """
 
-    message = state.get("message", "")
-    history_text = format_recent_history(state, limit=4, empty="")
+    message = request.current_user_message
+    history_text = _format_recent_turns(request.transcript, limit=4, empty="")
     prompt = (
         "Classify whether the user's own location is available for crisis "
         "resource lookup. "
@@ -431,6 +498,26 @@ async def _extract_location(
     if decision.status != "provided":
         return "", decision.status
     return _normalize_extracted_location(decision.location), "provided"
+
+
+def _format_recent_turns(
+    transcript: tuple[Mapping[str, Any], ...],
+    *,
+    limit: int,
+    empty: str,
+) -> str:
+    """Format transcript turns without depending on graph state."""
+
+    if limit <= 0:
+        return empty
+    lines: list[str] = []
+    for turn in transcript[-limit:]:
+        content = str(turn.get("content", "") or "").strip()
+        if not content:
+            continue
+        role = str(turn.get("role", "unknown") or "unknown")
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines) or empty
 
 
 async def _lookup_resources(

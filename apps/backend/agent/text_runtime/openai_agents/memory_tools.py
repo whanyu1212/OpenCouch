@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal, Mapping, cast
 
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
-from agent.gates.memory_control.service import execute_memory_control_action
+from agent.gates.memory_control.service import (
+    MemoryControlRequest,
+    execute_memory_control_request,
+)
 from agent.text_runtime.openai_agents.context import (
     MemoryActionType,
     MemoryReadActionType,
@@ -41,6 +44,27 @@ class MemoryToolResult(BaseModel):
 MemoryReadToolResult = MemoryToolResult
 
 
+def memory_control_request_from_context(
+    context: OpenAITextRunContext,
+    action: Mapping[str, Any],
+) -> MemoryControlRequest:
+    """Build a neutral memory-control request from SDK local context."""
+
+    owner_id = context.user_id or context.session_id or context.thread_id
+    return MemoryControlRequest(
+        owner_id=owner_id,
+        current_user_message=context.current_user_message,
+        action=dict(action),
+        pending_action=(
+            dict(context.pending_memory_action)
+            if context.pending_memory_action is not None
+            else None
+        ),
+        session_id=context.session_id or context.thread_id,
+        turn_count=context.turn_count,
+    )
+
+
 async def execute_memory_tool_action(
     context: OpenAITextRunContext,
     action: dict[str, Any],
@@ -63,8 +87,8 @@ async def execute_memory_tool_action(
     }:
         raise ValueError(f"Unsupported memory action: {action_type!r}")
 
-    result = await execute_memory_control_action(
-        context.agent_state_for_memory_action(action),
+    result = await execute_memory_control_request(
+        memory_control_request_from_context(context, action),
         context.workflow_context,
     )
     tool_result = MemoryToolResult(

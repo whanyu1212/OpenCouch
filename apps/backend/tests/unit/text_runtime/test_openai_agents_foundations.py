@@ -15,7 +15,6 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
-from agent.state import resolve_owner_id
 from agent.text_runtime import resolve_text_agent_runtime
 from agent.text_runtime.openai_agents import (
     CRISIS_AGENT_NAME,
@@ -42,6 +41,9 @@ from agent.text_runtime.openai_agents import (
     lookup_crisis_resources,
     show_memory_status,
     show_saved_memory,
+)
+from agent.text_runtime.openai_agents.memory_tools import (
+    memory_control_request_from_context,
 )
 from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 
@@ -218,17 +220,18 @@ def test_operational_tool_metadata_is_explicit() -> None:
         assert tool.params_json_schema["additionalProperties"] is False
 
 
-def test_local_context_adapts_to_memory_service_state_without_clients() -> None:
-    """Local SDK context should not leak backend clients into model state."""
+def test_local_context_builds_neutral_memory_request_without_graph_state() -> None:
+    """Local SDK context should hand tools neutral input, not graph state."""
 
     context = _run_context()
 
-    state = context.agent_state_for_memory_action({"type": "status"})
+    request = memory_control_request_from_context(context, {"type": "status"})
 
-    assert resolve_owner_id(state) == "user-1"
-    assert state["memory_control"]["action"] == {"type": "status"}
-    assert "workflow_context" not in state
-    assert "memory_store" not in state
+    assert request.owner_id == "user-1"
+    assert request.action == {"type": "status"}
+    assert not hasattr(context, "agent_state_for_memory_action")
+    assert not hasattr(context, "agent_state_for_grounded_lookup")
+    assert not hasattr(context, "agent_state_for_crisis_resources")
     assert context.memory_tool_calls == []
 
 

@@ -14,7 +14,11 @@ from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
 from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
-from agent.gates.memory_control.service import execute_memory_control_action
+from agent.gates.memory_control.service import (
+    MemoryControlRequest,
+    execute_memory_control_action,
+    execute_memory_control_request,
+)
 from agent.models import AgentInput
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
@@ -113,6 +117,24 @@ async def test_service_lists_saved_memory() -> None:
     state["memory_control"]["action"] = {"type": "list"}
 
     result = await execute_memory_control_action(state, _context(store=store))
+
+    assert "Presentations make me anxious" in result.response_text
+    assert result.memory_control == {"pending_action": None}
+
+
+@pytest.mark.asyncio
+async def test_service_lists_saved_memory_from_neutral_request() -> None:
+    store = OpenCouchMemoryStore()
+    await _seed_fact(store)
+
+    result = await execute_memory_control_request(
+        MemoryControlRequest(
+            owner_id="user-1",
+            current_user_message="What do you remember about me?",
+            action={"type": "list"},
+        ),
+        _context(store=store),
+    )
 
     assert "Presentations make me anxious" in result.response_text
     assert result.memory_control == {"pending_action": None}

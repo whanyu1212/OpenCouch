@@ -20,7 +20,7 @@ from agent.crisis_branch import (
     crisis_response_delta,
     write_crisis_log,
 )
-from agent.gates.memory_control.service import execute_memory_control_action
+from agent.gates.memory_control.service import execute_memory_control_request
 from agent.gates.safety.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
@@ -42,6 +42,9 @@ from agent.text_runtime.openai_agents import (
     build_crisis_response_agent,
     build_guided_exercise_agent,
     build_therapeutic_agent,
+)
+from agent.text_runtime.openai_agents.memory_tools import (
+    memory_control_request_from_context,
 )
 from agent.text_runtime.types import (
     TextRuntimeChunkEvent,
@@ -778,8 +781,8 @@ class OpenAITextAgentAdapter:
         }
 
         if tool_result is None:
-            fallback_result = await execute_memory_control_action(
-                run_context.agent_state_for_memory_action(action),
+            fallback_result = await execute_memory_control_request(
+                memory_control_request_from_context(run_context, action),
                 context,
             )
             response_text = fallback_result.response_text

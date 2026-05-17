@@ -11,7 +11,10 @@ from agent.text_runtime.openai_agents.context import (
     GroundedToolStatus,
     OpenAITextRunContext,
 )
-from agent.tools.grounded_search import answer_factual_lookup
+from agent.tools.grounded_search import (
+    GroundedLookupRequest,
+    answer_factual_lookup_request,
+)
 
 
 class GroundedLookupToolResult(BaseModel):
@@ -49,10 +52,13 @@ async def execute_grounded_lookup_tool(
     if llm_client is None:
         raise RuntimeError("answer_grounded_lookup requires an LLM client.")
 
-    answer, status = await answer_factual_lookup(
-        context.agent_state_for_grounded_lookup(text),
+    answer, status = await answer_factual_lookup_request(
+        GroundedLookupRequest(
+            query=text,
+            current_user_message=context.current_user_message,
+            transcript=tuple(context.transcript),
+        ),
         llm_client=llm_client,
-        query=text,
     )
     response_text = (
         answer
