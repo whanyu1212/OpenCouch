@@ -971,19 +971,38 @@ class PersistentAgentRuntime:
             self._openai_shadow_adapter = OpenAITextAgentAdapter()
         return self._openai_shadow_adapter
 
-    def _openai_sdk_session_for_thread(
+    async def _openai_sdk_session_for_thread(
         self,
         thread_id: str,
         *,
         current_user_message: str,
+        prior_state: AgentState | None,
     ) -> Any | None:
         """Return the SDK session for OpenAI serving turns when enabled."""
 
         if self._text_agent_runtime != "openai" or self._text_session_store is None:
             return None
+        await self._seed_openai_sdk_session_from_state(thread_id, prior_state)
         return self._text_session_store.turn_session_for_thread(
             thread_id,
             current_user_message=current_user_message,
+        )
+
+    async def _seed_openai_sdk_session_from_state(
+        self,
+        thread_id: str,
+        prior_state: AgentState | None,
+    ) -> bool:
+        """Seed an empty SDK session from persisted runtime transcript state."""
+
+        if self._text_session_store is None or prior_state is None:
+            return False
+        messages = messages_from_transcript(prior_state.get("transcript", []))
+        if not messages:
+            return False
+        return await self._text_session_store.seed_thread_from_messages(
+            thread_id,
+            messages,
         )
 
     async def _ensure_openai_sdk_turn_recorded(
@@ -1305,7 +1324,8 @@ class PersistentAgentRuntime:
             adapter = self._get_text_agent_adapter()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Runtime state restores transcript; only turn_count is needed here.
+            # Runtime state restores transcript and can bootstrap an empty
+            # OpenAI SDK session during migration or local session-db loss.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
@@ -1323,9 +1343,10 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = self._openai_sdk_session_for_thread(
+            sdk_session = await self._openai_sdk_session_for_thread(
                 thread_id,
                 current_user_message=message,
+                prior_state=prior_state,
             )
 
             async with self._active_session_manager.active_session_mutation(
@@ -1730,7 +1751,8 @@ class PersistentAgentRuntime:
             adapter = self._get_text_agent_adapter()
             self._remember_llm_client(thread_id, llm_client)
 
-            # Runtime state restores transcript; only turn_count is needed here.
+            # Runtime state restores transcript and can bootstrap an empty
+            # OpenAI SDK session during migration or local session-db loss.
             prior_state = await self.get_state(thread_id)
             await self._prepare_session_for_turn(
                 thread_id=thread_id,
@@ -1748,9 +1770,10 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = self._openai_sdk_session_for_thread(
+            sdk_session = await self._openai_sdk_session_for_thread(
                 thread_id,
                 current_user_message=message,
+                prior_state=prior_state,
             )
 
             turn_start = time.monotonic()

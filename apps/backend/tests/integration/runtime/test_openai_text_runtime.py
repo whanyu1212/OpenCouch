@@ -2,17 +2,96 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 from agent.persistence import PersistentAgentRuntime
 from agent.text_runtime import openai_adapter
 from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME, THERAPEUTIC_AGENT_NAME
+from agent.text_runtime.session_store import messages_from_sdk_session_items
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
 )
 from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
+
+
+class _SessionInspectingOpenAIRunner(FakeOpenAISDKRunner):
+    """Fake SDK runner that records model-visible SDK history at handoff."""
+
+    def __init__(self, final_output: str = "openai reply") -> None:
+        super().__init__(final_output)
+        self.run_session_history: list[list[tuple[str, str]]] = []
+        self.stream_session_history: list[list[tuple[str, str]]] = []
+
+    async def run(
+        self,
+        *,
+        agent: Any,
+        input_text: str,
+        context: Any,
+        session: Any | None = None,
+    ) -> Any:
+        self.run_session_history.append(await _session_history(session))
+        return await super().run(
+            agent=agent,
+            input_text=input_text,
+            context=context,
+            session=session,
+        )
+
+    def run_streamed(
+        self,
+        *,
+        agent: Any,
+        input_text: str,
+        context: Any,
+        session: Any | None = None,
+    ) -> Any:
+        stream = super().run_streamed(
+            agent=agent,
+            input_text=input_text,
+            context=context,
+            session=session,
+        )
+        return _SessionInspectingStream(
+            stream,
+            session=session,
+            observed_history=self.stream_session_history,
+        )
+
+
+class _SessionInspectingStream:
+    """Stream wrapper that snapshots SDK history before yielding events."""
+
+    def __init__(
+        self,
+        stream: Any,
+        *,
+        session: Any | None,
+        observed_history: list[list[tuple[str, str]]],
+    ) -> None:
+        self._stream = stream
+        self._session = session
+        self._observed_history = observed_history
+
+    @property
+    def final_output(self) -> Any:
+        return getattr(self._stream, "final_output", None)
+
+    async def stream_events(self) -> Any:
+        self._observed_history.append(await _session_history(self._session))
+        async for event in self._stream.stream_events():
+            yield event
+
+
+async def _session_history(session: Any | None) -> list[tuple[str, str]]:
+    if session is None:
+        return []
+    messages = messages_from_sdk_session_items(await session.get_items())
+    return [(message.role.value, message.content) for message in messages]
 
 
 @pytest.mark.asyncio
@@ -59,6 +138,108 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
         assert [call["session"] is not None for call in runner.run_calls[:2]] == [
             True,
             True,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_seeds_empty_openai_sdk_session_from_state(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persisted runtime transcript should backfill an empty SDK session."""
+
+    runner = _SessionInspectingOpenAIRunner("first seeded reply")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-seed-sdk",
+            user_id="user-1",
+            message="My presentation is on Tuesday.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        assert runtime._text_session_store is not None  # noqa: SLF001
+        await runtime._text_session_store.clear_thread("thread-seed-sdk")  # noqa: SLF001
+        runner.final_output = "second seeded reply"
+
+        await runtime.run_turn(
+            thread_id="thread-seed-sdk",
+            user_id="user-1",
+            message="What did I say was coming up?",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        assert runner.run_session_history[1] == [
+            ("user", "My presentation is on Tuesday."),
+            ("assistant", "first seeded reply"),
+        ]
+        history = await runtime._text_session_store.get_history(  # noqa: SLF001
+            "thread-seed-sdk"
+        )
+        assert [(message.role.value, message.content) for message in history] == [
+            ("user", "My presentation is on Tuesday."),
+            ("assistant", "first seeded reply"),
+            ("user", "What did I say was coming up?"),
+            ("assistant", "second seeded reply"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_stream_seeds_empty_openai_sdk_session_from_state(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming turns should also seed SDK history before hiding prior state."""
+
+    runner = _SessionInspectingOpenAIRunner("first streamed-seed reply")
+    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_agent_runtime="openai",
+        extract_in_foreground=True,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-stream-seed-sdk",
+            user_id="user-1",
+            message="The review meeting is on Friday.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        assert runtime._text_session_store is not None  # noqa: SLF001
+        await runtime._text_session_store.clear_thread(  # noqa: SLF001
+            "thread-stream-seed-sdk"
+        )
+        runner.final_output = "second streamed-seed reply"
+
+        events = [
+            event
+            async for event in runtime.run_turn_stream(
+                thread_id="thread-stream-seed-sdk",
+                user_id="user-1",
+                message="What timing did I mention?",
+                llm_client=FakeCrossRestartLLM(),
+            )
+        ]
+
+        assert runner.stream_session_history[0] == [
+            ("user", "The review meeting is on Friday."),
+            ("assistant", "first streamed-seed reply"),
+        ]
+        assert isinstance(events[-1], DoneEvent)
+        history = await runtime._text_session_store.get_history(  # noqa: SLF001
+            "thread-stream-seed-sdk"
+        )
+        assert [(message.role.value, message.content) for message in history] == [
+            ("user", "The review meeting is on Friday."),
+            ("assistant", "first streamed-seed reply"),
+            ("user", "What timing did I mention?"),
+            ("assistant", "second streamed-seed reply"),
         ]
 
 
