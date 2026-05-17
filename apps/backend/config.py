@@ -17,7 +17,7 @@ from llm.openai_client import DEFAULT_OPENAI_MODEL
 LLMProvider = Literal["gemini", "openai"]
 ResponseModelTier = Literal["fast", "quality"]
 PersistenceBackend = Literal["sqlite", "postgres"]
-TextSessionBackend = Literal["disabled", "sqlite", "sqlalchemy"]
+TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 
 # Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
@@ -83,7 +83,7 @@ class Settings:
     response_quality_openai_model: str = DEFAULT_OPENAI_QUALITY_MODEL
     persistence_backend: PersistenceBackend = DEFAULT_PERSISTENCE_BACKEND
     memory_database_url: str | None = None
-    text_session_backend: TextSessionBackend = "disabled"
+    text_session_backend: TextSessionBackend = "auto"
     text_session_database_url: str | None = None
     langsmith_tracing: bool = False
     langsmith_endpoint: str | None = None
@@ -122,7 +122,7 @@ def get_settings() -> Settings:
     )
     text_session_backend = _read_text_session_backend_env(
         "OPENCOUCH_TEXT_SESSION_BACKEND",
-        "disabled",
+        "auto",
     )
 
     return Settings(
@@ -196,6 +196,8 @@ def _read_text_session_backend_env(
     """Read and validate the OpenAI SDK text-session backend."""
 
     raw = os.getenv(name, fallback).strip().lower()
+    if raw == "auto":
+        return "auto"
     if raw == "disabled":
         return "disabled"
     if raw == "sqlite":
@@ -204,7 +206,7 @@ def _read_text_session_backend_env(
         return "sqlalchemy"
     raise ValueError(
         f"Unsupported {name} value: {raw}. "
-        "Supported values: disabled, sqlite, sqlalchemy."
+        "Supported values: auto, disabled, sqlite, sqlalchemy."
     )
 
 

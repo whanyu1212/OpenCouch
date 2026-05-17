@@ -55,7 +55,11 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
 
         assert second.output.response_text == "openai persistent reply"
         assert len(second.history) == 4
-        assert "openai persistent reply" in runner.run_calls[1]["input_text"]
+        assert "openai persistent reply" not in runner.run_calls[1]["input_text"]
+        assert [call["session"] is not None for call in runner.run_calls[:2]] == [
+            True,
+            True,
+        ]
 
 
 @pytest.mark.asyncio
