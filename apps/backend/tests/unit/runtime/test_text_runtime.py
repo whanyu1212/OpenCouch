@@ -80,15 +80,15 @@ class _FakeWorkflow:
         }
 
 
-def test_resolve_text_agent_runtime_defaults_to_langgraph(
+def test_resolve_text_agent_runtime_defaults_to_openai(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The seam must remain behavior-preserving by default."""
+    """The default text runtime should now be OpenAI."""
 
     monkeypatch.delenv("OPENCOUCH_TEXT_AGENT_RUNTIME", raising=False)
 
-    assert DEFAULT_TEXT_AGENT_RUNTIME == "langgraph"
-    assert resolve_text_agent_runtime() == "langgraph"
+    assert DEFAULT_TEXT_AGENT_RUNTIME == "openai"
+    assert resolve_text_agent_runtime() == "openai"
 
 
 def test_resolve_text_agent_runtime_normalizes_env(
@@ -122,8 +122,20 @@ def test_persistent_runtime_accepts_openai_text_runtime() -> None:
     assert runtime._text_agent_runtime == "openai"
 
 
-def test_create_text_agent_adapter_builds_langgraph_adapter() -> None:
-    """The factory should wrap the existing graph builder for the default path."""
+def test_persistent_runtime_defaults_to_openai_text_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PersistentAgentRuntime should use OpenAI when no override is set."""
+
+    monkeypatch.delenv("OPENCOUCH_TEXT_AGENT_RUNTIME", raising=False)
+
+    runtime = PersistentAgentRuntime()
+
+    assert runtime._text_agent_runtime == "openai"
+
+
+def test_create_text_agent_adapter_builds_openai_adapter_by_default() -> None:
+    """The factory should make OpenAI the default serving adapter."""
 
     workflow = _FakeWorkflow()
 
@@ -132,12 +144,27 @@ def test_create_text_agent_adapter_builds_langgraph_adapter() -> None:
         graph_builder=lambda **_: workflow,  # type: ignore[arg-type]
     )
 
+    assert isinstance(adapter, OpenAITextAgentAdapter)
+    assert adapter.checkpoint_workflow is workflow
+
+
+def test_create_text_agent_adapter_builds_langgraph_adapter() -> None:
+    """The factory should keep LangGraph available as an explicit rollback."""
+
+    workflow = _FakeWorkflow()
+
+    adapter = create_text_agent_adapter(
+        checkpointer=object(),
+        graph_builder=lambda **_: workflow,  # type: ignore[arg-type]
+        runtime_name="langgraph",
+    )
+
     assert isinstance(adapter, LangGraphTextAgentAdapter)
     assert adapter.workflow is workflow
 
 
 def test_create_text_agent_adapter_builds_openai_adapter() -> None:
-    """The factory should wire OpenAI with a LangGraph checkpoint fallback."""
+    """The factory should wire OpenAI with a LangGraph checkpoint adapter."""
 
     workflow = _FakeWorkflow()
 

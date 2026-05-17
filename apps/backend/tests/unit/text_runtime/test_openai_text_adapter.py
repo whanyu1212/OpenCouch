@@ -103,7 +103,7 @@ def _adapter(
     runner: FakeOpenAISDKRunner,
 ) -> OpenAITextAgentAdapter:
     return OpenAITextAgentAdapter(
-        fallback=LangGraphTextAgentAdapter(cast(Any, workflow)),
+        checkpoint_adapter=LangGraphTextAgentAdapter(cast(Any, workflow)),
         runner=cast(Any, runner),
         model="gpt-test",
     )

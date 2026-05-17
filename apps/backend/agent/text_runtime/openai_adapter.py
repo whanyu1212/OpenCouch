@@ -256,16 +256,21 @@ _PRIOR_STATE_NOT_PROVIDED = object()
 
 
 class OpenAITextAgentAdapter:
-    """Hybrid OpenAI text adapter with LangGraph fallback for unsupported turns."""
+    """OpenAI text adapter with LangGraph-backed checkpoint persistence."""
 
     def __init__(
         self,
         *,
-        fallback: LangGraphTextAgentAdapter,
+        checkpoint_adapter: LangGraphTextAgentAdapter | None = None,
+        fallback: LangGraphTextAgentAdapter | None = None,
         runner: OpenAIAgentsSDKRunner | None = None,
         model: str = DEFAULT_OPENAI_MODEL,
     ) -> None:
-        self._fallback = fallback
+        if checkpoint_adapter is None:
+            if fallback is None:
+                raise TypeError("OpenAITextAgentAdapter requires checkpoint_adapter.")
+            checkpoint_adapter = fallback
+        self._checkpoint_adapter = checkpoint_adapter
         self._runner = runner or _DEFAULT_OPENAI_RUNNER
         self._model = model
 
@@ -273,12 +278,12 @@ class OpenAITextAgentAdapter:
     def checkpoint_workflow(self) -> Any:
         """Return the LangGraph workflow used only for checkpoint persistence."""
 
-        return self._fallback.workflow
+        return self._checkpoint_adapter.workflow
 
     async def get_state(self, config: RunnableConfig) -> AgentState | None:
         """Return the latest checkpointed text state for a thread."""
 
-        return await self._fallback.get_state(config)
+        return await self._checkpoint_adapter.get_state(config)
 
     async def update_state(
         self,
@@ -287,9 +292,9 @@ class OpenAITextAgentAdapter:
         *,
         as_node: str | None = None,
     ) -> None:
-        """Persist a state update through the fallback checkpointer."""
+        """Persist a state update through the checkpoint adapter."""
 
-        await self._fallback.update_state(config, values, as_node=as_node)
+        await self._checkpoint_adapter.update_state(config, values, as_node=as_node)
 
     async def run_turn(
         self,
@@ -298,17 +303,13 @@ class OpenAITextAgentAdapter:
         config: RunnableConfig,
         context: WorkflowContext,
     ) -> Mapping[str, Any]:
-        """Run one turn through OpenAI when safe, otherwise delegate to LangGraph."""
+        """Run one turn through the OpenAI text runtime."""
 
         prepared = await self._prepare_turn(
             initial_state, config=config, context=context
         )
         if not prepared.eligible:
-            return await self._fallback.run_turn(
-                initial_state,
-                config=config,
-                context=context,
-            )
+            raise RuntimeError("OpenAI text runtime produced an ineligible turn.")
 
         crisis_mode = _crisis_runtime_mode(prepared)
         if crisis_mode is not None:
@@ -375,19 +376,13 @@ class OpenAITextAgentAdapter:
         config: RunnableConfig,
         context: WorkflowContext,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
-        """Run one streaming turn through OpenAI when safe, else delegate."""
+        """Run one streaming turn through the OpenAI text runtime."""
 
         prepared = await self._prepare_turn(
             initial_state, config=config, context=context
         )
         if not prepared.eligible:
-            async for event in self._fallback.run_turn_stream(
-                initial_state,
-                config=config,
-                context=context,
-            ):
-                yield event
-            return
+            raise RuntimeError("OpenAI text runtime produced an ineligible turn.")
 
         crisis_mode = _crisis_runtime_mode(prepared)
         if crisis_mode is not None:
@@ -635,15 +630,6 @@ class OpenAITextAgentAdapter:
         )
         dispatch_update["diagnostics"] = diagnostics
         _apply_delta(state, dispatch_update)
-
-        fallback_reason = _fallback_reason(dispatch_plan)
-        if fallback_reason:
-            return _PreparedTurn(
-                state=state,
-                eligible=False,
-                fallback_reason=fallback_reason,
-                dispatch_plan=dispatch_plan,
-            )
 
         return _PreparedTurn(
             state=state,
@@ -1478,12 +1464,6 @@ def _operational_context_for_prompt(state: AgentState) -> str:
         )
 
     return "\n".join(lines)
-
-
-def _fallback_reason(plan: TurnDispatchPlan) -> str:
-    if plan.route not in {"memory_control", "grounded_lookup", "therapeutic"}:
-        return f"unsupported_route:{plan.route}"
-    return ""
 
 
 def _memory_action_type_from_plan(
