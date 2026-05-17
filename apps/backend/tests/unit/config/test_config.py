@@ -27,7 +27,7 @@ def test_get_settings_defaults_to_postgres_backend(
 
     assert settings.persistence_backend == "postgres"
     assert settings.memory_database_url is None
-    assert settings.text_session_backend == "disabled"
+    assert settings.text_session_backend == "auto"
     assert settings.text_session_database_url is None
 
 

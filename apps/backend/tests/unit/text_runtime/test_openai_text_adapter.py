@@ -187,6 +187,35 @@ async def test_openai_adapter_passes_sdk_session_to_safe_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_adapter_omits_checkpoint_history_when_sdk_session_is_used() -> (
+    None
+):
+    """SDK sessions should own prior chat context for OpenAI model input."""
+
+    workflow = _StatefulWorkflow()
+    workflow.state = _initial_state("old turn")
+    workflow.state["transcript"] = [
+        {"role": "user", "content": "old user detail"},
+        {"role": "assistant", "content": "old assistant detail"},
+    ]
+    runner = FakeOpenAISDKRunner("openai reply")
+    adapter = _adapter(workflow, runner)
+
+    await adapter.run_turn(
+        cast(Any, _initial_state("new turn")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(),
+        session=object(),
+    )
+
+    prompt = runner.run_calls[0]["input_text"]
+    assert "old user detail" not in prompt
+    assert "old assistant detail" not in prompt
+    assert "Recent conversation:\n(no prior history)" in prompt
+    assert "Current user message:\nuser: new turn" in prompt
+
+
+@pytest.mark.asyncio
 async def test_openai_adapter_passes_sdk_session_to_streamed_safe_turn() -> None:
     """Streaming OpenAI serving turns should also use the SDK session."""
 

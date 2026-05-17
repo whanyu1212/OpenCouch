@@ -200,6 +200,8 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         use_search: bool = False,
     ) -> str:
         del use_search
+        if self._session is not None:
+            prompt = _strip_recent_history_from_prompt(prompt)
         run_start = time.monotonic()
         result = await self._runner.run(
             agent=self._build_agent(system_instruction),
@@ -216,6 +218,8 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         prompt: str,
         system_instruction: str | None = None,
     ) -> AsyncIterator[str]:
+        if self._session is not None:
+            prompt = _strip_recent_history_from_prompt(prompt)
         run_start = time.monotonic()
         stream = self._runner.run_streamed(
             agent=self._build_agent(system_instruction),
@@ -462,7 +466,10 @@ class OpenAITextAgentAdapter:
 
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
-        input_text = self._input_text_for_state(state)
+        input_text = self._input_text_for_state(
+            state,
+            include_recent_history=session is None,
+        )
 
         yield TextRuntimeStatusEvent(stage="therapeutic")
         run_start = time.monotonic()
@@ -955,6 +962,7 @@ class OpenAITextAgentAdapter:
         input_text = self._crisis_input_text_for_state(
             state,
             runtime_mode=runtime_mode,
+            include_recent_history=session is None,
         )
         response_text, sdk_duration_ms = await self._run_openai_agent_with(
             state,
@@ -1011,6 +1019,7 @@ class OpenAITextAgentAdapter:
         input_text = self._crisis_input_text_for_state(
             state,
             runtime_mode=runtime_mode,
+            include_recent_history=session is None,
         )
 
         yield TextRuntimeStatusEvent(stage=runtime_mode)
@@ -1071,7 +1080,10 @@ class OpenAITextAgentAdapter:
         text, _ = await self._run_openai_agent_with(
             state,
             agent=self._build_agent(state),
-            input_text=self._input_text_for_state(state),
+            input_text=self._input_text_for_state(
+                state,
+                include_recent_history=session is None,
+            ),
             run_context=run_context,
             session=session,
         )
@@ -1087,7 +1099,10 @@ class OpenAITextAgentAdapter:
     ) -> _SafeAgentResult:
         run_context = self._run_context_for_state(state, config, context)
         agent = self._build_agent(state)
-        input_text = self._input_text_for_state(state)
+        input_text = self._input_text_for_state(
+            state,
+            include_recent_history=session is None,
+        )
         response_text, sdk_duration_ms = await self._run_openai_agent_with(
             state,
             agent=agent,
@@ -1245,9 +1260,17 @@ class OpenAITextAgentAdapter:
             instructions=instructions,
         )
 
-    def _input_text_for_state(self, state: AgentState) -> str:
+    def _input_text_for_state(
+        self,
+        state: AgentState,
+        *,
+        include_recent_history: bool = True,
+    ) -> str:
+        prompt_state = (
+            state if include_recent_history else _state_without_prompt_history(state)
+        )
         prompt = build_therapeutic_response_prompt(
-            state,
+            prompt_state,
             response_style="supportive",
         )
         operational_context = _operational_context_for_prompt(state)
@@ -1295,12 +1318,16 @@ class OpenAITextAgentAdapter:
         state: AgentState,
         *,
         runtime_mode: str,
+        include_recent_history: bool = True,
     ) -> str:
+        prompt_state = (
+            state if include_recent_history else _state_without_prompt_history(state)
+        )
         if runtime_mode == "crisis_response":
-            return build_crisis_response_prompt(state)
+            return build_crisis_response_prompt(prompt_state)
         if runtime_mode == "crisis_clarification":
             return build_therapeutic_response_prompt(
-                state,
+                prompt_state,
                 response_style="clarifying",
             )
         raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
@@ -1348,6 +1375,40 @@ def _effective_turn_state(
         else:
             state[key] = value
     return cast(AgentState, state)
+
+
+def _state_without_prompt_history(state: AgentState) -> AgentState:
+    prompt_state = dict(state)
+    prompt_state["transcript"] = []
+    prompt_state["history"] = []
+    return cast(AgentState, prompt_state)
+
+
+def _strip_recent_history_from_prompt(prompt: str) -> str:
+    marker = "Recent conversation:\n"
+    current_marker = "\nCurrent user message:\n"
+    start = prompt.find(marker)
+    if start == -1:
+        return prompt
+    history_start = start + len(marker)
+    end = prompt.find(current_marker, history_start)
+    if end == -1:
+        return prompt
+
+    middle = prompt[history_start:end]
+    preserved = ""
+    for context_marker in (
+        "\nRelevant context requested by the user:",
+        "\nRelevant context from past sessions:",
+        "\nPrivate memory context is available",
+    ):
+        context_start = middle.find(context_marker)
+        if context_start != -1:
+            preserved = middle[context_start:]
+            break
+
+    replacement = "(conversation history is provided by the SDK session)"
+    return f"{prompt[:history_start]}{replacement}{preserved}{prompt[end:]}"
 
 
 def _apply_delta(state: AgentState, delta: Mapping[str, Any]) -> None:

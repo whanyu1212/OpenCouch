@@ -12,14 +12,15 @@ from agents.memory import SQLiteSession, SessionSettings
 from agent.memory.modes import MemoryMode
 from agent.models import Message, MessageRole
 
-TextSessionBackend = Literal["disabled", "sqlite", "sqlalchemy"]
+TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
+ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
 
 
 @dataclass(frozen=True, slots=True)
 class TextSessionStoreConfig:
     """Configuration for OpenAI Agents SDK conversation sessions."""
 
-    backend: TextSessionBackend = "disabled"
+    backend: ActiveTextSessionBackend = "sqlite"
     sqlite_path: str | Path = ":memory:"
     database_url: str | None = None
     create_tables: bool = True
@@ -30,8 +31,6 @@ class TextSessionStore:
     """Factory/cache for SDK sessions keyed by OpenCouch thread id."""
 
     def __init__(self, config: TextSessionStoreConfig) -> None:
-        if config.backend == "disabled":
-            raise ValueError("TextSessionStore cannot be constructed as disabled.")
         if config.backend == "sqlalchemy" and not config.database_url:
             raise ValueError(
                 "text_session_backend='sqlalchemy' requires text_session_database_url."
@@ -50,7 +49,7 @@ class TextSessionStore:
             )
 
     @property
-    def backend(self) -> TextSessionBackend:
+    def backend(self) -> ActiveTextSessionBackend:
         """Return the configured SDK session backend."""
 
         return self._config.backend
@@ -92,6 +91,42 @@ class TextSessionStore:
         self._sessions[normalized_thread_id] = session
         return session
 
+    def turn_session_for_thread(
+        self,
+        thread_id: str,
+        *,
+        current_user_message: str,
+    ) -> "TextSessionTurn":
+        """Return a per-turn SDK session that stores raw conversation turns."""
+
+        return TextSessionTurn(
+            self.session_for_thread(thread_id),
+            current_user_message=current_user_message,
+        )
+
+    async def seed_thread_from_messages(
+        self,
+        thread_id: str,
+        messages: list[Message],
+    ) -> bool:
+        """Seed an empty SDK session from legacy transcript messages."""
+
+        session = self.session_for_thread(thread_id)
+        if await session.get_items(limit=1):
+            return False
+
+        items = [
+            {"role": message.role.value, "content": message.content}
+            for message in messages
+            if message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+            and message.content.strip()
+        ]
+        if not items:
+            return False
+
+        await session.add_items(items)
+        return True
+
     async def get_history(
         self,
         thread_id: str,
@@ -110,6 +145,40 @@ class TextSessionStore:
         session = self.session_for_thread(thread_id)
         await session.clear_session()
 
+    async def ensure_turn_recorded(
+        self,
+        thread_id: str,
+        *,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        """Ensure one raw user/assistant turn exists in SDK history."""
+
+        user_text = user_message.strip()
+        assistant_text = assistant_message.strip()
+        if not user_text and not assistant_text:
+            return
+
+        history = await self.get_history(thread_id)
+        if _history_ends_with_turn(
+            history,
+            user_message=user_text,
+            assistant_message=assistant_text,
+        ):
+            return
+
+        items: list[dict[str, str]] = []
+        if user_text and not _history_ends_with_message(
+            history,
+            role=MessageRole.USER,
+            content=user_text,
+        ):
+            items.append({"role": "user", "content": user_text})
+        if assistant_text:
+            items.append({"role": "assistant", "content": assistant_text})
+        if items:
+            await self.session_for_thread(thread_id).add_items(items)
+
     async def aclose(self) -> None:
         """Close cached SDK session resources."""
 
@@ -127,6 +196,7 @@ class TextSessionStore:
 def create_text_session_store(
     *,
     memory_mode: MemoryMode,
+    text_agent_runtime: str = "openai",
     backend: TextSessionBackend = "disabled",
     sqlite_path: str | Path = ":memory:",
     database_url: str | None = None,
@@ -135,8 +205,9 @@ def create_text_session_store(
 ) -> TextSessionStore | None:
     """Create an SDK session store, preserving incognito's no-disk contract."""
 
-    if backend == "disabled":
+    if backend == "disabled" or text_agent_runtime != "openai":
         return None
+    resolved_backend = _resolve_backend(backend, database_url=database_url)
     if memory_mode == MemoryMode.INCOGNITO:
         return TextSessionStore(
             TextSessionStoreConfig(
@@ -148,13 +219,92 @@ def create_text_session_store(
         )
     return TextSessionStore(
         TextSessionStoreConfig(
-            backend=backend,
+            backend=resolved_backend,
             sqlite_path=sqlite_path,
             database_url=database_url,
             create_tables=create_tables,
             history_limit=history_limit,
         )
     )
+
+
+class TextSessionTurn:
+    """Per-turn session facade that stores raw chat turns in the SDK store.
+
+    The model receives runtime prompts as the current input, but public history
+    and future SDK session history should contain only the user's raw message
+    and assistant-facing reply. This facade delegates reads to the underlying
+    SDK session and normalizes writes for one runtime turn.
+    """
+
+    def __init__(self, session: Any, *, current_user_message: str) -> None:
+        self._session = session
+        self._current_user_message = current_user_message.strip()
+        self._stored_current_user = False
+        self._stored_assistant_texts: set[str] = set()
+        self.session_id = getattr(session, "session_id")
+        self.session_settings = getattr(session, "session_settings", None)
+
+    async def get_items(self, limit: int | None = None) -> list[Any]:
+        """Return prior raw conversation history."""
+
+        return await self._session.get_items(limit=limit)
+
+    async def add_items(self, items: list[Any]) -> None:
+        """Persist only raw user/assistant conversation messages."""
+
+        normalized = self._conversation_items_for_storage(items)
+        if normalized:
+            await self._session.add_items(normalized)
+
+    async def pop_item(self) -> Any | None:
+        """Remove and return the latest item from the underlying session."""
+
+        return await self._session.pop_item()
+
+    async def clear_session(self) -> None:
+        """Clear the underlying session."""
+
+        await self._session.clear_session()
+
+    def _conversation_items_for_storage(self, items: list[Any]) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            role = str(item.get("role") or "")
+            if role == "user":
+                if self._stored_current_user:
+                    continue
+                content = (
+                    self._current_user_message
+                    or _content_to_text(item.get("content")).strip()
+                )
+                if content:
+                    normalized.append({"role": "user", "content": content})
+                    self._stored_current_user = True
+                continue
+            if role != "assistant":
+                continue
+
+            content = _content_to_text(item.get("content")).strip()
+            if not content or content in self._stored_assistant_texts:
+                continue
+            normalized.append({"role": "assistant", "content": content})
+            self._stored_assistant_texts.add(content)
+        return normalized
+
+
+def _resolve_backend(
+    backend: TextSessionBackend,
+    *,
+    database_url: str | None,
+) -> ActiveTextSessionBackend:
+    if backend == "auto":
+        return "sqlalchemy" if database_url else "sqlite"
+    if backend in {"sqlite", "sqlalchemy"}:
+        return backend
+    raise ValueError(f"Unsupported active text session backend {backend!r}.")
 
 
 def normalize_sqlalchemy_async_url(url: str) -> str:
@@ -195,6 +345,35 @@ def messages_from_sdk_session_items(items: list[Any]) -> list[Message]:
             )
         )
     return messages
+
+
+def _history_ends_with_turn(
+    history: list[Message],
+    *,
+    user_message: str,
+    assistant_message: str,
+) -> bool:
+    if len(history) < 2:
+        return False
+    user, assistant = history[-2], history[-1]
+    return (
+        user.role == MessageRole.USER
+        and user.content == user_message
+        and assistant.role == MessageRole.ASSISTANT
+        and assistant.content == assistant_message
+    )
+
+
+def _history_ends_with_message(
+    history: list[Message],
+    *,
+    role: MessageRole,
+    content: str,
+) -> bool:
+    if not history:
+        return False
+    latest = history[-1]
+    return latest.role == role and latest.content == content
 
 
 def _content_to_text(content: Any) -> str:

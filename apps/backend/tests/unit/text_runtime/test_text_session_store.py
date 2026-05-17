@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent.memory.modes import MemoryMode
+from agent.models import Message, MessageRole
 from agent.text_runtime.session_store import (
     TextSessionStore,
     TextSessionStoreConfig,
@@ -90,6 +91,103 @@ async def test_clear_thread_removes_sdk_session_items(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_turn_session_stores_raw_user_message_not_runtime_prompt(
+    tmp_path,
+) -> None:
+    """Runner prompt writes should become raw public conversation history."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        turn_session = store.turn_session_for_thread(
+            "thread-1",
+            current_user_message="I feel overwhelmed",
+        )
+
+        await turn_session.add_items(
+            [
+                {
+                    "role": "user",
+                    "content": "Write the next assistant message.\nCurrent user: ...",
+                },
+                {"type": "function_call", "name": "show_memory_status"},
+                {"role": "assistant", "content": "That sounds heavy."},
+            ]
+        )
+        await turn_session.add_items(
+            [{"role": "user", "content": "duplicate runtime prompt"}]
+        )
+
+        history = await store.get_history("thread-1")
+    finally:
+        await store.aclose()
+
+    assert [(message.role.value, message.content) for message in history] == [
+        ("user", "I feel overwhelmed"),
+        ("assistant", "That sounds heavy."),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_seed_thread_from_messages_only_seeds_empty_session(tmp_path) -> None:
+    """Legacy checkpoint transcripts can bootstrap an empty SDK session."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        seeded = await store.seed_thread_from_messages(
+            "thread-1",
+            [
+                Message(role=MessageRole.USER, content="hello"),
+                Message(role=MessageRole.ASSISTANT, content="hi"),
+            ],
+        )
+        seeded_again = await store.seed_thread_from_messages(
+            "thread-1",
+            [Message(role=MessageRole.USER, content="should not append")],
+        )
+
+        history = await store.get_history("thread-1")
+    finally:
+        await store.aclose()
+
+    assert seeded is True
+    assert seeded_again is False
+    assert [message.content for message in history] == ["hello", "hi"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_turn_recorded_appends_missing_turn_once(tmp_path) -> None:
+    """Runtime fallback should fill history when a runner fake does not persist."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        await store.ensure_turn_recorded(
+            "thread-1",
+            user_message="hello",
+            assistant_message="hi",
+        )
+        await store.ensure_turn_recorded(
+            "thread-1",
+            user_message="hello",
+            assistant_message="hi",
+        )
+
+        history = await store.get_history("thread-1")
+    finally:
+        await store.aclose()
+
+    assert [(message.role.value, message.content) for message in history] == [
+        ("user", "hello"),
+        ("assistant", "hi"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_incognito_text_session_store_uses_memory_sqlite() -> None:
     """Incognito mode must not write SDK sessions to configured disk storage."""
 
@@ -97,6 +195,23 @@ async def test_incognito_text_session_store_uses_memory_sqlite() -> None:
         memory_mode=MemoryMode.INCOGNITO,
         backend="sqlalchemy",
         database_url="postgresql://opencouch:opencouch@localhost/opencouch",
+    )
+
+    try:
+        assert store is not None
+        assert store.backend == "sqlite"
+    finally:
+        if store is not None:
+            await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auto_text_session_store_uses_sqlite_without_database_url() -> None:
+    """Auto mode should work in local development without extra config."""
+
+    store = create_text_session_store(
+        memory_mode=MemoryMode.LOCAL,
+        backend="auto",
     )
 
     try:

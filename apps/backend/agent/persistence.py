@@ -137,9 +137,9 @@ class PersistentAgentRuntime:
         session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
         session_feedback_database_url: str | None = None,
         memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
-        text_session_backend: TextSessionBackend = "disabled",
+        text_session_backend: TextSessionBackend = "auto",
         text_session_database_url: str | None = None,
-        text_session_sqlite_path: str | Path = DEFAULT_TEXT_SESSION_DB_PATH,
+        text_session_sqlite_path: str | Path | None = None,
         text_session_create_tables: bool = True,
         text_session_history_limit: int | None = None,
         crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
@@ -184,6 +184,8 @@ class PersistentAgentRuntime:
             text_session_database_url: SQLAlchemy async-capable database URL
                 used when ``text_session_backend`` is ``"sqlalchemy"``.
             text_session_sqlite_path: SQLite path for the SDK session store.
+                Defaults to a ``text_sessions.sqlite3`` sibling of the thread
+                checkpoint database, and to ``:memory:`` for in-memory threads.
             text_session_create_tables: Whether SQLAlchemy SDK sessions may
                 create their own tables when first used.
             text_session_history_limit: Optional SDK session item limit.
@@ -223,6 +225,14 @@ class PersistentAgentRuntime:
         self.sqlite_path = (
             Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
         )
+        if text_session_sqlite_path is not None:
+            resolved_text_session_sqlite_path = text_session_sqlite_path
+        elif resolved_sqlite == ":memory:":
+            resolved_text_session_sqlite_path = ":memory:"
+        else:
+            resolved_text_session_sqlite_path = Path(resolved_sqlite).with_name(
+                DEFAULT_TEXT_SESSION_DB_PATH.name
+            )
 
         self._thread_persistence_backend = effective_thread_persistence_backend(
             memory_mode=memory_mode,
@@ -242,8 +252,9 @@ class PersistentAgentRuntime:
         self._openai_shadow_adapter: OpenAITextAgentAdapter | None = None
         self._text_session_store: TextSessionStore | None = create_text_session_store(
             memory_mode=memory_mode,
+            text_agent_runtime=self._text_agent_runtime,
             backend=text_session_backend,
-            sqlite_path=text_session_sqlite_path,
+            sqlite_path=resolved_text_session_sqlite_path,
             database_url=text_session_database_url,
             create_tables=text_session_create_tables,
             history_limit=text_session_history_limit,
@@ -1028,12 +1039,68 @@ class PersistentAgentRuntime:
             )
         return self._openai_shadow_adapter
 
-    def _openai_sdk_session_for_thread(self, thread_id: str) -> Any | None:
+    def _openai_sdk_session_for_thread(
+        self,
+        thread_id: str,
+        *,
+        current_user_message: str,
+    ) -> Any | None:
         """Return the SDK session for OpenAI serving turns when enabled."""
 
         if self._text_agent_runtime != "openai" or self._text_session_store is None:
             return None
-        return self._text_session_store.session_for_thread(thread_id)
+        return self._text_session_store.turn_session_for_thread(
+            thread_id,
+            current_user_message=current_user_message,
+        )
+
+    async def _seed_openai_sdk_session_from_state(
+        self,
+        thread_id: str,
+        state: AgentState | None,
+    ) -> None:
+        """Seed SDK session history from legacy checkpoints when needed."""
+
+        if self._text_agent_runtime != "openai" or self._text_session_store is None:
+            return
+        if state is None:
+            return
+        messages = messages_from_transcript(state.get("transcript", []))
+        await self._text_session_store.seed_thread_from_messages(thread_id, messages)
+
+    async def _ensure_openai_sdk_turn_recorded(
+        self,
+        thread_id: str,
+        *,
+        user_message: str,
+        final_state: AgentState,
+    ) -> None:
+        """Ensure SDK history contains the finalized OpenAI user/assistant turn."""
+
+        if self._text_agent_runtime != "openai" or self._text_session_store is None:
+            return
+        response_text = str(final_state.get("response_text") or "").strip()
+        await self._text_session_store.ensure_turn_recorded(
+            thread_id,
+            user_message=user_message,
+            assistant_message=response_text,
+        )
+
+    async def _history_for_final_state(
+        self,
+        thread_id: str,
+        final_state: AgentState,
+    ) -> list[Message]:
+        """Return public history without calling the public get_history method."""
+
+        if (
+            self._text_agent_runtime == "openai"
+            and self._text_session_store is not None
+        ):
+            history = await self._text_session_store.get_history(thread_id)
+            if history:
+                return history
+        return messages_from_transcript(final_state.get("transcript", []))
 
     def _get_graph(self) -> AgentWorkflow:
         """Return the compiled LangGraph workflow for compatibility callers.
@@ -1071,6 +1138,14 @@ class PersistentAgentRuntime:
         """
 
         state = await self.get_state(thread_id)
+        if (
+            self._text_agent_runtime == "openai"
+            and self._text_session_store is not None
+        ):
+            await self._seed_openai_sdk_session_from_state(thread_id, state)
+            history = await self._text_session_store.get_history(thread_id)
+            if history or state is None:
+                return history
         if state is None:
             return []
         return messages_from_transcript(state.get("transcript", []))
@@ -1202,9 +1277,7 @@ class PersistentAgentRuntime:
         summaries: list[ThreadSummary] = []
         for thread_id in thread_ids:
             state = await self.get_state(thread_id)
-            history = messages_from_transcript(
-                state.get("transcript", []) if state is not None else []
-            )
+            history = await self.get_history(thread_id)
             session_progress: Mapping[str, Any] = (
                 state.get("session_progress", {}) if state is not None else {}
             )
@@ -1350,6 +1423,7 @@ class PersistentAgentRuntime:
                 expected_liveness=expected_liveness,
             )
             prior_turn_count = turn_count_from_state(prior_state)
+            await self._seed_openai_sdk_session_from_state(thread_id, prior_state)
 
             initial_state = self._build_turn_initial_state(
                 thread_id=thread_id,
@@ -1359,7 +1433,10 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = self._openai_sdk_session_for_thread(thread_id)
+            sdk_session = self._openai_sdk_session_for_thread(
+                thread_id,
+                current_user_message=message,
+            )
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -1389,6 +1466,11 @@ class PersistentAgentRuntime:
                     final_state = cast(
                         AgentState, {**dict(initial_state), **dict(turn_output)}
                     )
+                await self._ensure_openai_sdk_turn_recorded(
+                    thread_id,
+                    user_message=message,
+                    final_state=final_state,
+                )
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
 
@@ -1440,7 +1522,7 @@ class PersistentAgentRuntime:
                 result = PersistentTurnResult(
                     output=state_to_output(final_state),
                     state=final_state,
-                    history=messages_from_transcript(final_state.get("transcript", [])),
+                    history=await self._history_for_final_state(thread_id, final_state),
                 )
 
                 await self._active_session_manager.clear_active_session_mutation(
@@ -1768,6 +1850,7 @@ class PersistentAgentRuntime:
                 expected_liveness=expected_liveness,
             )
             prior_turn_count = turn_count_from_state(prior_state)
+            await self._seed_openai_sdk_session_from_state(thread_id, prior_state)
 
             initial_state = self._build_turn_initial_state(
                 thread_id=thread_id,
@@ -1777,7 +1860,10 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = self._openai_sdk_session_for_thread(thread_id)
+            sdk_session = self._openai_sdk_session_for_thread(
+                thread_id,
+                current_user_message=message,
+            )
 
             turn_start = time.monotonic()
             final_state: AgentState | None = None
@@ -1848,6 +1934,11 @@ class PersistentAgentRuntime:
                             "and no checkpoint was found for this thread."
                         )
                     final_state = fallback
+                await self._ensure_openai_sdk_turn_recorded(
+                    thread_id,
+                    user_message=message,
+                    final_state=final_state,
+                )
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
 

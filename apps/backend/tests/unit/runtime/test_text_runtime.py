@@ -132,6 +132,7 @@ def test_persistent_runtime_defaults_to_openai_text_runtime(
     runtime = PersistentAgentRuntime()
 
     assert runtime._text_agent_runtime == "openai"
+    assert runtime._text_session_store is not None
 
 
 def test_create_text_agent_adapter_builds_openai_adapter_by_default() -> None:
@@ -216,3 +217,41 @@ async def test_runtime_reset_clears_openai_sdk_session_store(tmp_path) -> None:
         await runtime.reset_thread("thread-1")
 
         assert await runtime._text_session_store.get_history("thread-1") == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_history_seeds_sdk_session_from_legacy_checkpoint(
+    tmp_path,
+) -> None:
+    """Existing checkpoint transcripts should migrate into SDK history on read."""
+
+    async with PersistentAgentRuntime(
+        sqlite_path=tmp_path / "threads.sqlite3",
+        text_session_backend="sqlite",
+        text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+    ) as runtime:
+        adapter = runtime._get_text_agent_adapter()
+        await adapter.update_state(
+            runtime._config_for_thread("thread-1"),
+            {
+                "transcript": [
+                    {"role": "user", "content": "legacy user"},
+                    {"role": "assistant", "content": "legacy assistant"},
+                ],
+                "session_progress": {"turn_count": 1},
+            },
+            as_node=FINALIZE_TURN_NODE,
+        )
+
+        history = await runtime.get_history("thread-1")
+
+        assert [(message.role.value, message.content) for message in history] == [
+            ("user", "legacy user"),
+            ("assistant", "legacy assistant"),
+        ]
+        assert runtime._text_session_store is not None
+        sdk_history = await runtime._text_session_store.get_history("thread-1")
+        assert [message.content for message in sdk_history] == [
+            "legacy user",
+            "legacy assistant",
+        ]
