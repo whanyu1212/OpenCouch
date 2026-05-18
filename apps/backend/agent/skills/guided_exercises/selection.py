@@ -16,6 +16,10 @@ from agent.skills.guided_exercises.types import (
 )
 
 
+def _normalize_message_text(message: str) -> str:
+    return " ".join(message.casefold().replace("_", " ").split())
+
+
 def _available_definitions_for_state(
     state: AgentState,
 ) -> tuple[ExerciseDefinition, ...]:
@@ -112,6 +116,21 @@ def _build_exercise_selection_prompt(
     )
 
 
+def _select_exercise_from_explicit_message(
+    state: AgentState,
+    definitions: tuple[ExerciseDefinition, ...],
+) -> str | None:
+    text = _normalize_message_text(str(state.get("message") or ""))
+    if not text:
+        return None
+
+    available_ids = {definition.id for definition in definitions}
+    for alias, exercise_id in iter_exercise_selection_aliases(definitions=definitions):
+        if _normalize_message_text(alias) in text and exercise_id in available_ids:
+            return exercise_id
+    return None
+
+
 async def _select_exercise_llm_primary(
     state: AgentState,
     *,
@@ -132,10 +151,17 @@ async def _select_exercise_llm_primary(
             exercise.
     """
 
+    available_definitions = _available_definitions_for_state(state)
+    explicit_selection = _select_exercise_from_explicit_message(
+        state,
+        available_definitions,
+    )
+    if explicit_selection is not None:
+        return explicit_selection
+
     if classifier_llm is None:
         raise RuntimeError("Guided exercise selection requires a classifier LLM.")
 
-    available_definitions = _available_definitions_for_state(state)
     decision: ExerciseSelectionDecision = await classifier_llm.generate_structured(
         prompt=_build_exercise_selection_prompt(state, available_definitions),
         response_schema=ExerciseSelectionDecision,

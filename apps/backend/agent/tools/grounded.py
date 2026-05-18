@@ -15,7 +15,7 @@ from agent.runtime.context import (
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.observability.timing import elapsed_ms
-from agent.runtime.tools.grounded_search import (
+from agent.tools.grounded_search import (
     FactualLookupStatus,
     GroundedLookupRequest,
     answer_factual_lookup,

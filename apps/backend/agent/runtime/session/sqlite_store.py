@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from agent.runtime.active_session.store import (
+from agent.runtime.session.store import (
     ACTIVE_SESSION_EXTRA_COLUMNS,
     ACTIVE_SESSION_STATE_DDL,
     ActiveSessionStore,

@@ -849,7 +849,7 @@ class TestExerciseTherapeuticApproach:
     def test_prompt_builder_prefers_exercise_therapeutic_approach(self) -> None:
         """build_guided_exercise_system_prompt reads exercise_state.exercise_therapeutic_approach
         over routing.therapeutic_approach when an exercise is active."""
-        from agent.runtime.agents.guided_exercise import (
+        from agent.specialists.guided_exercise import (
             build_guided_exercise_system_prompt,
         )
 
@@ -874,7 +874,7 @@ class TestExerciseTherapeuticApproach:
 
     def test_prompt_builder_falls_back_to_routing(self) -> None:
         """When exercise_therapeutic_approach is None, falls back to routing approach."""
-        from agent.runtime.agents.guided_exercise import (
+        from agent.specialists.guided_exercise import (
             build_guided_exercise_system_prompt,
         )
 
@@ -893,7 +893,7 @@ class TestExerciseTherapeuticApproach:
     def test_prompt_builder_ignores_stale_approach_without_exercise(self) -> None:
         """When exercise_type is None but exercise_therapeutic_approach is stale,
         the prompt builder ignores the stale therapeutic approach and falls back to routing."""
-        from agent.runtime.agents.guided_exercise import (
+        from agent.specialists.guided_exercise import (
             build_guided_exercise_system_prompt,
         )
 

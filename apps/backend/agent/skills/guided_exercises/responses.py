@@ -7,8 +7,8 @@ from typing import Any
 
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.runtime.agents.guided_exercise import build_guided_exercise_system_prompt
-from agent.runtime.agents.therapeutic_prompts import (
+from agent.specialists.guided_exercise import build_guided_exercise_system_prompt
+from agent.specialists.therapeutic_prompts import (
     build_therapeutic_response_prompt,
 )
 from agent.state import AgentState

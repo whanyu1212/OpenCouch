@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from agents import Agent
 
 from llm.openai_client import DEFAULT_OPENAI_MODEL
-from agent.runtime.agents.crisis import build_crisis_response_agent
-from agent.runtime.agents.guided_exercise import build_guided_exercise_agent
-from agent.runtime.agents.therapeutic import build_therapeutic_agent
+from agent.specialists.crisis import build_crisis_response_agent
+from agent.specialists.guided_exercise import build_guided_exercise_agent
+from agent.specialists.therapeutic import build_therapeutic_agent
 from agent.runtime.context import OpenAITextRunContext
 
 

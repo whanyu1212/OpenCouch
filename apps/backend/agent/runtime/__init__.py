@@ -1,7 +1,7 @@
 """Runtime support types and helpers for persistent agent sessions.
 
 The runtime package exports convenience symbols lazily so submodules such as
-``agent.runtime.agents`` and ``agent.runtime.tools`` can be imported without
+runtime support modules can be imported without
 eagerly importing the full persistent runtime.
 """
 
@@ -70,7 +70,7 @@ def __getattr__(name: str) -> Any:
 
         return getattr(_runtime, name)
     if name in _ACTIVE_SESSION_EXPORTS:
-        from agent.runtime import active_session as _active_session
+        from agent.runtime.session import active_session as _active_session
 
         return getattr(_active_session, name)
     if name in _SESSION_STORE_EXPORTS:

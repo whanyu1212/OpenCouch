@@ -19,9 +19,9 @@ from agent.runtime import (
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
 )
-from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
-from agent.runtime.agents.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
-from agent.runtime.agents.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.specialists.crisis import CRISIS_AGENT_NAME
+from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
+from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM as _RouteLLM,
@@ -781,7 +781,6 @@ async def test_openai_runtime_uses_crisis_agent_for_crisis_response() -> None:
     )
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
         "lookup_crisis_resources",
-        "get_crisis_support_template",
     ]
     assert [tool.name for tool in runtime._roster.crisis_agent.tools] == [
         "lookup_crisis_resources",

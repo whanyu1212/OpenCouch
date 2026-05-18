@@ -10,8 +10,8 @@ import pytest
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 import agent.runtime.text as openai_runtime
 from agent.runtime import PersistentAgentRuntime
-from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
-from agent.runtime.agents.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.specialists.crisis import CRISIS_AGENT_NAME
+from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.session_store import messages_from_sdk_session_items
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,

@@ -15,12 +15,12 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
-from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
-from agent.runtime.agents.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
-from agent.runtime.agents.roster import build_openai_text_agent_roster
-from agent.runtime.agents.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.specialists.crisis import CRISIS_AGENT_NAME
+from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
+from agent.specialists.roster import build_openai_text_agent_roster
+from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.context import MemoryToolCallRecord, OpenAITextRunContext
-from agent.runtime.tools import (
+from agent.tools import (
     CrisisResourceLookupToolResult,
     CrisisSupportTemplateToolResult,
     GroundedLookupToolResult,

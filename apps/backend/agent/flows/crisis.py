@@ -8,10 +8,11 @@ from typing import Any
 
 from agent.audit.crisis_log import write_crisis_log
 from agent.observability.timing import elapsed_ms
-from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
-from agent.runtime.guardrails.prompts import build_crisis_response_system_prompt
-from agent.runtime.agents.therapeutic_prompts import build_clarifying_system_prompt
-from agent.runtime.tools.crisis import (
+from agent.runtime.shared import chunk_from_sdk_event, final_output_text
+from agent.specialists.crisis import CRISIS_AGENT_NAME
+from agent.guardrails.prompts import build_crisis_response_system_prompt
+from agent.specialists.therapeutic_prompts import build_clarifying_system_prompt
+from agent.tools.crisis import (
     build_crisis_resource_lookup_delta,
     crisis_response_delta,
 )
@@ -160,7 +161,6 @@ async def run_crisis_turn_stream(
 
     yield TextRuntimeStatusEvent(stage=runtime_mode)
     run_start = time.monotonic()
-    from agent.runtime.text import _chunk_from_sdk_event, _final_output_text
 
     stream = runtime._runner.run_streamed(
         agent=agent,
@@ -170,11 +170,11 @@ async def run_crisis_turn_stream(
     )
     chunks: list[str] = []
     async for sdk_event in stream.stream_events():
-        chunk = _chunk_from_sdk_event(sdk_event)
+        chunk = chunk_from_sdk_event(sdk_event)
         if chunk:
             chunks.append(chunk)
 
-    response_text = _final_output_text(
+    response_text = final_output_text(
         getattr(stream, "final_output", None),
         fallback="".join(chunks),
     )

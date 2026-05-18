@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.runtime.guardrails.service import CrisisAssessmentSchema
-from agent.runtime.guardrails.assessment import assess_crisis_gate
+from agent.guardrails.service import CrisisAssessmentSchema
+from agent.guardrails.assessment import assess_crisis_gate
 from agent.runtime import build_initial_state, run_agent
 from agent.memory.modes import MemoryMode
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord

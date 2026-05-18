@@ -79,7 +79,7 @@ class _StreamingResponseLLM(BaseLLMClient):
     ) -> StructuredResponseT:
         schema_name = response_schema.__name__
         if schema_name == "CrisisAssessmentSchema":
-            from agent.runtime.guardrails.service import CrisisAssessmentSchema
+            from agent.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

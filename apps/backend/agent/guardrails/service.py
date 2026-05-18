@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import CrisisAssessment
-from agent.runtime.guardrails.prompts import (
+from agent.guardrails.prompts import (
     build_crisis_classifier_prompt,
     build_crisis_classifier_system_prompt,
 )

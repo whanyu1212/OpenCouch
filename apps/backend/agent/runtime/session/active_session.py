@@ -12,20 +12,20 @@ the load:
 - ``sqlite_store``: the SQLite backend with its own runtime-owned connection.
 
 The package is the public surface — callers should ``from
-agent.runtime.active_session import X`` rather than reaching into
+agent.runtime.session.active_session import X`` rather than reaching into
 sibling modules directly.
 """
 
 from __future__ import annotations
 
-from agent.runtime.active_session.manager import (
+from agent.runtime.session.manager import (
     ActiveSessionManager,
     PersistedActiveSessionRow,
     PersistedActiveSessionState,
     parse_iso_timestamp,
 )
-from agent.runtime.active_session.sqlite_store import SqliteActiveSessionStore
-from agent.runtime.active_session.store import (
+from agent.runtime.session.sqlite_store import SqliteActiveSessionStore
+from agent.runtime.session.store import (
     ACTIVE_SESSION_EXTRA_COLUMNS,
     ACTIVE_SESSION_STATE_DDL,
     ActiveSessionStore,

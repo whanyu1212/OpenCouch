@@ -7,16 +7,16 @@ from typing import Any, Sequence
 from agents import Agent
 
 from llm.openai_client import DEFAULT_OPENAI_MODEL
-from agent.runtime.agents.common import (
+from agent.specialists.common import (
     AgentDefinition,
     build_agent,
     definition_with_instructions,
 )
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.tools.grounded import build_grounded_lookup_tools
-from agent.runtime.tools.guided_exercise import build_guided_exercise_discovery_tools
-from agent.runtime.tools.memory import build_memory_tools
-from agent.runtime.tools.therapeutic import build_therapeutic_response_tools
+from agent.tools.grounded import build_grounded_lookup_tools
+from agent.tools.guided_exercise import build_guided_exercise_discovery_tools
+from agent.tools.memory import build_memory_tools
+from agent.tools.therapeutic import build_therapeutic_response_tools
 
 
 THERAPEUTIC_AGENT_NAME = "OpenCouch therapeutic response agent"

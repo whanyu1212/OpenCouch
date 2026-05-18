@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.runtime.active_session import (
+from agent.runtime.session.active_session import (
     PostgresActiveSessionStore,
     SqliteActiveSessionStore,
 )

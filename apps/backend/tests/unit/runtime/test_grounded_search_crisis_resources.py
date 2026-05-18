@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from agent.state import AgentState
-from agent.runtime.tools.grounded_search import (
+from agent.tools.grounded_search import (
     CrisisResourceLookupRequest,
     _normalize_extracted_location,
     find_crisis_resources,

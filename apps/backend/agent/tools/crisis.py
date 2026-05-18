@@ -13,7 +13,7 @@ from agent.runtime.context import (
 )
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.runtime.tools.grounded_search import (
+from agent.tools.grounded_search import (
     CrisisResourceLookupRequest,
     find_crisis_resources,
     find_crisis_resources_for_request,

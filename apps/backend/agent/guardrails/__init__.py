@@ -1,22 +1,22 @@
 """Runtime guardrails for OpenAI text-agent execution."""
 
-from agent.runtime.guardrails.assessment import (
+from agent.guardrails.assessment import (
     CrisisGateResult,
     assess_crisis_gate,
     build_crisis_gate_delta,
 )
-from agent.runtime.guardrails.crisis import (
+from agent.guardrails.crisis import (
     CrisisInputGuardrailOutput,
     crisis_input_guardrail,
     run_crisis_input_guardrail,
 )
-from agent.runtime.guardrails.prompts import (
+from agent.guardrails.prompts import (
     build_crisis_classifier_prompt,
     build_crisis_classifier_system_prompt,
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
 )
-from agent.runtime.guardrails.service import (
+from agent.guardrails.service import (
     CrisisAssessmentSchema,
     CrisisRiskResult,
     CrisisRiskService,

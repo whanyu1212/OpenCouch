@@ -30,7 +30,7 @@ from agent.audit.models import (
     CrisisLogPathCounts,
     CrisisLogRecord,
 )
-from agent.runtime.guardrails.service import CrisisAssessmentSchema
+from agent.guardrails.service import CrisisAssessmentSchema
 from agent.audit.crisis_log import write_crisis_log
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
 from agent.runtime_context import WorkflowContext

@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from agent.runtime import build_initial_state
-from agent.runtime.tools.crisis import build_crisis_resource_lookup_delta
+from agent.tools.crisis import build_crisis_resource_lookup_delta
 from agent.memory.modes import MemoryMode
 from agent.models import AgentInput, CrisisAssessment
 from agent.runtime_context import WorkflowContext

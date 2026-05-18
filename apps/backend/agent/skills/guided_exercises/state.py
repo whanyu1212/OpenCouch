@@ -6,6 +6,7 @@ from typing import Any
 
 from agent.state import AgentState, cleared_exercise_state
 from agent.skills.guided_exercises.registry import (
+    EXERCISE_5_4_3_2_1,
     get_exercise_definition,
     get_exercise_steps,
 )
@@ -38,6 +39,8 @@ def _start_exercise_delta(
     approach = state.get("therapeutic_approach")
     definition = get_exercise_definition(exercise_type)
     steps = definition.steps if definition is not None else ()
+    if approach in (None, "", "none") and exercise_type == EXERCISE_5_4_3_2_1:
+        approach = "dbt_skills"
     return {
         "exercise_state": {
             "exercise_type": exercise_type,

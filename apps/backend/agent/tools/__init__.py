@@ -1,6 +1,6 @@
 """OpenAI text runtime tools grouped by specialist ownership."""
 
-from agent.runtime.tools.crisis import (
+from agent.tools.crisis import (
     CrisisResourceLookupToolResult,
     CrisisSupportTemplateToolResult,
     build_crisis_response_tools,
@@ -9,13 +9,13 @@ from agent.runtime.tools.crisis import (
     get_crisis_support_template,
     lookup_crisis_resources,
 )
-from agent.runtime.tools.grounded import (
+from agent.tools.grounded import (
     GroundedLookupToolResult,
     answer_grounded_lookup,
     build_grounded_lookup_tools,
     execute_grounded_lookup_tool,
 )
-from agent.runtime.tools.guided_exercise import (
+from agent.tools.guided_exercise import (
     GuidedExerciseProgressToolResult,
     GuidedExerciseSkillDiscoveryToolResult,
     GuidedExerciseSkillSummary,
@@ -29,7 +29,7 @@ from agent.runtime.tools.guided_exercise import (
     load_guided_exercise_skill,
     record_guided_exercise_progress,
 )
-from agent.runtime.tools.memory import (
+from agent.tools.memory import (
     MemoryReadToolResult,
     MemoryToolResult,
     build_memory_tools,
@@ -46,7 +46,7 @@ from agent.runtime.tools.memory import (
     show_memory_status,
     show_saved_memory,
 )
-from agent.runtime.tools.therapeutic import (
+from agent.tools.therapeutic import (
     TherapeuticResponseSkillToolResult,
     build_therapeutic_response_tools,
     execute_therapeutic_response_skill_tool,

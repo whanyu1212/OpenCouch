@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from agent.runtime.active_session import (
+from agent.runtime.session.active_session import (
     ActiveSessionManager,
     PersistedActiveSessionState,
     PostgresActiveSessionStore,
@@ -1284,6 +1284,7 @@ class PersistentAgentRuntime:
                 llm_client=llm_client,
                 expected_liveness=expected_liveness,
             )
+            prior_state = await self.get_state(thread_id)
             prior_turn_count = turn_count_from_state(prior_state)
 
             initial_state = self._build_turn_initial_state(
@@ -1645,6 +1646,7 @@ class PersistentAgentRuntime:
                 llm_client=llm_client,
                 expected_liveness=expected_liveness,
             )
+            prior_state = await self.get_state(thread_id)
             prior_turn_count = turn_count_from_state(prior_state)
 
             initial_state = self._build_turn_initial_state(

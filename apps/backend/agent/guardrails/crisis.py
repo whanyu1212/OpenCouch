@@ -13,7 +13,7 @@ from agents import (
 )
 from pydantic import BaseModel, Field
 
-from agent.runtime.guardrails.assessment import assess_crisis_gate
+from agent.guardrails.assessment import assess_crisis_gate
 from agent.models import CrisisAssessment
 from agent.state import AgentState
 from agent.runtime.context import OpenAITextRunContext

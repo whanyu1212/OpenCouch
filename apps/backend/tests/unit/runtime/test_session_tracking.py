@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.runtime.active_session import PersistedActiveSessionState
+from agent.runtime.session.active_session import PersistedActiveSessionState
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.runtime.session import RuntimeSessionTracker
 

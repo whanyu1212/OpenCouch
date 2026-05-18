@@ -7,13 +7,13 @@ from typing import Any, Sequence
 from agents import Agent
 
 from llm.openai_client import DEFAULT_OPENAI_MODEL
-from agent.runtime.agents.common import (
+from agent.specialists.common import (
     AgentDefinition,
     build_agent,
     definition_with_instructions,
 )
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.tools.crisis import build_crisis_response_tools
+from agent.tools.crisis import build_crisis_response_tools
 
 
 CRISIS_AGENT_NAME = "OpenCouch crisis response text agent"

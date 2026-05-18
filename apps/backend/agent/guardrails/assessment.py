@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.runtime.guardrails.service import CrisisRiskService
+from agent.guardrails.service import CrisisRiskService
 from agent.models import CrisisAssessment
 from agent.observability.routing_trace import append_routing_trace
 from agent.runtime.session.state import clear_all_active_flows_delta

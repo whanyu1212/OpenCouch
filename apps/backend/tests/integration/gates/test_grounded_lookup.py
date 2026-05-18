@@ -14,8 +14,8 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.runtime.tools.grounded import build_grounded_lookup_delta
-from agent.runtime.tools.grounded_search import (
+from agent.tools.grounded import build_grounded_lookup_delta
+from agent.tools.grounded_search import (
     GroundedLookupRequest,
     answer_factual_lookup,
     answer_factual_lookup_request,

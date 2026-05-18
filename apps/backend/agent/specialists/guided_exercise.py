@@ -8,23 +8,23 @@ from agents import Agent
 
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 from agent.prompts import compose_sources as _compose
-from agent.runtime.agents.common import (
+from agent.specialists.common import (
     AgentDefinition,
     build_agent,
     definition_with_instructions,
 )
-from agent.runtime.agents.therapeutic_prompt_instructions import (
+from agent.specialists.therapeutic_prompt_instructions import (
     _GUIDED_EXERCISE_INSTRUCTIONS,
 )
-from agent.runtime.agents.therapeutic_prompt_sources import (
+from agent.specialists.therapeutic_prompt_sources import (
     _knowledge_for_response_style,
 )
-from agent.runtime.agents.therapeutic_prompts import (
+from agent.specialists.therapeutic_prompts import (
     _compose_system_prompt_with_state,
     _read_approach,
 )
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.tools.guided_exercise import build_guided_exercise_tools
+from agent.tools.guided_exercise import build_guided_exercise_tools
 from agent.state import AgentState
 
 

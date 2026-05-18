@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from agent.state import AgentState
-from agent.runtime.agents.therapeutic_prompts import (
+from agent.specialists.therapeutic_prompts import (
     build_clarifying_system_prompt,
     build_closing_system_prompt,
     build_psychoeducation_system_prompt,
