@@ -78,6 +78,11 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
     )
 
     assert runner.run_calls
+    assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
+    assert runner.run_calls[0]["agent"].name == runtime._roster.therapeutic_agent.name
+    assert runner.run_calls[0]["agent"].handoff_description == (
+        runtime._roster.therapeutic_agent.handoff_description
+    )
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
         "load_therapeutic_response_skill",
         "show_saved_memory",
@@ -611,6 +616,10 @@ async def test_openai_runtime_starts_guided_exercise_with_guided_agent() -> None
     assert runner.stream_calls
     sdk_call = runner.stream_calls[0]
     assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
+    assert sdk_call["agent"].name == runtime._roster.guided_exercise_agent.name
+    assert sdk_call["agent"].handoff_description == (
+        runtime._roster.guided_exercise_agent.handoff_description
+    )
     assert [tool.name for tool in sdk_call["agent"].tools] == [
         "load_guided_exercise_skill",
         "record_guided_exercise_progress",
@@ -673,6 +682,12 @@ async def test_openai_runtime_continues_active_guided_exercise() -> None:
         "advance"
     )
     assert runner.stream_calls
+    sdk_call = runner.stream_calls[0]
+    assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
+    assert sdk_call["agent"].name == runtime._roster.guided_exercise_agent.name
+    assert sdk_call["agent"].handoff_description == (
+        runtime._roster.guided_exercise_agent.handoff_description
+    )
 
 
 @pytest.mark.asyncio
@@ -950,6 +965,12 @@ async def test_openai_runtime_streams_guided_exercise_turn() -> None:
         "load_guided_exercise_skill"
     ]
     assert runner.stream_calls
+    sdk_call = runner.stream_calls[0]
+    assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
+    assert sdk_call["agent"].name == runtime._roster.guided_exercise_agent.name
+    assert sdk_call["agent"].handoff_description == (
+        runtime._roster.guided_exercise_agent.handoff_description
+    )
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from agents import Agent, Runner
 from openai import APIConnectionError, OpenAIError
 
 from agent.runtime.session.state import format_recent_history
-from agent.audit.crisis_log import write_crisis_log
 from agent.runtime.guardrails.prompts import (
     build_crisis_response_prompt,
     build_crisis_response_system_prompt,
@@ -24,7 +23,6 @@ from agent.observability.timing import elapsed_ms
 from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
 from agent.runtime.agents.guided_exercise import (
     GUIDED_EXERCISE_AGENT_NAME,
-    build_guided_exercise_agent,
 )
 from agent.runtime.agents.roster import build_openai_text_agent_roster
 from agent.runtime.agents.therapeutic import (
@@ -32,12 +30,13 @@ from agent.runtime.agents.therapeutic import (
     build_therapeutic_agent,
 )
 from agent.runtime.context import OpenAITextRunContext
+from agent.runtime.crisis_path import (
+    run_crisis_response_llm_turn as run_crisis_response_llm_turn_path,
+    run_crisis_turn as run_crisis_turn_path,
+    run_crisis_turn_stream as run_crisis_turn_stream_path,
+)
 from agent.runtime.guardrails import run_crisis_input_guardrail
 from agent.runtime.memory_context import build_turn_memory_delta
-from agent.runtime.tools.crisis import (
-    build_crisis_resource_lookup_delta,
-    crisis_response_delta,
-)
 from agent.runtime.types import (
     TextRuntimeConfig,
     TextRuntimeChunkEvent,
@@ -192,12 +191,12 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         self,
         *,
         runner: OpenAIAgentsSDKRunner,
-        model: str,
+        guided_exercise_agent: Any,
         run_context: OpenAITextRunContext,
         session: Any | None = None,
     ) -> None:
         self._runner = runner
-        self._model = model
+        self._guided_exercise_agent = guided_exercise_agent
         self._run_context = run_context
         self._session = session
         self.last_duration_ms: float | None = None
@@ -309,13 +308,12 @@ class _OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         raise RuntimeError("Guided exercise response LLM does not classify.")
 
     def _build_agent(self, system_instruction: str | None) -> Any:
+        agent = self._guided_exercise_agent
         instructions = _RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS
         if system_instruction:
             instructions = f"{instructions}\n\n{system_instruction}"
-        return build_guided_exercise_agent(
-            model=self._model,
-            instructions=instructions,
-        )
+        agent.instructions = instructions
+        return agent
 
 
 class _FallbackGuidedExerciseResponseLLM(BaseLLMClient):
@@ -922,7 +920,7 @@ class OpenAITextRuntime:
             )
         return _OpenAIGuidedExerciseResponseLLM(
             runner=self._runner,
-            model=self._model,
+            guided_exercise_agent=self._roster.guided_exercise_agent,
             run_context=run_context,
             session=session,
         )
@@ -955,86 +953,14 @@ class OpenAITextRuntime:
         streamed: bool,
         session: Any | None = None,
     ) -> AgentState:
-        if runtime_mode == "crisis_clarification":
-            state = await self._load_turn_memory(state, context)
-        elif runtime_mode != "crisis_response":
-            raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
-
-        if context.response_llm is not None:
-            return await self._run_crisis_response_llm_turn(
-                state,
-                config=config,
-                context=context,
-                runtime_mode=runtime_mode,
-                streamed=streamed,
-                session=session,
-            )
-
-        run_context = self._run_context_for_state(state, config, context)
-        agent = self._build_crisis_agent(state, runtime_mode=runtime_mode)
-        tool_call_count = len(run_context.crisis_resource_tool_calls)
-        input_text = self._crisis_input_text_for_state(
+        return await run_crisis_turn_path(
+            self,
             state,
-            runtime_mode=runtime_mode,
-            include_recent_history=_include_prompt_history(session),
-            require_resource_tool=runtime_mode == "crisis_response",
-        )
-        response_text, sdk_duration_ms = await self._run_openai_agent_with(
-            state,
-            agent=agent,
-            input_text=input_text,
-            run_context=run_context,
-            session=session,
-        )
-
-        response_style = _response_style_for_crisis_mode(runtime_mode)
-        if runtime_mode == "crisis_response":
-            if not _crisis_resource_tool_called(
-                run_context,
-                tool_call_count=tool_call_count,
-            ):
-                lookup_delta = await build_crisis_resource_lookup_delta(state, context)
-                _apply_delta(state, lookup_delta)
-                _apply_crisis_resource_fallback_diagnostics(state, run_context)
-                response_text, sdk_duration_ms = await self._run_openai_agent_with(
-                    state,
-                    agent=self._build_crisis_agent(
-                        state,
-                        runtime_mode=runtime_mode,
-                        enable_resource_tools=False,
-                    ),
-                    input_text=self._crisis_input_text_for_state(
-                        state,
-                        runtime_mode=runtime_mode,
-                        include_recent_history=_include_prompt_history(session),
-                        require_resource_tool=False,
-                    ),
-                    run_context=run_context,
-                    session=session,
-                )
-            else:
-                _apply_crisis_resource_tool_result(state, run_context)
-            _apply_delta(state, crisis_response_delta(response_text))
-            await write_crisis_log(state, context)
-        else:
-            _apply_delta(
-                state,
-                {
-                    "route": "therapeutic",
-                    "response_style": response_style,
-                    "response_text": response_text,
-                },
-            )
-
-        return await self._finalize_openai_turn(
-            state,
-            response_text=response_text,
             config=config,
+            context=context,
             runtime_mode=runtime_mode,
-            response_style=response_style,
-            selected_agent=CRISIS_AGENT_NAME,
-            sdk_duration_ms=sdk_duration_ms,
             streamed=streamed,
+            session=session,
         )
 
     async def _run_crisis_turn_stream(
@@ -1046,120 +972,15 @@ class OpenAITextRuntime:
         runtime_mode: str,
         session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
-        if runtime_mode == "crisis_clarification":
-            state = await self._load_turn_memory(state, context)
-        elif runtime_mode != "crisis_response":
-            raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
-
-        if context.response_llm is not None:
-            yield TextRuntimeStatusEvent(stage=runtime_mode)
-            final_state = await self._run_crisis_response_llm_turn(
-                state,
-                config=config,
-                context=context,
-                runtime_mode=runtime_mode,
-                streamed=True,
-                session=session,
-            )
-            response_text = str(final_state.get("response_text") or "")
-            if response_text:
-                yield TextRuntimeChunkEvent(text=response_text)
-            if runtime_mode == "crisis_response":
-                yield TextRuntimeStatusEvent(stage="crisis_log")
-            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-            yield TextRuntimeStateEvent(state=final_state)
-            return
-
-        run_context = self._run_context_for_state(state, config, context)
-        agent = self._build_crisis_agent(state, runtime_mode=runtime_mode)
-        tool_call_count = len(run_context.crisis_resource_tool_calls)
-        input_text = self._crisis_input_text_for_state(
+        async for event in run_crisis_turn_stream_path(
+            self,
             state,
-            runtime_mode=runtime_mode,
-            include_recent_history=_include_prompt_history(session),
-            require_resource_tool=runtime_mode == "crisis_response",
-        )
-
-        yield TextRuntimeStatusEvent(stage=runtime_mode)
-        run_start = time.monotonic()
-        stream = self._runner.run_streamed(
-            agent=agent,
-            input_text=input_text,
-            context=run_context,
-            session=session,
-        )
-        chunks: list[str] = []
-        async for sdk_event in stream.stream_events():
-            chunk = _chunk_from_sdk_event(sdk_event)
-            if chunk:
-                chunks.append(chunk)
-
-        response_text = _final_output_text(
-            getattr(stream, "final_output", None),
-            fallback="".join(chunks),
-        )
-        sdk_duration_ms = elapsed_ms(run_start)
-        response_style = _response_style_for_crisis_mode(runtime_mode)
-        if runtime_mode == "crisis_response":
-            if not _crisis_resource_tool_called(
-                run_context,
-                tool_call_count=tool_call_count,
-            ):
-                lookup_delta = await build_crisis_resource_lookup_delta(state, context)
-                _apply_delta(state, lookup_delta)
-                _apply_crisis_resource_fallback_diagnostics(state, run_context)
-                response_text, sdk_duration_ms = await self._run_openai_agent_with(
-                    state,
-                    agent=self._build_crisis_agent(
-                        state,
-                        runtime_mode=runtime_mode,
-                        enable_resource_tools=False,
-                    ),
-                    input_text=self._crisis_input_text_for_state(
-                        state,
-                        runtime_mode=runtime_mode,
-                        include_recent_history=_include_prompt_history(session),
-                        require_resource_tool=False,
-                    ),
-                    run_context=run_context,
-                    session=session,
-                )
-                chunks = [response_text]
-            else:
-                _apply_crisis_resource_tool_result(state, run_context)
-            for chunk in chunks:
-                yield TextRuntimeChunkEvent(text=chunk)
-            if response_text and not chunks:
-                yield TextRuntimeChunkEvent(text=response_text)
-            _apply_delta(state, crisis_response_delta(response_text))
-            yield TextRuntimeStatusEvent(stage="crisis_log")
-            await write_crisis_log(state, context)
-        else:
-            for chunk in chunks:
-                yield TextRuntimeChunkEvent(text=chunk)
-            if response_text and not chunks:
-                yield TextRuntimeChunkEvent(text=response_text)
-            _apply_delta(
-                state,
-                {
-                    "route": "therapeutic",
-                    "response_style": response_style,
-                    "response_text": response_text,
-                },
-            )
-
-        final_state = await self._finalize_openai_turn(
-            state,
-            response_text=response_text,
             config=config,
+            context=context,
             runtime_mode=runtime_mode,
-            response_style=response_style,
-            selected_agent=CRISIS_AGENT_NAME,
-            sdk_duration_ms=sdk_duration_ms,
-            streamed=True,
-        )
-        yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-        yield TextRuntimeStateEvent(state=final_state)
+            session=session,
+        ):
+            yield event
 
     async def _run_crisis_response_llm_turn(
         self,
@@ -1171,64 +992,14 @@ class OpenAITextRuntime:
         streamed: bool,
         session: Any | None = None,
     ) -> AgentState:
-        llm_client = context.response_llm
-        if llm_client is None:
-            raise RuntimeError("crisis response override requires response_llm.")
-
-        if runtime_mode == "crisis_response":
-            lookup_delta = await build_crisis_resource_lookup_delta(state, context)
-            _apply_delta(state, lookup_delta)
-            prompt = self._crisis_input_text_for_state(
-                state,
-                runtime_mode=runtime_mode,
-                include_recent_history=_include_prompt_history(session),
-                require_resource_tool=False,
-            )
-            system_instruction = build_crisis_response_system_prompt()
-        elif runtime_mode == "crisis_clarification":
-            prompt = self._crisis_input_text_for_state(
-                state,
-                runtime_mode=runtime_mode,
-                include_recent_history=_include_prompt_history(session),
-            )
-            system_instruction = build_clarifying_system_prompt(state)
-        else:
-            raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
-
-        run_start = time.monotonic()
-        response_text = await llm_client.generate_text(
-            prompt=prompt,
-            system_instruction=system_instruction,
-        )
-        sdk_duration_ms = elapsed_ms(run_start)
-        response_style = _response_style_for_crisis_mode(runtime_mode)
-        diagnostics = {
-            **dict(state.get("diagnostics", {}) or {}),
-            "openai_response_llm_override": True,
-        }
-        if runtime_mode == "crisis_response":
-            diagnostics["openai_crisis_tool_fallback"] = True
-            _apply_delta(state, crisis_response_delta(response_text))
-            await write_crisis_log(state, context)
-        else:
-            _apply_delta(
-                state,
-                {
-                    "route": "therapeutic",
-                    "response_style": response_style,
-                    "response_text": response_text,
-                },
-            )
-        _apply_delta(state, {"diagnostics": diagnostics})
-        return await self._finalize_openai_turn(
+        return await run_crisis_response_llm_turn_path(
+            self,
             state,
-            response_text=response_text,
             config=config,
+            context=context,
             runtime_mode=runtime_mode,
-            response_style=response_style,
-            selected_agent=CRISIS_AGENT_NAME,
-            sdk_duration_ms=sdk_duration_ms,
             streamed=streamed,
+            session=session,
         )
 
     async def _run_openai_agent(
@@ -1468,11 +1239,7 @@ class OpenAITextRuntime:
 
     def _build_agent(self, state: AgentState) -> Any:
         del state
-        instructions = _RUNTIME_THERAPEUTIC_INSTRUCTIONS
-        return build_therapeutic_agent(
-            model=self._model,
-            instructions=instructions,
-        )
+        return self._roster.therapeutic_agent
 
     def _build_shadow_agent(self, state: AgentState) -> Any:
         instructions = (

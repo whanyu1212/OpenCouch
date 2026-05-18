@@ -48,6 +48,9 @@ Guided exercise discovery:
 Therapeutic response skills:
 - Call load_therapeutic_response_skill before drafting an ordinary non-crisis
   therapeutic reply when no memory or grounded lookup tool owns the answer.
+- Do not call load_therapeutic_response_skill for memory-control requests or
+  factual/external lookup requests that are better handled by their dedicated
+  tools.
 - Choose the response_style argument that best fits the user's current turn:
   supportive, reflective, clarifying, psychoeducation, closing, or technique.
 - Use the returned skill_context as response-style guidance. Do not recite the

@@ -251,6 +251,10 @@ skills/
 !apps/backend/agent/skills/**
 !apps/backend/tests/unit/skills/
 !apps/backend/tests/unit/skills/**
+apps/backend/agent/skills/**/__pycache__/
+apps/backend/agent/skills/**/*.py[codz]
+apps/backend/tests/unit/skills/**/__pycache__/
+apps/backend/tests/unit/skills/**/*.py[codz]
 
 # editor local settings
 .vscode/
