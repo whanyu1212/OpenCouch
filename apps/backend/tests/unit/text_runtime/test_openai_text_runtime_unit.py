@@ -88,6 +88,7 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
         "prepare_memory_deletion_by_query",
         "confirm_memory_deletion",
         "cancel_memory_deletion",
+        "list_guided_exercise_skills",
         "answer_grounded_lookup",
     ]
     assert "Write the next assistant message" in runner.run_calls[0]["input_text"]
@@ -611,7 +612,8 @@ async def test_openai_runtime_starts_guided_exercise_with_guided_agent() -> None
     sdk_call = runner.stream_calls[0]
     assert sdk_call["agent"].name == GUIDED_EXERCISE_AGENT_NAME
     assert [tool.name for tool in sdk_call["agent"].tools] == [
-        "load_guided_exercise_skill"
+        "load_guided_exercise_skill",
+        "record_guided_exercise_progress",
     ]
     assert "Required tool: load_guided_exercise_skill" in sdk_call["input_text"]
     assert "grounding_box_breathing" in sdk_call["input_text"]
@@ -715,6 +717,10 @@ async def test_openai_runtime_uses_crisis_agent_for_safety_clarification() -> No
     assert result["diagnostics"]["openai_selected_agent"] == CRISIS_AGENT_NAME
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+    assert runner.run_calls[0]["agent"].name == runtime._roster.crisis_agent.name
+    assert runner.run_calls[0]["agent"].handoff_description == (
+        runtime._roster.crisis_agent.handoff_description
+    )
     assert runner.run_calls[0]["agent"].tools == []
     assert "Safety-check override" in runner.run_calls[0]["agent"].instructions
     assert await context.crisis_log_backend.arecord_count() == 0
@@ -754,8 +760,17 @@ async def test_openai_runtime_uses_crisis_agent_for_crisis_response() -> None:
     assert result["diagnostics"]["openai_crisis_tool_fallback"] is False
     assert runner.run_calls
     assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
+    assert runner.run_calls[0]["agent"].name == runtime._roster.crisis_agent.name
+    assert runner.run_calls[0]["agent"].handoff_description == (
+        runtime._roster.crisis_agent.handoff_description
+    )
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
-        "lookup_crisis_resources"
+        "lookup_crisis_resources",
+        "get_crisis_support_template",
+    ]
+    assert [tool.name for tool in runtime._roster.crisis_agent.tools] == [
+        "lookup_crisis_resources",
+        "get_crisis_support_template",
     ]
     assert "Required tool: lookup_crisis_resources" in runner.run_calls[0]["input_text"]
     assert await context.crisis_log_backend.arecord_count() == 1

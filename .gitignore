@@ -226,6 +226,9 @@ __marimo__/
 notes/
 *_spec.md
 
+# local root docs
+/docs/
+
 # local working docs — plans, reports, outlines, research notes
 # (kept at root level for convenience but not tracked in git)
 ROADMAP.md

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
 
-from agents import Runner
+from agents import Agent, Runner
 from openai import APIConnectionError, OpenAIError
 
 from agent.runtime.session.state import format_recent_history
@@ -21,11 +21,12 @@ from agent.runtime.guardrails.prompts import (
 )
 from agent.models import Channel, MessageRole
 from agent.observability.timing import elapsed_ms
-from agent.runtime.agents.crisis import CRISIS_AGENT_NAME, build_crisis_response_agent
+from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
 from agent.runtime.agents.guided_exercise import (
     GUIDED_EXERCISE_AGENT_NAME,
     build_guided_exercise_agent,
 )
+from agent.runtime.agents.roster import build_openai_text_agent_roster
 from agent.runtime.agents.therapeutic import (
     THERAPEUTIC_AGENT_NAME,
     build_therapeutic_agent,
@@ -404,6 +405,7 @@ class OpenAITextRuntime:
     ) -> None:
         self._runner = runner or _DEFAULT_OPENAI_RUNNER
         self._model = model
+        self._roster = build_openai_text_agent_roster(model=model)
 
     async def run_turn(
         self,
@@ -1492,9 +1494,10 @@ class OpenAITextRuntime:
         runtime_mode: str,
         enable_resource_tools: bool | None = None,
     ) -> Any:
+        base_agent = self._roster.crisis_agent
         if runtime_mode == "crisis_response":
             system_prompt = build_crisis_response_system_prompt()
-            tools = None if enable_resource_tools is not False else []
+            tools = list(base_agent.tools) if enable_resource_tools is not False else []
         elif runtime_mode == "crisis_clarification":
             system_prompt = build_clarifying_system_prompt(state)
             tools = []
@@ -1502,9 +1505,11 @@ class OpenAITextRuntime:
             raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
 
         instructions = f"{_RUNTIME_CRISIS_INSTRUCTIONS}\n\n{system_prompt}"
-        return build_crisis_response_agent(
-            model=self._model,
+        return Agent[OpenAITextRunContext](
+            name=base_agent.name,
+            handoff_description=base_agent.handoff_description,
             instructions=instructions,
+            model=base_agent.model,
             tools=tools,
         )
 
