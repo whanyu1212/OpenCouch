@@ -71,14 +71,6 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Generated eval SQLite artifacts
-eval/*.sqlite
-eval/*.sqlite3
-eval/*.db
-eval/.*.sqlite
-eval/.*.sqlite3
-eval/.*.db
-
 # Flask stuff:
 instance/
 .webassets-cache
@@ -241,6 +233,7 @@ AGENTS.md
 [Cc][Ll][Aa][Uu][Dd][Ee].md
 llms.txt
 *_plan.md
+*_PLAN.md
 *_report.md
 *_outline.md
 *_design.md
@@ -251,14 +244,13 @@ TELEGRAM_CHANNEL_IMPLEMENTATION.md
 # local references / skills worktrees
 refs/
 skills/
+!apps/backend/agent/skills/
+!apps/backend/agent/skills/**
+!apps/backend/tests/unit/skills/
+!apps/backend/tests/unit/skills/**
 
 # editor local settings
 .vscode/
 
 # local runtime sqlite databases
 apps/backend/.store/
-eval/.session_trajectory_eval.sqlite3
-eval/.session_arc_eval.sqlite3
-
-# dogfood transcripts (not ready for commit)
-eval/dogfood/

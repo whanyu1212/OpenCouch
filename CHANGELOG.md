@@ -94,7 +94,7 @@ The public `AgentOutput.response_type` field is unchanged in shape and value —
 ### Validation
 - Backend test suite at **1025 passed, 0 failed, 15 skipped** throughout each of the three field deletions; assertions on the deleted fields were removed (~17 across `test_state_contracts.py`, `test_crisis_gate.py`, `test_therapeutic_routing.py`, `test_grounded_lookup.py`, `test_diagnostics_reducer.py`, `test_opencouch_cli.py`, `test_session_trajectory_eval_helpers.py`, `test_grounded_lookup.py`)
 - Frontend type definitions, the assistant-message Pill rendering, the debug `state` page sections, and the CLI diagnostics line were updated in the same commit so the public API and UI stay coherent
-- Docs (`AgentGraph.tsx`, `StateFields.tsx`, `NodeCatalog.tsx`, `agent/README.md`) updated to reflect the trimmed state surface
+- Docs components and `agent/README.md` updated to reflect the trimmed state surface
 
 ## 2026-05-07 — Agent Module Restructure + Service Extraction + Latency Wins
 
@@ -319,7 +319,7 @@ This entry covers ~50 commits on `refactor/agent-restructure` since the 2026-05-
 - Moved deterministic crisis regex policy into `agent/safety/crisis_rules.py` so `crisis_gate.py` now focuses on node orchestration, schema normalization, and routing
 - Tightened `CrisisAssessmentSchema` with schema-native field descriptions and simplified the node flow by removing duplicate validation layers
 - Removed unused crisis-gate shadow monitoring and disagreement logging after confirming it was adding complexity without an active operational consumer
-- Added direct standalone `run_crisis_gate_node(...)` tests for override routing, deterministic fallback, LLM-primary success, LLM-exception fallback, and truth-table enforcement
+- Added direct standalone crisis-gate tests for override routing, deterministic fallback, LLM-primary success, LLM-exception fallback, and truth-table enforcement
 
 ### CLI therapeutic theme refinement
 - Updated the OpenCouch CLI Rich theme from amber-dominant tones to a calmer **sage + muted blue** palette to better match the therapeutic product tone

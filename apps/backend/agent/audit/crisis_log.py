@@ -1,7 +1,8 @@
 """Always-on crisis safety log backends.
 
 The crisis log is separate from prompt memory and writes regardless of
-memory mode. The graph appends records only from ``crisis_log_node``;
+memory mode. Crisis-response side effects append records only after the
+response branch completes;
 retention purges are operator- or maintenance-driven and never happen
 during normal turn processing.
 
@@ -16,18 +17,25 @@ Concrete backends share the same async protocol:
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import date
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
+from uuid import uuid4
 
 from agent.audit.models import CrisisLogRecord
+from agent.memory.hashing import hash_session_id
+from agent.memory.hashing import iso_now
+from agent.memory.modes import MemoryMode
+
+logger = logging.getLogger(__name__)
 
 
 class CrisisLogBackend(Protocol):
     """Protocol that any crisis-log backend must implement.
 
-    ``crisis_log_node`` writes records, debugging and audit code reads
-    them back by date, CLI status reports the total count, retention
+    Crisis-response side effects write records, debugging and audit code
+    reads them back by date, CLI status reports the total count, retention
     purging deletes expired records, and the runtime lifecycle owns
     closing.
     """
@@ -80,6 +88,63 @@ class CrisisLogBackend(Protocol):
             None: Closes the backend.
         """
         ...
+
+
+async def write_crisis_log(
+    state: Mapping[str, Any],
+    context: Any,
+) -> dict[str, Any]:
+    """Write a crisis event record to the always-on safety audit log."""
+
+    crisis = state.get("crisis")
+    needs_crisis_response = (
+        bool(crisis.get("needs_crisis_response"))
+        if isinstance(crisis, Mapping)
+        else bool(getattr(crisis, "needs_crisis_response", False))
+    )
+    if crisis is None or not needs_crisis_response:
+        logger.debug("crisis log called on non-crisis turn; skipping write")
+        return {}
+
+    backend = context.crisis_log_backend
+    crisis_audit = state.get("crisis_audit", {})
+    override_kind = crisis_audit.get("crisis_override_kind", "none")
+    classifier_path = crisis_audit.get("crisis_classifier_path", "llm_primary")
+    llm_failure_occurred = crisis_audit.get("crisis_llm_failure_occurred", False)
+
+    if "crisis_classifier_path" not in crisis_audit:
+        logger.debug(
+            "crisis log: no classifier_path in crisis_audit state; "
+            "using default 'llm_primary'"
+        )
+
+    user_id = (
+        None if context.memory_mode == MemoryMode.INCOGNITO else state.get("user_id")
+    )
+    level = crisis.get("level", 0) if isinstance(crisis, Mapping) else crisis.level
+    reason = crisis.get("reason", "") if isinstance(crisis, Mapping) else crisis.reason
+    record = CrisisLogRecord(
+        id=str(uuid4()),
+        session_id_opaque=hash_session_id(state.get("session_id")),
+        user_id_or_null=user_id,
+        detected_at=iso_now(),
+        level=level,
+        override_kind=override_kind,
+        classifier_path=classifier_path,
+        reason=reason or "",
+        response_node_completed=True,
+        llm_failure_occurred=llm_failure_occurred,
+    )
+
+    try:
+        await backend.aappend(record)
+    except Exception:
+        logger.error(
+            "crisis log failed to write record; audit trail lost for this event",
+            exc_info=True,
+        )
+
+    return {}
 
 
 class InMemoryCrisisLogBackend:

@@ -1,72 +1,31 @@
-"""Tests for the OpenAI text-agent runtime seam."""
+"""Tests for the OpenAI text-agent runtime."""
 
 from __future__ import annotations
 
 import pytest
 
-from agent.persistence import PersistentAgentRuntime
-from agent.text_runtime import (
-    DEFAULT_TEXT_AGENT_RUNTIME,
-    OpenAITextAgentAdapter,
-    create_text_agent_adapter,
-    resolve_text_agent_runtime,
-)
+from agent.runtime import OpenAITextRuntime, PersistentAgentRuntime
 
 
-def test_resolve_text_agent_runtime_defaults_to_openai(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The default text runtime is OpenAI."""
-
-    monkeypatch.delenv("OPENCOUCH_TEXT_AGENT_RUNTIME", raising=False)
-
-    assert DEFAULT_TEXT_AGENT_RUNTIME == "openai"
-    assert resolve_text_agent_runtime() == "openai"
-
-
-def test_resolve_text_agent_runtime_accepts_openai_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Runtime selection tolerates common env formatting noise."""
-
-    monkeypatch.setenv("OPENCOUCH_TEXT_AGENT_RUNTIME", " OpenAI ")
-
-    assert resolve_text_agent_runtime() == "openai"
-
-
-def test_resolve_text_agent_runtime_rejects_langgraph_value() -> None:
-    """Stale LangGraph runtime config should fail loudly."""
-
-    with pytest.raises(ValueError, match="Supported value: openai"):
-        resolve_text_agent_runtime("langgraph")
-
-
-def test_resolve_text_agent_runtime_rejects_unknown_value() -> None:
-    """Unsupported runtimes should fail before a turn starts."""
-
-    with pytest.raises(ValueError, match="Supported value: openai"):
-        resolve_text_agent_runtime("unknown")
-
-
-def test_persistent_runtime_defaults_to_openai_text_runtime(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """PersistentAgentRuntime should use OpenAI when no override is set."""
-
-    monkeypatch.delenv("OPENCOUCH_TEXT_AGENT_RUNTIME", raising=False)
+def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
+    """PersistentAgentRuntime should use the OpenAI text runtime."""
 
     runtime = PersistentAgentRuntime()
 
-    assert runtime._text_agent_runtime == "openai"
     assert runtime._text_session_store is not None
+    assert runtime._openai_text_runtime is None
 
 
-def test_create_text_agent_adapter_builds_openai_adapter() -> None:
-    """The factory should make OpenAI the only serving adapter."""
+@pytest.mark.asyncio
+async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
+    """Runtime prewarm should initialize the OpenAI runtime before use."""
 
-    adapter = create_text_agent_adapter()
-
-    assert isinstance(adapter, OpenAITextAgentAdapter)
+    async with PersistentAgentRuntime(
+        sqlite_path=tmp_path / "threads.sqlite3",
+        text_session_backend="sqlite",
+        text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+    ) as runtime:
+        assert isinstance(runtime._openai_text_runtime, OpenAITextRuntime)
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,7 @@ from agent.memory.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
 )
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -96,7 +96,7 @@ class _FakeAPILLM(BaseLLMClient):
         schema_name = response_schema.__name__
 
         if schema_name == "CrisisAssessmentSchema":
-            from agent.gates.safety.service import CrisisAssessmentSchema
+            from agent.runtime.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

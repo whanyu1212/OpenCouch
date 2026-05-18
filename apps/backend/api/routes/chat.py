@@ -21,7 +21,7 @@ from agent.models import (
     StatusEvent,
     friendly_stage,
 )
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime
 from agent.runtime.types import (
     ActiveSessionExists,
     SessionInterrupted,
@@ -284,8 +284,7 @@ async def chat_stream(
 
     except WebSocketDisconnect:
         # Client disconnected before the turn finished. The runtime
-        # will complete the turn regardless (LangGraph doesn't
-        # support cancellation), but we stop sending messages.
+        # will complete the turn regardless, but we stop sending messages.
         pass
     except Exception as exc:
         message = _agent_error_message(exc)

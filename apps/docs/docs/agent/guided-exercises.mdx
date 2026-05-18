@@ -73,5 +73,5 @@ Click any exercise to see its steps and trigger keywords. Use the filter tabs to
 
 
 :::tip Adding a new exercise
-Define an `ExerciseDefinition` under `agent/therapeutic/exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
+Define an `ExerciseDefinition` under `agent/skills/guided_exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
 :::

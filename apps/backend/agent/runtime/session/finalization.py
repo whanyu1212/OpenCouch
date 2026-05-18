@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.embeddings import EmbeddingProvider
-from agent.memory.extraction_service import (
-    extract_procedural_rules,
-    extract_semantic_facts,
-)
 from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
@@ -90,69 +85,3 @@ async def finalize_session_window(
             commit_result.procedural_skips,
         )
     return stored_arc
-
-
-async def extract_memory_from_transcript(
-    *,
-    thread_id: str,
-    user_id: str | None,
-    transcript: list[dict[str, Any]],
-    llm_client: BaseLLMClient | None,
-    session_buffer: SessionMemoryBuffer,
-    memory_store: MemoryStore,
-    memory_mode: MemoryMode,
-    embedding_provider: EmbeddingProvider | None,
-) -> None:
-    """Replay transcript user turns through the extraction services.
-
-    Args:
-        thread_id (str): The thread identifier for provenance.
-        user_id (str | None): The resolved user identifier, if any.
-        transcript (list[dict[str, Any]]): The serialized transcript to replay.
-        llm_client (BaseLLMClient | None): The LLM client used by extraction.
-        session_buffer (SessionMemoryBuffer): The session buffer to populate.
-        memory_store (MemoryStore): Store available to extraction.
-        memory_mode (MemoryMode): Runtime memory mode.
-        embedding_provider (EmbeddingProvider | None): Optional embedding
-            provider for extraction writes.
-
-    Returns:
-        None: This helper only mutates the provided session buffer.
-    """
-
-    user_turn_count = 0
-    for transcript_index, turn in enumerate(transcript):
-        if turn.get("role") != "user":
-            continue
-
-        message = (turn.get("content") or "").strip()
-        if not message:
-            continue
-
-        user_turn_count += 1
-        state = cast(
-            AgentState,
-            {
-                "message": message,
-                "user_id": user_id,
-                "session_id": thread_id,
-                "transcript": list(transcript[: transcript_index + 1]),
-                "session_progress": {"turn_count": user_turn_count},
-                "route": "therapeutic",
-            },
-        )
-        await extract_semantic_facts(
-            state,
-            llm_client=llm_client,
-            memory_store=memory_store,
-            memory_mode=memory_mode,
-            embedding_provider=embedding_provider,
-            session_buffer=session_buffer,
-        )
-        await extract_procedural_rules(
-            state,
-            llm_client=llm_client,
-            memory_store=memory_store,
-            memory_mode=memory_mode,
-            session_buffer=session_buffer,
-        )

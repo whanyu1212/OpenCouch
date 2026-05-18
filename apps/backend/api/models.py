@@ -6,7 +6,7 @@ send and receive. They intentionally do not re-export the internal
 carry implementation details that should not leak to HTTP callers.
 
 The route handlers own the mapping between these public schemas and the
-internal agent models, keeping the API surface stable as the graph state
+internal agent models, keeping the API surface stable as runtime state
 evolves.
 """
 
@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.memory.models import FeedbackLabel
+from agent.feedback.models import FeedbackLabel
 from config import ResponseModelTier
 
 

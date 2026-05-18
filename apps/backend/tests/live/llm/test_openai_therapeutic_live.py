@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from agent.graph import run_agent
+from agent.runtime import run_agent
 from agent.models import AgentInput, ResponseCategory
 from llm.factory import create_llm_client
 

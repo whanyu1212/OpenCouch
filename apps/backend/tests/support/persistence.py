@@ -80,7 +80,7 @@ class FakeCrossRestartLLM(BaseLLMClient):
 
         if schema_name == "CrisisAssessmentSchema":
             self.crisis_calls += 1
-            from agent.gates.safety.service import CrisisAssessmentSchema
+            from agent.runtime.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,

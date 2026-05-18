@@ -7,10 +7,10 @@ from typing import Literal
 
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
-from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
+from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
-from agent.audit.session_feedback import (
+from agent.feedback.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.feedback.session_feedback import (
     InMemorySessionFeedbackBackend,
     SessionFeedbackBackend,
 )

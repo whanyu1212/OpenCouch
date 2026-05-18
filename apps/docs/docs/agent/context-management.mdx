@@ -9,22 +9,22 @@ import PromptInjectionMatrix from '@site/src/components/PromptInjectionMatrix';
 
 # Context Management
 
-Every turn, the agent retrieves long-term memory, loads the
-conversation via checkpointer + reducers, and assembles the context
-that the response node will see.
+Every turn, the runtime retrieves long-term memory, relies on the SDK session
+for short-term conversation continuity, and assembles the context that the
+OpenAI Agents SDK runner will see.
 
 ---
 
 ## Per-turn retrieval
 
-`load_memory_node` runs only on the therapeutic branch — the crisis,
-memory_control, and grounded_lookup branches all skip retrieval.
-When it does run, it populates:
+The runtime turn memory context runs before ordinary therapeutic responses.
+Crisis, memory-control, and grounded lookup paths can skip or ignore the
+retrieval result. When it runs, it populates:
 
 | Output | What it contains | Retrieval method |
 |---|---|---|
 | `working_memory` | `WorkingMemoryEntry` dicts (semantic + episodic) | Hybrid RRF (embedding + token-recall) |
-| `session_memory.summary` | Per-turn human-readable summary of what was retrieved | Written by `load_memory_node` |
+| `session_memory.summary` | Per-turn human-readable summary of what was retrieved | Written by turn memory context |
 | `procedural_profile.procedural_rules` | Style directives from `ProceduralProfile` | Full profile load (not query-based) |
 | `procedural_profile.proactive_recall_enabled` | Recall toggle | Read from procedural profile |
 | `diagnostics` | Hit counts, store sizes, retrieval path | Written via `_merge_dicts` reducer |
@@ -51,8 +51,8 @@ same arc never appears twice on a single turn.
 |---|---|---|
 | `message` | User input | Yes |
 | `history` / `transcript` | Checkpointer + `operator.add` reducer | Accumulated across turns |
-| `working_memory` | `load_memory_node` | Re-retrieved each turn |
-| `procedural_profile` | `load_memory_node` | Re-loaded each turn (merged via `_merge_dicts`) |
+| `working_memory` | Turn memory context | Re-retrieved each turn |
+| `procedural_profile` | Turn memory context | Re-loaded each turn (merged via `_merge_dicts`) |
 | `crisis` / `crisis_audit` | `crisis_gate_node` | Fresh each turn |
 | `response_style`, `therapeutic_approach` | Dispatcher | Fresh each turn |
 | `session_progress` | Checkpointer + `_merge_dicts` reducer | `turn_count` increments while preserving sibling fields |
@@ -65,18 +65,16 @@ same arc never appears twice on a single turn.
 A guided exercise that started under, say, the `act` approach should
 keep that approach when guided exercise instructions resume. The
 `exercise_therapeutic_approach` field on `exercise_state` stores the
-pinned approach at exercise start. The dispatcher reuses it when an
-active exercise routes back to `guided_exercise` or to a narrow
-`clarifying` side-turn. A `psychoeducation` side-turn preserves the
-active exercise state, but may use the LLM's fresh top-level approach
-for the explanation. Only an explicit exit clears
+pinned approach at exercise start. The guided-exercise runtime reuses it when
+an active exercise routes back to `guided_exercise`. A side-turn preserves the
+active exercise state while the therapeutic response skill may choose a fresh
+top-level approach for the explanation. Only an explicit exit clears
 `exercise_therapeutic_approach` alongside `exercise_type` and
 `exercise_step`.
 
-This is enforced in `agent/therapeutic/dispatch/guards.py` and the
-dispatcher fallback logic: `_active_exercise_therapeutic_approach()` reads the
-pinned approach, and exercise continuation / clarification branches reuse it
-instead of letting the LLM pick a fresh one.
+This is enforced by `agent/skills/guided_exercises/runner.py` and the
+runtime-owned exercise state checks in `agent/runtime/text.py`, not by a
+separate therapeutic dispatcher.
 
 ---
 
@@ -104,7 +102,7 @@ which context fields are injected into each response prompt.
 
 ## Diagnostics
 
-`load_memory_node` stamps the following diagnostics so each turn's
+Turn memory context stamps the following diagnostics so each turn's
 retrieval is auditable from CLI / Opik:
 
 | Key | What it reports |

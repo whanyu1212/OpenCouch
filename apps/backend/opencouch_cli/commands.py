@@ -308,7 +308,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         ("/debug", "state"),
-        "Dump the raw graph state for the active thread.",
+        "Dump the raw persisted state for the active thread.",
         "debug",
         usage="/debug state",
     ),

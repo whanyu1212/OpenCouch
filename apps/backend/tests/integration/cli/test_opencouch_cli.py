@@ -8,7 +8,7 @@ import pytest
 from rich.console import Group
 from rich.spinner import Spinner
 
-from agent.memory.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
+from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.models import (
     AgentOutput,
     CrisisAssessment,
@@ -536,7 +536,7 @@ def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
                 ]
             },
         ),
-        status_stages=["crisis_gate", "turn_dispatch"],
+        status_stages=["load_memory", "therapeutic"],
         pending_status="finishing turn",
     )
     out = capsys.readouterr().out
@@ -2846,11 +2846,7 @@ class TestRenderStageTimings:
             diagnostics={
                 "load_memory_ms": 1.23,
                 "crisis_gate_ms": 2.34,
-                "extract_facts_ms": 3.45,
-                "extract_procedural_ms": 4.56,
                 "turn_total_ms": 99.99,
-                "semantic_writes": 1,
-                "procedural_writes": 0,
             },
             memory_deltas={"semantic": 1, "episodic": 0, "procedural": 0},
         )
@@ -2858,8 +2854,8 @@ class TestRenderStageTimings:
 
         assert "load_memory" in out
         assert "crisis_gate" in out
-        assert "extract_facts" in out
-        assert "extract_procedural" in out
+        assert "semantic_memory" in out
+        assert "procedural_memory" in out
         assert "turn_total" in out
         assert "1.23" in out
         assert "2.34" in out
@@ -2879,31 +2875,23 @@ class TestRenderStageTimings:
         assert "5.00" in out
         # Rows for missing stages still appear with "-" in the time column
         assert "crisis_gate" in out
-        assert "extract_facts" in out
+        assert "semantic_memory" in out
 
-    def test_policy_hold_counts_render_in_writes_column(self, capsys) -> None:
-        """Phase-1 policy counters should surface in the writes column."""
+    def test_memory_deltas_render_in_store_delta_column(self, capsys) -> None:
+        """Store deltas should surface without extraction diagnostics."""
 
         from opencouch_cli.app import _render_stage_timings
 
         _render_stage_timings(
-            diagnostics={
-                "extract_facts_ms": 3.45,
-                "extract_procedural_ms": 4.56,
-                "semantic_writes": 1,
-                "semantic_session_end_holds": 2,
-                "semantic_repeat_required": 1,
-                "semantic_policy_drops": 1,
-                "procedural_writes": 0,
-                "procedural_session_end_holds": 1,
-                "procedural_policy_drops": 1,
-            },
+            diagnostics={},
             memory_deltas={"semantic": 1, "procedural": 0},
         )
         out = capsys.readouterr().out
 
-        assert "1 (h2 r1 d1)" in out
-        assert "0 (h1 d1)" in out
+        assert "semantic_memory" in out
+        assert "procedural_memory" in out
+        assert "+1" in out
+        assert " 0" in out or "│0" in out
 
 
 class TestDebugStateCommand:

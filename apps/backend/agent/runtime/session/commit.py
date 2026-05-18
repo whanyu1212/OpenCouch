@@ -30,7 +30,7 @@ async def run_commit_session_memory(
     """Commit buffered semantic/procedural candidates that survived review.
 
     Args:
-        state: Current graph state at session end.
+        state: Current runtime state at session end.
         memory_store: Store used for semantic/procedural writes.
         session_buffer: Runtime buffer containing held memory candidates.
         stored_arc: Optional episodic arc generated for the completed session.

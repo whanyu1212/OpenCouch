@@ -1,4 +1,4 @@
-"""Therapeutic-dispatch models used by the memory-aware subgraph."""
+"""Therapeutic response-style models used by memory-aware response planning."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ ExerciseStartBasis = Literal[
 
 
 class DispatchDecision(BaseModel):
-    """The structured output of the therapeutic_dispatch_node LLM call."""
+    """Legacy structured response-style decision used by test fixtures."""
 
     response_style: TherapeuticResponseStyle
     therapeutic_approach: TherapeuticApproach = "none"

@@ -1,7 +1,7 @@
 """Tests for :meth:`PersistentAgentRuntime.record_session_feedback`.
 
 The runtime method is the only path that should produce
-:class:`SessionFeedbackRecord` instances in production. Graph nodes
+:class:`SessionFeedbackRecord` instances in production. OpenAI agents
 don't touch this — end-session surfaces (CLI ``/end`` / ``/exit``,
 HTTP ``POST /threads/{id}/end``) call it directly.
 
@@ -30,8 +30,8 @@ import pytest
 
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
-from agent.audit.session_feedback import SessionFeedbackBackend
-from agent.persistence import PersistentAgentRuntime
+from agent.feedback.session_feedback import SessionFeedbackBackend
+from agent.runtime import PersistentAgentRuntime
 from tests.support.persistence import FakeCrossRestartLLM
 
 
@@ -203,7 +203,7 @@ async def test_backend_failure_returns_none_and_does_not_raise(
     async with rt:
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="agent.persistence"):
+        with caplog.at_level(logging.WARNING, logger="agent.runtime.session_feedback"):
             result = await rt.record_session_feedback(
                 "t", label="positive", source="cli_end"
             )
@@ -230,7 +230,7 @@ async def test_state_lookup_failure_returns_none_and_does_not_raise(
 
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="agent.persistence"):
+        with caplog.at_level(logging.WARNING, logger="agent.runtime"):
             result = await rt.record_session_feedback(
                 "t", label="positive", source="cli_end"
             )

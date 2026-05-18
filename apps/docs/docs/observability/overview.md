@@ -40,29 +40,18 @@ crisis_gate                load_memory
                     │
                  graph END
                     │
-             runtime extraction
-          ┌─────────┴─────────┐
-          ▼                   ▼
-    semantic policy     procedural policy
-    · extract_facts_ms  · extract_procedural_ms
-    · semantic_writes   · procedural_writes
-    · extract_facts_    · extract_procedural_
-      reason              reason
-          └─────────┬─────────┘
-                    ▼
             AgentOutput.diagnostics
               + turn_total_ms (stamped by runtime)
 ```
 
-:::info Runtime extraction, merged diagnostics
-Semantic and procedural extraction run after the graph response path.
-Because `diagnostics` uses a `_merge_dicts` reducer, their keys merge
-with graph-node timings without either side knowing what the other wrote.
+:::info Runtime diagnostics
+Runtime and graph stages use the same structured diagnostics channel, so
+turn-level timings and retrieval counters land in one `AgentOutput`.
 :::
 
 ---
 
-## Observability & evaluation
+## Observability
 
 For text runs, Opik captures the LangGraph execution trace, including
 the top-level run plus child spans for graph nodes and subgraphs. In
@@ -116,15 +105,11 @@ graph is still running:
 
 ```text
   ⠋ crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
-    → runtime extraction
 ```
 
 The stream now also has a non-terminal `response_ready` event. That
 means the CLI can render the finished reply as soon as
-`finalize_turn_node` seals it, while the post-response memory tail
-continues in the background. The next user turn still waits for that
-tail before it is processed, so turn ordering and memory consistency
-stay intact.
+`finalize_turn_node` seals it.
 
 ### 3. On-demand inspection commands
 
@@ -194,24 +179,6 @@ render without a mapping update.
 | `procedural_count` | load_memory | Rules loaded from profile |
 | `proactive_recall` | load_memory | Recall toggle state |
 | `retrieval_path` | load_memory | `hybrid_rrf` / `token_recall` / `token_recall_after_embed_error` |
-| `extract_facts_ms` | runtime extraction | Semantic extraction wall-clock time |
-| `semantic_writes` | runtime extraction | Immediate semantic writes that actually committed on this turn |
-| `semantic_candidates` | runtime extraction | Total candidates returned by the LLM |
-| `semantic_commit_now_candidates` | runtime extraction | Candidates the policy classified as commit-now |
-| `semantic_session_end_holds` | runtime extraction | Semantic candidates held for session-end review |
-| `semantic_repeat_required` | runtime extraction | Semantic candidates blocked pending stronger repetition evidence |
-| `semantic_policy_drops` | runtime extraction | Semantic candidates dropped by LLM-primary write policy or hard local guards |
-| `semantic_policy_errors` | runtime extraction | Semantic candidates skipped because the write-policy classifier failed |
-| `semantic_bumps` | runtime extraction | Existing facts bumped by exact duplicate handling |
-| `extract_facts_reason` | runtime extraction | Skip reason or extraction outcome |
-| `extract_procedural_ms` | runtime extraction | Procedural extraction wall-clock time |
-| `procedural_writes` | runtime extraction | Immediate procedural rules written |
-| `procedural_candidates` | runtime extraction | Total candidates returned by the LLM |
-| `procedural_commit_now_candidates` | runtime extraction | Candidates the policy classified as commit-now |
-| `procedural_session_end_holds` | runtime extraction | Procedural candidates buffered for session-end promotion |
-| `procedural_policy_drops` | runtime extraction | Procedural candidates dropped by LLM-primary write policy or hard local guards |
-| `procedural_policy_errors` | runtime extraction | Procedural candidates skipped because the write-policy classifier failed |
-| `extract_procedural_reason` | runtime extraction | Skip reason or extraction outcome |
 | `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the graph) |
 
 ---

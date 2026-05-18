@@ -75,8 +75,8 @@ attribute access only.
 | `session_memory_buffer` | `SessionMemoryBuffer \| None` | `None` |
 
 `session_memory_buffer` is set by `PersistentAgentRuntime` so that
-the runtime extraction coordinator can park session-end candidates
-in a per-thread buffer that persists across restarts.
+session-end candidates can be carried in a per-thread buffer that
+persists across restarts.
 
 <details>
 <summary>Schema implementation detail</summary>

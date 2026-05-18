@@ -13,7 +13,7 @@ COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
 FROM base AS api-dev
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --extra voice-api
+    uv sync --locked --no-dev
 
 WORKDIR /workspace
 COPY apps/backend ./apps/backend
@@ -26,19 +26,6 @@ ENV PATH="/opt/opencouch-backend-venv/bin:$PATH" \
 EXPOSE 8080
 
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
-
-FROM base AS voice-dev
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --extra voice
-
-WORKDIR /workspace
-COPY apps/backend ./apps/backend
-WORKDIR /workspace/apps/backend
-
-ENV PATH="/opt/opencouch-backend-venv/bin:$PATH"
-
-CMD ["python", "-m", "agent.voice.agent", "start"]
 
 FROM base AS prod
 

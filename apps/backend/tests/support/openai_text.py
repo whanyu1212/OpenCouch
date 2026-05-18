@@ -138,6 +138,7 @@ def _required_tool_name(input_text: str) -> str | None:
         "cancel_memory_deletion",
         "answer_grounded_lookup",
         "lookup_crisis_resources",
+        "load_therapeutic_response_skill",
         "load_guided_exercise_skill",
     ):
         if f"Required tool: {tool_name}" in input_text:
@@ -278,7 +279,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 response_style=self.therapeutic_response_style,
                 therapeutic_approach=self.therapeutic_approach,
                 exercise_start_basis=self.exercise_start_basis,
-                reasoning="scripted therapeutic dispatch",
+                reasoning="scripted therapeutic response style",
                 confidence="high",
             )
         if schema_name == "ExerciseSelectionDecision":

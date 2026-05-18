@@ -150,7 +150,7 @@ access via `runtime.context.llm_client` — not dict access.
 ```python
 @dataclass(slots=True, frozen=True)
 class WorkflowContext:
-    llm_client: BaseLLMClient | None          # control-plane LLM (safety, routing, memory extraction)
+    llm_client: BaseLLMClient | None          # control-plane LLM (safety, routing, session finalization)
     memory_store: MemoryStore                  # unified read/write across semantic / episodic / procedural
     crisis_log_backend: CrisisLogBackend       # always-on audit trail
     memory_mode: MemoryMode                    # INCOGNITO / LOCAL / SYNCED

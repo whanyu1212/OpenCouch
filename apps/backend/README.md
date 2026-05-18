@@ -8,7 +8,7 @@ Current status:
 - configurable persistence (Postgres recommended, SQLite fallback)
 - provider-backed LLM adapters
 - local interactive CLI entrypoint
-- pytest backend tests and runner-based crisis evals
+- pytest backend tests and targeted live-provider checks
 
 Planned implementation order:
 1. real chat API endpoint

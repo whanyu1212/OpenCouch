@@ -1,4 +1,4 @@
-"""Structured routing trace helpers for graph diagnostics."""
+"""Structured routing trace helpers for runtime diagnostics."""
 
 from __future__ import annotations
 

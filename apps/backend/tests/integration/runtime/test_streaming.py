@@ -2,22 +2,20 @@
 
 The pre-v0.8 ``run_turn_stream`` was a thin wrapper around ``run_turn``
 that emitted a single ``StatusEvent(stage="load_memory")`` before the
-whole graph ran and a ``DoneEvent`` after. v0.8 replaced it with a
-multi-mode ``graph.astream`` call that emits one ``StatusEvent`` per
-node update, accumulates the final state from the ``values`` chunks,
-stamps the outer ``turn_total_ms`` into diagnostics, and yields a
-``DoneEvent``.
+whole runtime turn ran and a ``DoneEvent`` after. v0.8 replaced it with
+streaming runtime execution that emits one ``StatusEvent`` per stage
+update, accumulates the final state, stamps the outer ``turn_total_ms``
+into diagnostics, and yields a ``DoneEvent``.
 
 These tests cover the new contract:
 
-1. **Per-node StatusEvents.** The stream emits one StatusEvent for
-   each node that runs (crisis_gate, turn_dispatch, load_memory, therapeutic, finalize,
-   extract_facts, extract_procedural) in execution order. v0.9:
-   finalize runs BEFORE extractors. A ResponseReadyEvent is emitted
-   after finalize so the user sees the response while extractors run.
+1. **Per-stage StatusEvents.** The stream emits one StatusEvent for
+   each runtime stage that runs (load_memory, therapeutic, finalize)
+   in execution order. A ResponseReadyEvent is emitted after finalize
+   so the user sees the response before DoneEvent.
 
 2. **DoneEvent carries diagnostics.** The ``DoneEvent.output.diagnostics``
-   dict contains both the per-node timings (stamped by each node) and
+   dict contains both the per-stage timings (stamped by each stage) and
    the outer ``turn_total_ms`` (stamped by ``run_turn_stream`` itself).
 
 3. **Session tracking bookkeeping.** The stream path updates
@@ -44,7 +42,7 @@ from agent.models import (
     StatusEvent,
     StreamEvent,
 )
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -81,7 +79,7 @@ class _StreamingResponseLLM(BaseLLMClient):
     ) -> StructuredResponseT:
         schema_name = response_schema.__name__
         if schema_name == "CrisisAssessmentSchema":
-            from agent.gates.safety.service import CrisisAssessmentSchema
+            from agent.runtime.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
@@ -180,19 +178,8 @@ class TestRunTurnStreamStages:
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
-        Expected stages (in two phases):
-          - Linear (ordered):
-              crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
-          - Parallel (set, order non-deterministic):
-              {extract_semantic_facts, extract_procedural_rules}
-
-        After finalize, the two extractors run on parallel edges, so the
-        relative order of their status events depends on event-loop
-        scheduling and LLM/DB timing. The pre-finalize ordering remains
-        strict.
-
-        A ResponseReadyEvent is emitted after finalize, before the
-        extractors begin.
+        Expected stages are linear: load_memory -> therapeutic -> finalize.
+        A ResponseReadyEvent is emitted after finalize, before DoneEvent.
         """
 
         async with PersistentAgentRuntime(
@@ -208,17 +195,14 @@ class TestRunTurnStreamStages:
         assert done is not None
         stage_names = [event.stage for event in statuses]
 
-        # Linear pre-finalize stages must appear in this exact order.
-        # Memory extraction stages are no longer emitted by the graph —
-        # extraction runs as a runtime-managed background task after
-        # finalize, outside the runtime status stream. ``finalize`` is
+        # Runtime stages must appear in this exact order. ``finalize`` is
         # the terminal graph stage.
         assert stage_names == [
             "load_memory",
             "therapeutic",
             "finalize",
         ]
-        # Response chunks stream during the therapeutic subgraph node and
+        # Response chunks stream during the therapeutic response node and
         # concatenate to the full response.
 
     @pytest.mark.asyncio
@@ -284,19 +268,12 @@ class TestRunTurnStreamDiagnostics:
 
     @pytest.mark.asyncio
     async def test_diagnostics_carry_per_stage_timings(self) -> None:
-        """Each node stamps its own timing key into diagnostics.
-
-        Uses ``extract_in_foreground=True`` so the extraction service
-        timings land in the DoneEvent's diagnostics. In production the
-        runtime runs extraction as a background task and these keys are
-        omitted from per-turn output.
-        """
+        """Core runtime stages stamp timing keys into diagnostics."""
 
         async with PersistentAgentRuntime(
             sqlite_path=":memory:",
             memory_sqlite_path=":memory:",
             crisis_log_sqlite_path=":memory:",
-            extract_in_foreground=True,
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-3", message="hi"
@@ -304,16 +281,16 @@ class TestRunTurnStreamDiagnostics:
 
         assert done is not None
         diag = done.output.diagnostics
-        # Each node's timing key must be present and numeric.
+        # Each retained runtime timing key must be present and numeric.
         for key in (
             "load_memory_ms",
             "crisis_gate_ms",
-            "extract_facts_ms",
-            "extract_procedural_ms",
         ):
             assert key in diag, f"missing {key} from diagnostics"
             assert isinstance(diag[key], (int, float))
             assert diag[key] >= 0.0
+        assert "extract_facts_ms" not in diag
+        assert "extract_procedural_ms" not in diag
 
     @pytest.mark.asyncio
     async def test_diagnostics_carry_turn_total_ms(self) -> None:
@@ -346,8 +323,6 @@ class TestRunTurnStreamDiagnostics:
             for key in (
                 "load_memory_ms",
                 "crisis_gate_ms",
-                "extract_facts_ms",
-                "extract_procedural_ms",
             )
         ]
         assert diag["turn_total_ms"] >= max(stage_times)
@@ -356,9 +331,7 @@ class TestRunTurnStreamDiagnostics:
     async def test_diagnostics_carry_post_finalize_ms(self) -> None:
         """``post_finalize_ms`` measures the wall-clock between
         ``finalize_turn_node`` writing the response and the graph
-        terminating. It quantifies the latency wedge that background
-        extraction (#5) would close — the dashboard reads this to decide
-        whether the optimization is worth the contract churn.
+        terminating.
 
         Invariants:
             - The key must be present and numeric on a normal turn.
@@ -389,7 +362,7 @@ class TestRunTurnStreamDiagnostics:
 
     @pytest.mark.asyncio
     async def test_diagnostics_include_retrieval_counts(self) -> None:
-        """load_memory_node's retrieval-count diagnostics flow through."""
+        """Turn memory context retrieval-count diagnostics flow through."""
 
         async with PersistentAgentRuntime(
             sqlite_path=":memory:",

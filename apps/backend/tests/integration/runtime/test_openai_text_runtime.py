@@ -1,16 +1,18 @@
-"""Integration coverage for the hybrid OpenAI text runtime."""
+"""Integration coverage for the OpenAI text runtime."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
-from agent.persistence import PersistentAgentRuntime
-from agent.text_runtime import openai_adapter
-from agent.text_runtime.openai_agents import CRISIS_AGENT_NAME, THERAPEUTIC_AGENT_NAME
-from agent.text_runtime.session_store import messages_from_sdk_session_items
+import agent.runtime.text as openai_runtime
+from agent.runtime import PersistentAgentRuntime
+from agent.runtime.agents.crisis import CRISIS_AGENT_NAME
+from agent.runtime.agents.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.runtime.session_store import messages_from_sdk_session_items
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
@@ -87,6 +89,38 @@ class _SessionInspectingStream:
             yield event
 
 
+class _RecordingTextLLM(FakeCrossRestartLLM):
+    """Fake response LLM that records prompt text for boundary assertions."""
+
+    def __init__(self, text: str = "recorded response") -> None:
+        super().__init__()
+        self.text = text
+        self.prompts: list[str] = []
+        self.system_instructions: list[str | None] = []
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        del use_search
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        return self.text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        yield self.text
+
+
 async def _session_history(session: Any | None) -> list[tuple[str, str]]:
     if session is None:
         return []
@@ -102,12 +136,10 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
     """The OpenAI runtime should produce a normal persisted text turn."""
 
     runner = FakeOpenAISDKRunner("openai persistent reply")
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-1",
@@ -134,11 +166,50 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
 
         assert second.output.response_text == "openai persistent reply"
         assert len(second.history) == 4
-        assert "openai persistent reply" not in runner.run_calls[1]["input_text"]
+        second_input = runner.run_calls[1]["input_text"]
+        assert "I feel tense before a presentation." not in second_input
+        assert "openai persistent reply" not in second_input
+        assert "It is still bothering me." in second_input
         assert [call["session"] is not None for call in runner.run_calls[:2]] == [
             True,
             True,
         ]
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_disabled_sdk_session_keeps_legacy_prompt_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without SDK sessions, prompts should still carry recent transcript."""
+
+    runner = FakeOpenAISDKRunner("legacy first reply")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        text_session_backend="disabled",
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-legacy-history",
+            user_id="user-1",
+            message="I get tense before presentations.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        runner.final_output = "legacy second reply"
+        await runtime.run_turn(
+            thread_id="thread-legacy-history",
+            user_id="user-1",
+            message="Can you remind me what I said?",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        second_input = runner.run_calls[1]["input_text"]
+        assert runner.run_calls[1]["session"] is None
+        assert "I get tense before presentations." in second_input
+        assert "legacy first reply" in second_input
+        assert "Can you remind me what I said?" in second_input
 
 
 @pytest.mark.asyncio
@@ -149,12 +220,10 @@ async def test_persistent_runtime_seeds_empty_openai_sdk_session_from_state(
     """Persisted runtime transcript should backfill an empty SDK session."""
 
     runner = _SessionInspectingOpenAIRunner("first seeded reply")
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-seed-sdk",
@@ -197,12 +266,10 @@ async def test_persistent_runtime_stream_seeds_empty_openai_sdk_session_from_sta
     """Streaming turns should also seed SDK history before hiding prior state."""
 
     runner = _SessionInspectingOpenAIRunner("first streamed-seed reply")
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-stream-seed-sdk",
@@ -231,6 +298,10 @@ async def test_persistent_runtime_stream_seeds_empty_openai_sdk_session_from_sta
             ("user", "The review meeting is on Friday."),
             ("assistant", "first streamed-seed reply"),
         ]
+        streamed_input = runner.stream_calls[0]["input_text"]
+        assert "The review meeting is on Friday." not in streamed_input
+        assert "first streamed-seed reply" not in streamed_input
+        assert "What timing did I mention?" in streamed_input
         assert isinstance(events[-1], DoneEvent)
         history = await runtime._text_session_store.get_history(  # noqa: SLF001
             "thread-stream-seed-sdk"
@@ -255,12 +326,10 @@ async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
         tool_calls=[("show_memory_status", {})],
         tool_response_as_final=True,
     )
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-memory-control",
@@ -298,12 +367,10 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_sdk_tool(
         tool_calls=[("answer_grounded_lookup", {"query": "grounded query"})],
         tool_response_as_final=True,
     )
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-grounded",
@@ -348,12 +415,10 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
         "Please contact local emergency services now.",
         tool_calls=[("lookup_crisis_resources", {})],
     )
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-crisis",
@@ -379,9 +444,7 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
             "lookup_crisis_resources"
         ]
         assert result.output.diagnostics["openai_crisis_tool_fallback"] is False
-        assert result.output.diagnostics["extract_facts_reason"] == (
-            "skipped: crisis_path"
-        )
+        assert "extract_facts_reason" not in result.output.diagnostics
         assert await runtime.crisis_log_backend.arecord_count() == 1
         state = await runtime.get_state("thread-crisis")
         assert state is not None
@@ -396,6 +459,84 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_crisis_uses_sdk_session_not_prompt_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Crisis prompts should not replay transcript when SDK session is active."""
+
+    runner = FakeOpenAISDKRunner("prior assistant reply")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-crisis-boundary",
+            user_id="user-1",
+            message="I feel tense before presentations.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        runner.final_output = "Please contact local emergency services now."
+        runner.tool_calls = [("lookup_crisis_resources", {})]
+        await runtime.run_turn(
+            thread_id="thread-crisis-boundary",
+            user_id="user-1",
+            message="I'm in Singapore and I will end my life tonight.",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                crisis_level=3,
+            ),
+        )
+
+        crisis_input = runner.run_calls[1]["input_text"]
+        assert runner.run_calls[1]["session"] is not None
+        assert "I feel tense before presentations." not in crisis_input
+        assert "prior assistant reply" not in crisis_input
+        assert "I will end my life tonight." in crisis_input
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_crisis_response_llm_omits_sdk_session_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct crisis response LLM overrides must follow the SDK boundary."""
+
+    runner = FakeOpenAISDKRunner("prior assistant reply")
+    response_llm = _RecordingTextLLM("override crisis reply")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-crisis-response-llm-boundary",
+            user_id="user-1",
+            message="I freeze before presentations.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        result = await runtime.run_turn(
+            thread_id="thread-crisis-response-llm-boundary",
+            user_id="user-1",
+            message="I'm in Singapore and I will end my life tonight.",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                crisis_level=3,
+            ),
+            response_llm_client=response_llm,
+        )
+
+        assert result.output.response_text == "override crisis reply"
+        prompt = response_llm.prompts[-1]
+        assert "I freeze before presentations." not in prompt
+        assert "prior assistant reply" not in prompt
+        assert "I will end my life tonight." in prompt
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -403,12 +544,10 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
     """Ambiguous level-1 safety turns should not fall back to runtime."""
 
     runner = FakeOpenAISDKRunner("Are you in immediate danger right now?")
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-crisis-check",
@@ -446,12 +585,10 @@ async def test_persistent_runtime_openai_streaming_surface(
     """The OpenAI streaming path should keep the public event surface intact."""
 
     runner = FakeOpenAISDKRunner("openai streamed reply")
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         events = [
             event
@@ -488,12 +625,10 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
         tool_calls=[("show_memory_status", {})],
         tool_response_as_final=True,
     )
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        text_agent_runtime="openai",
-        extract_in_foreground=True,
     ) as runtime:
         events = [
             event
@@ -529,11 +664,10 @@ async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
     """Shadow comparison should not write state snapshots or transcript turns."""
 
     runner = FakeOpenAISDKRunner("shadow-only reply")
-    monkeypatch.setattr(openai_adapter, "_DEFAULT_OPENAI_RUNNER", runner)
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
-        extract_in_foreground=True,
     ) as runtime:
         result = await runtime.run_openai_text_shadow_turn(
             thread_id="thread-shadow",
@@ -549,3 +683,45 @@ async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
         assert (await runtime.session_status("thread-shadow")).value == "absent"
         assert await runtime.get_state("thread-shadow") is None
         assert await runtime.get_history("thread-shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_guided_response_llm_omits_sdk_session_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guided-exercise response LLM overrides must strip transcript history."""
+
+    runner = FakeOpenAISDKRunner("prior assistant reply")
+    response_llm = _RecordingTextLLM("guided fallback reply")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-guided-response-llm-boundary",
+            user_id="user-1",
+            message="I freeze before presentations.",
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        result = await runtime.run_turn(
+            thread_id="thread-guided-response-llm-boundary",
+            user_id="user-1",
+            message="Can we do box breathing?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="guided_exercise",
+                exercise_start_basis="explicit_user_request",
+                exercise_type="grounding_box_breathing",
+            ),
+            response_llm_client=response_llm,
+        )
+
+        assert result.output.response_style == "guided_exercise"
+        prompt = response_llm.prompts[-1]
+        assert "I freeze before presentations." not in prompt
+        assert "prior assistant reply" not in prompt
+        assert "Can we do box breathing?" in prompt
+        assert "(conversation history is provided by the SDK session)" in prompt

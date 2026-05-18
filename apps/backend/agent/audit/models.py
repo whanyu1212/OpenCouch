@@ -1,8 +1,8 @@
-"""Audit and feedback record models.
+"""Safety audit record models.
 
-These models describe operational records written for safety,
-feedback, and review. They are not therapeutic memory and should not
-be loaded into prompt context by ordinary memory recall paths.
+These models describe operational records written for safety and review.
+They are not therapeutic memory and should not be loaded into prompt context
+by ordinary memory recall paths.
 """
 
 from __future__ import annotations
@@ -58,23 +58,6 @@ class CrisisLogAggregate(BaseModel):
     response_node_completion_rate: float = Field(ge=0.0, le=1.0)
 
 
-FeedbackLabel = Literal["positive", "negative", "skip"]
-FeedbackSource = Literal["cli_end", "cli_exit", "api_end"]
-
-
-class SessionFeedbackRecord(BaseModel):
-    """One end-of-session feedback record."""
-
-    id: str
-    session_id_opaque: str
-    user_id_or_null: str | None = None
-    recorded_at: str
-    label: FeedbackLabel
-    turn_count_at_end: int
-    source: FeedbackSource
-    schema_version: int = 1
-
-
 __all__ = [
     "CrisisOverrideOutcome",
     "CrisisClassifierPath",
@@ -82,7 +65,4 @@ __all__ = [
     "CrisisLogLevelCounts",
     "CrisisLogPathCounts",
     "CrisisLogAggregate",
-    "FeedbackLabel",
-    "FeedbackSource",
-    "SessionFeedbackRecord",
 ]

@@ -8,8 +8,7 @@ write failure, and the ``SessionArc → StoredSessionArc`` promotion.
 
 All tests are deterministic — no live API calls. The fake LLM client
 dispatches on ``response_schema`` so it can coexist with the crisis
-classifier and dispatcher in future integration tests (same pattern as
-``_FakeExtractionLLM`` in test_extract_facts.py).
+classifier and dispatcher in future integration tests.
 """
 
 from __future__ import annotations
@@ -233,7 +232,7 @@ class TestSummarizerEarlyExits:
     @pytest.mark.asyncio
     async def test_no_llm_client_returns_none(self) -> None:
         """If llm_client is None, the summarizer should return None
-        without touching the store. Same contract as extract_facts."""
+        without touching the store."""
 
         store = OpenCouchMemoryStore()
         state = _partial_state()
@@ -389,8 +388,7 @@ class TestSummarizerHappyPath:
     @pytest.mark.asyncio
     async def test_owner_id_falls_back_to_session_id(self) -> None:
         """When state.user_id is None, the owner_id for the episodic
-        namespace derives from session_id. This matches the load_memory
-        and extract_facts convention."""
+        namespace derives from session_id."""
 
         store = OpenCouchMemoryStore()
         arc = _make_session_arc()

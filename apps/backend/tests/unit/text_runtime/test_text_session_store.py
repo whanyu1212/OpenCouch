@@ -6,7 +6,7 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.models import Message, MessageRole
-from agent.text_runtime.session_store import (
+from agent.runtime.session_store import (
     TextSessionStore,
     TextSessionStoreConfig,
     create_text_session_store,

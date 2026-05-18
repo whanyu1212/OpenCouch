@@ -5,8 +5,8 @@ outputs, prompt-visible memory, and diagnostics. This module defines the
 separate runtime context for process-owned services that should not be
 serialized into runtime state snapshots.
 
-One-shot calls build the context in ``agent.graph``; thread-persistent sessions
-build it in ``agent.persistence`` so each thread can share runtime stores while
+One-shot calls build the context in ``agent.runtime``; thread-persistent sessions
+build it in ``agent.runtime`` so each thread can share runtime stores while
 keeping state snapshots scoped to the thread.
 """
 
@@ -30,13 +30,13 @@ class WorkflowContext:
 
     Attributes:
         llm_client: Control-plane LLM used by safety classification, routing,
-            memory extraction, and other structured/background tasks.
+            session finalization, and other structured/background tasks.
         memory_store: Shared semantic, episodic, and procedural memory store.
-            ``load_memory_node`` reads from it; extractor and exercise nodes may
-            write to it when memory mode allows.
-        crisis_log_backend: Always-on audit backend used by
-            ``crisis_log_node``. This remains available even when user memory
-            is incognito.
+            The runtime turn memory context reads from it; explicit memory
+            tools and exercise services may write to it when memory mode allows.
+        crisis_log_backend: Always-on audit backend used by crisis-response
+            side effects. This remains available even when user memory is
+            incognito.
         memory_mode: Current persistence tier. Memory-aware nodes use this to
             decide whether durable memory reads/writes are allowed.
         response_llm: Optional response-writing LLM. Therapeutic response nodes
@@ -48,7 +48,8 @@ class WorkflowContext:
             session-end commit can promote or drop them.
         pre_fetched_memory: Optional in-flight memory fetch the runtime
             scheduled at turn start so it overlaps with crisis/control/grounded
-            gates. ``load_memory_node`` awaits it on the therapeutic path.
+            gates. The runtime turn memory context awaits it on the therapeutic
+            path.
             ``None`` when speculation is disabled, the turn is incognito, or
             the runtime did not pre-schedule (e.g., one-shot calls via
             ``run_agent``).

@@ -46,7 +46,7 @@ from channels.telegram import (
     telegram_thread_id,
 )
 from channels.registry.postgres import PostgresTelegramSessionRegistry
-from agent.persistence import PersistentAgentRuntime, SessionLeaseExpired, SessionStatus
+from agent.runtime import PersistentAgentRuntime, SessionLeaseExpired, SessionStatus
 from llm.base import BaseLLMClient, StructuredResponseT
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"

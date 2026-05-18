@@ -127,7 +127,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       <strong>Cost &amp; latency levers</strong>
     </div>
-    <p>Pre-extractor small-talk checks skip most acknowledgment turns. The runtime schedules memory extraction after the graph reaches <code>END</code>, so memory writes do not block the visible reply. Stream emits <code>response_ready</code> as soon as <code>finalize_turn_node</code> seals the reply.</p>
+    <p>The runtime prefetches memory at turn start, keeps the SDK session responsible for short-term conversation context, and emits <code>response_ready</code> as soon as <code>finalize_turn_node</code> seals the reply.</p>
   </div>
 
   <div className="doc-card">

@@ -1,6 +1,6 @@
 """Memory persistence modes for the OpenCouch agent.
 
-- ``INCOGNITO`` — ephemeral, in-memory only. Checkpointer runs against
+- ``INCOGNITO`` — ephemeral, in-memory only. Session state is stored in
   ``:memory:`` and memory/audit stores avoid disk writes.
 - ``LOCAL`` — persists through the configured local backend and stays on
   the device. Postgres is the recommended durable backend; SQLite remains

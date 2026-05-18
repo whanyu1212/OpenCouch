@@ -2,14 +2,13 @@
 
 Run from ``apps/backend/`` so default local paths resolve to the
 backend working directory. The CLI supports deterministic smoke tests,
-hybrid LLM runs, persistent local memory, thread switching, and optional
-voice mode.
+hybrid LLM runs, persistent local memory, and thread switching.
 
 Common invocations:
 
 ``uv run python -m opencouch_cli --mode deterministic --memory-mode guest``
     Zero LLM calls, in-memory only. Useful for checking rendering and
-    deterministic graph paths.
+    deterministic runtime paths.
 
 ``uv run python -m opencouch_cli --mode auto --memory-mode persistent``
     Real model when configured, durable local persistence, and memory
@@ -37,7 +36,7 @@ Important slash commands:
     Retention-purge crisis audit records after typed confirmation.
 
 ``/debug state``
-    Dump the raw persisted graph state when rendered panels are not
+    Dump the raw persisted runtime state when rendered panels are not
     enough for diagnosis.
 """
 
@@ -47,23 +46,21 @@ import argparse
 import asyncio
 import difflib
 import os
-import subprocess
-import sys
 import textwrap
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlencode
 from uuid import uuid4
 
 from psycopg import OperationalError as PostgresOperationalError
 
-from agent.memory.models import FeedbackLabel, FeedbackSource, StoredSessionArc
+from agent.feedback.models import FeedbackLabel, FeedbackSource
+from agent.memory.models import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.reconciliation import filter_active_semantic_records
-from agent.persistence import (
+from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
@@ -428,7 +425,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sqlite-path",
         default=str(DEFAULT_THREAD_DB_PATH),
         help=(
-            "Legacy SQLite path for LangGraph thread checkpoints. Deprecated "
+            "Legacy SQLite path for persisted session state. Deprecated "
             "for normal local development; prefer "
             "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
         ),
@@ -474,23 +471,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Disable optional tracing integrations for this CLI run. "
             "Equivalent to setting OPENCOUCH_DISABLE_TRACING=1."
         ),
-    )
-    parser.add_argument(
-        "--voice",
-        action="store_true",
-        default=False,
-        help=(
-            "Start voice mode instead of the text CLI. Launches the "
-            "FastAPI server plus the LiveKit voice worker, then opens "
-            "the LiveKit browser test page. Requires LIVEKIT_URL, "
-            "LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and OPENAI_API_KEY."
-        ),
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port for the voice mode server. Default: 8000.",
     )
     return parser
 
@@ -762,7 +742,7 @@ def render_meta(
         needs_clarification: Whether safety clarification is needed.
         needs_crisis_response: Whether a crisis response is required.
         reason: One-line classifier reason.
-        diagnostics: Optional per-node timing and decision metadata.
+        diagnostics: Optional per-stage timing and decision metadata.
         memory_deltas: Optional before/after store count deltas.
         verbose: Whether to render the detailed timings table.
 
@@ -1023,32 +1003,24 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
     manually and didn't populate diagnostics" case and there's nothing
     useful to show.
 
-    Timings come from the diagnostics dict stamped by each node:
+    Timings come from the diagnostics dict stamped by each runtime stage:
 
-    - ``load_memory_ms`` from ``run_load_memory_node``
-    - ``crisis_gate_ms`` from ``run_crisis_gate_node``
-    - ``extract_facts_ms`` from ``run_extract_semantic_facts_node``
-    - ``extract_procedural_ms`` from ``run_extract_procedural_rules_node``
+    - ``load_memory_ms`` from memory-loading runtime logic
+    - ``crisis_gate_ms`` from crisis-gate runtime logic
     - ``turn_total_ms`` stamped by ``run_turn`` / ``run_turn_stream``
-      after the graph invocation completes
+      after the agent turn completes
 
     A missing key renders as ``-`` so the table shape stays stable even
-    when a skip path (incognito, no LLM) short-circuits a node before
+    when a skip path (incognito, no LLM) short-circuits a stage before
     it wrote its timing. The "total" column is the outer ``run_turn``
-    clock. It is useful because the node-level sums don't include edge work,
-    checkpoint I/O, or the Python-side overhead between nodes.
+    clock. It is useful because the stage-level sums don't include session
+    persistence I/O or the Python-side overhead between stages.
 
     Memory-write deltas come from the CLI's before/after store counts
-    (see the chat_loop bookkeeping), not from the diagnostics dict. The
-    two paths carry different semantics: the diagnostics dict reports
-    what the extractor nodes **tried to write** (``semantic_writes``,
-    ``procedural_writes``), whereas the delta reports what actually
-    **landed in the store** after any silent skip / dedup interactions.
-    We render both when available to make "writer produced a candidate
-    but dedup rejected it" visible at a glance.
+    (see the chat_loop bookkeeping), not from the diagnostics dict.
 
     Args:
-        diagnostics: Per-node timing and write-attempt metadata.
+        diagnostics: Per-stage timing and write-attempt metadata.
         memory_deltas: Store count deltas observed by the CLI.
 
     Returns:
@@ -1082,61 +1054,6 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
         except (TypeError, ValueError):
             return "-"
 
-    def _fmt_count(key: str) -> str:
-        """Format an integer diagnostic count.
-
-        Args:
-            key: Diagnostic key to read.
-
-        Returns:
-            Formatted count, or ``"-"`` when unavailable.
-        """
-
-        val = diagnostics.get(key)
-        if val is None:
-            return "-"
-        return str(int(val))
-
-    def _fmt_write_summary(
-        key: str,
-        *,
-        held_key: str | None = None,
-        repeat_key: str | None = None,
-        drop_key: str | None = None,
-    ) -> str:
-        """Format write attempts with held/repeat/drop suffixes.
-
-        Args:
-            key: Base write-count diagnostic key.
-            held_key: Optional held-count diagnostic key.
-            repeat_key: Optional repeat-count diagnostic key.
-            drop_key: Optional drop-count diagnostic key.
-
-        Returns:
-            Formatted write summary.
-        """
-
-        base = _fmt_count(key)
-        if base == "-":
-            return base
-
-        extras: list[str] = []
-        for label, extra_key in (
-            ("h", held_key),
-            ("r", repeat_key),
-            ("d", drop_key),
-        ):
-            if extra_key is None:
-                continue
-            val = diagnostics.get(extra_key)
-            if val is None or val == 0:
-                continue
-            extras.append(f"{label}{int(val)}")
-
-        if not extras:
-            return base
-        return f"{base} ({' '.join(extras)})"
-
     def _fmt_delta(key: str) -> str:
         """Format a store-count delta.
 
@@ -1155,24 +1072,15 @@ def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
     timing_table.add_row("load_memory", _fmt_ms("load_memory_ms"), "-", "-")
     timing_table.add_row("crisis_gate", _fmt_ms("crisis_gate_ms"), "-", "-")
     timing_table.add_row(
-        "extract_facts",
-        _fmt_ms("extract_facts_ms"),
-        _fmt_write_summary(
-            "semantic_writes",
-            held_key="semantic_session_end_holds",
-            repeat_key="semantic_repeat_required",
-            drop_key="semantic_policy_drops",
-        ),
+        "semantic_memory",
+        "-",
+        "-",
         _fmt_delta("semantic"),
     )
     timing_table.add_row(
-        "extract_procedural",
-        _fmt_ms("extract_procedural_ms"),
-        _fmt_write_summary(
-            "procedural_writes",
-            held_key="procedural_session_end_holds",
-            drop_key="procedural_policy_drops",
-        ),
+        "procedural_memory",
+        "-",
+        "-",
         _fmt_delta("procedural"),
     )
     # Episodic writes happen at session end via the summarizer, not
@@ -1199,7 +1107,7 @@ def render_context(state: AgentState | None) -> None:
     state.
 
     Args:
-        state: Most recent graph input state snapshot.
+        state: Most recent persisted runtime state snapshot.
 
     Returns:
         None.
@@ -1297,7 +1205,7 @@ def render_context(state: AgentState | None) -> None:
         Panel(
             table,
             title="[muted]session context[/muted]",
-            subtitle="[hint]what the graph is carrying forward[/hint]",
+            subtitle="[hint]what the session is carrying forward[/hint]",
             border_style="panel",
             box=box.ROUNDED,
         )
@@ -1309,7 +1217,7 @@ async def _render_debug_state(
     runtime: PersistentAgentRuntime,
     session: RunnerSession,
 ) -> None:
-    """Dump the raw graph state for the active thread as JSON.
+    """Dump the raw persisted state for the active thread as JSON.
 
     Backs ``/debug state``. This is the full-state view for when the
     rendered context and timing panels are not enough to diagnose a
@@ -1318,8 +1226,8 @@ async def _render_debug_state(
     Pydantic models and other non-JSON types round-trip through
     ``default=str`` in ``json.dumps`` rather than crashing. Most
     state fields are already plain dicts (we serialize to JSON at
-    checkpoint write time via LangGraph's JsonPlusSerializer), so
-    this fallback only kicks in for an odd CrisisAssessment instance
+    state persistence time via the runtime serializer), so this fallback
+    only kicks in for an odd CrisisAssessment instance
     that survived the round-trip as a typed model.
 
     Degrades gracefully when no state exists yet (fresh thread or
@@ -1327,7 +1235,7 @@ async def _render_debug_state(
     crashing on a None state.
 
     Args:
-        runtime: Persistent runtime used to fetch checkpointed state.
+        runtime: Persistent runtime used to fetch persisted state.
         session: Active CLI session.
 
     Returns:
@@ -1359,7 +1267,7 @@ async def _render_debug_state(
         Panel(
             Text(rendered, style="info"),
             title=f"[muted]debug state ({session.thread_id})[/muted]",
-            subtitle="[hint]raw graph state dict[/hint]",
+            subtitle="[hint]raw persisted state dict[/hint]",
             border_style="panel",
             box=box.ROUNDED,
         )
@@ -3023,9 +2931,9 @@ def render_status(session: RunnerSession) -> None:
 def render_history(session: RunnerSession, limit: int = 6) -> None:
     """Render the most recent transcript entries.
 
-    Assistant turns show the response style recorded by the finalize
-    node. Missing style metadata falls back to ``-`` for older or
-    minimal checkpoints.
+    Assistant turns show the response style recorded by the runtime.
+    Missing style metadata falls back to ``-`` for older or minimal
+    persisted states.
 
     Args:
         session: Mutable CLI session state.
@@ -3830,7 +3738,7 @@ async def handle_command(
     if command == "/debug":
         if len(args) == 0 or args[0] != "state":
             render_info(
-                "Usage: /debug state  (dumps raw graph state for the active thread)",
+                "Usage: /debug state  (dumps raw persisted state for the active thread)",
                 style="warning",
             )
             return True
@@ -3876,7 +3784,7 @@ async def chat_loop(
             rationale. When None, the CLI uses ``thread_id`` as the
             effective owner.
         response_model_tier: Response tier for user-facing prose.
-        sqlite_path: Legacy SQLite file used for persisted thread checkpoints.
+        sqlite_path: Legacy SQLite file used for persisted session state.
             Deprecated for normal local development in favor of Postgres.
         memory_mode: Local memory mode ("guest" or "persistent").
         memory_sqlite_path: Legacy SQLite path for the memory store. Only
@@ -4196,9 +4104,7 @@ async def chat_loop(
 def main() -> int:
     """Run the OpenCouch CLI.
 
-    With ``--voice``, starts the FastAPI server plus the LiveKit
-    voice worker and opens the browser test page.
-    Without ``--voice``, runs the interactive text CLI as usual.
+    Runs the interactive text CLI.
 
     Returns:
         Process exit code for the CLI session.
@@ -4208,9 +4114,6 @@ def main() -> int:
 
     if args.disable_tracing:
         os.environ["OPENCOUCH_DISABLE_TRACING"] = "1"
-
-    if args.voice:
-        return _run_voice_mode(args)
 
     thread_id = args.thread_id or generate_thread_id()
     sqlite_path = str(Path(args.sqlite_path).expanduser())
@@ -4229,112 +4132,3 @@ def main() -> int:
             crisis_log_sqlite_path=crisis_log_sqlite_path,
         )
     )
-
-
-def _run_voice_mode(args) -> int:
-    """Start the voice mode server and open the browser.
-
-    Launches uvicorn serving the FastAPI app plus a background
-    ``agent.voice.agent`` worker, then opens the LiveKit test page
-    in the default browser.
-
-    The server runs in the foreground; Ctrl+C stops it.
-
-    Args:
-        args: Parsed CLI arguments.
-
-    Returns:
-        Process exit code for voice mode startup and shutdown.
-    """
-
-    import webbrowser
-
-    import uvicorn
-
-    required_env = (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
-        "OPENAI_API_KEY",
-    )
-    missing = [name for name in required_env if not os.getenv(name)]
-    if missing:
-        console.print(
-            Panel(
-                "[accent]Voice mode requires LiveKit configuration.[/accent]\n\n"
-                f"Missing env vars: [info]{', '.join(missing)}[/info]",
-                title="Voice Mode Unavailable",
-                style="warning",
-            )
-        )
-        return 1
-
-    port = args.port
-    query = {"dispatch": "1"}
-    if args.user_id:
-        query["user"] = args.user_id
-    if args.thread_id:
-        query["thread"] = args.thread_id
-    url = f"http://localhost:{port}/api/voice/livekit/test?{urlencode(query)}"
-    worker_env = os.environ.copy()
-    worker_env["OPENCOUCH_MEMORY_MODE"] = (
-        "guest" if args.memory_mode == "guest" else "persistent"
-    )
-    worker_cmd = [sys.executable, "-m", "agent.voice.agent", "start"]
-
-    console.print(Rule("[primary]OpenCouch Voice Mode[/primary]", style="panel"))
-    console.print(
-        f"[muted]Starting voice server on port[/muted] [info]{port}[/info]\n"
-        f"[muted]Starting LiveKit worker:[/muted] [info]{' '.join(worker_cmd)}[/info]\n"
-        f"[muted]Opening[/muted] [info]{url}[/info] [muted]in your browser...[/muted]\n"
-        f"[muted]Press[/muted] [accent]Ctrl+C[/accent] [muted]to stop.[/muted]\n"
-    )
-
-    worker = subprocess.Popen(worker_cmd, env=worker_env)
-    try:
-        worker.wait(timeout=1.0)
-    except subprocess.TimeoutExpired:
-        pass
-    else:
-        console.print(
-            Panel(
-                "[accent]The LiveKit worker exited before the browser test page opened.[/accent]\n"
-                "Check the worker logs above for the failure reason.",
-                title="Voice Worker Failed",
-                style="warning",
-            )
-        )
-        return worker.returncode or 1
-
-    # Open the browser after a short delay so the server has time
-    # to start. We use a thread because uvicorn.run blocks.
-    import threading
-
-    def open_browser() -> None:
-        """Open the voice test page after a short startup delay.
-
-        Returns:
-            None.
-        """
-
-        import time
-
-        time.sleep(1.5)
-        webbrowser.open(url)
-
-    threading.Thread(target=open_browser, daemon=True).start()
-
-    try:
-        uvicorn.run("main:app", host="127.0.0.1", port=port, log_level="info")
-    except KeyboardInterrupt:
-        console.print("\n[muted]Voice server stopped.[/muted]")
-    finally:
-        if worker.poll() is None:
-            worker.terminate()
-            try:
-                worker.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                worker.kill()
-                worker.wait(timeout=5)
-
-    return 0

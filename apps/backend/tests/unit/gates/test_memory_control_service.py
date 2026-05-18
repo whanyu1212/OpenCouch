@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.graph import build_initial_state
+from agent.runtime import build_initial_state
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact

@@ -1,7 +1,7 @@
-"""Tests for the crisis_log_node always-on safety audit trail.
+"""Tests for the crisis-log always-on safety audit trail.
 
 Covers three concerns:
-    1. ``run_crisis_log_node`` writes a record when the turn is flagged
+    1. ``write_crisis_log`` writes a record when the turn is flagged
        as a crisis (and skips writes otherwise).
     2. The written record stores only an opaque session-id hash.
     3. End-to-end via ``run_agent`` — a crisis turn lands a record in
@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.graph import run_agent
+from agent.runtime import run_agent
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
@@ -30,9 +30,9 @@ from agent.audit.models import (
     CrisisLogPathCounts,
     CrisisLogRecord,
 )
-from agent.gates.safety.service import CrisisAssessmentSchema
+from agent.runtime.guardrails.service import CrisisAssessmentSchema
+from agent.audit.crisis_log import write_crisis_log
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
-from agent.nodes.crisis_log import run_crisis_log_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
@@ -53,12 +53,17 @@ def test_crisis_path_counts_cover_all_classifier_paths() -> None:
 class _MockRuntime:
     """Minimal runtime stand-in exposing ``.context`` only."""
 
-    def __init__(self, *, crisis_log_backend: InMemoryCrisisLogBackend) -> None:
+    def __init__(
+        self,
+        *,
+        crisis_log_backend: InMemoryCrisisLogBackend,
+        memory_mode: MemoryMode = MemoryMode.LOCAL,
+    ) -> None:
         self.context = WorkflowContext(
             llm_client=None,
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=crisis_log_backend,
-            memory_mode=MemoryMode.LOCAL,
+            memory_mode=memory_mode,
         )
 
 
@@ -149,11 +154,11 @@ class _FakeCrisisLLM(BaseLLMClient):
         raise RuntimeError(f"Unexpected structured schema {schema_name!r}.")
 
 
-# ─── run_crisis_log_node unit tests ──────────────────────────────────────
+# ─── write_crisis_log unit tests ─────────────────────────────────────────
 
 
 class TestCrisisLogNode:
-    """Unit tests for the crisis_log_node with mocked runtime + backend."""
+    """Unit tests for crisis-log writes with mocked runtime + backend."""
 
     @pytest.mark.asyncio
     async def test_crisis_turn_writes_record(self) -> None:
@@ -163,7 +168,7 @@ class TestCrisisLogNode:
         runtime = _MockRuntime(crisis_log_backend=backend)
         state = _build_crisis_state(level=3)
 
-        delta = await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        delta = await write_crisis_log(state, runtime.context)
 
         assert delta == {}  # no state changes; side effect only
         assert await backend.arecord_count() == 1
@@ -181,7 +186,7 @@ class TestCrisisLogNode:
             session_id="thread-xyz",
         )
 
-        await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        await write_crisis_log(state, runtime.context)
 
         today = date.today()  # noqa: DTZ011 - local date for bucketing
         # detected_at is UTC so the bucket might be today or today±1 day.
@@ -217,7 +222,7 @@ class TestCrisisLogNode:
             }
         )
 
-        await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        await write_crisis_log(state, runtime.context)
 
         records = await _fetch_all_records(backend)
         assert len(records) == 1
@@ -234,7 +239,7 @@ class TestCrisisLogNode:
         runtime = _MockRuntime(crisis_log_backend=backend)
         state = _build_crisis_state(session_id="very-private-session-id")
 
-        await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        await write_crisis_log(state, runtime.context)
 
         # Fetch the record from whatever bucket it landed in
         from datetime import timedelta
@@ -256,13 +261,16 @@ class TestCrisisLogNode:
 
     @pytest.mark.asyncio
     async def test_incognito_mode_nulls_user_id(self) -> None:
-        """When user_id is None (incognito), the record stores null."""
+        """Incognito mode must scrub user_id even if state carries one."""
 
         backend = InMemoryCrisisLogBackend()
-        runtime = _MockRuntime(crisis_log_backend=backend)
-        state = _build_crisis_state(user_id=None, session_id="anonymous-session")
+        runtime = _MockRuntime(
+            crisis_log_backend=backend,
+            memory_mode=MemoryMode.INCOGNITO,
+        )
+        state = _build_crisis_state(user_id="alice", session_id="anonymous-session")
 
-        await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        await write_crisis_log(state, runtime.context)
 
         from datetime import timedelta
 
@@ -286,7 +294,7 @@ class TestCrisisLogNode:
         runtime = _MockRuntime(crisis_log_backend=backend)
         state = _build_crisis_state(level=0, needs_crisis_response=False)
 
-        delta = await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        delta = await write_crisis_log(state, runtime.context)
 
         assert delta == {}
         assert await backend.arecord_count() == 0
@@ -306,8 +314,8 @@ class TestCrisisLogNode:
         runtime = _MockRuntime(crisis_log_backend=backend)
         state = _build_crisis_state()
 
-        with caplog.at_level(logging.ERROR, logger="agent.nodes.crisis_log"):
-            delta = await run_crisis_log_node(state, runtime)  # type: ignore[arg-type]
+        with caplog.at_level(logging.ERROR, logger="agent.audit.crisis_log"):
+            delta = await write_crisis_log(state, runtime.context)
 
         assert delta == {}  # must not raise
         assert any("audit trail lost" in r.message for r in caplog.records)

@@ -5,8 +5,8 @@ runtimes. Indexed columns support date/session queries and retention
 purges; the full serialized record remains in the ``value`` JSON column
 for forward compatibility.
 
-Graph nodes only append records. ``apurge_before`` exists for explicit
-operator or maintenance retention paths.
+Crisis-response side effects append records. ``apurge_before`` exists for
+explicit operator or maintenance retention paths.
 """
 
 from __future__ import annotations

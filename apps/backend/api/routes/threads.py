@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime
 from api.dependencies import get_llm_client, get_runtime
 from api.models import (
     EndSessionRequest,
@@ -56,7 +56,7 @@ async def get_thread_state(
     thread_id: str,
     runtime: PersistentAgentRuntime = Depends(get_runtime),
 ) -> dict:
-    """Return the raw graph state for a thread.
+    """Return the raw persisted runtime state for a thread.
 
     This is the API equivalent of the CLI's ``/debug state``
     command. Returns the full state dict including diagnostics,
@@ -69,7 +69,7 @@ async def get_thread_state(
         runtime: Shared persistent agent runtime.
 
     Returns:
-        JSON-serializable graph state.
+        JSON-serializable persisted runtime state.
     """
 
     state = await runtime.get_state(thread_id)

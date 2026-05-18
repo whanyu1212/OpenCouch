@@ -25,7 +25,7 @@ from telegram.ext import (
 )
 
 from agent.models import Channel, DoneEvent, ResponseReadyEvent
-from agent.persistence import (
+from agent.runtime import (
     ActiveSessionExists,
     ExpectedSessionLiveness,
     PersistentAgentRuntime,

@@ -2,24 +2,24 @@
 
 This module exports a standalone async function
 :func:`run_summarize_session` invoked directly by
-:class:`agent.persistence.PersistentAgentRuntime` when a session ends
+:class:`agent.runtime.PersistentAgentRuntime` when a session ends
 (via the CLI's ``/end`` command or a ``/exit`` confirmation).
 
 Summarization runs at **session boundaries**, not per-turn. The runtime already
 owns the store, state snapshot, and LLM client, so a direct service call keeps
 the boundary explicit.
 
-Design rules (mirror the extract_facts conventions):
+Design rules:
 
 1. **Conservative summarization.** The system prompt tells the LLM to
    return ``arc=None`` for sessions that don't have enough content
    (pure small talk, <3 substantive turns, no emotional arc). A missing
    summary is better than a fabricated one.
 
-2. **Silent skip on incognito or no LLM.** Same contract as
-   ``extract_facts`` — if the memory mode is INCOGNITO or no LLM client
-   is available, the summarizer returns ``None`` without touching the
-   store. The runtime should not treat either case as an error.
+2. **Silent skip on incognito or no LLM.** If the memory mode is
+   INCOGNITO or no LLM client is available, the summarizer returns
+   ``None`` without touching the store. The runtime should not treat
+   either case as an error.
 
 3. **Failures degrade silently.** LLM errors, schema validation errors,
    and store write errors are all logged at WARNING level but never
@@ -91,8 +91,8 @@ async def run_summarize_session(
             and ``user_id`` / ``session_id``. The transcript is the full
             session history, not a window.
         llm_client: The runtime's LLM client, passed explicitly rather
-            than pulled from ``runtime.context`` (since this isn't a
-            graph node). When ``None``, the summarizer skips silently.
+            than pulled from ``runtime.context``. When ``None``, the
+            summarizer skips silently.
         memory_store: The runtime's memory store. The written arc lands
             in ``(owner_id, "episodic")``.
         memory_mode: The runtime's active memory mode. When INCOGNITO,

@@ -1,8 +1,8 @@
 """Structured working-memory helpers.
 
-This module keeps the durable graph state raw and pushes any
+This module keeps the durable runtime state raw and pushes any
 human-readable rendering to the surfaces that need it (prompt builders,
-dispatcher prompts, CLI panels). The state carries structured entries;
+SDK skill contexts, CLI panels). The state carries structured entries;
 formatting happens on demand.
 """
 
@@ -54,7 +54,7 @@ def make_semantic_working_memory_entry(
         object: Optional object identifier.
 
     Returns:
-        Structured entry for graph state.
+        Structured entry for runtime state.
     """
 
     entry: SemanticWorkingMemoryEntry = {
@@ -90,7 +90,7 @@ def make_episodic_working_memory_entry(
         approach_context: Optional approach-specific session details.
 
     Returns:
-        Structured entry for graph state.
+        Structured entry for runtime state.
     """
 
     entry: EpisodicWorkingMemoryEntry = {

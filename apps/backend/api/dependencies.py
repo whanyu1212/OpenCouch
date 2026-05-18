@@ -1,8 +1,8 @@
 """FastAPI dependency injection for the agent runtime.
 
 The ``PersistentAgentRuntime`` is an async context manager that owns
-configured persistence backends, an embedding provider, and the LangGraph
-checkpointer. It must be opened once at startup and closed at
+configured persistence backends, an embedding provider, and the runtime
+session store. It must be opened once at startup and closed at
 shutdown, not per request. FastAPI's lifespan protocol handles this.
 
 Usage in ``main.py``::
@@ -30,9 +30,8 @@ Then in route handlers::
 
 The runtime and LLM client are singletons. Every request shares
 the same instance. This is safe because ``PersistentAgentRuntime``
-serializes graph invocations per thread_id via the LangGraph
-checkpointer, and the LLM clients are stateless (each call is
-independent).
+serializes agent turns per thread_id via the persistent session
+store, and the LLM clients are stateless (each call is independent).
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from agent.memory.modes import MemoryMode
-from agent.persistence import (
+from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
