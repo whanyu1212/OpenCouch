@@ -34,7 +34,7 @@ _SESSION_STORE_EXPORTS = {
     "create_text_session_store",
 }
 
-_TEXT_EXPORTS = {
+_OPENAI_TEXT_RUNTIME_EXPORTS = {
     "OpenAITextRuntime",
 }
 
@@ -77,10 +77,10 @@ def __getattr__(name: str) -> Any:
         from agent.runtime import session_store as _session_store
 
         return getattr(_session_store, name)
-    if name in _TEXT_EXPORTS:
-        from agent.runtime import text as _text
+    if name in _OPENAI_TEXT_RUNTIME_EXPORTS:
+        from agent.runtime import openai_text_runtime as _openai_text_runtime
 
-        return getattr(_text, name)
+        return getattr(_openai_text_runtime, name)
     if name in _TURN_EXPORTS:
         from agent.runtime import turn as _turn
 

@@ -18,7 +18,7 @@ from agent.specialists.therapeutic_prompts import (
 )
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session.state import format_recent_history
-from agent.runtime.shared import (
+from agent.runtime.prompt_utils import (
     chunk_from_sdk_event,
     final_output_text,
     include_prompt_history,
@@ -54,7 +54,7 @@ async def run_therapeutic_response_llm_turn(
     session: Any | None,
     fallback_reason: str | None = None,
 ) -> TherapeuticAgentResult:
-    from agent.runtime.turn_state import apply_state_delta
+    from agent.runtime.state_ops import apply_state_delta
 
     run_start = time.monotonic()
     response_text = await llm_client.generate_text(
@@ -88,7 +88,7 @@ async def run_therapeutic_response_llm_stream(
     session: Any | None,
     fallback_reason: str | None = None,
 ) -> AsyncIterator[TextRuntimeStreamEvent]:
-    from agent.runtime.turn_state import apply_state_delta
+    from agent.runtime.state_ops import apply_state_delta
 
     run_start = time.monotonic()
     chunks: list[str] = []
@@ -368,7 +368,7 @@ def merge_therapeutic_tool_results(
     run_context: OpenAITextRunContext,
     response_text: str,
 ) -> tuple[str, str, str]:
-    from agent.runtime.turn_state import apply_state_delta
+    from agent.runtime.state_ops import apply_state_delta
 
     memory_calls = list(run_context.memory_tool_calls)
     grounded_calls = list(run_context.grounded_tool_calls)

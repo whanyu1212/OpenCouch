@@ -8,12 +8,9 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from agents import Agent, Runner
+from agents import Runner
 from agent.runtime.session.state import format_recent_history
-from agent.guardrails.prompts import (
-    build_crisis_response_prompt,
-    build_crisis_response_system_prompt,
-)
+from agent.guardrails.prompts import build_crisis_response_prompt
 from agent.models import Channel
 from agent.observability.timing import elapsed_ms
 from agent.specialists.crisis import CRISIS_AGENT_NAME
@@ -23,7 +20,7 @@ from agent.specialists.guided_exercise import (
 from agent.specialists.roster import build_openai_text_agent_roster
 from agent.specialists.therapeutic import (
     THERAPEUTIC_AGENT_NAME,
-    build_therapeutic_agent,
+    build_therapeutic_shadow_agent,
 )
 from agent.runtime.context import OpenAITextRunContext
 from agent.flows.crisis import (
@@ -51,13 +48,13 @@ from agent.flows.therapeutic import (
 )
 from agent.guardrails import run_crisis_input_guardrail
 from agent.runtime.memory_context import build_turn_memory_delta
-from agent.runtime.turn_state import (
+from agent.runtime.state_ops import (
     DICT_REDUCER_KEYS,
     apply_state_delta,
     build_shadow_result,
     finalize_openai_turn,
 )
-from agent.runtime.shared import (
+from agent.runtime.prompt_utils import (
     final_output_text,
     include_prompt_history,
     state_without_prompt_history,
@@ -70,63 +67,11 @@ from agent.runtime.types import (
 )
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
-from agent.specialists.therapeutic_prompts import (
-    build_clarifying_system_prompt,
-    build_supportive_system_prompt,
-    build_therapeutic_response_prompt,
-)
+from agent.specialists.therapeutic_prompts import build_therapeutic_response_prompt
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
 from agent.tools.grounded import build_grounded_lookup_delta
 from llm.base import BaseLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL
-
-
-_RUNTIME_THERAPEUTIC_INSTRUCTIONS = """\
-You are the OpenCouch therapeutic text agent for an already-classified safe
-turn. The application runtime owns crisis assessment, memory mutation,
-guided-exercise state, persistence, and audit logging.
-
-Operational tools may be attached:
-- Call load_therapeutic_response_skill before drafting an ordinary non-crisis
-  therapeutic reply when no memory or grounded lookup tool owns the answer.
-  Use the returned skill_context as private response-style guidance.
-- Call show_saved_memory only when the prompt explicitly requires it or the
-  user asks what saved memory contains.
-- Call show_memory_status only when the prompt explicitly requires it or the
-  user asks whether memory is enabled, how many memories exist, or whether
-  proactive recall is on.
-- Call mutating memory tools only when the prompt explicitly requires the
-  matching action or the user clearly asks to change saved memory.
-- Preserve deletion confirmation semantics: prepare deletion first, then
-  confirm or cancel only when a pending deletion exists.
-- Call answer_grounded_lookup only when the prompt explicitly requires it or
-  the user asks for external, source-backed, current, official, factual, or
-  resource information.
-- Never invent tool results or claim a side effect happened without the tool.
-"""
-
-_RUNTIME_CRISIS_INSTRUCTIONS = """\
-You are the OpenCouch crisis text specialist for a turn already classified by
-the application runtime. The runtime owns crisis assessment, audit logging,
-persistence, memory mutation, and guided-exercise state. You own crisis
-response wording and may own crisis-resource lookup when the runtime prompt
-requires the attached lookup_crisis_resources tool.
-Do not reclassify the user or invent crisis resources. Follow the provided
-prompt context exactly for either level-1 safety clarification or level-2/3
-crisis response.
-"""
-
-_RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS = """\
-You are the OpenCouch guided exercise text specialist for a turn already
-selected by the application runtime. The runtime owns consent, exercise
-selection, step state, step classification, exit handling, completion, memory
-side effects, and persistence.
-
-Use the runtime-provided exercise skill block and step directive as the source
-of truth. Do not offer a menu, start a different exercise, skip steps, add
-unsupported steps, or continue an exercise after the runtime says to exit or
-complete it.
-"""
 
 
 @dataclass(frozen=True)
@@ -134,13 +79,6 @@ class _PreparedTurn:
     state: AgentState
     eligible: bool
     fallback_reason: str = ""
-
-
-@dataclass(frozen=True)
-class _ExerciseSkillToolRequest:
-    exercise_type: str
-    runtime_action: str
-    current_step_index: int | None
 
 
 class OpenAIAgentsSDKRunner:
@@ -367,7 +305,10 @@ class OpenAITextRuntime:
                 )
 
             run_context = self._run_context_for_state(state, config, context)
-            agent = self._build_shadow_agent(state)
+            agent = build_therapeutic_shadow_agent(
+                state=state,
+                model=self._model,
+            )
             input_text = self._input_text_for_state(state)
 
             run_start = time.monotonic()
@@ -811,53 +752,6 @@ class OpenAITextRuntime:
         del state
         return self._roster.therapeutic_agent
 
-    def _build_shadow_agent(self, state: AgentState) -> Any:
-        instructions = (
-            f"{_RUNTIME_THERAPEUTIC_INSTRUCTIONS}\n\n"
-            "Shadow runs must not call tools or create side effects. Produce a "
-            "best-effort safe therapeutic reply from the visible prompt only.\n\n"
-            f"{build_supportive_system_prompt(state)}"
-        )
-        return build_therapeutic_agent(
-            model=self._model,
-            instructions=instructions,
-            tools=[],
-        )
-
-    def _build_crisis_agent(
-        self,
-        state: AgentState,
-        *,
-        runtime_mode: str,
-        enable_resource_tools: bool | None = None,
-    ) -> Any:
-        base_agent = self._roster.crisis_agent
-        if runtime_mode == "crisis_response":
-            system_prompt = build_crisis_response_system_prompt()
-            tools = (
-                [
-                    tool
-                    for tool in base_agent.tools
-                    if tool.name == "lookup_crisis_resources"
-                ]
-                if enable_resource_tools is not False
-                else []
-            )
-        elif runtime_mode == "crisis_clarification":
-            system_prompt = build_clarifying_system_prompt(state)
-            tools = []
-        else:
-            raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
-
-        instructions = f"{_RUNTIME_CRISIS_INSTRUCTIONS}\n\n{system_prompt}"
-        return Agent[OpenAITextRunContext](
-            name=base_agent.name,
-            handoff_description=base_agent.handoff_description,
-            instructions=instructions,
-            model=base_agent.model,
-            tools=tools,
-        )
-
     def _input_text_for_state(
         self,
         state: AgentState,
@@ -962,74 +856,6 @@ def _effective_turn_state(
     return cast(AgentState, state)
 
 
-def _replace_exercise_skill_context_with_tool_instruction(
-    prompt: str,
-) -> tuple[str, _ExerciseSkillToolRequest | None]:
-    skill_start = prompt.find("Exercise skill:")
-    runtime_task_marker = "\n\nRuntime task:"
-    runtime_task_start = prompt.find(runtime_task_marker, skill_start)
-    if skill_start == -1 or runtime_task_start == -1:
-        return prompt, None
-
-    skill_block = prompt[skill_start:runtime_task_start]
-    exercise_type = _skill_block_value(skill_block, "skill_id")
-    runtime_action = _skill_block_value(skill_block, "runtime_action")
-    if not exercise_type or not runtime_action:
-        return prompt, None
-
-    current_step_index = _parse_optional_int(_skill_block_value(skill_block, "index"))
-    arguments: dict[str, Any] = {
-        "exercise_type": exercise_type,
-        "runtime_action": runtime_action,
-    }
-    if current_step_index is not None:
-        arguments["current_step_index"] = current_step_index
-
-    replacement = (
-        "Exercise skill:\n"
-        "(skill context is owned by GuidedExerciseAgent tools)\n"
-        "Required tool: load_guided_exercise_skill\n"
-        f"Required tool arguments: {json.dumps(arguments, sort_keys=True)}\n"
-        "Call the required tool exactly once before answering. Use only the "
-        "returned skill_context plus the Runtime task below. Do not invent "
-        "exercise steps, switch exercises, or offer a menu."
-    )
-    return (
-        f"{prompt[:skill_start]}{replacement}{prompt[runtime_task_start:]}",
-        _ExerciseSkillToolRequest(
-            exercise_type=exercise_type,
-            runtime_action=runtime_action,
-            current_step_index=current_step_index,
-        ),
-    )
-
-
-def _skill_block_value(block: str, key: str) -> str:
-    prefix = f"- {key}:"
-    for line in block.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(prefix):
-            return stripped.removeprefix(prefix).strip()
-    return ""
-
-
-def _parse_optional_int(value: str) -> int | None:
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
-def _guided_exercise_skill_tool_called(
-    run_context: OpenAITextRunContext,
-    *,
-    tool_call_count: int,
-) -> bool:
-    return len(run_context.guided_exercise_skill_tool_calls) > tool_call_count
-
-
 def _crisis_resource_tool_input_text_for_state(state: AgentState) -> str:
     crisis = state["crisis"]
     urgency = (
@@ -1119,32 +945,6 @@ def _apply_crisis_resource_fallback_diagnostics(
         ],
         "openai_crisis_tool_fallback": True,
     }
-    apply_state_delta(state, {"diagnostics": diagnostics})
-
-
-def _apply_guided_exercise_tool_diagnostics(
-    state: AgentState,
-    run_context: OpenAITextRunContext,
-    *,
-    fallback: bool,
-) -> None:
-    diagnostics = {
-        **dict(state.get("diagnostics", {}) or {}),
-        "openai_guided_exercise_tool_expected": "load_guided_exercise_skill",
-        "openai_guided_exercise_tool_calls": [
-            call.tool_name for call in run_context.guided_exercise_skill_tool_calls
-        ],
-        "openai_guided_exercise_tool_fallback": fallback,
-    }
-    latest = run_context.latest_guided_exercise_skill_tool_result()
-    if latest is not None:
-        diagnostics.update(
-            {
-                "openai_guided_exercise_tool_exercise_type": latest.exercise_type,
-                "openai_guided_exercise_tool_runtime_action": latest.runtime_action,
-                "openai_guided_exercise_tool_step": latest.current_step_index,
-            }
-        )
     apply_state_delta(state, {"diagnostics": diagnostics})
 
 

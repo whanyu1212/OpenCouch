@@ -48,7 +48,7 @@ from agent.runtime.session_store import (
     TextSessionStore,
     create_text_session_store,
 )
-from agent.runtime.text import OpenAITextRuntime
+from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (

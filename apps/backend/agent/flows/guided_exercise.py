@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from llm.base import BaseLLMClient, StructuredResponseT
 
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.shared import (
+from agent.runtime.prompt_utils import (
     chunk_from_sdk_event,
     final_output_text,
     include_prompt_history,
     strip_recent_history_from_prompt,
+)
+from agent.runtime.state_ops import apply_state_delta
+from agent.specialists.guided_exercise import (
+    GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    GUIDED_EXERCISE_AGENT_NAME,
 )
 from agent.runtime.types import (
     TextRuntimeChunkEvent,
@@ -216,11 +223,6 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         use_search: bool = False,
     ) -> str:
         from agent.observability.timing import elapsed_ms
-        from agent.runtime.text import (
-            _RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS,
-            _guided_exercise_skill_tool_called,
-            _replace_exercise_skill_context_with_tool_instruction,
-        )
 
         del use_search
         if self._session is not None:
@@ -235,7 +237,7 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             agent=_build_guided_exercise_agent(
                 self._guided_exercise_agent,
                 system_instruction=system_instruction,
-                runtime_instructions=_RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS,
+                runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
             ),
             input_text=prompt,
             context=self._run_context,
@@ -251,7 +253,7 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
                 agent=_build_guided_exercise_agent(
                     self._guided_exercise_agent,
                     system_instruction=system_instruction,
-                    runtime_instructions=_RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS,
+                    runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
                 ),
                 input_text=original_prompt,
                 context=self._run_context,
@@ -267,11 +269,6 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         system_instruction: str | None = None,
     ) -> AsyncIterator[str]:
         from agent.observability.timing import elapsed_ms
-        from agent.runtime.text import (
-            _RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS,
-            _guided_exercise_skill_tool_called,
-            _replace_exercise_skill_context_with_tool_instruction,
-        )
 
         if self._session is not None:
             prompt = strip_recent_history_from_prompt(prompt)
@@ -285,7 +282,7 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             agent=_build_guided_exercise_agent(
                 self._guided_exercise_agent,
                 system_instruction=system_instruction,
-                runtime_instructions=_RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS,
+                runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
             ),
             input_text=prompt,
             context=self._run_context,
@@ -311,7 +308,7 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
                 agent=_build_guided_exercise_agent(
                     self._guided_exercise_agent,
                     system_instruction=system_instruction,
-                    runtime_instructions=_RUNTIME_GUIDED_EXERCISE_INSTRUCTIONS,
+                    runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
                 ),
                 input_text=original_prompt,
                 context=self._run_context,
@@ -336,6 +333,13 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
     ) -> StructuredResponseT:
         del prompt, response_schema, system_instruction, use_search
         raise RuntimeError("Guided exercise response LLM does not classify.")
+
+
+@dataclass(frozen=True)
+class _ExerciseSkillToolRequest:
+    exercise_type: str
+    runtime_action: str
+    current_step_index: int | None
 
 
 class FallbackGuidedExerciseResponseLLM(BaseLLMClient):
@@ -462,10 +466,6 @@ async def run_guided_exercise_turn(
     streamed: bool,
     session: Any | None = None,
 ) -> Any:
-    from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
-    from agent.runtime.text import _apply_guided_exercise_tool_diagnostics
-    from agent.runtime.turn_state import apply_state_delta
-
     response_llm = guided_exercise_response_llm(
         runtime,
         state,
@@ -507,10 +507,6 @@ async def run_guided_exercise_turn_stream(
     context: WorkflowContext,
     session: Any | None = None,
 ) -> AsyncIterator[TextRuntimeStreamEvent]:
-    from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
-    from agent.runtime.text import _apply_guided_exercise_tool_diagnostics
-    from agent.runtime.turn_state import apply_state_delta
-
     yield TextRuntimeStatusEvent(stage="guided_exercise")
     queue: asyncio.Queue[str] = asyncio.Queue()
 
@@ -577,6 +573,100 @@ def _build_guided_exercise_agent(
         instructions = f"{instructions}\n\n{system_instruction}"
     agent.instructions = instructions
     return agent
+
+
+def _replace_exercise_skill_context_with_tool_instruction(
+    prompt: str,
+) -> tuple[str, _ExerciseSkillToolRequest | None]:
+    skill_start = prompt.find("Exercise skill:")
+    runtime_task_marker = "\n\nRuntime task:"
+    runtime_task_start = prompt.find(runtime_task_marker, skill_start)
+    if skill_start == -1 or runtime_task_start == -1:
+        return prompt, None
+
+    skill_block = prompt[skill_start:runtime_task_start]
+    exercise_type = _skill_block_value(skill_block, "skill_id")
+    runtime_action = _skill_block_value(skill_block, "runtime_action")
+    if not exercise_type or not runtime_action:
+        return prompt, None
+
+    current_step_index = _parse_optional_int(_skill_block_value(skill_block, "index"))
+    arguments: dict[str, Any] = {
+        "exercise_type": exercise_type,
+        "runtime_action": runtime_action,
+    }
+    if current_step_index is not None:
+        arguments["current_step_index"] = current_step_index
+
+    replacement = (
+        "Exercise skill:\n"
+        "(skill context is owned by GuidedExerciseAgent tools)\n"
+        "Required tool: load_guided_exercise_skill\n"
+        f"Required tool arguments: {json.dumps(arguments, sort_keys=True)}\n"
+        "Call the required tool exactly once before answering. Use only the "
+        "returned skill_context plus the Runtime task below. Do not invent "
+        "exercise steps, switch exercises, or offer a menu."
+    )
+    return (
+        f"{prompt[:skill_start]}{replacement}{prompt[runtime_task_start:]}",
+        _ExerciseSkillToolRequest(
+            exercise_type=exercise_type,
+            runtime_action=runtime_action,
+            current_step_index=current_step_index,
+        ),
+    )
+
+
+def _skill_block_value(block: str, key: str) -> str:
+    prefix = f"- {key}:"
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped.removeprefix(prefix).strip()
+    return ""
+
+
+def _parse_optional_int(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _guided_exercise_skill_tool_called(
+    run_context: OpenAITextRunContext,
+    *,
+    tool_call_count: int,
+) -> bool:
+    return len(run_context.guided_exercise_skill_tool_calls) > tool_call_count
+
+
+def _apply_guided_exercise_tool_diagnostics(
+    state: Any,
+    run_context: OpenAITextRunContext,
+    *,
+    fallback: bool,
+) -> None:
+    diagnostics = {
+        **dict(state.get("diagnostics", {}) or {}),
+        "openai_guided_exercise_tool_expected": "load_guided_exercise_skill",
+        "openai_guided_exercise_tool_calls": [
+            call.tool_name for call in run_context.guided_exercise_skill_tool_calls
+        ],
+        "openai_guided_exercise_tool_fallback": fallback,
+    }
+    latest = run_context.latest_guided_exercise_skill_tool_result()
+    if latest is not None:
+        diagnostics.update(
+            {
+                "openai_guided_exercise_tool_exercise_type": latest.exercise_type,
+                "openai_guided_exercise_tool_runtime_action": latest.runtime_action,
+                "openai_guided_exercise_tool_step": latest.current_step_index,
+            }
+        )
+    apply_state_delta(state, {"diagnostics": diagnostics})
 
 
 __all__ = [

@@ -13,6 +13,8 @@ from agent.specialists.common import (
     definition_with_instructions,
 )
 from agent.runtime.context import OpenAITextRunContext
+from agent.specialists.therapeutic_prompts import build_supportive_system_prompt
+from agent.state import AgentState
 from agent.tools.grounded import build_grounded_lookup_tools
 from agent.tools.guided_exercise import build_guided_exercise_discovery_tools
 from agent.tools.memory import build_memory_tools
@@ -60,6 +62,30 @@ Do not claim to own crisis classification or guided-exercise state. Those
 remain application-owned.
 """
 
+RUNTIME_THERAPEUTIC_INSTRUCTIONS = """\
+You are the OpenCouch therapeutic text agent for an already-classified safe
+turn. The application runtime owns crisis assessment, memory mutation,
+guided-exercise state, persistence, and audit logging.
+
+Operational tools may be attached:
+- Call load_therapeutic_response_skill before drafting an ordinary non-crisis
+  therapeutic reply when no memory or grounded lookup tool owns the answer.
+  Use the returned skill_context as private response-style guidance.
+- Call show_saved_memory only when the prompt explicitly requires it or the
+  user asks what saved memory contains.
+- Call show_memory_status only when the prompt explicitly requires it or the
+  user asks whether memory is enabled, how many memories exist, or whether
+  proactive recall is on.
+- Call mutating memory tools only when the prompt explicitly requires the
+  matching action or the user clearly asks to change saved memory.
+- Preserve deletion confirmation semantics: prepare deletion first, then
+  confirm or cancel only when a pending deletion exists.
+- Call answer_grounded_lookup only when the prompt explicitly requires it or
+  the user asks for external, source-backed, current, official, factual, or
+  resource information.
+- Never invent tool results or claim a side effect happened without the tool.
+"""
+
 _THERAPEUTIC_DEFINITION = AgentDefinition(
     name=THERAPEUTIC_AGENT_NAME,
     handoff_description="Default owner for safe OpenCouch therapeutic text replies.",
@@ -91,8 +117,30 @@ def build_therapeutic_agent(
     )
 
 
+def build_therapeutic_shadow_agent(
+    *,
+    state: AgentState,
+    model: str = DEFAULT_OPENAI_MODEL,
+) -> Agent[OpenAITextRunContext]:
+    """Build the no-tools therapeutic agent used for shadow evaluation."""
+
+    instructions = (
+        f"{RUNTIME_THERAPEUTIC_INSTRUCTIONS}\n\n"
+        "Shadow runs must not call tools or create side effects. Produce a "
+        "best-effort safe therapeutic reply from the visible prompt only.\n\n"
+        f"{build_supportive_system_prompt(state)}"
+    )
+    return build_therapeutic_agent(
+        model=model,
+        instructions=instructions,
+        tools=[],
+    )
+
+
 __all__ = [
+    "RUNTIME_THERAPEUTIC_INSTRUCTIONS",
     "THERAPEUTIC_AGENT_INSTRUCTIONS",
     "THERAPEUTIC_AGENT_NAME",
     "build_therapeutic_agent",
+    "build_therapeutic_shadow_agent",
 ]

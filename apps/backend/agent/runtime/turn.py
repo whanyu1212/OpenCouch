@@ -15,7 +15,7 @@ from agent.models import (
     MessageRole,
     ResponseCategory,
 )
-from agent.runtime.text import OpenAITextRuntime
+from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentTurnInputState
 from llm.base import BaseLLMClient

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
-import agent.runtime.text as openai_runtime
+import agent.runtime.openai_text_runtime as openai_runtime
 from agent.runtime import PersistentAgentRuntime
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME

@@ -8,8 +8,8 @@ from typing import Any
 
 from agent.audit.crisis_log import write_crisis_log
 from agent.observability.timing import elapsed_ms
-from agent.runtime.shared import chunk_from_sdk_event, final_output_text
-from agent.specialists.crisis import CRISIS_AGENT_NAME
+from agent.runtime.prompt_utils import chunk_from_sdk_event, final_output_text
+from agent.specialists.crisis import CRISIS_AGENT_NAME, build_runtime_crisis_agent
 from agent.guardrails.prompts import build_crisis_response_system_prompt
 from agent.specialists.therapeutic_prompts import build_clarifying_system_prompt
 from agent.tools.crisis import (
@@ -53,7 +53,11 @@ async def run_crisis_turn(
         )
 
     run_context = runtime._run_context_for_state(state, config, context)
-    agent = runtime._build_crisis_agent(state, runtime_mode=runtime_mode)
+    agent = build_runtime_crisis_agent(
+        state=state,
+        runtime_mode=runtime_mode,
+        base_agent=runtime._roster.crisis_agent,
+    )
     tool_call_count = len(run_context.crisis_resource_tool_calls)
     input_text = runtime._crisis_input_text_for_state(
         state,
@@ -80,9 +84,10 @@ async def run_crisis_turn(
             _apply_crisis_resource_fallback_diagnostics(state, run_context)
             response_text, sdk_duration_ms = await runtime._run_openai_agent_with(
                 state,
-                agent=runtime._build_crisis_agent(
-                    state,
+                agent=build_runtime_crisis_agent(
+                    state=state,
                     runtime_mode=runtime_mode,
+                    base_agent=runtime._roster.crisis_agent,
                     enable_resource_tools=False,
                 ),
                 input_text=runtime._crisis_input_text_for_state(
@@ -150,7 +155,11 @@ async def run_crisis_turn_stream(
         return
 
     run_context = runtime._run_context_for_state(state, config, context)
-    agent = runtime._build_crisis_agent(state, runtime_mode=runtime_mode)
+    agent = build_runtime_crisis_agent(
+        state=state,
+        runtime_mode=runtime_mode,
+        base_agent=runtime._roster.crisis_agent,
+    )
     tool_call_count = len(run_context.crisis_resource_tool_calls)
     input_text = runtime._crisis_input_text_for_state(
         state,
@@ -191,9 +200,10 @@ async def run_crisis_turn_stream(
             _apply_crisis_resource_fallback_diagnostics(state, run_context)
             response_text, sdk_duration_ms = await runtime._run_openai_agent_with(
                 state,
-                agent=runtime._build_crisis_agent(
-                    state,
+                agent=build_runtime_crisis_agent(
+                    state=state,
                     runtime_mode=runtime_mode,
+                    base_agent=runtime._roster.crisis_agent,
                     enable_resource_tools=False,
                 ),
                 input_text=runtime._crisis_input_text_for_state(
