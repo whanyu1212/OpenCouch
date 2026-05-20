@@ -420,35 +420,6 @@ async def test_openai_runtime_records_no_verified_grounded_lookup_status() -> No
 
 
 @pytest.mark.asyncio
-async def test_openai_runtime_falls_back_when_grounded_tool_is_not_called() -> None:
-    workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner("unused")
-    runtime = _runtime(workflow, runner)
-
-    result = await runtime.run_turn(
-        cast(Any, _initial_state("Can you look up the current rule?")),
-        config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(
-            _RouteLLM(
-                route="grounded_lookup",
-                grounded_status="no_verified_answer",
-                grounded_answer="I couldn’t verify that from reliable sources.",
-            )
-        ),
-    )
-
-    assert result["route"] == "grounded_lookup"
-    assert result["response_text"] == ("I couldn’t verify that from reliable sources.")
-    assert result["grounded_lookup"]["status"] == "no_verified_answer"
-    assert result["diagnostics"]["openai_grounded_tool_expected"] == (
-        "answer_grounded_lookup"
-    )
-    assert result["diagnostics"]["openai_grounded_tool_calls"] == []
-    assert result["diagnostics"]["openai_grounded_tool_fallback"] is True
-    assert runner.run_calls
-
-
-@pytest.mark.asyncio
 async def test_openai_runtime_handles_pending_memory_cancel() -> None:
     workflow = _StatefulWorkflow()
     workflow.state = _initial_state("Please delete that saved fact")
@@ -762,7 +733,9 @@ async def test_openai_runtime_handles_explicit_memory_reference_on_sdk_path() ->
     result = await runtime.run_turn(
         cast(Any, _initial_state("What did we work out last time?")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(),
+        context=_context(
+            _RouteLLM(route="therapeutic", memory_reference_mode="explicit")
+        ),
     )
 
     assert result["route"] == "therapeutic"

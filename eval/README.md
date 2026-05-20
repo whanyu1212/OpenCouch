@@ -33,7 +33,7 @@ Boundary and precedence coverage for ambiguous inputs.
 
 Covers:
 - metaphorical distress staying non-crisis
-- explicit memory references staying therapeutic
+- explicit vs implicit memory-reference boundaries
 - crisis overriding grounded lookup
 - grounded lookup preserving guided-exercise state
 
@@ -51,6 +51,10 @@ Covers:
 - guided exercise → memory control → resume
 - therapeutic → grounded lookup switch
 - therapeutic → guided exercise switch
+- pending memory action preservation across safe / grounded / crisis side turns
+- crisis de-escalation back to therapeutic flow
+- repeated high-risk follow-up consistency
+- guided exercise interrupted by crisis → explicit resume
 
 Use this file to verify specialist switching and resume behavior across turns.
 
@@ -64,8 +68,11 @@ Covers:
 - crisis no-verified-resources behavior
 - memory deletion confirmation side effects
 - crisis clarification without resource lookup
+- crisis clarification with location still avoiding resource lookup
 - guided exercise preserve-without-advance
 - memory missing-tool safety
+- proactive recall enable / disable side effects
+- save-preference and forget-by-query dispatch
 
 Use this file when validating state transitions, diagnostics, and response constraints.
 
@@ -153,25 +160,33 @@ The JSONL files were the practical source of truth, but there was no single docu
 - how to run it
 - where coverage is intentionally incomplete
 
-### 2. Memory-control breadth is still limited
-Current evals cover status/show/delete/cancel and some missing-tool safety, but do not yet deeply cover:
+### 2. Memory-control breadth is stronger, but conflicting-intent depth is still limited
+Current evals now cover:
 - enable/disable proactive recall
-- broader save-memory flows
-- conflicting memory intents
-- preservation of pending memory actions across more unrelated turns
+- save-preference dispatch
+- forget-by-query dispatch
+- preservation of pending memory actions across safe, grounded, and crisis side turns
 
-### 3. Guided-exercise lifecycle coverage is partial
+Still weak or missing:
+- conflicting memory intents
+- deeper multi-turn save/forget combinations
+- more ambiguous memory-control phrasing
+
+### 3. Guided-exercise lifecycle coverage is broad, but some edge cases remain
 Covered:
 - start
 - continue
 - preserve
 - resume
-
-Still weak or missing:
-- explicit abandon / exit
+- explicit exit
 - restart with a different exercise mid-flow
 - invalid continue when no exercise is active
 - crisis interruption during an active exercise
+- explicit post-crisis resume
+
+Still light:
+- additional abandon / restart wording variants
+- more conflicting continue / clear cue combinations
 
 ### 4. Grounded missing-tool fallback behavior is documented but semantically odd
 The current contract for `grounded_lookup_missing_tool_falls_back` is:
@@ -184,12 +199,16 @@ The current contract for `grounded_lookup_missing_tool_falls_back` is:
 
 This is now covered by evals, but may still deserve a future product/runtime decision.
 
-### 5. Crisis progression coverage can go deeper
-Still missing or light:
+### 5. Crisis progression coverage is much better, but ambiguous safety signals remain
+Current evals now cover:
 - de-escalation back to therapeutic flow
 - crisis interruption while another workflow is active
 - repeated high-risk follow-up turns
+- clarification with location still avoiding lookup
+
+Still light:
 - more ambiguous or conflicting safety signals
+- mixed recovery / relapse patterns across longer crisis sequences
 
 ### 6. Mixed-intent precedence is still the highest-risk gap
 Examples worth adding:

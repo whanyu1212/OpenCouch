@@ -22,6 +22,7 @@ from agent.specialists.therapeutic import (
     THERAPEUTIC_AGENT_NAME,
     build_therapeutic_shadow_agent,
 )
+from agent.specialists.triage import TRIAGE_AGENT_NAME
 from agent.runtime.context import OpenAITextRunContext
 from agent.flows.crisis import (
     run_crisis_response_llm_turn as run_crisis_response_llm_turn_path,
@@ -47,6 +48,7 @@ from agent.flows.therapeutic import (
     therapeutic_agent_prompt_for_state as therapeutic_agent_prompt_for_state_path,
 )
 from agent.guardrails import run_crisis_input_guardrail
+from agent.memory.types import TurnDispatchDecision
 from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime.state_ops import (
     DICT_REDUCER_KEYS,
@@ -62,6 +64,7 @@ from agent.runtime.prompt_utils import (
 from agent.runtime.types import (
     TextRuntimeConfig,
     TextRuntimeShadowResult,
+    TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
 )
@@ -69,6 +72,7 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
 from agent.specialists.therapeutic_prompts import build_therapeutic_response_prompt
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
+from agent.skills.guided_exercises.state import clear_exercise_delta
 from agent.tools.grounded import build_grounded_lookup_delta
 from llm.base import BaseLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL
@@ -165,8 +169,24 @@ class OpenAITextRuntime:
                 session=session,
             )
 
+        state = prepared.state
+        if state.get("route") == "grounded_lookup":
+            query = str(
+                (state.get("grounded_lookup", {}) or {}).get("query")
+                or state.get("message")
+                or ""
+            ).strip()
+            return await self._run_grounded_lookup_tool_turn(
+                state,
+                query=query,
+                config=config,
+                context=context,
+                streamed=False,
+                session=session,
+            )
+
         state, guided_exercise = await self._load_and_prepare_guided_exercise(
-            prepared.state,
+            state,
             context,
         )
         if guided_exercise:
@@ -231,9 +251,29 @@ class OpenAITextRuntime:
                 yield event
             return
 
+        state = prepared.state
+        if state.get("route") == "grounded_lookup":
+            yield TextRuntimeStatusEvent(stage="grounded_lookup")
+            query = str(
+                (state.get("grounded_lookup", {}) or {}).get("query")
+                or state.get("message")
+                or ""
+            ).strip()
+            final_state = await self._run_grounded_lookup_tool_turn(
+                state,
+                query=query,
+                config=config,
+                context=context,
+                streamed=True,
+                session=session,
+            )
+            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+            yield TextRuntimeStateEvent(state=final_state)
+            return
+
         yield TextRuntimeStatusEvent(stage="load_memory")
         state, guided_exercise = await self._load_and_prepare_guided_exercise(
-            prepared.state,
+            state,
             context,
         )
         if guided_exercise:
@@ -362,11 +402,31 @@ class OpenAITextRuntime:
                 eligible=True,
             )
 
-        _apply_agent_primary_safe_turn_update(state)
+        state = await self._apply_triage_turn_dispatch(
+            state,
+            context=context,
+        )
         return _PreparedTurn(
             state=state,
             eligible=True,
         )
+
+    async def _apply_triage_turn_dispatch(
+        self,
+        state: AgentState,
+        *,
+        context: WorkflowContext,
+    ) -> AgentState:
+        llm_client = context.llm_client
+        if llm_client is None:
+            return state
+        decision = await llm_client.generate_structured(
+            prompt=self._triage_input_text_for_state(state),
+            response_schema=TurnDispatchDecision,
+            system_instruction=self._roster.triage_agent.instructions,
+        )
+        apply_state_delta(state, _state_delta_for_turn_dispatch(state, decision))
+        return state
 
     async def _load_turn_memory(
         self,
@@ -383,6 +443,32 @@ class OpenAITextRuntime:
         context: WorkflowContext,
     ) -> tuple[AgentState, bool]:
         state = await self._load_turn_memory(state, context)
+        exercise_state = state.get("exercise_state", {}) or {}
+        has_active_exercise = (
+            isinstance(exercise_state, Mapping)
+            and exercise_state.get("exercise_type") is not None
+            and exercise_state.get("exercise_step") is not None
+        )
+        turn_lifecycle = state.get("turn_lifecycle", {}) or {}
+        lifecycle_action = (
+            turn_lifecycle.get("action")
+            if isinstance(turn_lifecycle, Mapping)
+            else None
+        )
+        if has_active_exercise and lifecycle_action == "clear":
+            apply_state_delta(state, clear_exercise_delta(state))
+            if state.get("route") != "guided_exercise":
+                apply_state_delta(
+                    state,
+                    {
+                        "turn_lifecycle": {
+                            "active_flow": "none",
+                            "action": "none",
+                        }
+                    },
+                )
+                return state, False
+
         action = guided_exercise_runtime_action(state)
         guided_exercise_basis = guided_exercise_selection_basis(state)
         if guided_exercise_basis is None:
@@ -395,9 +481,6 @@ class OpenAITextRuntime:
                         "turn_lifecycle": {
                             "active_flow": "guided_exercise",
                             "action": "preserve",
-                        },
-                        "diagnostics": {
-                            "openai_agent_primary_routing": True,
                         },
                     },
                 )
@@ -414,7 +497,6 @@ class OpenAITextRuntime:
                 },
                 "diagnostics": {
                     "openai_guided_exercise_selection_basis": guided_exercise_basis,
-                    "openai_agent_primary_routing": True,
                 },
             },
         )
@@ -771,6 +853,34 @@ class OpenAITextRuntime:
             return prompt
         return f"{prompt}\n\n{operational_context}"
 
+    def _triage_input_text_for_state(self, state: AgentState) -> str:
+        active_flow = "none"
+        exercise_state = state.get("exercise_state", {}) or {}
+        if (
+            isinstance(exercise_state, Mapping)
+            and exercise_state.get("exercise_type") is not None
+            and exercise_state.get("exercise_step") is not None
+        ):
+            active_flow = "guided_exercise"
+        memory_control = state.get("memory_control", {}) or {}
+        if (
+            isinstance(memory_control, Mapping)
+            and memory_control.get("pending_action") is not None
+        ):
+            active_flow = "pending_memory_action"
+        memory_reference = state.get("memory_reference", {}) or {}
+        memory_reference_mode = (
+            memory_reference.get("mode")
+            if isinstance(memory_reference, Mapping)
+            else "none"
+        )
+        return (
+            f"Active flow: {active_flow}\n"
+            f"Memory reference mode: {memory_reference_mode}\n"
+            f"Recent conversation:\n{format_recent_history(state)}\n\n"
+            f'Current user message: "{state.get("message", "")}"'
+        )
+
     def _grounded_lookup_input_text_for_state(
         self,
         state: AgentState,
@@ -952,42 +1062,82 @@ def _apply_crisis_resource_fallback_diagnostics(
     apply_state_delta(state, {"diagnostics": diagnostics})
 
 
-def _apply_agent_primary_safe_turn_update(state: AgentState) -> None:
-    """Set app-owned safe-turn context before the primary agent runs."""
+def _memory_control_action_from_turn_dispatch(
+    decision: TurnDispatchDecision,
+) -> dict[str, Any] | None:
+    action_type = decision.memory_action_type
+    if action_type is None:
+        return None
+    action: dict[str, Any] = {"type": action_type}
+    if action_type == "set_recall":
+        action["enabled"] = bool(decision.enabled)
+    elif action_type == "save_preference":
+        action["preference_text"] = decision.preference_text
+    elif action_type == "forget_by_index":
+        action["target_kind"] = decision.target_kind or "fact"
+        action["target_index"] = decision.target_index or 1
+    elif action_type == "forget_by_query":
+        action["query"] = decision.query
+    return action
 
-    apply_state_delta(
-        state,
-        {
-            "route": "therapeutic",
-            "turn_lifecycle": {"active_flow": "none", "action": "none"},
-            "memory_reference": {
-                "mode": _memory_reference_mode_for_message(
-                    str(state.get("message") or "")
-                )
-            },
-            "diagnostics": {"openai_agent_primary_routing": True},
+
+def _state_delta_for_turn_dispatch(
+    state: AgentState,
+    decision: TurnDispatchDecision,
+) -> dict[str, Any]:
+    diagnostics = {
+        **dict(state.get("diagnostics", {}) or {}),
+        "openai_triage_agent": TRIAGE_AGENT_NAME,
+        "openai_triage_route": decision.route,
+        "openai_triage_active_flow_action": decision.active_flow_action,
+        "openai_triage_confidence": decision.confidence,
+    }
+    existing_memory_reference = state.get("memory_reference", {}) or {}
+    existing_memory_reference_mode = (
+        existing_memory_reference.get("mode")
+        if isinstance(existing_memory_reference, Mapping)
+        else None
+    )
+    memory_reference_mode = (
+        "explicit"
+        if existing_memory_reference_mode == "explicit"
+        and decision.memory_reference_mode == "none"
+        else decision.memory_reference_mode
+    )
+    delta: dict[str, Any] = {
+        "route": decision.route,
+        "memory_reference": {"mode": memory_reference_mode},
+        "turn_lifecycle": {
+            "active_flow": (
+                "guided_exercise" if decision.route == "guided_exercise" else "none"
+            ),
+            "action": decision.active_flow_action,
         },
-    )
-
-
-def _memory_reference_mode_for_message(message: str) -> str:
-    text = " ".join(message.lower().split())
-    explicit_phrases = (
-        "what did we work out",
-        "what did we decide",
-        "where did we leave off",
-        "where we left off",
-        "last time we talked",
-        "last time we spoke",
-        "last session",
-        "previous session",
-        "what helped last time",
-        "continue from last time",
-        "continue where we left",
-    )
-    if any(phrase in text for phrase in explicit_phrases):
-        return "explicit"
-    return "none"
+        "diagnostics": diagnostics,
+    }
+    if decision.route == "memory_control":
+        memory_action = _memory_control_action_from_turn_dispatch(decision)
+        delta["memory_control"] = {
+            **dict(state.get("memory_control", {}) or {}),
+            "action": memory_action or {},
+        }
+    if decision.route == "grounded_lookup":
+        delta["grounded_lookup"] = {
+            **dict(state.get("grounded_lookup", {}) or {}),
+            "query": decision.query or str(state.get("message") or "").strip(),
+        }
+        delta["response_style"] = "grounded_lookup"
+    if decision.route == "guided_exercise":
+        delta["response_style"] = "guided_exercise"
+        delta["therapeutic_approach"] = state.get("therapeutic_approach") or "none"
+        diagnostics["openai_guided_exercise_selection_basis"] = (
+            decision.exercise_start_basis
+        )
+        if decision.exercise_type:
+            exercise_state = dict(state.get("exercise_state", {}) or {})
+            exercise_state.setdefault("exercise_type", decision.exercise_type)
+            delta["exercise_state"] = exercise_state
+    return delta
 
 
 def _crisis_runtime_mode(prepared: _PreparedTurn) -> str | None:

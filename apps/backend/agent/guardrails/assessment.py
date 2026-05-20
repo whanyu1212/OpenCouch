@@ -10,7 +10,6 @@ from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.guardrails.service import CrisisRiskService
 from agent.models import CrisisAssessment
 from agent.observability.routing_trace import append_routing_trace
-from agent.runtime.session.state import clear_all_active_flows_delta
 from agent.observability.timing import elapsed_ms
 from agent.state import AgentState
 from llm.base import BaseLLMClient
@@ -72,7 +71,11 @@ def build_crisis_gate_delta(
         "diagnostics": diagnostics,
     }
     if assessment.needs_crisis_response:
-        delta.update(clear_all_active_flows_delta())
+        delta.update(
+            {
+                "turn_lifecycle": {"active_flow": "none", "action": "none"},
+            }
+        )
     return delta
 
 
