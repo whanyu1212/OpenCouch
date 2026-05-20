@@ -32,7 +32,6 @@ from agent.tools import (
     TherapeuticResponseSkillToolResult,
     answer_grounded_lookup,
     build_memory_tools,
-    build_read_only_memory_tools,
     execute_crisis_resource_lookup_tool,
     execute_crisis_support_template_tool,
     execute_guided_exercise_discovery_tool,
@@ -185,23 +184,6 @@ def test_agent_roster_builds_dormant_specialists() -> None:
         "record_guided_exercise_progress",
     ]
     assert roster.therapeutic_agent.handoffs == []
-
-
-def test_read_only_memory_tool_metadata_is_explicit() -> None:
-    """Tool contracts should state scope, side effects, and retry safety."""
-
-    tools = build_read_only_memory_tools()
-
-    assert [tool.name for tool in tools] == [
-        "show_saved_memory",
-        "show_memory_status",
-    ]
-    for tool in tools:
-        assert "Side effects: none" in tool.description
-        assert "Retry safety: safe" in tool.description
-        assert tool.strict_json_schema is True
-        assert tool.params_json_schema["additionalProperties"] is False
-        assert tool.params_json_schema["required"] == []
 
 
 def test_operational_tool_metadata_is_explicit() -> None:

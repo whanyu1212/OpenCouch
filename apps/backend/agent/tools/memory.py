@@ -345,9 +345,3 @@ def build_memory_tools() -> list[Any]:
         confirm_memory_deletion,
         cancel_memory_deletion,
     ]
-
-
-def build_read_only_memory_tools() -> list[Any]:
-    """Return read-only memory tools for tests and compatibility."""
-
-    return [show_saved_memory, show_memory_status]
