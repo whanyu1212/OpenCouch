@@ -386,6 +386,69 @@ async def test_openai_runtime_runs_grounded_lookup_through_sdk_tool() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_runtime_records_no_verified_grounded_lookup_status() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner(
+        tool_calls=[("answer_grounded_lookup", {"query": "grounded query"})],
+        tool_response_as_final=True,
+    )
+    runtime = _runtime(workflow, runner)
+
+    result = await runtime.run_turn(
+        cast(Any, _initial_state("Can you verify whether this is current?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="grounded_lookup",
+                grounded_status="no_verified_answer",
+                grounded_answer="I couldn’t verify that from reliable sources.",
+            )
+        ),
+    )
+
+    assert result["route"] == "grounded_lookup"
+    assert result["response_text"] == "I couldn’t verify that from reliable sources."
+    assert result["grounded_lookup"]["status"] == "no_verified_answer"
+    assert result["diagnostics"]["openai_grounded_tool_expected"] == (
+        "answer_grounded_lookup"
+    )
+    assert result["diagnostics"]["openai_grounded_tool_calls"] == [
+        "answer_grounded_lookup"
+    ]
+    assert result["diagnostics"]["openai_grounded_tool_fallback"] is False
+    assert runner.run_calls
+
+
+@pytest.mark.asyncio
+async def test_openai_runtime_falls_back_when_grounded_tool_is_not_called() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("unused")
+    runtime = _runtime(workflow, runner)
+
+    result = await runtime.run_turn(
+        cast(Any, _initial_state("Can you look up the current rule?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="grounded_lookup",
+                grounded_status="no_verified_answer",
+                grounded_answer="I couldn’t verify that from reliable sources.",
+            )
+        ),
+    )
+
+    assert result["route"] == "grounded_lookup"
+    assert result["response_text"] == ("I couldn’t verify that from reliable sources.")
+    assert result["grounded_lookup"]["status"] == "no_verified_answer"
+    assert result["diagnostics"]["openai_grounded_tool_expected"] == (
+        "answer_grounded_lookup"
+    )
+    assert result["diagnostics"]["openai_grounded_tool_calls"] == []
+    assert result["diagnostics"]["openai_grounded_tool_fallback"] is True
+    assert runner.run_calls
+
+
+@pytest.mark.asyncio
 async def test_openai_runtime_handles_pending_memory_cancel() -> None:
     workflow = _StatefulWorkflow()
     workflow.state = _initial_state("Please delete that saved fact")
@@ -788,6 +851,44 @@ async def test_openai_runtime_uses_crisis_agent_for_crisis_response() -> None:
     ]
     assert "Required tool: lookup_crisis_resources" in runner.run_calls[0]["input_text"]
     assert await context.crisis_log_backend.arecord_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_runtime_records_crisis_no_verified_resource_status() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner(
+        "No verified, actionable local crisis line was found. Please contact local emergency services now.",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
+    runtime = _runtime(workflow, runner)
+    context = _context(
+        _RouteLLM(
+            route="therapeutic",
+            crisis_level=3,
+            crisis_location_status="provided",
+            crisis_location="Singapore",
+            crisis_resource_status="no_verified_results",
+        )
+    )
+
+    result = await runtime.run_turn(
+        cast(Any, _initial_state("I'm in Singapore and I am about to hurt myself.")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    assert result["route"] == "crisis"
+    assert result["response_style"] == "crisis_response"
+    assert result["resource_lookup_status"] == "no_verified_results"
+    assert result["found_resources"] == []
+    assert result["diagnostics"]["openai_crisis_tool_expected"] == (
+        "lookup_crisis_resources"
+    )
+    assert result["diagnostics"]["openai_crisis_tool_calls"] == [
+        "lookup_crisis_resources"
+    ]
+    assert result["diagnostics"]["openai_crisis_tool_fallback"] is False
+    assert runner.run_calls
 
 
 @pytest.mark.asyncio

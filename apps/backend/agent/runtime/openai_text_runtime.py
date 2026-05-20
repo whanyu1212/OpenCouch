@@ -460,14 +460,18 @@ class OpenAITextRuntime:
 
         if tool_result is None:
             fallback_delta = await build_grounded_lookup_delta(state, context)
-            apply_state_delta(state, dict(fallback_delta))
-            response_text = str(state.get("response_text") or "")
+            response_text = str(fallback_delta.get("response_text") or "")
             if not response_text:
                 raise ValueError("grounded_lookup returned an empty response.")
             diagnostics["openai_grounded_tool_fallback"] = True
-            diagnostics.update(dict(state.get("diagnostics", {}) or {}))
-            diagnostics["openai_grounded_tool_fallback"] = True
-            apply_state_delta(state, {"diagnostics": diagnostics})
+            apply_state_delta(
+                state,
+                {
+                    **dict(fallback_delta),
+                    "route": "grounded_lookup",
+                    "diagnostics": diagnostics,
+                },
+            )
         else:
             response_text = tool_result.response_text
             diagnostics["openai_grounded_tool_fallback"] = False

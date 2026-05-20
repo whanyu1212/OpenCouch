@@ -164,6 +164,15 @@ async def run_therapeutic_turn(
             session=session,
             fallback_reason=cast(str, openai_sdk_fallback_reason(exc)),
         )
+    grounded_fallback = await maybe_run_grounded_lookup_fallback(
+        state,
+        context=context,
+        run_context=run_context,
+        response_text=response_text,
+        sdk_duration_ms=sdk_duration_ms,
+    )
+    if grounded_fallback is not None:
+        return grounded_fallback
     return resolve_therapeutic_result(
         state,
         run_context=run_context,
@@ -232,12 +241,20 @@ async def run_therapeutic_turn_stream(
         getattr(stream, "final_output", None),
         fallback="".join(chunks),
     )
-    result = resolve_therapeutic_result(
+    result = await maybe_run_grounded_lookup_fallback(
         state,
+        context=context,
         run_context=run_context,
         response_text=response_text,
         sdk_duration_ms=elapsed_ms(run_start),
     )
+    if result is None:
+        result = resolve_therapeutic_result(
+            state,
+            run_context=run_context,
+            response_text=response_text,
+            sdk_duration_ms=elapsed_ms(run_start),
+        )
     final_state = await runtime._finalize_openai_turn(
         state,
         response_text=result.response_text,
@@ -250,6 +267,58 @@ async def run_therapeutic_turn_stream(
     )
     yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
     yield TextRuntimeStateEvent(state=final_state)
+
+
+async def maybe_run_grounded_lookup_fallback(
+    state: AgentState,
+    *,
+    context: WorkflowContext,
+    run_context: OpenAITextRunContext,
+    response_text: str,
+    sdk_duration_ms: float,
+) -> TherapeuticAgentResult | None:
+    from agent.runtime.state_ops import apply_state_delta
+    from agent.tools.grounded import build_grounded_lookup_delta
+
+    if run_context.grounded_tool_calls or run_context.memory_tool_calls:
+        return None
+    if context.llm_client is None:
+        return None
+    if not is_explicit_grounded_lookup_request(str(state.get("message") or "")):
+        return None
+
+    apply_state_delta(
+        state,
+        {
+            "grounded_lookup": {
+                "query": str(state.get("message") or "").strip(),
+            }
+        },
+    )
+    fallback_delta = await build_grounded_lookup_delta(state, context)
+    resolved_text = str(fallback_delta.get("response_text") or "").strip()
+    if not resolved_text:
+        resolved_text = response_text
+    apply_state_delta(
+        state,
+        {
+            **dict(fallback_delta),
+            "route": "grounded_lookup",
+            "diagnostics": {
+                **dict(state.get("diagnostics", {}) or {}),
+                "openai_agent_primary_routing": True,
+                "openai_grounded_tool_expected": "answer_grounded_lookup",
+                "openai_grounded_tool_calls": [],
+                "openai_grounded_tool_fallback": True,
+            },
+        },
+    )
+    return TherapeuticAgentResult(
+        response_text=resolved_text,
+        runtime_mode="grounded_lookup",
+        response_style="grounded_lookup",
+        sdk_duration_ms=sdk_duration_ms,
+    )
 
 
 def resolve_therapeutic_result(
@@ -360,6 +429,21 @@ def response_style_from_state(state: Mapping[str, Any]) -> str:
     if style and style != "pending":
         return style
     return "supportive"
+
+
+def is_explicit_grounded_lookup_request(message: str) -> bool:
+    text = " ".join(message.lower().split())
+    lookup_markers = (
+        "look up",
+        "lookup",
+        "verify",
+        "current rule",
+        "is this current",
+        "official",
+        "side effects",
+        "policy on",
+    )
+    return any(marker in text for marker in lookup_markers)
 
 
 def merge_therapeutic_tool_results(

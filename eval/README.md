@@ -1,0 +1,233 @@
+# Eval README
+
+This directory contains deterministic evaluation assets for OpenCouch routing, runtime behavior, and crisis-response flows.
+
+## Purpose
+
+The eval suite helps answer four questions:
+
+1. **Did the runtime route to the right path?**
+2. **Did it select the right specialist agent?**
+3. **Did it call the right tool, preserve state correctly, and apply the expected side effects?**
+4. **Did crisis-specific helpers produce safe and grounded outputs?**
+
+Most routing and behavior evals are designed to run without a live provider by using scripted LLM and SDK responses.
+
+## Datasets
+
+### `datasets/routing_matrix.jsonl`
+Baseline single-turn routing coverage.
+
+Covers:
+- safe therapeutic turns
+- memory control turns
+- grounded lookup turns
+- guided exercise start / continue
+- crisis clarification
+- crisis response
+
+Use this file to verify the main route/runtime-mode backbone.
+
+### `datasets/routing_boundaries.jsonl`
+Boundary and precedence coverage for ambiguous inputs.
+
+Covers:
+- metaphorical distress staying non-crisis
+- explicit memory references staying therapeutic
+- crisis overriding grounded lookup
+- grounded lookup preserving guided-exercise state
+
+Use this file to catch false positives and route-priority regressions.
+
+### `datasets/multiturn_routing.jsonl`
+Multiturn routing and state-preservation coverage.
+
+Covers:
+- guided exercise → grounded lookup → resume
+- memory cancel → safe therapeutic follow-up
+- crisis clarification → crisis escalation
+- therapeutic → crisis switch
+- grounded lookup → therapeutic follow-up
+- guided exercise → memory control → resume
+- therapeutic → grounded lookup switch
+- therapeutic → guided exercise switch
+
+Use this file to verify specialist switching and resume behavior across turns.
+
+### `datasets/behavior_matrix.jsonl`
+Behavioral and side-effect coverage for runtime contracts.
+
+Covers:
+- grounded lookup success
+- grounded lookup missing-tool fallback
+- guided exercise step advancement
+- crisis no-verified-resources behavior
+- memory deletion confirmation side effects
+- crisis clarification without resource lookup
+- guided exercise preserve-without-advance
+- memory missing-tool safety
+
+Use this file when validating state transitions, diagnostics, and response constraints.
+
+### `datasets/crisis_response_events.jsonl`
+End-to-end crisis-response event coverage.
+
+Covers:
+- imminent risk with verified resources
+- imminent risk without location
+- high risk with refused location
+- imminent risk with search failure fallback
+
+Use this file to verify crisis-response routing, resource handling, and safety language.
+
+### `datasets/crisis_templates.jsonl`
+Crisis response template coverage.
+
+Covers:
+- moderate / high / imminent template variants
+- verified-resource vs no-resource branches
+- safe wording constraints
+- phone-number preservation constraints
+
+Use this file to validate generated crisis copy independently from runtime routing.
+
+### `datasets/crisis_resources.jsonl`
+Crisis resource lookup coverage.
+
+Covers:
+- structured location extraction
+- verified resource lookup
+- no-location cases
+- refused-location cases
+- no-verified-result cases
+- search-failure fallback
+- ambiguous-location cases
+- selected live checks
+
+Use this file to validate the crisis resource lookup layer directly.
+
+## Runners
+
+### `runners/run_routing_eval.py`
+Primary deterministic runtime eval runner for routing, behavior, and multiturn datasets.
+
+Example usage from repo root:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py
+```
+
+Run a different dataset:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
+  --dataset eval/datasets/behavior_matrix.jsonl
+```
+
+Run a specific case:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
+  --dataset eval/datasets/behavior_matrix.jsonl \
+  --case-id grounded_lookup_missing_tool_falls_back
+```
+
+## Coverage matrix
+
+| Area | Route / Mode focus | Main datasets |
+| --- | --- | --- |
+| Safe therapeutic | `therapeutic` / `safe_therapeutic` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl` |
+| Memory control | `memory_control` / `memory_control` | `routing_matrix.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
+| Grounded lookup | `grounded_lookup` / `grounded_lookup` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
+| Guided exercise | `therapeutic` / `guided_exercise` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
+| Crisis clarification | `therapeutic` / `crisis_clarification` | `routing_matrix.jsonl`, `behavior_matrix.jsonl`, `multiturn_routing.jsonl` |
+| Crisis response | `crisis` / `crisis_response` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `crisis_response_events.jsonl` |
+| Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
+| Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
+
+## Current known gaps
+
+### 1. No dedicated eval index existed before this README
+The JSONL files were the practical source of truth, but there was no single document explaining:
+- what each dataset covers
+- how to run it
+- where coverage is intentionally incomplete
+
+### 2. Memory-control breadth is still limited
+Current evals cover status/show/delete/cancel and some missing-tool safety, but do not yet deeply cover:
+- enable/disable proactive recall
+- broader save-memory flows
+- conflicting memory intents
+- preservation of pending memory actions across more unrelated turns
+
+### 3. Guided-exercise lifecycle coverage is partial
+Covered:
+- start
+- continue
+- preserve
+- resume
+
+Still weak or missing:
+- explicit abandon / exit
+- restart with a different exercise mid-flow
+- invalid continue when no exercise is active
+- crisis interruption during an active exercise
+
+### 4. Grounded missing-tool fallback behavior is documented but semantically odd
+The current contract for `grounded_lookup_missing_tool_falls_back` is:
+
+- route falls back to `therapeutic`
+- runtime mode becomes `safe_therapeutic`
+- response uses the scripted final output
+- grounded lookup state remains `not_attempted`
+- grounded-tool diagnostics keys are absent
+
+This is now covered by evals, but may still deserve a future product/runtime decision.
+
+### 5. Crisis progression coverage can go deeper
+Still missing or light:
+- de-escalation back to therapeutic flow
+- crisis interruption while another workflow is active
+- repeated high-risk follow-up turns
+- more ambiguous or conflicting safety signals
+
+### 6. Mixed-intent precedence is still the highest-risk gap
+Examples worth adding:
+- crisis + memory control in the same turn
+- crisis + guided exercise in the same turn
+- grounded lookup + memory action in the same turn
+- preserve / continue conflicts with multiple active cues
+
+## Conventions for adding cases
+
+When adding a new eval case:
+
+1. Put it in the dataset that matches its primary purpose:
+   - route selection → `routing_matrix.jsonl`
+   - boundary/precedence → `routing_boundaries.jsonl`
+   - multiturn switching/resume → `multiturn_routing.jsonl`
+   - side effects / diagnostics / state mutation → `behavior_matrix.jsonl`
+   - crisis-specific subsystems → crisis datasets
+
+2. Prefer small, surgical cases.
+   - One case should usually validate one contract or one precedence rule.
+
+3. Include only the assertions needed to lock the intended behavior.
+   - route
+   - runtime mode
+   - selected agent
+   - key state fields
+   - key diagnostics
+   - required / forbidden response text
+
+4. If a case captures surprising behavior, document it here under **Current known gaps** or update the relevant section.
+
+## Suggested next additions
+
+Priority candidates:
+- guided exercise interrupted by crisis
+- memory control interrupted by crisis
+- proactive recall enable/disable coverage in eval datasets
+- mixed-intent precedence cases
+- explicit guided-exercise exit / restart cases
+- deeper memory save / retrieval behavior coverage
