@@ -6,7 +6,7 @@ import logging
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.embeddings import EmbeddingProvider
-from agent.memory.models import StoredSessionArc
+from agent.memory.types import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.session.commit import run_commit_session_memory

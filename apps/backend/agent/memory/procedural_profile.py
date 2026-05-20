@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from typing import Callable, Literal, TypeVar
 
 from agent.memory.hashing import iso_now
-from agent.memory.models import (
+from agent.memory.types import (
     ConfidenceLevel,
     MemoryWriteTiming,
     ProceduralProfile,

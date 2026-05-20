@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from agent.memory.modes import MemoryMode
-from agent.memory.models import EntityRef, SemanticFact
+from agent.memory.types import EntityRef, SemanticFact
 from agent.memory.store import MemoryStore
 from agent.state import AgentState, resolve_owner_id
 

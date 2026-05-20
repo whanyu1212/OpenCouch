@@ -468,6 +468,19 @@ class OpenAITextRuntime:
                     },
                 )
                 return state, False
+        if has_active_exercise and lifecycle_action == "preserve":
+            apply_state_delta(
+                state,
+                {
+                    "route": "therapeutic",
+                    "response_style": "clarifying",
+                    "turn_lifecycle": {
+                        "active_flow": "guided_exercise",
+                        "action": "preserve",
+                    },
+                },
+            )
+            return state, False
 
         action = guided_exercise_runtime_action(state)
         guided_exercise_basis = guided_exercise_selection_basis(state)

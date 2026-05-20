@@ -13,7 +13,7 @@ from agent.state import AgentState
 if TYPE_CHECKING:
     from agent.memory.policy.candidates import SessionMemoryBuffer
     from agent.memory.embeddings import EmbeddingProvider
-    from agent.memory.models import StoredSessionArc
+    from agent.memory.types import StoredSessionArc
     from agent.memory.store import MemoryStore
     from llm.base import BaseLLMClient
 

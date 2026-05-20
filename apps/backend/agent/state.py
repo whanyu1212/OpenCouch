@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.memory.models import GuidancePermission, SessionIntent, SessionStage
+from agent.memory.types import GuidancePermission, SessionIntent, SessionStage
 from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.memory.entries import WorkingMemoryEntry
 

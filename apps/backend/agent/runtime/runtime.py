@@ -24,7 +24,7 @@ from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.recall import LoadMemoryResult, load_memory_for_turn
 from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
-from agent.memory.models import StoredSessionArc
+from agent.memory.types import StoredSessionArc
 from agent.runtime.session import (
     RuntimeSessionTracker,
     active_transcript_length,

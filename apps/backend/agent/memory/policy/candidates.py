@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agent.memory.models import MemoryWrite, ProceduralRuleDraft
+from agent.memory.types import MemoryWrite, ProceduralRuleDraft
 
 CandidateLayer = Literal["semantic", "procedural"]
 PolicyAction = Literal[

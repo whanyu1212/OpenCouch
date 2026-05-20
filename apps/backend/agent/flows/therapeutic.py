@@ -362,21 +362,6 @@ def response_style_from_state(state: Mapping[str, Any]) -> str:
     return "supportive"
 
 
-def is_explicit_grounded_lookup_request(message: str) -> bool:
-    text = " ".join(message.lower().split())
-    lookup_markers = (
-        "look up",
-        "lookup",
-        "verify",
-        "current rule",
-        "is this current",
-        "official",
-        "side effects",
-        "policy on",
-    )
-    return any(marker in text for marker in lookup_markers)
-
-
 def merge_therapeutic_tool_results(
     state: AgentState,
     *,

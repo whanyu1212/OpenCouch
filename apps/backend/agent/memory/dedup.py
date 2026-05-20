@@ -32,7 +32,7 @@ do not need to know which duplicate-detection heuristic is active.
 
 from __future__ import annotations
 
-from agent.memory.models import MemoryWrite
+from agent.memory.types import MemoryWrite
 from agent.memory.store import StoreRecord
 from agent.memory.text_tokens import tokenize as _tokenize
 

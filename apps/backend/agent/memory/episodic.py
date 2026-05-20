@@ -29,7 +29,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.models import SessionArc, StoredSessionArc
+from agent.memory.types import SessionArc, StoredSessionArc
 from agent.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
