@@ -76,6 +76,57 @@ Covers:
 
 Use this file when validating state transitions, diagnostics, and response constraints.
 
+### `datasets/trajectory_memory_modes.jsonl`
+Longer trajectory coverage for durable-memory mode behavior.
+
+Covers:
+- persistent mode with matching durable memory available on the first turn
+- persistent mode retaining seeded durable memory across later turns in the same eval case
+- persistent "memory-light" baselines with no seed or no useful matching seed
+- incognito mode suppressing durable-memory recall even when matching memory exists
+- incognito mode preventing seeded durable memory from leaking into later turns
+
+Use this file to compare persistent vs incognito memory behavior over short trajectories rather than single-turn routing alone.
+
+### `datasets/trajectory_interruptions.jsonl`
+Trajectory coverage for interruption, recovery, and resume behavior across memory modes.
+
+Covers:
+- guided exercise interrupted by crisis, then explicit resume
+- crisis de-escalation back to safe therapeutic flow
+- guided exercise preserved across a grounded side turn, then resumed
+- recovery / relapse sequences that return from safe therapeutic flow to crisis response
+- persistent-vs-incognito recall contrast on the non-crisis turns inside those trajectories
+
+Use this file to verify that active-flow continuity and crisis precedence remain correct while memory mode still controls durable recall.
+
+### `datasets/trajectory_endurance.jsonl`
+Longer 5-turn endurance trajectories across memory modes.
+
+Covers:
+- incognito no-leak endurance across repeated named-entity turns
+- persistent long-session continuity with relevant recall
+- persistent memory-light control sessions without relevant recall
+- longer guided-exercise arcs with multiple continue / preserve / clear transitions
+- ambiguous recovery / relapse arcs that move through safe therapeutic, crisis clarification, and crisis response
+
+Use this file to catch drift that only appears after several turns rather than in shorter trajectory checks.
+
+### `datasets/session_quality_trajectories.jsonl`
+Optional judged full-session quality trajectories.
+
+Covers:
+- persistent vs incognito support-session quality on the same durable-memory scenario
+- persistent vs incognito relationship-tension quality on the same scenario
+- persistent vs incognito work-stress quality
+- persistent vs incognito self-criticism quality
+- exercise side-turn + resume qualitative smoothness
+- exercise interruption/resume and exercise restart quality
+- crisis clarification → de-escalation quality
+- recovery / relapse and repeated high-risk follow-up qualitative safety handling
+
+Use this file with `run_routing_eval.py --judge` to score whole-session coherence, memory appropriateness, workflow smoothness, and safety handling after deterministic checks pass.
+
 ### `datasets/crisis_response_events.jsonl`
 End-to-end crisis-response event coverage.
 
@@ -139,6 +190,14 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
   --case-id grounded_lookup_missing_tool_falls_back
 ```
 
+Optional judge mode for full-session qualitative scoring:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
+  --dataset eval/datasets/session_quality_trajectories.jsonl \
+  --judge --provider openai
+```
+
 ## Coverage matrix
 
 | Area | Route / Mode focus | Main datasets |
@@ -146,9 +205,13 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
 | Safe therapeutic | `therapeutic` / `safe_therapeutic` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl` |
 | Memory control | `memory_control` / `memory_control` | `routing_matrix.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
 | Grounded lookup | `grounded_lookup` / `grounded_lookup` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
-| Guided exercise | `therapeutic` / `guided_exercise` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
+| Guided exercise | `therapeutic` / `guided_exercise` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `trajectory_interruptions.jsonl` |
 | Crisis clarification | `therapeutic` / `crisis_clarification` | `routing_matrix.jsonl`, `behavior_matrix.jsonl`, `multiturn_routing.jsonl` |
-| Crisis response | `crisis` / `crisis_response` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `crisis_response_events.jsonl` |
+| Crisis response | `crisis` / `crisis_response` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `crisis_response_events.jsonl`, `trajectory_interruptions.jsonl`, `trajectory_endurance.jsonl` |
+| Trajectory memory modes | persistent vs incognito durable recall behavior | `trajectory_memory_modes.jsonl` |
+| Trajectory interruptions | exercise/crisis/recovery trajectories across memory modes | `trajectory_interruptions.jsonl` |
+| Trajectory endurance | longer multi-turn continuity / no-leak / relapse coverage | `trajectory_endurance.jsonl` |
+| Session quality trajectories | judged full-session coherence / memory / safety quality | `session_quality_trajectories.jsonl` |
 | Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
 | Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
 
@@ -216,6 +279,16 @@ Examples worth adding:
 - crisis + guided exercise in the same turn
 - grounded lookup + memory action in the same turn
 - preserve / continue conflicts with multiple active cues
+
+### 7. Full session trajectories are still only partially covered
+The trajectory memory-mode, interruption, endurance, and judged session-quality datasets
+now improve persistent-vs-incognito coverage for durable recall behavior plus longer
+exercise/crisis/recovery switching and whole-session quality scoring, but the eval suite
+is still lighter on:
+- even longer 7-10+ turn conversational endurance checks
+- backend-specific persistence parity inside the eval harness itself
+- richer retrieval-quality assertions beyond presence/absence of recalled state
+- judged coverage for additional nuanced scenarios beyond the current curated fourteen full-session cases
 
 ## Conventions for adding cases
 

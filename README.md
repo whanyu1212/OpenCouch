@@ -17,7 +17,7 @@
 > OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
 
 > [!WARNING]
-> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/cli_dogfood.sh`](scripts/cli_dogfood.sh) to start the text agent. Voice support is temporarily removed and will be rebuilt from scratch. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
+> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/text_repl.sh`](scripts/text_repl.sh) to start the text agent. Voice support is temporarily removed and will be rebuilt from scratch. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
 
 ---
 
@@ -129,7 +129,7 @@ Keep real `.env` files local and out of version control.
 
 ### Local run commands
 
-The most reliable dogfood path is `scripts/cli_dogfood.sh` for text. Compose starts the browser stack: Postgres, backend API, and web.
+The most reliable dogfood path is `scripts/text_repl.sh` for text. Compose starts the browser stack: Postgres, backend API, and web.
 
 <details>
 <summary><b>View commands for Compose, CLI, web, Telegram, and docs</b></summary>
@@ -164,7 +164,7 @@ Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.
 
 ```bash
 # Preferred persistent dogfood command.
-./scripts/cli_dogfood.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
+./scripts/text_repl.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
 
 # Raw backend CLI commands.
 cd apps/backend
@@ -172,7 +172,7 @@ uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread
 uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
 ```
 
-`scripts/cli_dogfood.sh` starts Dockerized Postgres first and forwards flags to `opencouch_cli`.
+`scripts/text_repl.sh` starts Dockerized Postgres first and forwards flags to `opencouch_cli`.
 
 #### Manual web stack
 

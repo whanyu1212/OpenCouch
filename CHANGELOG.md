@@ -21,7 +21,7 @@
 ### Local dogfooding
 - Added `scripts/voice_agent.sh`, a dedicated LiveKit voice-agent launcher that starts the Dockerized Postgres service by default and then runs `agent.voice.agent`; it defaults to `start` but forwards LiveKit agent commands such as `console`, `console --text`, and `connect --room <name>`
 - Added voice-script flags for common dogfooding configuration without requiring manual environment exports: `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres`
-- Kept `scripts/cli_dogfood.sh` as the text-agent wrapper, so local users can run the text and voice agents independently while the web UI is being reworked
+- Kept `scripts/text_repl.sh` as the text-agent wrapper, so local users can run the text and voice agents independently while the web UI is being reworked
 
 ### LiveKit text-mode verification
 - Fixed the LiveKit local text console path so typed turns go through the same OpenCouch pre-turn policy hook as spoken turns, including crisis classification, turn policy, and exercise-consent state
@@ -122,7 +122,7 @@ This entry covers ~50 commits on `refactor/agent-restructure` since the 2026-05-
 
 ### Local dogfooding ergonomics
 - Added an upfront `get_settings()` validation that raises a clear, actionable `ValueError` when `OPENCOUCH_PERSISTENCE_BACKEND=postgres` (the default) is selected without `OPENCOUCH_MEMORY_DATABASE_URL`, replacing the previous abstract `thread_database_url is required when thread_persistence_backend='postgres'` failure that surfaced deep inside the runtime — the new message names both escape hatches (set the URL with the docker compose default, or switch to `OPENCOUCH_PERSISTENCE_BACKEND=sqlite`)
-- Added `scripts/cli_dogfood.sh`, a thin wrapper that ensures the Dockerized Postgres service is healthy (`docker compose up -d postgres --wait`) before launching the CLI from `apps/backend`, forwarding any flags through `"$@"`; raw `uv run python -m opencouch_cli` invocations remain canonical for guest, deterministic, and SQLite-fallback cases that do not need Postgres
+- Added `scripts/text_repl.sh`, a thin wrapper that ensures the Dockerized Postgres service is healthy (`docker compose up -d postgres --wait`) before launching the CLI from `apps/backend`, forwarding any flags through `"$@"`; raw `uv run python -m opencouch_cli` invocations remain canonical for guest, deterministic, and SQLite-fallback cases that do not need Postgres
 - Updated the root README CLI section to introduce the wrapper alongside the existing raw invocations, with a backlink to the Environment section and an explicit "when not to use it" callout
 
 ### Validation

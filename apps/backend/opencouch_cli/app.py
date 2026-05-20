@@ -306,7 +306,7 @@ def _render_persistence_startup_error(
             "reachable. Start it from the repo root with:\n\n"
             "  docker compose -f compose.yml up -d postgres --wait\n\n"
             "For normal text-agent dogfooding, prefer:\n\n"
-            "  ./scripts/cli_dogfood.sh --memory-mode persistent "
+            "  ./scripts/text_repl.sh --memory-mode persistent "
             "--user-id dogfood --response-model-tier quality\n\n"
             "For a no-database smoke test, use --memory-mode guest or set "
             "OPENCOUCH_PERSISTENCE_BACKEND=sqlite.",

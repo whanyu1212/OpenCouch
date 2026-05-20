@@ -1129,7 +1129,7 @@ async def test_chat_loop_renders_postgres_startup_hint(monkeypatch) -> None:
     assert messages[0][0] == "danger"
     assert "Postgres persistence is configured" in messages[0][1]
     assert "docker compose -f compose.yml up -d postgres --wait" in messages[0][1]
-    assert "./scripts/cli_dogfood.sh" in messages[0][1]
+    assert "./scripts/text_repl.sh" in messages[0][1]
 
 
 @pytest.mark.asyncio
