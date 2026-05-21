@@ -616,6 +616,78 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_exercise(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Low-confidence triage should not drop active exercise state."""
+
+    runner = FakeOpenAISDKRunner("Let's stay with the exercise for a moment.")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        first = await runtime.run_turn(
+            thread_id="thread-low-confidence-exercise",
+            user_id="user-1",
+            message="Can we do box breathing?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="guided_exercise",
+                exercise_start_basis="explicit_user_request",
+                exercise_type="grounding_box_breathing",
+            ),
+        )
+
+        assert first.output.response_style == "guided_exercise"
+        state = await runtime.get_state("thread-low-confidence-exercise")
+        assert state is not None
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "thread-low-confidence-exercise",
+            {
+                **dict(state),
+                "exercise_state": {
+                    "exercise_type": "grounding_box_breathing",
+                    "exercise_step": 1,
+                    "exercise_therapeutic_approach": "dbt_skills",
+                },
+                "therapeutic_approach": "dbt_skills",
+            },
+        )
+
+        second = await runtime.run_turn(
+            thread_id="thread-low-confidence-exercise",
+            user_id="user-1",
+            message="What about that?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        assert second.output.response_style == "guided_exercise"
+        assert second.output.response_type.value == "therapeutic"
+        assert second.output.diagnostics["openai_triage_route"] == "therapeutic"
+        assert second.output.diagnostics["openai_triage_confidence"] == "low"
+        assert (
+            second.output.diagnostics["openai_guided_exercise_selection_basis"]
+            == "active_exercise"
+        )
+        assert second.state.get("exercise_state", {}).get("exercise_type") == (
+            "grounding_box_breathing"
+        )
+        assert second.state.get("exercise_state", {}).get("exercise_step") is not None
+        assert second.state.get("exercise_state", {}).get("exercise_step") >= 1
+        assert (
+            second.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
+            == "dbt_skills"
+        )
+        assert runner.run_calls
+        assert "guided exercise" in runner.run_calls[-1]["agent"].name.lower()
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_streaming_surface(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
