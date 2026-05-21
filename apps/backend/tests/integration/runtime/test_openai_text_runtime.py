@@ -622,6 +622,52 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_retriage_sees_prior_low_confidence_context(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confident follow-up should see and then clear prior ambiguity context."""
+
+    runner = FakeOpenAISDKRunner("That sounds like something to talk through.")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-low-confidence-loop",
+            user_id="user-1",
+            message="What about the thing?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        followup_llm = ScriptedOpenAITextRouteLLM(route="therapeutic")
+        await runtime.run_turn(
+            thread_id="thread-low-confidence-loop",
+            user_id="user-1",
+            message="I meant I want to talk it through.",
+            llm_client=followup_llm,
+        )
+
+        triage_prompts = [
+            prompt
+            for schema_name, prompt in followup_llm.structured_prompts
+            if schema_name == "TurnDispatchDecision"
+        ]
+        assert triage_prompts
+        assert "Prior low-confidence clarification" in triage_prompts[0]
+        assert 'tentative route was "grounded_lookup"' in triage_prompts[0]
+        state = await runtime.get_state("thread-low-confidence-loop")
+        assert state is not None
+        assert state["turn_lifecycle"]["active_flow"] == "none"
+        assert "tentative_route" not in state["turn_lifecycle"]
+        assert "triage_confidence" not in state["turn_lifecycle"]
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending_memory_action(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

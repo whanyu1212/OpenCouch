@@ -917,9 +917,25 @@ class OpenAITextRuntime:
             if isinstance(memory_reference, Mapping)
             else "none"
         )
+        turn_lifecycle = state.get("turn_lifecycle", {}) or {}
+        prior_clarification = ""
+        if (
+            isinstance(turn_lifecycle, Mapping)
+            and turn_lifecycle.get("triage_confidence") == "low"
+        ):
+            tentative_route = str(turn_lifecycle.get("tentative_route") or "").strip()
+            if tentative_route:
+                prior_clarification = (
+                    "Prior low-confidence clarification: the previous turn asked the "
+                    f"user to clarify ambiguous intent; tentative route was "
+                    f'"{tentative_route}". Treat the current message as a possible '
+                    "answer to that clarification, but do not force the tentative "
+                    "route if the user changed topics.\n"
+                )
         return (
             f"Active flow: {active_flow}\n"
             f"Memory reference mode: {memory_reference_mode}\n"
+            f"{prior_clarification}"
             f"Recent conversation:\n{format_recent_history(state)}\n\n"
             f'Current user message: "{state.get("message", "")}"'
         )
@@ -1007,6 +1023,18 @@ def _effective_turn_state(
             state[key] = {
                 **dict(prior_state.get(key, {}) or {}),
                 **dict(value or {}),
+            }
+        elif key == "turn_lifecycle":
+            prior_lifecycle = dict(prior_state.get("turn_lifecycle", {}) or {})
+            seeded_lifecycle = dict(value or {})
+            preserved_clarification = {
+                preserve_key: prior_lifecycle[preserve_key]
+                for preserve_key in ("tentative_route", "triage_confidence")
+                if prior_lifecycle.get(preserve_key) is not None
+            }
+            state[key] = {
+                **seeded_lifecycle,
+                **preserved_clarification,
             }
         else:
             state[key] = value

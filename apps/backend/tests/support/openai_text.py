@@ -236,6 +236,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.crisis_location = crisis_location
         self.crisis_resource_status = crisis_resource_status
         self.triage_confidence = triage_confidence
+        self.structured_prompts: list[tuple[str, str]] = []
 
     async def generate_structured(
         self,
@@ -246,6 +247,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         use_search: bool = False,
     ) -> Any:
         schema_name = response_schema.__name__
+        self.structured_prompts.append((schema_name, prompt))
         if schema_name == "CrisisAssessmentSchema":
             return response_schema(
                 level=self.crisis_level,
