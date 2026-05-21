@@ -434,7 +434,7 @@ class OpenAITextRuntime:
                 {
                     "response_style": "clarifying",
                     "turn_lifecycle": {
-                        "active_flow": "none",
+                        "active_flow": self._active_flow_for_state(state),
                         "action": decision.active_flow_action,
                     },
                 },
@@ -879,7 +879,7 @@ class OpenAITextRuntime:
             return prompt
         return f"{prompt}\n\n{operational_context}"
 
-    def _triage_input_text_for_state(self, state: AgentState) -> str:
+    def _active_flow_for_state(self, state: AgentState) -> str:
         active_flow = "none"
         exercise_state = state.get("exercise_state", {}) or {}
         if (
@@ -894,6 +894,10 @@ class OpenAITextRuntime:
             and memory_control.get("pending_action") is not None
         ):
             active_flow = "pending_memory_action"
+        return active_flow
+
+    def _triage_input_text_for_state(self, state: AgentState) -> str:
+        active_flow = self._active_flow_for_state(state)
         memory_reference = state.get("memory_reference", {}) or {}
         memory_reference_mode = (
             memory_reference.get("mode")

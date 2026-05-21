@@ -616,6 +616,78 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending_memory_action(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Low-confidence triage should not drop pending memory-flow context."""
+
+    runner = FakeOpenAISDKRunner(
+        "Do you want me to change your saved memory or talk it through first?"
+    )
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-low-confidence-memory",
+            user_id="user-1",
+            message="Please delete that saved fact",
+            llm_client=ScriptedOpenAITextRouteLLM(route="memory_control"),
+        )
+
+        state = await runtime.get_state("thread-low-confidence-memory")
+        assert state is not None
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "thread-low-confidence-memory",
+            {
+                **dict(state),
+                "memory_control": {
+                    "action": {},
+                    "pending_action": {
+                        "type": "delete",
+                        "target": {
+                            "kind": "fact",
+                            "id": "fact-1",
+                            "key": "fact-1",
+                            "namespace": ["user-1", "semantic"],
+                            "preview": "Presentations make me anxious.",
+                        },
+                    },
+                },
+                "turn_lifecycle": {
+                    "active_flow": "pending_memory_action",
+                    "action": "continue",
+                },
+            },
+        )
+
+        result = await runtime.run_turn(
+            thread_id="thread-low-confidence-memory",
+            user_id="user-1",
+            message="What about that one?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        assert result.output.response_style == "clarifying"
+        assert result.output.response_type.value == "therapeutic"
+        assert result.output.diagnostics["openai_triage_route"] == "therapeutic"
+        assert result.output.diagnostics["openai_triage_confidence"] == "low"
+        state = await runtime.get_state("thread-low-confidence-memory")
+        assert state is not None
+        assert state["route"] == "therapeutic"
+        assert state["response_style"] == "clarifying"
+        assert state["turn_lifecycle"]["active_flow"] == "pending_memory_action"
+        assert state["memory_control"]["pending_action"]["target"]["key"] == "fact-1"
+        assert runner.run_calls
+        assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_exercise(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
