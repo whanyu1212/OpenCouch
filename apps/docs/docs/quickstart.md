@@ -58,8 +58,10 @@ OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast`}
 
 ### Deterministic mode
 
-No LLM calls, in-memory only. Good for verifying the graph and slash
-commands.
+No LLM calls, in-memory only. Good for verifying CLI rendering, slash
+commands, and local persistence plumbing. User turns return a labeled
+deterministic smoke response; use `auto` or `hybrid` for real crisis
+classification and therapeutic generation.
 
 <TerminalWindow title="bash — deterministic CLI">
 {`cd apps/backend
@@ -67,6 +69,24 @@ uv run python -m opencouch_cli \\
     --mode deterministic \\
     --memory-mode guest \\
     --thread-id scratch`}
+</TerminalWindow>
+
+### Experimental TUI
+
+The Textual TUI is an experimental dogfood surface. It keeps the REPL as
+the canonical local CLI, but adds switchable `Dogfood`, `Debug`, and
+`Chat` workspaces for comparing richer terminal workflows. It starts in
+light mode by default; use `--theme dark` to start dark, or press
+`Ctrl+Y` inside the TUI to switch themes. `Tab` and `Shift+Tab` cycle
+workspaces, while `Ctrl+1`, `Ctrl+2`, and `Ctrl+3` jump directly.
+
+<TerminalWindow title="bash — deterministic TUI">
+{`./scripts/text_tui.sh \\
+    --mode deterministic \\
+    --memory-mode guest \\
+    --view dogfood \\
+    --theme light \\
+    --thread-id scratch-tui`}
 </TerminalWindow>
 
 ### Full mode with persistent memory

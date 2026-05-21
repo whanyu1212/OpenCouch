@@ -229,7 +229,7 @@ def _completion_context(text: str) -> tuple[tuple[str, ...], str, int]:
 
 _INPUT_HISTORY = InMemoryHistory()
 _PROMPT_SESSION: PromptSession[str] | None = None
-_ACTIVE_PROMPT_THEME = "mono"
+_ACTIVE_PROMPT_THEME = "calm"
 
 # Recent commands for the quick-picker (most recent first, max 5).
 _RECENT_COMMANDS: deque[str] = deque(maxlen=5)
@@ -395,6 +395,14 @@ def _clip_toolbar_message(message: str, *, max_length: int = 42) -> str:
     return message[: max_length - 1].rstrip() + "…"
 
 
+def _clip_toolbar_identity(identity: str, *, max_length: int = 13) -> str:
+    """Clip long toolbar identities so status remains glanceable."""
+
+    if len(identity) <= max_length:
+        return identity
+    return identity[: max_length - 1].rstrip() + "…"
+
+
 def prompt_toolbar(state: PromptToolbarState) -> AnyFormattedText:
     """Return the bottom toolbar for the current prompt.
 
@@ -405,7 +413,7 @@ def prompt_toolbar(state: PromptToolbarState) -> AnyFormattedText:
         AnyFormattedText: Prompt-toolkit formatted toolbar text.
     """
 
-    identity = state.user_id or state.thread_id
+    identity = state.user_id or _clip_toolbar_identity(state.thread_id)
 
     if state.ui_mode == "compact":
         fragments: list[tuple[str, str]] = [
@@ -442,28 +450,23 @@ def prompt_toolbar(state: PromptToolbarState) -> AnyFormattedText:
         return FormattedText(fragments)
 
     fragments = [
-        ("class:toolbar.label", "  mode"),
-        ("class:toolbar.punct", ": "),
+        ("class:toolbar.label", "  mode "),
         ("class:toolbar.mode", state.resolved_mode),
         ("class:toolbar.separator", "   "),
-        ("class:toolbar.label", "memory"),
-        ("class:toolbar.punct", ": "),
+        ("class:toolbar.label", "memory "),
         ("class:toolbar.memory", state.memory_mode),
         ("class:toolbar.separator", "   "),
-        ("class:toolbar.label", "response"),
-        ("class:toolbar.punct", ": "),
+        ("class:toolbar.label", "response "),
         ("class:toolbar.response", state.response_model_tier),
         ("class:toolbar.separator", "   "),
-        ("class:toolbar.label", "thread"),
-        ("class:toolbar.punct", ": "),
+        ("class:toolbar.label", "thread "),
         ("class:toolbar.thread", identity),
     ]
     if state.pending_status:
         fragments.extend(
             [
                 ("class:toolbar.separator", "   "),
-                ("class:toolbar.label", "status"),
-                ("class:toolbar.punct", ": "),
+                ("class:toolbar.label", "status "),
                 ("class:toolbar.pending", state.pending_status),
             ]
         )
@@ -471,8 +474,7 @@ def prompt_toolbar(state: PromptToolbarState) -> AnyFormattedText:
         fragments.extend(
             [
                 ("class:toolbar.separator", "   "),
-                ("class:toolbar.label", "last"),
-                ("class:toolbar.punct", ": "),
+                ("class:toolbar.label", "last "),
                 ("class:toolbar.last", _clip_toolbar_message(state.last_action)),
             ]
         )

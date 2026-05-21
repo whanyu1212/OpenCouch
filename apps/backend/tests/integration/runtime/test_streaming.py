@@ -175,6 +175,42 @@ class TestRunTurnStreamStages:
     """The stream should emit one StatusEvent per node in execution order."""
 
     @pytest.mark.asyncio
+    async def test_deterministic_mode_streams_offline_smoke_response(self) -> None:
+        """No-client deterministic turns should stay local and persist transcript state."""
+
+        async with PersistentAgentRuntime(
+            sqlite_path=":memory:",
+            memory_sqlite_path=":memory:",
+            crisis_log_sqlite_path=":memory:",
+            text_session_backend="disabled",
+        ) as runtime:
+            events: list[StreamEvent] = []
+            async for event in runtime.run_turn_stream(
+                thread_id="t-deterministic-smoke",
+                message="I feel stressed about work today.",
+                llm_client=None,
+                response_llm_client=None,
+            ):
+                events.append(event)
+            state = await runtime.get_state("t-deterministic-smoke")
+            history = await runtime.get_history("t-deterministic-smoke")
+
+        statuses = [event.stage for event in events if isinstance(event, StatusEvent)]
+        ready = next(event for event in events if isinstance(event, ResponseReadyEvent))
+        done = next(event for event in events if isinstance(event, DoneEvent))
+
+        assert statuses == ["deterministic", "finalize"]
+        assert ready.output.response_text == done.output.response_text
+        assert "Deterministic smoke mode" in done.output.response_text
+        assert done.output.diagnostics["text_agent_runtime"] == "deterministic_smoke"
+        assert done.output.diagnostics["deterministic_smoke"] is True
+        assert state is not None
+        assert state["route"] == "therapeutic"
+        assert len(history) == 2
+        assert history[0].content == "I feel stressed about work today."
+        assert history[1].content == done.output.response_text
+
+    @pytest.mark.asyncio
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 

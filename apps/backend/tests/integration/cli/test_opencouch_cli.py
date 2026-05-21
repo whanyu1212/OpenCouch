@@ -152,6 +152,23 @@ class _FakeTieredChatLoopRuntime(_FakeChatLoopRuntime):
         yield DoneEvent(output=_make_agent_output("tiered"))
 
 
+class _FakeFailingTurnRuntime(_FakeChatLoopRuntime):
+    """Runtime stub that fails during turn streaming."""
+
+    async def run_turn_stream(self, **kwargs):
+        yield StatusEvent(stage="triage")
+        raise RuntimeError("crisis gate failed")
+
+
+class _FakeFailingTailRuntime(_FakeChatLoopRuntime):
+    """Runtime stub that fails after response_ready has been rendered."""
+
+    async def run_turn_stream(self, **kwargs):
+        yield ResponseReadyEvent(output=_make_agent_output("ready"))
+        await asyncio.sleep(0)
+        raise RuntimeError("tail failed")
+
+
 def _make_agent_output(
     response_text: str,
     *,
@@ -188,8 +205,8 @@ def _session() -> RunnerSession:
     )
 
 
-def test_render_header_uses_prominent_title_panel_and_session_metadata(capsys) -> None:
-    """The refreshed header should keep metadata while giving the CLI a stronger title block."""
+def test_render_header_uses_compact_product_shell_and_session_metadata(capsys) -> None:
+    """The startup header should stay compact and keep key session metadata."""
 
     from opencouch_cli.app import render_header
 
@@ -202,22 +219,28 @@ def test_render_header_uses_prominent_title_panel_and_session_metadata(capsys) -
     )
     out = capsys.readouterr().out
 
-    # The brand name is rendered as block-art characters, so check for
-    # the block elements that form the logo plus the "CLI" tag below it.
-    assert "█▀▀█" in out  # block-art logo is present
-    assert "CLI" in out
-    assert "PRIVATE BY DEFAULT" in out
-    assert "MEMORY ON YOUR TERMS" in out
-    assert "A calm workspace for supportive conversations" in out
+    assert "OpenCouch" in out
+    assert "text agent" in out
     assert "session" in out
+    assert "deterministic" in out
     assert "memory" in out
+    assert "persistent" in out
     assert "thread" in out
+    assert "thread-a" in out
     assert "owner" in out
+    assert "alice" in out
     assert "response" in out
-    assert "quick actions" in out
-    assert "/keys" in out
-    assert "/ui" in out
-    assert "/theme" in out
+    assert "quality" in out
+    assert "/ commands" in out
+    assert "/status" in out
+    assert "exit to stop" in out
+    assert "Type / for commands" not in out
+    assert "█▀▀█" not in out
+    assert "PRIVATE BY DEFAULT" not in out
+    assert "quick actions" not in out
+    assert "/keys" not in out
+    assert "/ui" not in out
+    assert "/theme" not in out
     assert "[/bold primary]" not in out
 
 
@@ -309,6 +332,25 @@ def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
     assert "sqlite path" in out
 
 
+def test_render_doctor_shows_runtime_readiness(capsys) -> None:
+    """Doctor output should make deterministic smoke mode and owner scope explicit."""
+
+    from opencouch_cli.app import render_doctor
+
+    session = _session()
+
+    render_doctor(session)
+    out = capsys.readouterr().out
+
+    assert "runtime doctor" in out
+    assert "llm" in out
+    assert "smoke" in out
+    assert "deterministic smoke mode" in out
+    assert "owner scope" in out
+    assert "thread-scoped" in out
+    assert "turn recovery" in out
+
+
 def test_help_command_registry_contains_current_public_commands() -> None:
     """The help registry should cover all public slash commands."""
 
@@ -317,6 +359,7 @@ def test_help_command_registry_contains_current_public_commands() -> None:
     displays = [command.display for command in help_commands()]
 
     assert "/help" in displays
+    assert "/doctor" in displays
     assert "/memory list [facts|sessions|rules]" in displays
     assert "/memory recall on|off" in displays
     assert "/keys" in displays
@@ -432,10 +475,11 @@ def test_prompt_toolbar_shows_session_state_and_pending_memory() -> None:
     assert "saving memory" in text
     assert "/ commands" in text
     assert "trace" not in text
-    assert "mode: hybrid" in text
-    assert "memory: persistent" in text
-    assert "response: quality" in text
-    assert "status: saving memory" in text
+    assert "mode hybrid" in text
+    assert "memory persistent" in text
+    assert "response quality" in text
+    assert "status saving memory" in text
+    assert ":" not in text
     assert "  |  " not in text
 
 
@@ -456,6 +500,34 @@ def test_prompt_toolbar_keeps_trace_toggle_out_of_status_bar() -> None:
     text = "".join(fragment[1] for fragment in toolbar)
 
     assert "trace" not in text
+
+
+def test_prompt_toolbar_clips_long_thread_identity() -> None:
+    """Long thread ids should not dominate the prompt toolbar."""
+
+    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+
+    toolbar = prompt_toolbar(
+        PromptToolbarState(
+            resolved_mode="auto",
+            memory_mode="guest",
+            response_model_tier="fast",
+            thread_id="local-1234567890abcdef",
+            user_id=None,
+        )
+    )
+    text = "".join(fragment[1] for fragment in toolbar)
+
+    assert "local-123456…" in text
+    assert "local-1234567890abcdef" not in text
+
+
+def test_runner_session_defaults_to_calm_prompt_theme() -> None:
+    """New CLI sessions should use the calmer semantic prompt theme."""
+
+    session = _session()
+
+    assert session.prompt_theme == "calm"
 
 
 def test_guest_pending_tail_status_avoids_memory_copy() -> None:
@@ -601,8 +673,8 @@ def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
     assert "awaiting safety clarification" in out
 
 
-def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
-    """Trace overlay should show routing flow with reasons beside decisions."""
+def test_render_turn_trace_shows_table_like_flow_and_reasons(capsys) -> None:
+    """Trace overlay should show routing decisions as a compact table."""
 
     from opencouch_cli.app import render_turn_trace
 
@@ -638,12 +710,21 @@ def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
     out = capsys.readouterr().out
 
     assert "routing trace" in out
-    assert "+-- safety" in out
+    assert "stage" in out
+    assert "decision" in out
+    assert "safety" in out
     assert "normal" in out
-    assert "No crisis signal detected." in out
-    assert "fake dispatch decision" in out
-    assert "stages:" in out
-    assert "tail: finishing turn" in out
+    assert "source" in out
+    assert "deterministic" in out
+    assert "No crisis signal" in out
+    assert "detected." in out
+    assert "fake dispatch" in out
+    assert "decision" in out
+    assert "stages" in out
+    assert "tail" in out
+    assert "finishing" in out
+    assert "turn" in out
+    assert "+--" not in out
 
 
 @pytest.mark.asyncio
@@ -714,6 +795,106 @@ async def test_chat_loop_shows_spinner_loading_state_before_stage_updates(
     second_spinner = captured_updates[1].renderables[0]
     assert isinstance(second_spinner, Spinner)
     assert "finalizing turn" in str(second_spinner.text)
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_reports_turn_stream_failures_without_exiting(
+    monkeypatch,
+) -> None:
+    """A runtime turn failure should render a recoverable error and prompt again."""
+
+    runtime = _FakeFailingTurnRuntime()
+    prompt_calls = 0
+    messages: list[tuple[str, str]] = []
+
+    async def _read_user_input(state):
+        _ = state
+        nonlocal prompt_calls
+        prompt_calls += 1
+        if prompt_calls == 1:
+            return "hi"
+        raise EOFError
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
+    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    exit_code = await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id=None,
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert exit_code == 0
+    assert prompt_calls == 2
+    assert any(style == "danger" for style, _ in messages)
+    assert any("Turn failed" in message for _, message in messages)
+    assert any("crisis gate failed" in message for _, message in messages)
+
+
+@pytest.mark.asyncio
+async def test_chat_loop_reports_response_tail_failures_without_exiting(
+    monkeypatch,
+) -> None:
+    """Background tail failures should be surfaced without crashing shutdown."""
+
+    runtime = _FakeFailingTailRuntime()
+    messages: list[tuple[str, str]] = []
+    prompts = iter(["hi", EOFError()])
+
+    async def _read_user_input(state):
+        _ = state
+        value = next(prompts)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    monkeypatch.setattr(
+        "opencouch_cli.app.resolve_llm_client",
+        lambda mode: (None, "deterministic"),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.PersistentAgentRuntime",
+        lambda *args, **kwargs: runtime,
+    )
+    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
+    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_turn_route", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_turn_activity", lambda *args, **kwargs: None
+    )
+
+    exit_code = await chat_loop(
+        "deterministic",
+        thread_id="thread-a",
+        user_id=None,
+        sqlite_path=":memory:",
+        memory_mode="persistent",
+    )
+
+    assert exit_code == 0
+    assert any(style == "danger" for style, _ in messages)
+    assert any("Response tail failed" in message for _, message in messages)
+    assert any("tail failed" in message for _, message in messages)
 
 
 @pytest.mark.asyncio
@@ -2893,8 +3074,8 @@ class TestRenderContext:
         assert "• Last session (grief): talked about my dog passing" in out
 
 
-def test_render_response_shows_footer_metadata(capsys) -> None:
-    """Reply panels should surface thread and turn metadata in the footer."""
+def test_render_response_uses_lightweight_normal_message_chrome(capsys) -> None:
+    """Normal replies should read as conversation, not a heavy panel."""
 
     from opencouch_cli.app import render_response
 
@@ -2906,13 +3087,49 @@ def test_render_response_shows_footer_metadata(capsys) -> None:
     )
     out = capsys.readouterr().out
 
-    assert "reply" in out
+    assert "assistant" in out
     assert "thread" in out
     assert "thread-a" in out
     assert "turn" in out
     assert "3" in out
     assert "style" in out
     assert "support" in out
+    assert "hello there" in out
+    assert "╭" not in out
+    assert "╰" not in out
+
+
+def test_render_onboarding_uses_single_quiet_hint(capsys) -> None:
+    """First-run onboarding should not consume a full panel."""
+
+    from opencouch_cli.app import render_onboarding
+
+    render_onboarding()
+    out = capsys.readouterr().out
+
+    assert "Type / for commands" in out
+    assert "quick start" not in out
+    assert "Most used commands" not in out
+    assert "╭" not in out
+    assert "╰" not in out
+
+
+def test_render_help_uses_single_command_reference_panel(capsys) -> None:
+    """/help should be one scannable reference instead of stacked panels."""
+
+    from opencouch_cli.app import render_help
+
+    render_help()
+    out = capsys.readouterr().out
+
+    assert "command reference" in out
+    assert "category" in out
+    assert "command" in out
+    assert "session" in out
+    assert "/help" in out
+    assert "/memory status" in out
+    assert out.count("╭") == 1
+    assert "commands · session" not in out
 
 
 def test_render_meta_defaults_to_compact_summary(capsys) -> None:

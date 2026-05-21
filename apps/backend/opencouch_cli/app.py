@@ -46,6 +46,7 @@ import argparse
 import asyncio
 import difflib
 import json
+import logging
 import os
 import textwrap
 from contextlib import AsyncExitStack
@@ -56,6 +57,16 @@ from typing import Literal
 from uuid import uuid4
 
 from psycopg import OperationalError as PostgresOperationalError
+from rich import box
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.rule import Rule
+from rich.spinner import Spinner
+from rich.table import Table
+from rich.text import Text
+from rich.theme import Theme
 
 from agent.feedback.models import FeedbackLabel, FeedbackSource
 from agent.memory.models import StoredSessionArc
@@ -110,17 +121,9 @@ from opencouch_cli.input import (
     record_recent_command,
     set_prompt_theme,
 )
-from rich import box
-from rich.console import Console, Group
-from rich.live import Live
-from rich.panel import Panel
-from rich.prompt import Prompt
-from rich.rule import Rule
-from rich.spinner import Spinner
-from rich.table import Table
-from rich.text import Text
-from rich.theme import Theme
 from llm.base import BaseLLMClient
+
+logger = logging.getLogger(__name__)
 
 CLI_THEME = Theme(
     {
@@ -207,15 +210,12 @@ def _live_preview_renderable(
 
     if visible_text:
         renderables.append(
-            Panel(
+            _normal_reply_renderable(
                 visible_text,
-                title="[success]  reply  [/success]",
-                subtitle=Text.from_markup(
-                    f"[muted]thread[/muted] [info]{thread_id}[/info]"
-                ),
-                border_style="panel",
-                box=box.ROUNDED,
-                padding=(1, 2),
+                thread_id=thread_id,
+                turn_count=None,
+                response_style=None,
+                therapeutic_approach=None,
             )
         )
 
@@ -231,7 +231,7 @@ def _response_panel(
     *,
     thread_id: str | None = None,
     turn_count: int | None = None,
-) -> Panel:
+) -> Panel | Group:
     """Build the terminal assistant-response panel for one turn.
 
     Args:
@@ -244,10 +244,17 @@ def _response_panel(
     """
 
     is_crisis = output.response_type.value == "crisis"
-    title = (
-        "[danger]  crisis  [/danger]" if is_crisis else "[success]  reply  [/success]"
-    )
-    border = "danger" if is_crisis else "panel"
+    if not is_crisis:
+        return _normal_reply_renderable(
+            output.response_text,
+            thread_id=thread_id,
+            turn_count=turn_count,
+            response_style=output.response_style,
+            therapeutic_approach=output.therapeutic_approach,
+        )
+
+    title = "[danger]  crisis  [/danger]"
+    border = "danger"
     subtitle_parts: list[str] = []
     if thread_id:
         subtitle_parts.append(f"[muted]thread[/muted] [info]{thread_id}[/info]")
@@ -269,6 +276,60 @@ def _response_panel(
         box=box.HEAVY if is_crisis else box.ROUNDED,
         padding=(1, 2),
     )
+
+
+def _normal_reply_renderable(
+    response_text: str,
+    *,
+    thread_id: str | None,
+    turn_count: int | None,
+    response_style: str | None,
+    therapeutic_approach: str | None,
+) -> Group:
+    """Build lightweight chrome for a normal assistant reply."""
+
+    meta = Text("  assistant", style="success")
+    meta_parts: list[tuple[str, str]] = []
+    if thread_id:
+        meta_parts.append(("thread", thread_id))
+    if turn_count is not None:
+        meta_parts.append(("turn", str(turn_count)))
+    if response_style:
+        style_label = response_style
+        if therapeutic_approach and therapeutic_approach != "none":
+            style_label += f" / {therapeutic_approach}"
+        meta_parts.append(("style", style_label))
+
+    for label, value in meta_parts:
+        meta.append("  ·  ", style="panel")
+        meta.append(label, style="muted")
+        meta.append(" ", style="panel")
+        meta.append(value, style="info")
+
+    body = _left_rail_text(response_text, style="info")
+    return Group(meta, body)
+
+
+def _left_rail_text(value: str, *, style: str) -> Text:
+    """Render multiline text against a subtle terminal left rail."""
+
+    body = Text()
+    wrote_line = False
+    max_width = max(24, min(console.width - 6, 88))
+    paragraphs = value.splitlines() or [""]
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        wrapped = textwrap.wrap(paragraph, width=max_width) if paragraph else [""]
+        for line in wrapped:
+            if wrote_line:
+                body.append("\n")
+            body.append("  │ ", style="panel")
+            body.append(line, style=style)
+            wrote_line = True
+        if paragraph_index < len(paragraphs) - 1:
+            body.append("\n")
+            body.append("  │", style="panel")
+            wrote_line = True
+    return body
 
 
 async def _drain_turn_stream_tail(
@@ -298,6 +359,16 @@ async def _drain_turn_stream_tail(
     return final_output
 
 
+def _recoverable_error_message(prefix: str, exc: Exception) -> str:
+    """Return a compact user-facing error for recoverable CLI failures."""
+
+    detail = str(exc).strip() or type(exc).__name__
+    return (
+        f"{prefix}: {detail}\n"
+        "The CLI stayed open. Fix the runtime configuration or retry the turn."
+    )
+
+
 @dataclass(slots=True)
 class RunnerSession:
     """Mutable local session state for the interactive CLI."""
@@ -318,7 +389,7 @@ class RunnerSession:
     trace_mode: TraceMode = "off"
     ui_mode: UIMode = "full"
     observability_mode: ObservabilityMode = "compact"
-    prompt_theme: PromptThemeName = "mono"
+    prompt_theme: PromptThemeName = "calm"
     show_onboarding: bool = True
 
     def owner_id(self) -> str:
@@ -683,40 +754,14 @@ def render_header(
         None.
     """
 
-    # Block-letter wordmark — hand-crafted using Unicode half-block
-    # characters for a bold, modern terminal logo.
-    _LOGO_LINES = [
-        "█▀▀█ █▀▀█ █▀▀ █▀▀▄   █▀▀ █▀▀█ █  █ █▀▀ █  █",
-        "█  █ █▄▄█ █▀▀ █  █   █   █  █ █  █ █   █▀▀█",
-        "▀▀▀▀ ▀    ▀▀▀ ▀  ▀   ▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀ ▀  ▀",
-    ]
-
-    console.print()
-    console.print(Rule(style="panel", characters="─"))
-    console.print()
-    for line in _LOGO_LINES:
-        console.print(Text(line, style="primary", justify="center"))
-    console.print(Text("CLI", style="accent", justify="center"))
-    console.print()
-    console.print(
-        Text(
-            "A calm workspace for supportive conversations",
-            style="muted",
-            justify="center",
-        )
-    )
-    console.print(
-        Text(
-            "PRIVATE BY DEFAULT  •  MEMORY ON YOUR TERMS",
-            style="hint",
-            justify="center",
-        )
-    )
-    console.print()
-    console.print(Rule(style="panel", characters="─"))
     console.print()
 
-    # Session metadata — compact single-line layout
+    title = Text()
+    title.append("  OpenCouch", style="brand")
+    title.append("  ·  ", style="panel")
+    title.append("text agent", style="info")
+    console.print(title)
+
     session_parts: list[str] = [
         f"[muted]session[/muted] [primary]{mode}[/primary]",
         f"[muted]memory[/muted] [accent]{memory_mode}[/accent]",
@@ -736,38 +781,17 @@ def render_header(
         identity_parts.append("[muted]owner[/muted] [warning]thread-scoped[/warning]")
     console.print(Text.from_markup("   " + "  [panel]·[/panel]  ".join(identity_parts)))
 
-    exit_hint = Text()
-    exit_hint.append("   type ", style="hint")
-    exit_hint.append("exit", style="accent")
-    exit_hint.append(" or ", style="hint")
-    exit_hint.append("quit", style="accent")
-    exit_hint.append(" to stop", style="hint")
-    console.print(exit_hint)
-
-    console.print()
-
-    # Quick-action hints — grouped on two lines
-    console.print(
-        Text.from_markup(
-            "   [muted]quick actions[/muted]  "
-            "[info]/help[/info]  [info]/keys[/info]  [info]/status[/info]  "
-            "[info]/history[/info]  [info]/context[/info]  [info]/memory[/info]"
-        )
-    )
-    console.print(
-        Text.from_markup(
-            "                  "
-            "[info]/threads[/info]  [info]/resume[/info]  [info]/new[/info]  "
-            "[info]/ui[/info]  [info]/theme[/info]  [info]/mode[/info]"
-        )
-    )
-    console.print(
-        Text.from_markup(
-            "                  "
-            "[info]/response-tier[/info]  [info]/trace[/info]  "
-            "[info]/debug[/info]  [info]/exit[/info]"
-        )
-    )
+    hint = Text()
+    hint.append("/", style="accent")
+    hint.append(" commands", style="hint")
+    hint.append("  ·  ", style="panel")
+    hint.append("/status", style="accent")
+    hint.append(" session", style="hint")
+    hint.append("  ·  ", style="panel")
+    hint.append("exit", style="accent")
+    hint.append(" to stop", style="hint")
+    hint.pad_left(3)
+    console.print(hint)
     console.print()
 
 
@@ -1086,39 +1110,38 @@ def render_turn_trace(
     if not entries:
         entries = _fallback_routing_trace_entries(output)
 
-    lines = [
-        "flow                                      reason",
-        "----                                      ------",
-    ]
-    for index, entry in enumerate(entries):
-        if index > 0:
-            lines.append("  |")
+    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
+    table.add_column("stage", style="hint", no_wrap=True)
+    table.add_column("decision", style="primary")
+    table.add_column("source", style="accent")
+    table.add_column("reason", style="info")
+
+    for entry in entries:
         stage = _clip_trace_text(entry.get("stage", "-"), 11)
         decision = _clip_trace_text(entry.get("decision", "-"), 22)
         reason = entry.get("reason") or "-"
-        meta_parts = [
-            value for value in (entry.get("source"), entry.get("confidence")) if value
-        ]
-        if meta_parts:
-            reason = f"{reason} ({', '.join(meta_parts)})"
-        flow = f"  +-- {stage:<11} -> {decision:<22}"
-        wrapped_reason = textwrap.wrap(reason, width=28) or ["-"]
-        lines.append(f"{flow}  {wrapped_reason[0]}")
-        continuation_indent = " " * (len(flow) + 2)
-        for continuation in wrapped_reason[1:]:
-            lines.append(f"{continuation_indent}{continuation}")
+        source = entry.get("source") or "-"
+        confidence = entry.get("confidence")
+        if confidence:
+            source = f"{source} / {confidence}"
+        table.add_row(stage, decision, source, reason)
 
+    note_parts: list[str] = []
     if status_stages:
         unique_stages = list(dict.fromkeys(status_stages))
         stage_labels = " -> ".join(friendly_stage(stage) for stage in unique_stages)
-        lines.extend(["", f"stages: {stage_labels}"])
+        note_parts.append(f"stages {stage_labels}")
     if pending_status:
-        lines.append(f"tail: {pending_status}")
+        note_parts.append(f"tail {pending_status}")
+
+    renderables: list[Table | Text] = [table]
+    if note_parts:
+        renderables.append(Text("  " + "  ·  ".join(note_parts), style="hint"))
 
     console.print()
     console.print(
         Panel(
-            Text("\n".join(lines), style="info"),
+            Group(*renderables),
             title="[muted]routing trace[/muted]",
             subtitle="[hint]/trace off hides this[/hint]",
             border_style="panel",
@@ -2988,23 +3011,25 @@ def render_help() -> None:
             (command.display, command.description)
         )
 
+    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
+    table.add_column("category", style="hint", no_wrap=True)
+    table.add_column("command", style="accent", no_wrap=True)
+    table.add_column("description", style="info")
     for category in category_order:
         rows = grouped.get(category, [])
         if not rows:
             continue
-        table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-        table.add_column("command", style="accent", no_wrap=True)
-        table.add_column("description", style="info")
         for display, description in rows:
-            table.add_row(display, description)
-        console.print(
-            Panel(
-                table,
-                title=f"[muted]commands · {category_titles.get(category, category)}[/muted]",
-                border_style="panel",
-                box=box.ROUNDED,
-            )
+            table.add_row(category_titles.get(category, category), display, description)
+    console.print(
+        Panel(
+            table,
+            title="[muted]command reference[/muted]",
+            subtitle="[hint]type / to search commands from the prompt[/hint]",
+            border_style="panel",
+            box=box.ROUNDED,
         )
+    )
     console.print()
 
 
@@ -3043,24 +3068,13 @@ def render_onboarding() -> None:
         None.
     """
 
-    console.print(
-        Panel(
-            "[muted]Welcome to OpenCouch CLI.[/muted]\n\n"
-            "[info]Quick start[/info]\n"
-            "  • Type a message and press Enter.\n"
-            "  • Type [accent]/[/accent] at prompt start to open command completion.\n\n"
-            "[info]Most used commands[/info]\n"
-            "  • [accent]/help[/accent] — command reference\n"
-            "  • [accent]/status[/accent] — current session mode/state\n"
-            "  • [accent]/memory status[/accent] — memory health and counts\n"
-            "  • [accent]/threads[/accent] — list saved threads\n"
-            "  • [accent]/keys[/accent] — keyboard shortcuts\n\n"
-            "[hint]This tip is shown once per CLI run.[/hint]",
-            title="[muted]quick start[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
-    )
+    hint = Text()
+    hint.append("  Type ", style="hint")
+    hint.append("/", style="accent")
+    hint.append(" for commands", style="hint")
+    hint.append("  ·  ", style="panel")
+    hint.append("start typing to talk", style="hint")
+    console.print(hint)
     console.print()
 
 
@@ -3112,6 +3126,85 @@ def render_status(session: RunnerSession) -> None:
         Panel(
             table,
             title="[muted]session status[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+def render_doctor(session: RunnerSession) -> None:
+    """Render lightweight runtime readiness checks for the active CLI session."""
+
+    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
+    table.add_column("check", style="hint", no_wrap=True)
+    table.add_column("status", style="accent", no_wrap=True)
+    table.add_column("detail", style="info")
+
+    if session.llm_client is None:
+        table.add_row(
+            "llm",
+            "smoke",
+            "No control LLM is configured; turns use deterministic smoke mode.",
+        )
+    else:
+        table.add_row(
+            "llm",
+            "ok",
+            f"Control LLM enabled through {session.resolved_mode} mode.",
+        )
+
+    if session.response_llm_client is not None:
+        table.add_row(
+            "response model",
+            "ok",
+            f"Dedicated {session.response_model_tier} response tier is enabled.",
+        )
+    elif session.llm_client is not None:
+        table.add_row(
+            "response model",
+            "shared",
+            "Responses fall back to the control LLM client.",
+        )
+    else:
+        table.add_row(
+            "response model",
+            "skipped",
+            "No response LLM is used in deterministic smoke mode.",
+        )
+
+    if session.memory_mode == "guest":
+        table.add_row(
+            "persistence",
+            "ephemeral",
+            "Guest mode keeps thread and memory state in process-local storage.",
+        )
+    else:
+        table.add_row(
+            "persistence",
+            "ok",
+            f"Persistent mode is using the {session.persistence_backend} backend.",
+        )
+
+    if session.memory_mode == "persistent" and session.user_id is None:
+        table.add_row(
+            "owner scope",
+            "warn",
+            "Memory is thread-scoped; pass --user-id for cross-thread dogfooding.",
+        )
+    else:
+        table.add_row("owner scope", "ok", _owner_scope_display(session))
+
+    table.add_row(
+        "turn recovery",
+        "ok",
+        "Turn and response-tail failures are reported without closing the CLI.",
+    )
+
+    console.print(
+        Panel(
+            table,
+            title="[muted]runtime doctor[/muted]",
             border_style="panel",
             box=box.ROUNDED,
         )
@@ -3798,6 +3891,10 @@ async def handle_command(
         render_status(session)
         return True
 
+    if command == "/doctor":
+        render_doctor(session)
+        return True
+
     if command == "/history":
         limit = 6
         if args:
@@ -4104,8 +4201,16 @@ async def chat_loop(
             if pending_tail_task is None:
                 return
 
-            await pending_tail_task
-            pending_tail_task = None
+            try:
+                await pending_tail_task
+            except Exception as exc:
+                logger.warning("CLI response tail failed", exc_info=True)
+                render_info(
+                    _recoverable_error_message("Response tail failed", exc),
+                    style="danger",
+                )
+            finally:
+                pending_tail_task = None
 
             session.last_context = await runtime.get_state(session.thread_id)
             session.history = await runtime.get_history(session.thread_id)
@@ -4180,91 +4285,99 @@ async def chat_loop(
                     response_llm_client=session.response_llm_client,
                 )
 
-                with Live(console=console, refresh_per_second=15) as live:
-                    status_renderable = Spinner(
-                        "dots",
-                        text=Text.assemble(
-                            ("thinking", "primary"),
-                            (" — waiting for pipeline", "hint"),
-                        ),
-                        style="primary",
-                    )
+                try:
+                    with Live(console=console, refresh_per_second=15) as live:
+                        status_renderable = Spinner(
+                            "dots",
+                            text=Text.assemble(
+                                ("thinking", "primary"),
+                                (" — waiting for pipeline", "hint"),
+                            ),
+                            style="primary",
+                        )
 
-                    def _stream_group(body) -> Group:
-                        """Combine the spinner and response body for live rendering.
+                        def _stream_group(body) -> Group:
+                            """Combine the spinner and response body for live rendering.
 
-                        Args:
-                            body: Rich renderable shown under the spinner.
+                            Args:
+                                body: Rich renderable shown under the spinner.
 
-                        Returns:
-                            Rich group for the live display.
-                        """
+                            Returns:
+                                Rich group for the live display.
+                            """
 
-                        return Group(status_renderable, body)
+                            return Group(status_renderable, body)
 
-                    live.update(_stream_group(Text("", style="muted")))
-                    async for event in stream:
-                        if isinstance(event, StatusEvent):
-                            status_stages.append(event.stage)
-                            label = friendly_stage(event.stage)
-                            detail = f" ({event.detail})" if event.detail else ""
-                            status_renderable = Spinner(
-                                "dots",
-                                text=Text.assemble(
-                                    (label, "primary"),
-                                    (detail, "hint"),
-                                ),
-                                style="primary",
-                            )
-                            body = _live_preview_renderable(
-                                accumulated_text,
-                                thread_id=session.thread_id,
-                            )
-                            live.update(_stream_group(body))
+                        live.update(_stream_group(Text("", style="muted")))
+                        async for event in stream:
+                            if isinstance(event, StatusEvent):
+                                status_stages.append(event.stage)
+                                label = friendly_stage(event.stage)
+                                detail = f" ({event.detail})" if event.detail else ""
+                                status_renderable = Spinner(
+                                    "dots",
+                                    text=Text.assemble(
+                                        (label, "primary"),
+                                        (detail, "hint"),
+                                    ),
+                                    style="primary",
+                                )
+                                body = _live_preview_renderable(
+                                    accumulated_text,
+                                    thread_id=session.thread_id,
+                                )
+                                live.update(_stream_group(body))
 
-                        elif isinstance(event, ChunkEvent):
-                            accumulated_text += event.text
-                            live.update(
-                                _stream_group(
-                                    _live_preview_renderable(
-                                        accumulated_text,
+                            elif isinstance(event, ChunkEvent):
+                                accumulated_text += event.text
+                                live.update(
+                                    _stream_group(
+                                        _live_preview_renderable(
+                                            accumulated_text,
+                                            thread_id=session.thread_id,
+                                        )
+                                    )
+                                )
+                            elif isinstance(event, ResponseReadyEvent):
+                                response_ready_output = event.output
+                                live.update(
+                                    _response_panel(
+                                        response_ready_output,
                                         thread_id=session.thread_id,
+                                        turn_count=len(
+                                            [
+                                                m
+                                                for m in session.history
+                                                if m.role == MessageRole.USER
+                                            ]
+                                        )
+                                        + 1,
                                     )
                                 )
-                            )
-                        elif isinstance(event, ResponseReadyEvent):
-                            response_ready_output = event.output
-                            live.update(
-                                _response_panel(
-                                    response_ready_output,
-                                    thread_id=session.thread_id,
-                                    turn_count=len(
-                                        [
-                                            m
-                                            for m in session.history
-                                            if m.role == MessageRole.USER
-                                        ]
+                                break
+                            elif isinstance(event, DoneEvent):
+                                final_output = event.output
+                                live.update(
+                                    _response_panel(
+                                        final_output,
+                                        thread_id=session.thread_id,
+                                        turn_count=len(
+                                            [
+                                                m
+                                                for m in session.history
+                                                if m.role == MessageRole.USER
+                                            ]
+                                        )
+                                        + 1,
                                     )
-                                    + 1,
                                 )
-                            )
-                            break
-                        elif isinstance(event, DoneEvent):
-                            final_output = event.output
-                            live.update(
-                                _response_panel(
-                                    final_output,
-                                    thread_id=session.thread_id,
-                                    turn_count=len(
-                                        [
-                                            m
-                                            for m in session.history
-                                            if m.role == MessageRole.USER
-                                        ]
-                                    )
-                                    + 1,
-                                )
-                            )
+                except Exception as exc:
+                    logger.warning("CLI turn stream failed", exc_info=True)
+                    render_info(
+                        _recoverable_error_message("Turn failed", exc),
+                        style="danger",
+                    )
+                    continue
 
                 if response_ready_output is not None:
                     pending_tail_task = asyncio.create_task(
