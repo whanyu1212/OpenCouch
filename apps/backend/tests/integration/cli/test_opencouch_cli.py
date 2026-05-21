@@ -582,6 +582,8 @@ def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
                 ],
                 "openai_therapeutic_skill_response_style": "supportive",
                 "openai_grounded_tool_calls": ["answer_grounded_lookup"],
+                "openai_triage_confidence": "low",
+                "openai_triage_tentative_route": "grounded_lookup",
             },
         ),
         observability_mode="verbose",
@@ -594,6 +596,8 @@ def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
     assert "response-style" in out
     assert "load_therapeutic_response_skill → supportive" in out
     assert "answer_grounded_lookup" in out
+    assert "triage" in out
+    assert "low; tentative grounded_lookup" in out
     assert "awaiting safety clarification" in out
 
 

@@ -973,6 +973,17 @@ def render_turn_activity(
     if tool_lines:
         table.add_row("activity", "\n".join(f"• {line}" for line in tool_lines))
 
+    diagnostics = output.diagnostics or {}
+    triage_confidence = str(diagnostics.get("openai_triage_confidence") or "").strip()
+    tentative_route = str(
+        diagnostics.get("openai_triage_tentative_route") or ""
+    ).strip()
+    if triage_confidence:
+        triage_detail = triage_confidence
+        if tentative_route:
+            triage_detail = f"{triage_detail}; tentative {tentative_route}"
+        table.add_row("triage", triage_detail)
+
     if output.crisis.needs_clarification:
         table.add_row("state", "awaiting safety clarification")
     elif output.crisis.needs_crisis_response:
