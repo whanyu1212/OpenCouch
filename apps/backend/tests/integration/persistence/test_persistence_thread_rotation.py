@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
@@ -16,16 +15,11 @@ from agent.runtime import (
     SessionLeaseExpired,
     SessionStatus,
 )
-from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
-
-_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
-_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
-
-
-def _postgres_memory_database_url() -> str | None:
-    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
-        return None
-    return os.getenv(_POSTGRES_TEST_URL_ENV)
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    postgres_database_url,
+    runtime_paths,
+)
 
 
 class _FailingTextRuntime:
@@ -73,7 +67,7 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
     tmp_path: Path,
 ) -> None:
     """Postgres-backed thread state should preserve rotation-required liveness."""
-    memory_database_url = _postgres_memory_database_url()
+    memory_database_url = postgres_database_url()
     if not memory_database_url:
         pytest.skip(
             "Postgres integration tests are disabled; set "

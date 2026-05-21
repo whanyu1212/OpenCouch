@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
@@ -16,6 +17,17 @@ from agent.memory.models import (
     SummarizationResult,
 )
 from llm.base import BaseLLMClient, StructuredResponseT
+
+_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
+
+
+def postgres_database_url() -> str | None:
+    """Return the explicitly enabled DSN for opt-in Postgres tests."""
+
+    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
+        return None
+    return os.getenv(_POSTGRES_TEST_URL_ENV)
 
 
 class FakeCrossRestartLLM(BaseLLMClient):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import date
 from uuid import uuid4
 
@@ -11,21 +10,7 @@ import pytest
 
 from agent.feedback.models import SessionFeedbackRecord
 from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
-
-_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
-_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
-
-
-def _postgres_database_url() -> str | None:
-    """Return the explicitly enabled Postgres DSN for backend integration tests.
-
-    Returns:
-        str | None: Configured Postgres DSN, or ``None`` when unavailable.
-    """
-
-    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
-        return None
-    return os.getenv(_POSTGRES_TEST_URL_ENV)
+from tests.support.persistence import postgres_database_url
 
 
 def _record(
@@ -87,7 +72,7 @@ async def _delete_records(dsn: str, record_ids: list[str]) -> None:
 async def test_postgres_feedback_round_trip_preserves_order() -> None:
     """Records appended for the same session should come back in insertion order."""
 
-    dsn = _postgres_database_url()
+    dsn = postgres_database_url()
     if not dsn:
         pytest.skip(
             "Postgres integration tests are disabled; set "
@@ -131,7 +116,7 @@ async def test_postgres_feedback_round_trip_preserves_order() -> None:
 async def test_postgres_feedback_persists_across_close_and_reopen() -> None:
     """Session feedback should survive backend close and reopen in Postgres."""
 
-    dsn = _postgres_database_url()
+    dsn = postgres_database_url()
     if not dsn:
         pytest.skip(
             "Postgres integration tests are disabled; set "
@@ -170,7 +155,7 @@ async def test_postgres_feedback_persists_across_close_and_reopen() -> None:
 async def test_postgres_feedback_purge_before_uses_exclusive_boundary() -> None:
     """Records on the cutoff date survive; only older rows are purged."""
 
-    dsn = _postgres_database_url()
+    dsn = postgres_database_url()
     if not dsn:
         pytest.skip(
             "Postgres integration tests are disabled; set "

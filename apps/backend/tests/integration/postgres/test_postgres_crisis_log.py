@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import date
 from uuid import uuid4
 
@@ -11,21 +10,7 @@ import pytest
 
 from agent.audit.models import CrisisLogRecord
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
-
-_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
-_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
-
-
-def _postgres_database_url() -> str | None:
-    """Return the explicitly enabled Postgres DSN for backend integration tests.
-
-    Returns:
-        str | None: Configured Postgres DSN, or ``None`` when unavailable.
-    """
-
-    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
-        return None
-    return os.getenv(_POSTGRES_TEST_URL_ENV)
+from tests.support.persistence import postgres_database_url
 
 
 def _crisis_record(
@@ -86,7 +71,7 @@ async def _delete_records(dsn: str, record_ids: list[str]) -> None:
 async def test_postgres_crisis_log_round_trip_preserves_order() -> None:
     """Records appended on the same day should come back in insertion order."""
 
-    dsn = _postgres_database_url()
+    dsn = postgres_database_url()
     if not dsn:
         pytest.skip(
             "Postgres integration tests are disabled; set "
@@ -129,7 +114,7 @@ async def test_postgres_crisis_log_round_trip_preserves_order() -> None:
 async def test_postgres_crisis_log_persists_across_close_and_reopen() -> None:
     """File-backed SQLite semantics should hold across backend reopen in Postgres too."""
 
-    dsn = _postgres_database_url()
+    dsn = postgres_database_url()
     if not dsn:
         pytest.skip(
             "Postgres integration tests are disabled; set "

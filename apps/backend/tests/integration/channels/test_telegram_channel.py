@@ -48,21 +48,7 @@ from channels.telegram import (
 from channels.registry.postgres import PostgresTelegramSessionRegistry
 from agent.runtime import PersistentAgentRuntime, SessionLeaseExpired, SessionStatus
 from llm.base import BaseLLMClient, StructuredResponseT
-
-_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
-_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
-
-
-def _postgres_database_url() -> str | None:
-    """Return the explicit opt-in DSN for Postgres registry integration tests.
-
-    Returns:
-        str | None: Configured Postgres DSN, or ``None`` when unavailable.
-    """
-
-    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
-        return None
-    return os.getenv(_POSTGRES_TEST_URL_ENV)
+from tests.support.persistence import postgres_database_url
 
 
 class _FakeLLM(BaseLLMClient):
@@ -205,7 +191,7 @@ def _registry_for_config(
             ``None`` so production fallback behavior is still covered.
     """
 
-    database_url = _postgres_database_url()
+    database_url = postgres_database_url()
     if config.thread_rotation_enabled and database_url is not None:
         return PostgresTelegramSessionRegistry(database_url)
     return None
@@ -933,7 +919,7 @@ def test_build_telegram_session_registry_falls_back_without_postgres_url() -> No
 
 @pytest.mark.asyncio
 async def test_postgres_registry_roundtrips_rotated_session_state() -> None:
-    database_url = _postgres_database_url()
+    database_url = postgres_database_url()
     if database_url is None:
         pytest.skip(
             "Postgres integration tests are disabled; set "
