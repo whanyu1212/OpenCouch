@@ -425,6 +425,7 @@ class OpenAITextRuntime:
             response_schema=TurnDispatchDecision,
             system_instruction=self._roster.triage_agent.instructions,
         )
+        tentative_route = decision.route if decision.confidence == "low" else None
         if decision.confidence == "low":
             decision.route = "therapeutic"
         apply_state_delta(state, _state_delta_for_turn_dispatch(state, decision))
@@ -434,8 +435,13 @@ class OpenAITextRuntime:
                 {
                     "response_style": "clarifying",
                     "turn_lifecycle": {
-                        "active_flow": "none",
+                        "active_flow": self._active_flow_for_state(state),
                         "action": decision.active_flow_action,
+                        "tentative_route": tentative_route,
+                        "triage_confidence": decision.confidence,
+                    },
+                    "diagnostics": {
+                        "openai_triage_tentative_route": tentative_route,
                     },
                 },
             )
@@ -468,6 +474,11 @@ class OpenAITextRuntime:
             if isinstance(turn_lifecycle, Mapping)
             else None
         )
+        lifecycle_metadata = {}
+        if isinstance(turn_lifecycle, Mapping):
+            for key in ("tentative_route", "triage_confidence"):
+                if turn_lifecycle.get(key) is not None:
+                    lifecycle_metadata[key] = turn_lifecycle[key]
         if has_active_exercise and lifecycle_action == "clear":
             apply_state_delta(state, clear_exercise_delta(state))
             if state.get("route") != "guided_exercise":
@@ -490,6 +501,7 @@ class OpenAITextRuntime:
                     "turn_lifecycle": {
                         "active_flow": "guided_exercise",
                         "action": "preserve",
+                        **lifecycle_metadata,
                     },
                 },
             )
@@ -520,6 +532,7 @@ class OpenAITextRuntime:
                 "turn_lifecycle": {
                     "active_flow": "guided_exercise",
                     "action": action,
+                    **lifecycle_metadata,
                 },
                 "diagnostics": {
                     "openai_guided_exercise_selection_basis": guided_exercise_basis,
@@ -879,7 +892,7 @@ class OpenAITextRuntime:
             return prompt
         return f"{prompt}\n\n{operational_context}"
 
-    def _triage_input_text_for_state(self, state: AgentState) -> str:
+    def _active_flow_for_state(self, state: AgentState) -> str:
         active_flow = "none"
         exercise_state = state.get("exercise_state", {}) or {}
         if (
@@ -894,15 +907,35 @@ class OpenAITextRuntime:
             and memory_control.get("pending_action") is not None
         ):
             active_flow = "pending_memory_action"
+        return active_flow
+
+    def _triage_input_text_for_state(self, state: AgentState) -> str:
+        active_flow = self._active_flow_for_state(state)
         memory_reference = state.get("memory_reference", {}) or {}
         memory_reference_mode = (
             memory_reference.get("mode")
             if isinstance(memory_reference, Mapping)
             else "none"
         )
+        turn_lifecycle = state.get("turn_lifecycle", {}) or {}
+        prior_clarification = ""
+        if (
+            isinstance(turn_lifecycle, Mapping)
+            and turn_lifecycle.get("triage_confidence") == "low"
+        ):
+            tentative_route = str(turn_lifecycle.get("tentative_route") or "").strip()
+            if tentative_route:
+                prior_clarification = (
+                    "Prior low-confidence clarification: the previous turn asked the "
+                    f"user to clarify ambiguous intent; tentative route was "
+                    f'"{tentative_route}". Treat the current message as a possible '
+                    "answer to that clarification, but do not force the tentative "
+                    "route if the user changed topics.\n"
+                )
         return (
             f"Active flow: {active_flow}\n"
             f"Memory reference mode: {memory_reference_mode}\n"
+            f"{prior_clarification}"
             f"Recent conversation:\n{format_recent_history(state)}\n\n"
             f'Current user message: "{state.get("message", "")}"'
         )
@@ -990,6 +1023,18 @@ def _effective_turn_state(
             state[key] = {
                 **dict(prior_state.get(key, {}) or {}),
                 **dict(value or {}),
+            }
+        elif key == "turn_lifecycle":
+            prior_lifecycle = dict(prior_state.get("turn_lifecycle", {}) or {})
+            seeded_lifecycle = dict(value or {})
+            preserved_clarification = {
+                preserve_key: prior_lifecycle[preserve_key]
+                for preserve_key in ("tentative_route", "triage_confidence")
+                if prior_lifecycle.get(preserve_key) is not None
+            }
+            state[key] = {
+                **seeded_lifecycle,
+                **preserved_clarification,
             }
         else:
             state[key] = value

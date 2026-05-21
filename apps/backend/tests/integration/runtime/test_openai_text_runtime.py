@@ -607,12 +607,224 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
         assert result.output.response_type.value == "therapeutic"
         assert result.output.diagnostics["openai_triage_route"] == "therapeutic"
         assert result.output.diagnostics["openai_triage_confidence"] == "low"
+        assert (
+            result.output.diagnostics["openai_triage_tentative_route"]
+            == "grounded_lookup"
+        )
         state = await runtime.get_state("thread-low-confidence-triage")
         assert state is not None
         assert state["route"] == "therapeutic"
         assert state["response_style"] == "clarifying"
+        assert state["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+        assert state["turn_lifecycle"]["triage_confidence"] == "low"
         assert runner.run_calls
         assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_retriage_sees_prior_low_confidence_context(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confident follow-up should see and then clear prior ambiguity context."""
+
+    runner = FakeOpenAISDKRunner("That sounds like something to talk through.")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-low-confidence-loop",
+            user_id="user-1",
+            message="What about the thing?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        followup_llm = ScriptedOpenAITextRouteLLM(route="therapeutic")
+        await runtime.run_turn(
+            thread_id="thread-low-confidence-loop",
+            user_id="user-1",
+            message="I meant I want to talk it through.",
+            llm_client=followup_llm,
+        )
+
+        triage_prompts = [
+            prompt
+            for schema_name, prompt in followup_llm.structured_prompts
+            if schema_name == "TurnDispatchDecision"
+        ]
+        assert triage_prompts
+        assert "Prior low-confidence clarification" in triage_prompts[0]
+        assert 'tentative route was "grounded_lookup"' in triage_prompts[0]
+        state = await runtime.get_state("thread-low-confidence-loop")
+        assert state is not None
+        assert state["turn_lifecycle"]["active_flow"] == "none"
+        assert "tentative_route" not in state["turn_lifecycle"]
+        assert "triage_confidence" not in state["turn_lifecycle"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending_memory_action(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Low-confidence triage should not drop pending memory-flow context."""
+
+    runner = FakeOpenAISDKRunner(
+        "Do you want me to change your saved memory or talk it through first?"
+    )
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-low-confidence-memory",
+            user_id="user-1",
+            message="Please delete that saved fact",
+            llm_client=ScriptedOpenAITextRouteLLM(route="memory_control"),
+        )
+
+        state = await runtime.get_state("thread-low-confidence-memory")
+        assert state is not None
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "thread-low-confidence-memory",
+            {
+                **dict(state),
+                "memory_control": {
+                    "action": {},
+                    "pending_action": {
+                        "type": "delete",
+                        "target": {
+                            "kind": "fact",
+                            "id": "fact-1",
+                            "key": "fact-1",
+                            "namespace": ["user-1", "semantic"],
+                            "preview": "Presentations make me anxious.",
+                        },
+                    },
+                },
+                "turn_lifecycle": {
+                    "active_flow": "pending_memory_action",
+                    "action": "continue",
+                },
+            },
+        )
+
+        result = await runtime.run_turn(
+            thread_id="thread-low-confidence-memory",
+            user_id="user-1",
+            message="What about that one?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        assert result.output.response_style == "clarifying"
+        assert result.output.response_type.value == "therapeutic"
+        assert result.output.diagnostics["openai_triage_route"] == "therapeutic"
+        assert result.output.diagnostics["openai_triage_confidence"] == "low"
+        assert (
+            result.output.diagnostics["openai_triage_tentative_route"]
+            == "grounded_lookup"
+        )
+        state = await runtime.get_state("thread-low-confidence-memory")
+        assert state is not None
+        assert state["route"] == "therapeutic"
+        assert state["response_style"] == "clarifying"
+        assert state["turn_lifecycle"]["active_flow"] == "pending_memory_action"
+        assert state["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+        assert state["turn_lifecycle"]["triage_confidence"] == "low"
+        assert state["memory_control"]["pending_action"]["target"]["key"] == "fact-1"
+        assert runner.run_calls
+        assert runner.run_calls[-1]["agent"].name == THERAPEUTIC_AGENT_NAME
+        assert (
+            "Triage tentatively suggested 'grounded_lookup'"
+            in runner.run_calls[-1]["input_text"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_exercise(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Low-confidence triage should not drop active exercise state."""
+
+    runner = FakeOpenAISDKRunner("Let's stay with the exercise for a moment.")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        first = await runtime.run_turn(
+            thread_id="thread-low-confidence-exercise",
+            user_id="user-1",
+            message="Can we do box breathing?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="guided_exercise",
+                exercise_start_basis="explicit_user_request",
+                exercise_type="grounding_box_breathing",
+            ),
+        )
+
+        assert first.output.response_style == "guided_exercise"
+        state = await runtime.get_state("thread-low-confidence-exercise")
+        assert state is not None
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "thread-low-confidence-exercise",
+            {
+                **dict(state),
+                "exercise_state": {
+                    "exercise_type": "grounding_box_breathing",
+                    "exercise_step": 1,
+                    "exercise_therapeutic_approach": "dbt_skills",
+                },
+                "therapeutic_approach": "dbt_skills",
+            },
+        )
+
+        second = await runtime.run_turn(
+            thread_id="thread-low-confidence-exercise",
+            user_id="user-1",
+            message="What about that?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        assert second.output.response_style == "guided_exercise"
+        assert second.output.response_type.value == "therapeutic"
+        assert second.output.diagnostics["openai_triage_route"] == "therapeutic"
+        assert second.output.diagnostics["openai_triage_confidence"] == "low"
+        assert (
+            second.output.diagnostics["openai_triage_tentative_route"]
+            == "grounded_lookup"
+        )
+        assert (
+            second.output.diagnostics["openai_guided_exercise_selection_basis"]
+            == "active_exercise"
+        )
+        assert second.state["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+        assert second.state["turn_lifecycle"]["triage_confidence"] == "low"
+        assert second.state.get("exercise_state", {}).get("exercise_type") == (
+            "grounding_box_breathing"
+        )
+        assert second.state.get("exercise_state", {}).get("exercise_step") is not None
+        assert second.state.get("exercise_state", {}).get("exercise_step") >= 1
+        assert (
+            second.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
+            == "dbt_skills"
+        )
+        assert runner.run_calls
+        assert "guided exercise" in runner.run_calls[-1]["agent"].name.lower()
 
 
 @pytest.mark.asyncio

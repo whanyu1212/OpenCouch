@@ -15,7 +15,11 @@ from agent.runtime import (
     SessionLeaseExpired,
     SessionStatus,
 )
-from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    postgres_database_url,
+    runtime_paths,
+)
 
 
 class _FailingTextRuntime:
@@ -56,6 +60,64 @@ async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> Non
 
         await runtime.end_session("thread-rotation")
         assert await runtime.session_status("thread-rotation") == SessionStatus.ABSENT
+
+
+@pytest.mark.asyncio
+async def test_soft_limit_marks_session_rotation_required_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Postgres-backed thread state should preserve rotation-required liveness."""
+    memory_database_url = postgres_database_url()
+    if not memory_database_url:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
+
+    paths = runtime_paths(tmp_path)
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-rotation-postgres",
+            message="hello",
+            llm_client=FakeCrossRestartLLM(),
+            session_transcript_soft_limit=1,
+        )
+
+        assert await runtime.session_status("thread-rotation-postgres") == (
+            SessionStatus.ROTATION_REQUIRED
+        )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+        assert await runtime.session_status("thread-rotation-postgres") == (
+            SessionStatus.ROTATION_REQUIRED
+        )
+        with pytest.raises(SessionLeaseExpired):
+            await runtime.run_turn(
+                thread_id="thread-rotation-postgres",
+                message="reuse should fail",
+                expected_liveness="active",
+            )
+
+        await runtime.end_session("thread-rotation-postgres")
+        assert await runtime.session_status("thread-rotation-postgres") == (
+            SessionStatus.ABSENT
+        )
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from uuid import uuid4
 
 import psycopg
@@ -10,23 +9,13 @@ import pytest
 
 from agent.memory.store import MemoryStore, StoreRecord
 from agent.memory.store.postgres import PostgresMemoryStore
-
-_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
-_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
-
-
-def _postgres_database_url() -> str | None:
-    """Return the explicitly enabled Postgres DSN for integration tests."""
-
-    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
-        return None
-    return os.getenv(_POSTGRES_TEST_URL_ENV)
+from tests.support.persistence import postgres_database_url
 
 
 def _require_postgres_database_url() -> str:
     """Return the enabled Postgres DSN or skip the test."""
 
-    dsn = _postgres_database_url()
+    dsn = postgres_database_url()
     if not dsn:
         pytest.skip(
             "Postgres integration tests are disabled; set "

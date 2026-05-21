@@ -36,7 +36,6 @@ SQLite files are isolated per test and clean up automatically.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -54,13 +53,18 @@ from agent.memory.models import (
     StoredSessionArc,
     SummarizationResult,
 )
+from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import PolicyDecision, build_semantic_candidate
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.runtime import PersistedActiveSessionState, PersistentAgentRuntime
 from llm.base import StructuredResponseT
-from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    postgres_database_url,
+    runtime_paths,
+)
 
 
 class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
@@ -275,23 +279,6 @@ def _trigger_supporting_summarization_result(
     )
 
 
-_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
-_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
-
-
-def _postgres_memory_database_url() -> str | None:
-    """Return the explicitly enabled DSN for Postgres persistence tests.
-
-    Returns:
-        str | None: Configured Postgres DSN, or ``None`` when the
-            integration environment is not available.
-    """
-
-    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
-        return None
-    return os.getenv(_POSTGRES_TEST_URL_ENV)
-
-
 # ─── Smoke tests ───────────────────────────────────────────────────────
 
 
@@ -365,7 +352,7 @@ async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
     ``OPENCOUCH_TEST_POSTGRES_URL``.
     """
 
-    memory_database_url = _postgres_memory_database_url()
+    memory_database_url = postgres_database_url()
     if not memory_database_url:
         pytest.skip(
             "Postgres integration tests are disabled; set "
@@ -634,7 +621,7 @@ async def test_full_trajectory_parity_in_postgres(
 ) -> None:
     """Postgres-backed runtime should preserve transcript, memory, and crisis data."""
 
-    memory_database_url = _postgres_memory_database_url()
+    memory_database_url = postgres_database_url()
     if not memory_database_url:
         pytest.skip(
             "Postgres integration tests are disabled; set "
@@ -733,6 +720,67 @@ async def test_full_trajectory_parity_in_postgres(
         assert len(day_records) == 1
         assert day_records[0].id == f"rec-{thread_id}"
         assert day_records[0].user_id_or_null == user_id
+
+
+@pytest.mark.asyncio
+async def test_feedback_layer_parity_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Postgres-backed session feedback should survive runtime restart."""
+
+    memory_database_url = postgres_database_url()
+    if not memory_database_url:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
+
+    paths = runtime_paths(tmp_path)
+    thread_id = f"thread-feedback-{uuid4()}"
+    user_id = f"user-feedback-{uuid4()}"
+    session_id_opaque = hash_session_id(thread_id)
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime_a:
+        await runtime_a.run_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            message="I want to reflect on how today went.",
+            channel=Channel.TEST,
+            llm_client=FakeCrossRestartLLM(),
+        )
+
+        record = await runtime_a.record_session_feedback(
+            thread_id,
+            label="positive",
+            source="cli_end",
+        )
+
+        assert record is not None
+        assert record.session_id_opaque == session_id_opaque
+        assert record.user_id_or_null == user_id
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=memory_database_url,
+    ) as runtime_b:
+        stored = await runtime_b.session_feedback_backend.alist_by_session(
+            session_id_opaque
+        )
+
+        assert len(stored) == 1
+        assert stored[0].id == record.id
+        assert stored[0].label == "positive"
+        assert stored[0].source == "cli_end"
+        assert stored[0].user_id_or_null == user_id
 
 
 @pytest.mark.asyncio
@@ -893,7 +941,7 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
 ) -> None:
     """Held candidates should survive restart and commit on session end in Postgres."""
 
-    memory_database_url = _postgres_memory_database_url()
+    memory_database_url = postgres_database_url()
     if not memory_database_url:
         pytest.skip(
             "Postgres integration tests are disabled; set "
