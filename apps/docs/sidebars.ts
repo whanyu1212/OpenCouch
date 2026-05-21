@@ -31,7 +31,6 @@ const sidebars: SidebarsConfig = {
           items: [
             'agent/graph',
             'agent/state',
-            'agent/nodes',
             'agent/tools',
           ],
         },

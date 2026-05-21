@@ -74,10 +74,10 @@ _TYPED_ACTION_ADAPTER: TypeAdapter[TypedMemoryAction] = TypeAdapter(TypedMemoryA
 
 
 def parse_memory_control_action(payload: dict[str, Any]) -> TypedMemoryAction:
-    """Parse a graph-state action dict into a typed memory-control action.
+    """Parse a runtime-state action dict into a typed memory-control action.
 
     Args:
-        payload (dict[str, Any]): Action dict carried on graph state.
+        payload (dict[str, Any]): Action dict carried on runtime state.
 
     Returns:
         TypedMemoryAction: Parsed action.
@@ -101,7 +101,7 @@ class MemoryControlAction:
     payload: dict[str, Any]
 
     def to_state_action(self) -> dict[str, Any]:
-        """Return a serializable action for graph state updates.
+        """Return a serializable action for runtime state updates.
 
         Returns:
             dict[str, Any]: Serializable memory-management action payload.

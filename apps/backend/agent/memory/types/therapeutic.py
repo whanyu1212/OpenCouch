@@ -1,4 +1,4 @@
-"""Therapeutic-dispatch models used by the memory-aware subgraph."""
+"""Therapeutic response-style models used by memory-aware response planning."""
 
 from __future__ import annotations
 
@@ -30,10 +30,53 @@ ExerciseStartBasis = Literal[
     "accepted_assistant_offer",
     "ambiguous_or_none",
 ]
+TurnRoute = Literal[
+    "therapeutic",
+    "memory_control",
+    "grounded_lookup",
+    "guided_exercise",
+]
+ActiveFlowAction = Literal["none", "continue", "preserve", "clear"]
+
+
+class TurnDispatchDecision(BaseModel):
+    """Structured turn-level routing decision for runtime-owned dispatch."""
+
+    route: TurnRoute
+    active_flow_action: ActiveFlowAction = "none"
+    memory_reference_mode: Literal["none", "explicit"] = "none"
+    memory_action_type: (
+        Literal[
+            "status",
+            "list",
+            "set_recall",
+            "save_preference",
+            "forget_by_index",
+            "forget_by_query",
+            "confirm_pending",
+            "cancel_pending",
+        ]
+        | None
+    ) = None
+    query: str = Field(
+        default="",
+        description=(
+            "Lookup query for grounded_lookup or query text for query-based memory "
+            "actions when relevant."
+        ),
+    )
+    enabled: bool | None = None
+    target_kind: str | None = None
+    target_index: int | None = None
+    preference_text: str = ""
+    exercise_start_basis: ExerciseStartBasis = "ambiguous_or_none"
+    exercise_type: str = ""
+    reasoning: str = Field(min_length=1, max_length=240)
+    confidence: ConfidenceLevel
 
 
 class DispatchDecision(BaseModel):
-    """The structured output of the therapeutic_dispatch_node LLM call."""
+    """Legacy structured response-style decision used by test fixtures."""
 
     response_style: TherapeuticResponseStyle
     therapeutic_approach: TherapeuticApproach = "none"
@@ -87,5 +130,8 @@ __all__ = [
     "SessionStage",
     "GuidancePermission",
     "ExerciseStartBasis",
+    "TurnRoute",
+    "ActiveFlowAction",
+    "TurnDispatchDecision",
     "DispatchDecision",
 ]

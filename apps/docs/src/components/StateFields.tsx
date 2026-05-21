@@ -46,12 +46,12 @@ const GROUPS: GroupDef[] = [
   {
     id: 'memory',
     label: 'Memory & working context',
-    blurb: 'Loaded each turn by load_memory_node (therapeutic branch only).',
+    blurb: 'Loaded each turn by the runtime turn memory context.',
     fields: [
-      { name: 'working_memory', type: 'list[WorkingMemoryEntry]', setBy: 'load_memory_node', lifecycle: 'loaded', desc: 'SemanticWorkingMemoryEntry (category/subject/predicate/object + evidence_quote) and EpisodicWorkingMemoryEntry (summary, themes, is_catch_up, approach_used). Formatted on demand at prompt-build time.' },
-      { name: 'session_memory', type: 'Annotated[SessionMemoryState, _merge_dicts]', setBy: 'load_memory_node', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Prompt-visible session continuity: summary, active_concerns, open_loops, current_goal.' },
-      { name: 'procedural_profile.procedural_rules', type: 'list[str]', setBy: 'load_memory_node', lifecycle: 'reducer', desc: 'Style directives that shape every reply. Always applied — the recall toggle is content-recall only.' },
-      { name: 'procedural_profile.proactive_recall_enabled', type: 'bool', setBy: 'load_memory_node', lifecycle: 'reducer', desc: 'Whether the agent may proactively reference recalled content. Procedural rules apply regardless.' },
+      { name: 'working_memory', type: 'list[WorkingMemoryEntry]', setBy: 'turn memory context', lifecycle: 'loaded', desc: 'SemanticWorkingMemoryEntry (category/subject/predicate/object + evidence_quote) and EpisodicWorkingMemoryEntry (summary, themes, is_catch_up, approach_used). Formatted on demand at prompt-build time.' },
+      { name: 'session_memory', type: 'Annotated[SessionMemoryState, _merge_dicts]', setBy: 'turn memory context', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Prompt-visible session continuity: summary, active_concerns, open_loops, current_goal.' },
+      { name: 'procedural_profile.procedural_rules', type: 'list[str]', setBy: 'turn memory context', lifecycle: 'reducer', desc: 'Style directives that shape every reply. Always applied — the recall toggle is content-recall only.' },
+      { name: 'procedural_profile.proactive_recall_enabled', type: 'bool', setBy: 'turn memory context', lifecycle: 'reducer', desc: 'Whether the agent may proactively reference recalled content. Procedural rules apply regardless.' },
     ],
   },
   {
@@ -114,10 +114,9 @@ const GROUPS: GroupDef[] = [
     label: 'Diagnostics',
     blurb: 'Per-turn observability. _merge_dicts lets graph nodes and runtime services write their own keys without racing.',
     fields: [
-      { name: 'diagnostics', type: 'Annotated[dict, _merge_dicts]', setBy: 'graph nodes + runtime side effects', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Timing and write-count metadata. Runtime extraction can merge diagnostics after the graph finishes.' },
+      { name: 'diagnostics', type: 'Annotated[dict, _merge_dicts]', setBy: 'graph nodes + runtime', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Timing, routing, and retrieval metadata.' },
       { name: 'diagnostics.crisis_gate_ms · crisis_classifier_path', type: 'float · str', setBy: 'crisis_gate_node', lifecycle: 'reducer', desc: 'Time spent classifying + which path decided it.' },
-      { name: 'diagnostics.load_memory_ms · retrieval_path', type: 'float · str', setBy: 'load_memory_node', lifecycle: 'reducer', desc: 'Retrieval time + which path ran (hybrid_rrf / token_recall / token_recall_after_embed_error).' },
-      { name: 'diagnostics.extract_facts_ms · extract_procedural_ms', type: 'float · float', setBy: 'runtime extraction', lifecycle: 'reducer', desc: 'Extraction LLM + LLM-primary policy time per lane.' },
+      { name: 'diagnostics.load_memory_ms · retrieval_path', type: 'float · str', setBy: 'turn memory context', lifecycle: 'reducer', desc: 'Retrieval time + which path ran (hybrid_rrf / token_recall / token_recall_after_embed_error).' },
       { name: 'diagnostics.turn_total_ms', type: 'float', setBy: 'runtime', lifecycle: 'reducer', desc: 'Total turn wall-clock, stamped outside the graph.' },
     ],
   },

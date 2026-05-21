@@ -32,7 +32,7 @@ from agent.memory.episodic import (
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.session import run_commit_session_memory
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -190,7 +190,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
         schema_name = response_schema.__name__
 
         if schema_name == "CrisisAssessmentSchema":
-            from agent.gates.safety.service import CrisisAssessmentSchema
+            from agent.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
@@ -630,6 +630,19 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
             llm_client=fake,
         )
 
+        runtime._session_memory_buffer_for_thread("thread-test").hold_semantic(
+            build_semantic_candidate(
+                _semantic_write(),
+                message="Family conflict is a big trigger for panic.",
+            ),
+            PolicyDecision(
+                action="commit_at_session_end",
+                reason="test buffers semantic candidate for session end",
+                policy_version="test_policy_v1",
+            ),
+        )
+        await runtime._persist_runtime_session_tracking("thread-test")
+
         assert await store.arecord_count(("user-1", "semantic")) == 0
         assert (
             len(
@@ -677,10 +690,6 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_store=store,
         memory_mode=MemoryMode.LOCAL,
-        # Foreground so the post-turn buffer-length assertion observes
-        # both turns' extracted candidates without depending on the
-        # next-turn drain.
-        extract_in_foreground=True,
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",
@@ -688,12 +697,46 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
             user_id="user-1",
             llm_client=fake,
         )
+        runtime._session_memory_buffer_for_thread("thread-test").hold_procedural(
+            build_procedural_candidate(
+                ProceduralRuleDraft(
+                    rule="You've said meditation makes you more anxious.",
+                    evidence=["Meditation makes me more anxious."],
+                ),
+                message="Meditation makes me more anxious.",
+                session_id="thread-test",
+                turn_index=0,
+            ),
+            PolicyDecision(
+                action="commit_at_session_end",
+                reason="test buffers implicit procedural preference",
+                policy_version="test_policy_v1",
+            ),
+        )
+        await runtime._persist_runtime_session_tracking("thread-test")
         await runtime.run_turn(
             thread_id="thread-test",
             message="I think meditation makes me more anxious every time.",
             user_id="user-1",
             llm_client=fake,
         )
+        runtime._session_memory_buffer_for_thread("thread-test").hold_procedural(
+            build_procedural_candidate(
+                ProceduralRuleDraft(
+                    rule="You've said meditation makes you more anxious.",
+                    evidence=["I think meditation makes me more anxious every time."],
+                ),
+                message="I think meditation makes me more anxious every time.",
+                session_id="thread-test",
+                turn_index=1,
+            ),
+            PolicyDecision(
+                action="commit_at_session_end",
+                reason="test buffers repeated implicit procedural preference",
+                policy_version="test_policy_v1",
+            ),
+        )
+        await runtime._persist_runtime_session_tracking("thread-test")
 
         assert await store.arecord_count(("user-1", "procedural")) == 0
         assert (

@@ -1,8 +1,8 @@
 """Search-grounded execution helpers for factual lookup and crisis resources.
 
-This module only performs provider-native search-grounded work. Routing and
-tool-selection decisions belong to graph dispatch nodes or voice function-tool
-selection, not this execution layer.
+This module only performs provider-native search-grounded work. Tool-selection
+decisions belong to the owning OpenAI specialist agents, not this execution
+layer.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent.conversation import get_transcript
+from agent.runtime.session.state import get_transcript
 from agent.state import AgentState
 from llm.base import BaseLLMClient
 
@@ -216,7 +216,7 @@ async def answer_factual_lookup(
     """Answer one factual lookup request with search grounding.
 
     Args:
-        state: Current graph state. Recent history is included only to clarify
+        state: Current runtime state. Recent history is included only to clarify
             references in the user's lookup request.
         llm_client: Provider client with search-grounded text generation.
         query: The factual or current-information request to answer.
@@ -286,7 +286,7 @@ async def find_crisis_resources(
     so callers can persist both the inferred location and resources in state.
 
     Args:
-        state: Current graph state containing the user message and recent history.
+        state: Current runtime state containing the user message and recent history.
         llm_client: Provider client used for location extraction and search.
 
     Returns:
@@ -313,7 +313,10 @@ async def find_crisis_resources_for_request(
         return "", [], "location_refused"
     if location_status != "provided" or not location:
         return "", [], "no_location"
-    resources, status = await _lookup_resources(location, llm_client=llm_client)
+    try:
+        resources, status = await _lookup_resources(location, llm_client=llm_client)
+    except Exception:
+        return location, [], "no_verified_results"
     return location, resources, status
 
 
@@ -322,7 +325,7 @@ def grounded_lookup_request_from_state(
     *,
     query: str,
 ) -> GroundedLookupRequest:
-    """Build a neutral grounded-lookup request from graph state."""
+    """Build a neutral grounded-lookup request from runtime state."""
 
     return GroundedLookupRequest(
         query=query,
@@ -334,7 +337,7 @@ def grounded_lookup_request_from_state(
 def crisis_resource_lookup_request_from_state(
     state: AgentState,
 ) -> CrisisResourceLookupRequest:
-    """Build a neutral crisis-resource request from graph state."""
+    """Build a neutral crisis-resource request from runtime state."""
 
     return CrisisResourceLookupRequest(
         current_user_message=str(state.get("message", "") or ""),
@@ -506,7 +509,7 @@ def _format_recent_turns(
     limit: int,
     empty: str,
 ) -> str:
-    """Format transcript turns without depending on graph state."""
+    """Format transcript turns without depending on runtime state."""
 
     if limit <= 0:
         return empty
@@ -586,14 +589,14 @@ def _normalize_crisis_resources(
     *,
     location: str,
 ) -> list[dict[str, str]]:
-    """Normalize structured crisis-resource rows for graph state.
+    """Normalize structured crisis-resource rows for runtime state.
 
     Args:
         resource_rows: Structured rows returned by the provider.
         location: User-stated location attached when a row omits region.
 
     Returns:
-        Graph-state resource rows capped at ``_MAX_RESOURCES``.
+        Runtime-state resource rows capped at ``_MAX_RESOURCES``.
     """
 
     normalized: list[dict[str, str]] = []

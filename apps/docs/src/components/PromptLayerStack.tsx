@@ -45,7 +45,7 @@ const fileIndex: Record<string, FileInfo> = {
       'Activates when a risk signal is confirmed. Prioritises immediate safety, avoids clinical distance, encourages offline human support and emergency services where appropriate.',
   },
   'sources.py': {
-    name: 'therapeutic/prompting/sources.py',
+    name: 'runtime/agents/therapeutic_prompt_sources.py',
     kind: 'code',
     summary: 'Prompt source selector',
     excerpt:
@@ -80,7 +80,7 @@ const fileIndex: Record<string, FileInfo> = {
       'Acceptance and Commitment Therapy techniques: cognitive defusion, values clarification, willingness over control. Helps users relate differently to difficult thoughts rather than trying to eliminate them.',
   },
   'builders.py': {
-    name: 'therapeutic/prompting/builders.py',
+    name: 'runtime/agents/therapeutic_prompts.py',
     kind: 'code',
     summary: 'Node task prompt builder',
     excerpt:

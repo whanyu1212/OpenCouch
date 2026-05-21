@@ -1,8 +1,7 @@
 """Typed state contracts for the OpenCouch text runtime.
 
-``AgentGraphInputState`` and related names remain for compatibility with older
-callers, but the active runtime is OpenAI Agents SDK based. ``AgentState`` is
-the internal product snapshot persisted by ``PersistentAgentRuntime``.
+``AgentState`` is the internal product snapshot persisted by
+``PersistentAgentRuntime``.
 
 The ``Annotated`` reducer metadata is retained as documentation for how turn
 deltas are merged: ``transcript`` appends list entries with ``operator.add``,
@@ -17,7 +16,7 @@ from collections.abc import Mapping
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
-from agent.memory.models import GuidancePermission, SessionIntent, SessionStage
+from agent.memory.types import GuidancePermission, SessionIntent, SessionStage
 from agent.models import Channel, CrisisAssessment, SessionAction
 from agent.memory.entries import WorkingMemoryEntry
 
@@ -61,11 +60,11 @@ def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
 class SessionMemoryState(TypedDict):
     """Prompt-visible session continuity carried across turns.
 
-    ``load_memory_node`` writes the current summary into this channel and
-    preserves sibling fields. Therapeutic prompt builders read it indirectly
-    through the subgraph input, while session-end summarization and memory
-    promotion use the corresponding persisted episodic records rather than this
-    channel as the source of truth.
+    The runtime turn memory context writes the current summary into this
+    channel and preserves sibling fields. Therapeutic prompt builders read it
+    indirectly through runtime state, while session-end summarization and
+    memory promotion use the corresponding persisted episodic records rather
+    than this channel as the source of truth.
     """
 
     summary: str
@@ -77,9 +76,9 @@ class SessionMemoryState(TypedDict):
 class ProceduralProfileState(TypedDict):
     """Prompt-shaping procedural profile loaded for the current owner.
 
-    ``load_memory_node`` reads the durable procedural profile from the memory
-    store and writes the prompt-ready rules plus the proactive-recall toggle
-    here. Therapeutic prompt builders read this channel; CLI/API mutation
+    The runtime turn memory context reads the durable procedural profile from
+    the memory store and writes the prompt-ready rules plus the proactive-recall
+    toggle here. Therapeutic prompt builders read this channel; CLI/API mutation
     commands update the backing store rather than this in-flight state directly.
     """
 
@@ -90,10 +89,10 @@ class ProceduralProfileState(TypedDict):
 class SessionProgressState(TypedDict):
     """Session-level counters and arc signals.
 
-    ``build_initial_state`` seeds ``turn_count`` for each turn, using
+    ``agent.runtime.build_initial_state`` seeds ``turn_count`` for each turn, using
     persisted runtime state when available. Persistent runtime summaries, feedback
     records, and memory extractors read ``turn_count`` for provenance. The
-    therapeutic dispatcher may also write ``session_intent`` and
+    runtime planning may also write ``session_intent`` and
     ``session_stage`` to keep response generation aware of the conversation arc
     without adding extra runtime branches.
     """
@@ -109,7 +108,7 @@ class ExerciseState(TypedDict):
     """Active guided-exercise continuity state.
 
     ``guided_exercise`` owns writes to this channel when starting, advancing,
-    completing, or exiting an exercise. The therapeutic dispatcher and prompt
+    completing, or exiting an exercise. The text runtime and prompt
     builders read it to keep side turns inside an active exercise and to reuse
     the therapeutic approach captured when the exercise began.
     """
@@ -122,7 +121,7 @@ class ExerciseState(TypedDict):
 
 
 def cleared_exercise_state() -> ExerciseState:
-    """Return a graph delta that clears active guided-exercise continuity.
+    """Return a runtime delta that clears active guided-exercise continuity.
 
     Returns:
         ExerciseState: Exercise-state fields set to their inactive values.
@@ -140,9 +139,9 @@ def cleared_exercise_state() -> ExerciseState:
 class MemoryControlState(TypedDict):
     """User-directed memory-control continuity.
 
-    ``memory_control_node`` writes pending destructive actions here so the next
-    turn can confirm or cancel them. ``turn_dispatch_node`` writes the current
-    turn's explicit memory command into ``action``.
+    Memory tools write pending destructive actions here so the next turn can
+    confirm or cancel them. Tool calls may also write the current turn's
+    explicit memory command into ``action``.
     """
 
     pending_action: NotRequired[dict[str, Any] | None]
@@ -152,9 +151,8 @@ class MemoryControlState(TypedDict):
 class GroundedLookupState(TypedDict):
     """Explicit factual lookup scratch state.
 
-    ``turn_dispatch_node`` writes the current turn's search query and initial
-    status. ``grounded_answer_node`` updates the status after attempting the
-    grounded response.
+    The grounded lookup tool writes the current turn's search query and updates
+    status after attempting the grounded response.
     """
 
     query: NotRequired[str]
@@ -164,23 +162,23 @@ class GroundedLookupState(TypedDict):
 class TurnLifecycleState(TypedDict):
     """Current-turn active-flow lifecycle decision.
 
-    ``turn_dispatch_node`` writes this after deciding whether an active
-    exercise or pending memory action should continue, pause, resume, or clear.
-    Downstream nodes read it as behavior state. Diagnostics may mirror these
-    values for observability, but diagnostics are not the source of truth.
+    Runtime preparation writes this after deciding whether an active exercise
+    or pending memory action should continue, pause, resume, or clear. Response
+    branches read it as behavior state. Diagnostics may mirror these values for
+    observability, but diagnostics are not the source of truth.
     """
 
     active_flow: Literal["none", "guided_exercise", "pending_memory_action"]
-    action: Literal["none", "continue", "preserve", "resume", "clear"]
+    action: Literal["none", "start", "continue", "preserve", "resume", "clear"]
 
 
 class MemoryReferenceState(TypedDict):
     """Current-turn permission to reference retrieved user memories.
 
-    ``turn_dispatch_node`` writes this after classifying the current safe
-    turn. It is distinct from the durable proactive-recall toggle: a user may
-    keep proactive recall off while explicitly asking "what did we work out
-    last time?" for this one turn.
+    Runtime preparation writes this after classifying the current safe turn. It
+    is distinct from the durable proactive-recall toggle: a user may keep
+    proactive recall off while explicitly asking "what did we work out last
+    time?" for this one turn.
     """
 
     mode: Literal["none", "explicit"]
@@ -189,9 +187,9 @@ class MemoryReferenceState(TypedDict):
 class CrisisAuditState(TypedDict):
     """Turn-scoped crisis-classifier provenance.
 
-    ``crisis_gate_node`` writes this alongside the ``crisis`` assessment.
-    ``crisis_log_node`` reads it to persist classifier path, override outcome,
-    and LLM-failure metadata in the audit log.
+    The crisis guardrail writes this alongside the ``crisis`` assessment.
+    Crisis logging reads it to persist classifier path, override outcome, and
+    LLM-failure metadata in the audit log.
     """
 
     crisis_override_kind: NotRequired[CrisisOverrideOutcome]
@@ -202,7 +200,7 @@ class CrisisAuditState(TypedDict):
 class AgentIdentityState(TypedDict):
     """External request identity seeded from ``AgentInput``.
 
-    ``build_initial_state`` writes these fields at turn start. Nodes use
+    ``agent.runtime.build_initial_state`` writes these fields at turn start. Services use
     ``message`` as the current user text, ``user_id`` / ``session_id`` through
     ``resolve_owner_id`` for memory namespace ownership, and
     ``installed_skills`` for capability-aware routing.
@@ -218,8 +216,8 @@ class AgentIdentityState(TypedDict):
 class AgentConversationState(TypedDict):
     """Conversation and working-memory channels used during a turn.
 
-    ``build_initial_state`` emits the current user turn into ``transcript``.
-    The text adapter appends the assistant turn. The transcript uses
+    ``agent.runtime.build_initial_state`` emits the current user turn into
+    ``transcript``. The text runtime appends the assistant turn. The transcript uses
     ``operator.add`` metadata to document append semantics. Turn memory owns
     ``working_memory`` for prompt-time semantic and episodic recall.
     """
@@ -255,7 +253,7 @@ class AgentCrisisState(TypedDict):
     crisis: CrisisAssessment
 
 
-class AgentGraphOutputState(AgentCrisisState, TypedDict):
+class AgentTurnOutputState(AgentCrisisState, TypedDict):
     """Public text-runtime output channels.
 
     Response branches own the response fields, ``guided_exercise`` may set
@@ -276,8 +274,8 @@ class AgentPrivateState(TypedDict):
 
     These fields are available during runtime execution but are not part of the
     public ``AgentOutput``. ``route`` lets extractors skip crisis turns,
-    ``turn_lifecycle`` carries current-turn active-flow behavior from dispatch
-    to downstream nodes, ``memory_reference`` controls one-turn permission to
+    ``turn_lifecycle`` carries current-turn active-flow behavior,
+    ``memory_reference`` controls one-turn permission to
     cite retrieved memories, ``crisis_audit`` feeds the crisis log, and
     crisis resource lookup writes ``inferred_location`` /
     ``found_resources`` / ``resource_lookup_status`` for crisis-resource lookup
@@ -294,14 +292,14 @@ class AgentPrivateState(TypedDict):
     resource_lookup_status: NotRequired[str]
 
 
-class AgentGraphInputState(
+class AgentTurnInputState(
     AgentIdentityState,
     AgentConversationState,
     AgentPersistentState,
-    AgentGraphOutputState,
+    AgentTurnOutputState,
     AgentPrivateState,
 ):
-    """Top-level turn input schema produced by ``build_initial_state``.
+    """Top-level turn input schema produced by ``agent.runtime.build_initial_state``.
 
     The input schema includes the current user turn, clean defaults for
     turn-scoped channels, and continuity groups. The OpenAI adapter merges this
@@ -310,11 +308,11 @@ class AgentGraphInputState(
     """
 
 
-class AgentState(AgentGraphInputState):
+class AgentState(AgentTurnInputState):
     """Full internal state schema used by text-runtime services.
 
     Runtime branches, prompt builders, tests, and evals use this type when
     reading or returning state-like dictionaries. It is not a public API
-    response shape; use ``AgentGraphOutputState`` and
-    ``agent.graph.state_to_output`` for caller-facing data.
+    response shape; use ``AgentTurnOutputState`` and
+    ``agent.runtime.state_to_output`` for caller-facing data.
     """

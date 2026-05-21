@@ -1,4 +1,4 @@
-"""Shared therapeutic policy labels for text and voice runtimes."""
+"""Shared therapeutic policy labels for runtime and memory models."""
 
 from __future__ import annotations
 

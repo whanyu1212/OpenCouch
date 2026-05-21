@@ -28,7 +28,7 @@ from agent.memory.procedural_profile import (
     aset_proactive_recall,
 )
 from agent.memory.store import StoreRecord
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime
 from api.dependencies import get_runtime
 from api.models import (
     DeleteResponse,

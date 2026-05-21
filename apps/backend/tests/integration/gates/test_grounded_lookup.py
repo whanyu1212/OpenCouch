@@ -8,15 +8,13 @@ from typing import Any, cast
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.graph import build_initial_state
+from agent.runtime import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
-from agent.nodes.grounded_answer import run_grounded_answer_node
-from agent.nodes.turn_dispatch import run_turn_dispatch_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
-from agent.turn_dispatch import build_turn_dispatch_prompt
+from agent.tools.grounded import build_grounded_lookup_delta
 from agent.tools.grounded_search import (
     GroundedLookupRequest,
     answer_factual_lookup,
@@ -85,50 +83,6 @@ class _FakeSearchLLM(BaseLLMClient):
         return response_schema(**response)
 
 
-class _FakeTurnDispatchLLM(BaseLLMClient):
-    """Fake structured client for turn-dispatch tests."""
-
-    def __init__(self, decision: dict[str, Any] | Exception) -> None:
-        self.decision = decision
-        self.structured_calls: list[dict[str, Any]] = []
-
-    async def generate_text(
-        self,
-        *,
-        prompt: str,
-        system_instruction: str | None = None,
-        use_search: bool = False,
-    ) -> str:
-        raise AssertionError("Text generation is not used by turn dispatch.")
-
-    async def generate_text_stream(
-        self,
-        *,
-        prompt: str,
-        system_instruction: str | None = None,
-    ) -> AsyncIterator[str]:
-        yield "unused"
-
-    async def generate_structured(
-        self,
-        *,
-        prompt: str,
-        response_schema: type[StructuredResponseT],
-        system_instruction: str | None = None,
-        use_search: bool = False,
-    ) -> StructuredResponseT:
-        self.structured_calls.append(
-            {
-                "prompt": prompt,
-                "system_instruction": system_instruction,
-                "use_search": use_search,
-            }
-        )
-        if isinstance(self.decision, Exception):
-            raise self.decision
-        return response_schema(**self.decision)
-
-
 def _state(message: str) -> AgentState:
     """Build a seeded state for grounded lookup tests."""
 
@@ -142,91 +96,6 @@ def _state(message: str) -> AgentState:
         )
     )
     return cast(AgentState, dict(state))
-
-
-@pytest.mark.asyncio
-async def test_turn_dispatch_routes_grounded_lookup_request() -> None:
-    llm = _FakeTurnDispatchLLM(
-        {
-            "route": "grounded_lookup",
-            "query": "affordable counselling services in Singapore",
-            "reasoning": "The user asked for external service information.",
-            "confidence": "high",
-            "active_flow_action": "none",
-        }
-    )
-
-    command = await run_turn_dispatch_node(
-        _state("Can you look up affordable counselling services in Singapore?"),
-        cast(Any, _Runtime(llm)),
-    )
-
-    assert command.goto == "grounded_answer_node"
-    assert len(llm.structured_calls) == 1
-    update = cast(dict[str, Any], command.update)
-    assert update["route"] == "grounded_lookup"
-    assert update["grounded_lookup"] == {
-        "query": "affordable counselling services in Singapore",
-        "status": "not_attempted",
-    }
-    assert update["memory_control"]["action"] == {}
-    assert update["diagnostics"]["turn_dispatch_classifier_path"] == "llm_primary"
-    trace = update["diagnostics"]["routing_trace"]
-    assert trace[-1]["stage"] == "turn_dispatch"
-    assert trace[-1]["decision"] == "grounded_lookup"
-    assert trace[-1]["source"] == "llm_primary"
-
-
-@pytest.mark.asyncio
-async def test_turn_dispatch_routes_subjective_check_to_therapeutic() -> None:
-    llm = _FakeTurnDispatchLLM(
-        {
-            "route": "therapeutic",
-            "reasoning": "The user is asking for subjective support.",
-            "confidence": "high",
-            "active_flow_action": "none",
-        }
-    )
-
-    command = await run_turn_dispatch_node(
-        _state("Can you check if I'm being unreasonable?"),
-        cast(Any, _Runtime(llm)),
-    )
-
-    assert command.goto == "load_memory_node"
-    update = cast(dict[str, Any], command.update)
-    assert update["grounded_lookup"] == {"query": "", "status": "not_attempted"}
-
-
-def test_turn_dispatch_prompt_names_resource_seeking_boundary() -> None:
-    """Resource-seeking mental-health asks should be a first-class lookup boundary."""
-
-    prompt = build_turn_dispatch_prompt(
-        _state("Can you find credible anxiety worksheets from an official source?")
-    )
-
-    assert "look up worksheets" in prompt
-    assert "credible articles" in prompt
-    assert "Do not route these to therapeutic" in prompt
-    assert "in-the-moment help" in prompt
-
-
-@pytest.mark.asyncio
-async def test_turn_dispatch_requires_grounded_lookup_query() -> None:
-    llm = _FakeTurnDispatchLLM(
-        {
-            "route": "grounded_lookup",
-            "reasoning": "The model selected lookup but omitted the query.",
-            "confidence": "high",
-            "active_flow_action": "none",
-        }
-    )
-
-    with pytest.raises(ValueError, match="without query"):
-        await run_turn_dispatch_node(
-            _state("Is grounding proven to work?"),
-            cast(Any, _Runtime(llm)),
-        )
 
 
 @pytest.mark.asyncio
@@ -323,7 +192,7 @@ async def test_grounded_answer_node_returns_operational_response() -> None:
     state = _state("Can you look up the current rule?")
     state["grounded_lookup"] = {"query": "Can you look up the current rule?"}
 
-    delta = await run_grounded_answer_node(state, cast(Any, _Runtime(llm)))
+    delta = await build_grounded_lookup_delta(state, _Runtime(llm).context)
 
     assert delta["route"] == "grounded_lookup"
     assert delta["grounded_lookup"]["status"] == "answered"
@@ -369,7 +238,7 @@ async def test_grounded_answer_node_requires_llm() -> None:
     state["grounded_lookup"] = {"query": "Can you look up the current rule?"}
 
     with pytest.raises(RuntimeError, match="requires an LLM client"):
-        await run_grounded_answer_node(state, cast(Any, _Runtime(None)))
+        await build_grounded_lookup_delta(state, _Runtime(None).context)
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ that span that window:
 
 - ``commit``: write held memory candidates to the store at session end.
 - ``finalization``: run the full end-of-session pipeline (commit +
-  summarize + extract).
+  summarize).
 - ``state``: pure-functional helpers for slicing, measuring, and
   zeroing session-relevant fields in :class:`agent.state.AgentState`.
 - ``summarize``: run session summarization to produce the episodic arc.
@@ -21,10 +21,7 @@ The package is the public surface — callers should import from
 from __future__ import annotations
 
 from agent.runtime.session.commit import run_commit_session_memory
-from agent.runtime.session.finalization import (
-    extract_memory_from_transcript,
-    finalize_session_window,
-)
+from agent.runtime.session.finalization import finalize_session_window
 from agent.runtime.session.state import (
     EXERCISE_STATE_FIELDS,
     active_transcript_length,
@@ -42,7 +39,6 @@ __all__ = [
     "RuntimeSessionTracker",
     "active_transcript_length",
     "crisis_level_from_state",
-    "extract_memory_from_transcript",
     "finalize_session_window",
     "run_commit_session_memory",
     "run_summarize_session",

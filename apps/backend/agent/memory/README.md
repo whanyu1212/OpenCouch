@@ -16,13 +16,13 @@ It does **not** own always-on audit persistence.
 It also does not own the memory-control gate that handles user-facing
 commands such as recall toggles, saved preferences, and forget requests.
 
-Those backends live in [agent/audit](../audit):
-- crisis log backends
-- session feedback backends
+Those backends live outside `agent.memory`:
+- crisis log backends live in [agent/audit](../audit)
+- session feedback backends live in [agent/feedback](../feedback)
 
 Important distinction:
 - `agent.audit.models` owns audit-related record schemas
-- Audit types live in `agent.audit.models` (no longer re-exported here)
+- `agent.feedback.models` owns explicit session-feedback schemas
 
 ## Mental Model
 
@@ -55,28 +55,24 @@ There are 3 main memory shapes:
 ### Retrieval
 
 - [retrieval.py](./retrieval.py): lexical ranking, dense ranking, cosine similarity, Reciprocal Rank Fusion.
-- [recall.py](./recall.py): per-turn retrieval entry point used by the load-memory node; assembles the semantic + episodic + procedural working-memory bundle.
+- [recall.py](./recall.py): per-turn retrieval entry point used by the runtime turn memory context; assembles the semantic + episodic + procedural working-memory bundle.
 - [embeddings.py](./embeddings.py): embedding provider protocol, OpenAI / Gemini / null providers, provider factory.
 - [text_tokens.py](./text_tokens.py): shared tokenizer used by retrieval and dedup.
 
 ### Write Pipeline
 
-- [extraction_service.py](./extraction_service.py): LLM-driven semantic and procedural extraction services used by thin graph nodes.
-- [turn_write_service.py](./turn_write_service.py): `TurnWriteService` — per-turn orchestration that maps extracted candidates through policy → dedup → store writes.
 - [session_commit_service.py](./session_commit_service.py): session-end commit of buffered candidates.
-- [semantic_writes.py](./semantic_writes.py): batch semantic-write helper (`apply_semantic_writes_batch`) shared by turn and session-end paths.
+- [semantic_writes.py](./semantic_writes.py): batch semantic-write helper (`apply_semantic_writes_batch`) used by session-end paths.
 - [dedup.py](./dedup.py): hot-path semantic near-duplicate detection.
 - [reconciliation.py](./reconciliation.py): conservative merge / replace / skip planning for semantic and procedural writes.
 
 ### Policy Layer
 
-The [policy/](./policy) subpackage owns the decision layer between extracted candidates and persisted writes:
+The [policy/](./policy) subpackage owns the decision layer between memory candidates and persisted writes:
 
 - [policy/candidates.py](./policy/candidates.py): candidate objects for semantic / procedural writes plus `SessionMemoryBuffer`; held candidates carry the policy decision that held them.
 - [policy/write.py](./policy/write.py): LLM-primary write-timing policy for semantic / procedural candidates, with narrow post-policy safety / storage clamps.
 - [policy/semantic.py](./policy/semantic.py): semantic policy constants for session-only categories.
-- [policy/small_talk.py](./policy/small_talk.py): pre-extractor filter for turns that should not produce memory writes.
-- [policy/turn_routing.py](./policy/turn_routing.py): `should_skip_memory_extraction`, `get_session_turn_index`.
 
 ### Procedural Profile
 
@@ -88,10 +84,8 @@ The [policy/](./policy) subpackage owns the decision layer between extracted can
 
 ### Prompt Builders
 
-The [prompts/](./prompts) subpackage groups all memory-layer prompts:
+The [prompts/](./prompts) subpackage groups memory-layer prompts:
 
-- [prompts/extraction.py](./prompts/extraction.py): semantic extraction prompts.
-- [prompts/procedural.py](./prompts/procedural.py): procedural-rule extraction prompts.
 - [prompts/summarization.py](./prompts/summarization.py): session summarization prompts.
 
 ### Working-Memory Rendering
@@ -129,26 +123,29 @@ If you are trying to understand a specific behavior, start here:
   Start with [policy/candidates.py](./policy/candidates.py), [policy/write.py](./policy/write.py), and [reconciliation.py](./reconciliation.py).
 
 - "What runs on every turn vs at session end?"
-  Start with [turn_write_service.py](./turn_write_service.py) and [session_commit_service.py](./session_commit_service.py).
+  Start with [recall.py](./recall.py), [session_commit_service.py](./session_commit_service.py), and [episodic.py](./episodic.py).
 
-- "What prompt is used for extraction or summarization?"
+- "What prompt is used for summarization?"
   Start in [prompts/](./prompts).
 
 - "How does the user toggle recall or save a preference?"
   Start with [agent/gates/memory_control](../gates/memory_control).
 
 - "Where did the crisis log / session feedback code go?"
-  Go to [agent/audit](../audit).
+  Crisis logs live in [agent/audit](../audit); session feedback lives in
+  [agent/feedback](../feedback).
 
 ## Runtime Wiring
 
 This package is mostly infrastructure. The main runtime integration points are outside this directory:
 
-- [agent/persistence.py](../persistence.py): chooses memory store implementation and owns lifecycle.
+- [agent/runtime/runtime.py](../runtime/runtime.py): chooses memory store implementation and owns lifecycle.
 - [agent/runtime/backends.py](../runtime/backends.py): selects Postgres vs SQLite vs in-memory based on settings.
 - [agent/gates/memory_control](../gates/memory_control): handles user-facing memory commands.
-- [agent/nodes/](../nodes): extraction, commit, summarization, and memory-loading nodes call into this package.
-- [agent/graph.py](../graph.py): wires the nodes into the workflow.
+- [agent/runtime/memory_context.py](../runtime/memory_context.py): builds the
+  runner-turn memory delta consumed by the text runtime.
+- [agent/runtime/text.py](../runtime/text.py): wires
+  memory loading into the OpenAI Agents SDK text runtime.
 
 ## Persistence Backend
 

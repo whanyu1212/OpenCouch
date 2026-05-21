@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent.therapeutic.exercises.registry import (
+from agent.skills.guided_exercises.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
 )
-from agent.therapeutic.exercises.skills import (
+from agent.skills.guided_exercises.skills import (
     build_exercise_skill,
     render_exercise_skill_context,
 )

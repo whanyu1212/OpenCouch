@@ -2,7 +2,7 @@
 
 These tests cover the new ``_format_procedural_rules_block`` and
 ``_format_recall_toggle_constraint`` helpers in
-``agent/therapeutic/prompts.py``, plus verification that the 6 public
+``agent.specialists.therapeutic_prompts``, plus verification that public
 system-prompt builders correctly weave the dynamic blocks into their
 output based on state.
 
@@ -35,21 +35,20 @@ from __future__ import annotations
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
-from agent.gates.safety.prompts import build_crisis_response_system_prompt
-from agent.state import AgentState
-from agent.therapeutic.dispatch import build_therapeutic_dispatch_system_prompt
-from agent.therapeutic.prompts import (
+from agent.specialists.guided_exercise import build_guided_exercise_system_prompt
+from agent.specialists.therapeutic_prompts import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
     build_clarifying_system_prompt,
     build_closing_system_prompt,
-    build_guided_exercise_system_prompt,
     build_psychoeducation_system_prompt,
     build_reflective_system_prompt,
     build_supportive_system_prompt,
     build_technique_system_prompt,
     build_therapeutic_response_prompt,
 )
+from agent.guardrails.prompts import build_crisis_response_system_prompt
+from agent.state import AgentState
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────────
@@ -490,47 +489,6 @@ def test_psychoeducation_prompt_handles_pop_neuro_practical_requests() -> None:
     assert "That's it for now" in prompt
 
 
-def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> None:
-    prompt = build_therapeutic_dispatch_system_prompt()
-
-    assert "NOT asking to start a named exercise track" in prompt
-    assert (
-        "those are guided_exercise turns because the agent should begin the "
-        "matching stepwise exercise" in prompt
-    )
-    assert "can we figure out a way to test it" in prompt
-    assert "can we look at what actually matters to me" in prompt
-    assert "If the user names self-criticism AND explicitly asks to do " in prompt
-    assert (
-        "do NOT use technique just because the user wants to 'talk it through'"
-        in prompt
-    )
-    assert "consolidating progress, naming strengths" in prompt
-    assert (
-        "I keep avoiding work tasks because I get anxious and start spiraling" in prompt
-    )
-    assert "can choose ACT as the therapeutic_approach" in prompt
-    assert "pairs wrap-up language with a takeaway request" in prompt
-    assert "before we wrap up, what's the main takeaway?" in prompt
-    assert "what should I remember from this?" in prompt
-    assert "A turn that says 'thanks, that helps'" in prompt
-
-
-def test_dispatch_prompt_includes_repair_session_intent_guidance() -> None:
-    """The dispatcher should expose repair as an arc label, not a graph node."""
-
-    prompt = build_therapeutic_dispatch_system_prompt()
-
-    assert (
-        "session_intent: vent, understand, reflect, work, regulate, repair, close"
-        in prompt
-    )
-    assert "you're not listening" in prompt
-    assert "that's not what I meant" in prompt
-    assert "guidance_permission=not_yet" in prompt
-    assert "avoid defending" in prompt
-
-
 def test_supportive_prompt_injects_repair_response_guidance() -> None:
     """Repair turns should constrain response generation toward reset and repair."""
 
@@ -712,7 +670,7 @@ class TestTherapeuticResponsePrompt:
         assert "- Last session (grief): talked about grief after my dog died." in prompt
 
     def test_legacy_string_working_memory_entries_render_unchanged(self) -> None:
-        """Legacy ``str`` entries (from older checkpoints or manual fixtures)
+        """Legacy ``str`` entries (from older persisted states or manual fixtures)
         should pass through the formatter unchanged."""
 
         state = _make_state(

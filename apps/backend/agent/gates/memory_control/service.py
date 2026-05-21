@@ -68,7 +68,7 @@ class MemoryControlRequest:
 
 
 def memory_control_request_from_state(state: AgentState) -> MemoryControlRequest:
-    """Build a framework-neutral memory-control request from graph state."""
+    """Build a framework-neutral memory-control request from runtime state."""
 
     try:
         owner_id = resolve_owner_id(state)
@@ -258,7 +258,7 @@ def _build_preference_rule_prompt(
 
     Args:
         current_user_message: Current user message used as evidence.
-        preference_text (str): Preference phrase selected by turn dispatch.
+        preference_text (str): Preference phrase selected by the memory tool.
 
     Returns:
         str: Prompt requesting one durable procedural rule.
@@ -458,7 +458,7 @@ async def execute_memory_control_action(
     """Execute an explicit memory-management action.
 
     Args:
-        state (AgentState): Current graph state with ``memory_control.action`` set
+        state (AgentState): Current runtime state with ``memory_control.action`` set
             by the gate.
         context (WorkflowContext): Workflow context carrying memory dependencies.
 

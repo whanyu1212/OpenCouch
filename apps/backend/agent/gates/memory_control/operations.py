@@ -1,7 +1,7 @@
 """User-directed memory-management helpers.
 
 These helpers back conversational memory-management turns. They intentionally
-operate below graph nodes and above the raw store so nodes can stay small while
+operate below runtime services and above the raw store so nodes can stay small while
 still keeping memory edits scoped to one owner.
 """
 

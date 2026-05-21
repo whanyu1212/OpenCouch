@@ -1,8 +1,8 @@
 """Per-turn memory retrieval that builds the working-memory bundle.
 
-Runs at the start of every turn (called by ``load_memory_node``) and
-returns the structured :class:`LoadMemoryResult` the response nodes use
-to ground their replies. Pulls from all three memory shapes:
+Runs at the start of every turn through the runtime turn memory context and
+returns the structured :class:`LoadMemoryResult` the text runtime uses to
+ground replies. Pulls from all three memory shapes:
 
 - **Semantic** facts via hybrid lexical + embedding retrieval, filtered
   to active records and capped at :data:`SEMANTIC_WORKING_MEMORY_LIMIT`.
@@ -318,7 +318,7 @@ async def _compute_query_embedding(
         return None, None, "token_recall"
     except Exception:
         logger.warning(
-            "load_memory_node: embedding call failed; falling back to "
+            "turn_memory_context: embedding call failed; falling back to "
             "token-recall only for this turn.",
             exc_info=True,
         )
@@ -484,7 +484,7 @@ async def load_memory_for_turn(
     )
 
     logger.info(
-        "load_memory_node: semantic=%d/%d episodic=%d/%d procedural=%d "
+        "turn_memory_context: semantic=%d/%d episodic=%d/%d procedural=%d "
         "recall=%s path=%s first_turn=%s query_tokens=%d duration_ms=%.2f owner=%r",
         len(semantic_entries),
         semantic_store_size,

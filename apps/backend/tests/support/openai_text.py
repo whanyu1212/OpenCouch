@@ -138,6 +138,7 @@ def _required_tool_name(input_text: str) -> str | None:
         "cancel_memory_deletion",
         "answer_grounded_lookup",
         "lookup_crisis_resources",
+        "load_therapeutic_response_skill",
         "load_guided_exercise_skill",
     ):
         if f"Required tool: {tool_name}" in input_text:
@@ -211,6 +212,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         crisis_location_status: str = "provided",
         crisis_location: str = "Singapore",
         crisis_resource_status: str = "found",
+        triage_confidence: str = "high",
     ) -> None:
         super().__init__()
         self.route = route
@@ -233,6 +235,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.crisis_location_status = crisis_location_status
         self.crisis_location = crisis_location
         self.crisis_resource_status = crisis_resource_status
+        self.triage_confidence = triage_confidence
 
     async def generate_structured(
         self,
@@ -256,7 +259,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 "route": self.route,
                 "active_flow_action": self.active_flow_action,
                 "reasoning": f"scripted {self.route} route",
-                "confidence": "high",
+                "confidence": self.triage_confidence,
                 "memory_reference_mode": self.memory_reference_mode,
             }
             if self.route == "memory_control":
@@ -278,7 +281,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 response_style=self.therapeutic_response_style,
                 therapeutic_approach=self.therapeutic_approach,
                 exercise_start_basis=self.exercise_start_basis,
-                reasoning="scripted therapeutic dispatch",
+                reasoning="scripted therapeutic response style",
                 confidence="high",
             )
         if schema_name == "ExerciseSelectionDecision":

@@ -1,6 +1,6 @@
 """Runtime-owned text state snapshot stores.
 
-These stores replace legacy checkpoints for OpenCouch-owned state that is
+These stores replace legacy session snapshots for OpenCouch-owned state that is
 not model-visible SDK session history: latest response metadata, diagnostics,
 active exercise state, pending memory action, and other product state used by
 API/CLI/debug surfaces.

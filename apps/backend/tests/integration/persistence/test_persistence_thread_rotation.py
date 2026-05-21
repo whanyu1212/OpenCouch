@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-from agent.persistence import (
+from agent.runtime import (
     ActiveSessionExists,
     PersistentAgentRuntime,
     SessionInterrupted,
@@ -18,16 +18,16 @@ from agent.persistence import (
 from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
 
-class _FailingTextAdapter:
+class _FailingTextRuntime:
     async def run_turn(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError("adapter failed")
+        raise RuntimeError("runtime failed")
 
     async def run_turn_stream(
         self,
         *args: Any,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        raise RuntimeError("adapter failed")
+        raise RuntimeError("runtime failed")
         yield
 
 
@@ -114,18 +114,14 @@ async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_failed_run_turn_leaves_interrupted_marker(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "agent.persistence.create_text_agent_adapter",
-        lambda *, runtime_name: _FailingTextAdapter(),  # noqa: ARG005
-    )
-
     async with PersistentAgentRuntime(
         **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
-        with pytest.raises(RuntimeError, match="adapter failed"):
+        runtime._openai_text_runtime = cast(Any, _FailingTextRuntime())  # noqa: SLF001
+
+        with pytest.raises(RuntimeError, match="runtime failed"):
             await runtime.run_turn(thread_id="thread-failed-turn", message="hello")
 
         assert await runtime.session_status("thread-failed-turn") == (

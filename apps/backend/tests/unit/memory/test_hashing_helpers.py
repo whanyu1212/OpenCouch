@@ -1,9 +1,7 @@
 """Tests for the shared memory-subsystem helpers.
 
-These helpers were extracted from ``agent/nodes/crisis_log.py`` and
-``agent/persistence.py`` so future memory subsystems (e.g. the
-session-feedback collector) can reuse them. This test module locks
-in the exact semantics of the extracted helpers so the refactor is
+These helpers are shared by audit, feedback, and persistence code. This test
+module locks in the exact semantics of the extracted helpers so refactors are
 verifiably behaviour-preserving.
 """
 
@@ -21,7 +19,7 @@ from agent.memory.hashing import hash_session_id, iso_now
 
 class TestHashSessionId:
     """Behaviour mirrors the private ``_hash_session_id`` helper that
-    previously lived in ``agent/nodes/crisis_log.py``."""
+    previously lived in crisis-log code."""
 
     def test_none_uses_placeholder(self) -> None:
         """Passing ``None`` hashes the literal ``"__no_session_id__"``."""
@@ -96,23 +94,21 @@ class TestIsoNow:
         assert parsed.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
 
 
-# ── Backward-compat aliases ───────────────────────────────────────
+# ── Public aliases ─────────────────────────────────────────────────
 
 
-class TestBackwardCompatAliases:
-    """The refactor preserves the old private names at their original
-    import sites so unmigrated callers continue to work."""
+class TestPublicAliases:
+    """Shared timestamp/hash helpers stay importable from runtime surfaces."""
 
-    def test_crisis_log_reexports_hash_session_id(self) -> None:
-        """``from agent.nodes.crisis_log import _hash_session_id`` still
-        works and resolves to the same callable."""
-        from agent.nodes.crisis_log import _hash_session_id
+    def test_crisis_log_uses_shared_hash_session_id(self) -> None:
+        """Crisis logging uses the shared hash helper directly."""
+        from agent.memory.hashing import hash_session_id as crisis_hash_session_id
 
-        assert _hash_session_id is hash_session_id
+        assert crisis_hash_session_id is hash_session_id
 
     def test_persistence_reexports_iso_now(self) -> None:
-        """``from agent.persistence import _iso_now`` still works and
+        """``from agent.runtime import _iso_now`` still works and
         resolves to the shared helper."""
-        from agent.persistence import _iso_now
+        from agent.runtime import _iso_now
 
         assert _iso_now is iso_now

@@ -13,12 +13,15 @@ from agent.audit.models import (
     CrisisLogPathCounts,
     CrisisLogRecord,
     CrisisOverrideOutcome,
+)
+from agent.feedback.models import (
     FeedbackLabel,
     FeedbackSource,
     SessionFeedbackRecord,
 )
 from agent.memory.types import (
     ACTContext,
+    ActiveFlowAction,
     CBTContext,
     ConfidenceLevel,
     DBTContext,
@@ -28,6 +31,8 @@ from agent.memory.types import (
     ExerciseStartBasis,
     ExtractionResult,
     GuidancePermission,
+    TurnDispatchDecision,
+    TurnRoute,
     GriefContext,
     HotPathEdgeType,
     IPTContext,
@@ -92,6 +97,9 @@ __all__ = [
     "SessionStage",
     "GuidancePermission",
     "ExerciseStartBasis",
+    "ActiveFlowAction",
+    "TurnRoute",
+    "TurnDispatchDecision",
     "DispatchDecision",
     "FeedbackLabel",
     "FeedbackSource",

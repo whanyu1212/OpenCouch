@@ -46,11 +46,11 @@ const TOOLS: Tool[] = [
     id: 'crisis_resource_search',
     name: 'find_crisis_resources',
     status: 'active',
-    triggerPath: 'crisis_resource_lookup_node',
-    triggerCondition: 'crisis gate routes to the crisis branch AND llm_client is available',
+    triggerPath: 'lookup_crisis_resources SDK tool',
+    triggerCondition: 'crisis specialist is selected for a level 2/3 crisis response and llm_client is available',
     providers: ['gemini', 'openai'],
     description:
-      'Surfaces verified crisis hotlines local to the user. Runs as the first node on the crisis branch — before crisis_response_node — so any resources land in the same reply. Uses provider-native web search grounding (Google Search for Gemini, web_search tool for OpenAI), not a custom tool attachment. The call graph chains two structured LLM calls: first classify location availability from the conversation, then search for resources with grounding enabled.',
+      'Surfaces verified crisis hotlines local to the user through the crisis specialist tool surface. Uses provider-native web search grounding (Google Search for Gemini, web_search tool for OpenAI). The lookup chains two structured LLM calls: first classify location availability from the conversation, then search for resources with grounding enabled.',
     pipeline: [
       {
         id: 'extract_location',
@@ -80,9 +80,9 @@ const TOOLS: Tool[] = [
     ],
     gracefulDegradation:
       'No-location, location-refused, and no-verified-result cases return explicit statuses. Missing LLM configuration or provider failures retry or surface through the graph instead of silently continuing.',
-    file: 'agent/tools/grounded_search.py',
+    file: 'agent/runtime/tools/grounded_search.py',
     fn: 'find_crisis_resources',
-    tests: 'tests/unit/tools/test_grounded_search_crisis_resources.py',
+    tests: 'tests/unit/runtime/test_grounded_search_crisis_resources.py',
   },
   {
     id: 'grounded_lookup',
@@ -129,7 +129,7 @@ const TOOLS: Tool[] = [
     ],
     gracefulDegradation:
       'Weak or missing sources produce an explicit "I couldn\'t verify that" reply rather than an invented answer. Missing LLM configuration or provider failures retry or surface. The status field (answered / no_verified_answer) drives observability.',
-    file: 'agent/tools/grounded_search.py',
+    file: 'agent/runtime/tools/grounded_search.py',
     fn: 'answer_factual_lookup',
   },
 ];

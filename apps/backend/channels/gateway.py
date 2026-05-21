@@ -15,7 +15,7 @@ from typing import TextIO
 from telegram.ext import Application
 
 from agent.memory.modes import MemoryMode
-from agent.persistence import (
+from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
@@ -136,7 +136,7 @@ def telegram_gateway_lock_path(
     """Return the lockfile path scoped to the runtime store directory.
 
     Args:
-        sqlite_path: Thread checkpoint SQLite path.
+        sqlite_path: Runtime session SQLite path.
 
     Returns:
         Lockfile path next to the configured thread database.

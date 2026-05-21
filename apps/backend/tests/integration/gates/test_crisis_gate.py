@@ -8,12 +8,12 @@ from typing import Any, cast
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.gates.safety.service import CrisisAssessmentSchema
-from agent.graph import build_initial_state, run_agent
+from agent.guardrails.service import CrisisAssessmentSchema
+from agent.guardrails.assessment import assess_crisis_gate
+from agent.runtime import build_initial_state, run_agent
 from agent.memory.modes import MemoryMode
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord
 from agent.models import AgentInput, ResponseCategory
-from agent.nodes.crisis_gate import run_crisis_gate_node
 from agent.runtime_context import WorkflowContext
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.persistence import FakeCrossRestartLLM
@@ -136,17 +136,26 @@ def _crisis_schema(
     )
 
 
+def _crisis_goto(update: dict[str, Any]) -> str:
+    crisis = update["crisis"]
+    return (
+        "crisis_resource_lookup_node"
+        if crisis.needs_crisis_response
+        else "safe_runtime"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("level", "expected_goto", "expected_route", "expected_decision"),
     [
         (3, "crisis_resource_lookup_node", "crisis", "crisis"),
         (2, "crisis_resource_lookup_node", "crisis", "crisis"),
-        (1, "turn_dispatch_node", "therapeutic", "check"),
-        (0, "turn_dispatch_node", "therapeutic", "normal"),
+        (1, "safe_runtime", "therapeutic", "check"),
+        (0, "safe_runtime", "therapeutic", "normal"),
     ],
 )
-async def test_run_crisis_gate_node_uses_llm_level_for_routing(
+async def test_assess_crisis_gate_uses_llm_level_for_routing(
     level: int,
     expected_goto: str,
     expected_route: str,
@@ -162,20 +171,21 @@ async def test_run_crisis_gate_node_uses_llm_level_for_routing(
         _crisis_schema(level=level, reason=f"LLM classified level {level}")
     )
 
-    command = await run_crisis_gate_node(  # type: ignore[arg-type]
+    result = await assess_crisis_gate(
         state,
-        _MockRuntime(llm_client=llm),
+        llm_client=_MockRuntime(llm_client=llm).context.llm_client,
     )
+    update = result.delta
 
-    assert command.goto == expected_goto
-    assert command.update["crisis"].level == level
-    assert command.update["crisis"].needs_crisis_response is (level >= 2)
-    assert command.update["crisis"].needs_clarification is (level == 1)
-    assert command.update["route"] == expected_route
-    assert command.update["crisis_audit"]["crisis_override_kind"] == "none"
-    assert command.update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
-    assert command.update["crisis_audit"]["crisis_llm_failure_occurred"] is False
-    trace = command.update["diagnostics"]["routing_trace"]
+    assert _crisis_goto(update) == expected_goto
+    assert update["crisis"].level == level
+    assert update["crisis"].needs_crisis_response is (level >= 2)
+    assert update["crisis"].needs_clarification is (level == 1)
+    assert update["route"] == expected_route
+    assert update["crisis_audit"]["crisis_override_kind"] == "none"
+    assert update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
+    assert update["crisis_audit"]["crisis_llm_failure_occurred"] is False
+    trace = update["diagnostics"]["routing_trace"]
     assert trace[-1]["stage"] == "safety"
     assert trace[-1]["decision"] == expected_decision
     assert trace[-1]["source"] == "llm_primary"
@@ -183,7 +193,7 @@ async def test_run_crisis_gate_node_uses_llm_level_for_routing(
 
 
 @pytest.mark.asyncio
-async def test_run_crisis_gate_node_requires_llm_client() -> None:
+async def test_assess_crisis_gate_requires_llm_client() -> None:
     """Without an LLM client, crisis classification should fail visibly."""
 
     state = build_initial_state(
@@ -192,12 +202,15 @@ async def test_run_crisis_gate_node_requires_llm_client() -> None:
     )
 
     with pytest.raises(RuntimeError, match="requires an LLM client"):
-        await run_crisis_gate_node(state, _MockRuntime())  # type: ignore[arg-type]
+        await assess_crisis_gate(
+            state,
+            llm_client=_MockRuntime().context.llm_client,
+        )
 
 
 @pytest.mark.asyncio
-async def test_run_crisis_gate_node_propagates_llm_failure() -> None:
-    """LLM errors should be left to the graph retry policy, not hidden."""
+async def test_assess_crisis_gate_propagates_llm_failure() -> None:
+    """LLM errors should be left to the caller's retry policy, not hidden."""
 
     state = build_initial_state(
         AgentInput(message="I just wish I could disappear for a while."),
@@ -205,14 +218,16 @@ async def test_run_crisis_gate_node_propagates_llm_failure() -> None:
     )
 
     with pytest.raises(RuntimeError, match="simulated classifier failure"):
-        await run_crisis_gate_node(  # type: ignore[arg-type]
+        await assess_crisis_gate(
             state,
-            _MockRuntime(llm_client=_FailingStructuredLLM()),
+            llm_client=_MockRuntime(
+                llm_client=_FailingStructuredLLM()
+            ).context.llm_client,
         )
 
 
 @pytest.mark.asyncio
-async def test_run_crisis_gate_node_enforces_truth_table_on_llm_output() -> None:
+async def test_assess_crisis_gate_enforces_truth_table_on_llm_output() -> None:
     """The node should normalize inconsistent LLM booleans to match the level."""
 
     state = build_initial_state(
@@ -229,16 +244,17 @@ async def test_run_crisis_gate_node_enforces_truth_table_on_llm_output() -> None
         )
     )
 
-    command = await run_crisis_gate_node(  # type: ignore[arg-type]
+    result = await assess_crisis_gate(
         state,
-        _MockRuntime(llm_client=llm),
+        llm_client=_MockRuntime(llm_client=llm).context.llm_client,
     )
+    update = result.delta
 
-    assert command.goto == "turn_dispatch_node"
-    assert command.update["crisis"].level == 0
-    assert command.update["crisis"].needs_crisis_response is False
-    assert command.update["crisis"].needs_clarification is False
-    assert command.update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
+    assert _crisis_goto(update) == "safe_runtime"
+    assert update["crisis"].level == 0
+    assert update["crisis"].needs_crisis_response is False
+    assert update["crisis"].needs_clarification is False
+    assert update["crisis_audit"]["crisis_classifier_path"] == "llm_primary"
 
 
 @pytest.mark.asyncio
@@ -297,8 +313,8 @@ async def test_crisis_path_succeeds_with_broken_store() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_turns_skip_extractors() -> None:
-    """Crisis turns should skip normal semantic and procedural extraction."""
+async def test_crisis_turns_do_not_emit_extraction_diagnostics() -> None:
+    """Crisis turns should not carry removed extraction diagnostics."""
 
     result = await run_agent(
         AgentInput(message="I've been thinking about ending it all."),
@@ -310,5 +326,5 @@ async def test_crisis_turns_skip_extractors() -> None:
     assert result.crisis.level == 2
     assert result.response_type == ResponseCategory.CRISIS
     diag = result.diagnostics
-    assert diag.get("extract_facts_reason") == "skipped: crisis_path"
-    assert diag.get("extract_procedural_reason") == "skipped: crisis_path"
+    assert "extract_facts_reason" not in diag
+    assert "extract_procedural_reason" not in diag

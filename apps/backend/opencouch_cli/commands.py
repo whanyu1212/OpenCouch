@@ -277,6 +277,25 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         show_in_help=False,
     ),
     SlashCommand(
+        ("/verbosity",),
+        "Switch turn observability detail.",
+        "runtime",
+        usage="/verbosity <compact|verbose>",
+        example="/verbosity verbose",
+    ),
+    SlashCommand(
+        ("/verbosity", "compact"),
+        "Show compact route and tool badges after each turn.",
+        "runtime",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/verbosity", "verbose"),
+        "Show fuller route, tool, and state activity after each turn.",
+        "runtime",
+        show_in_help=False,
+    ),
+    SlashCommand(
         ("/trace",),
         "Show or hide the routing trace overlay.",
         "runtime",
@@ -308,7 +327,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         ("/debug", "state"),
-        "Dump the raw graph state for the active thread.",
+        "Dump the raw persisted state for the active thread.",
         "debug",
         usage="/debug state",
     ),

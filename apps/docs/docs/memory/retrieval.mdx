@@ -89,18 +89,17 @@ records re-embed lazily on the next write.
 
 ---
 
-## load_memory structure
+## Turn Memory Structure
 
-`load_memory_node` owns the turn-level retrieval orchestration:
+`agent.runtime.memory_context` owns turn-level retrieval orchestration:
 semantic and episodic search, procedural profile loading, first-turn
-episodic catch-up, and diagnostics. A `test_memory_retrieval_parity.py`
-suite verifies that the in-memory and SQLite stores produce the same
-ranked results for the same input — so the retrieval algorithm is
-backend-agnostic by contract, not by accident.
+episodic catch-up, and diagnostics. The retrieval algorithm itself stays
+in `agent.memory.recall`, so the memory package owns memory semantics while
+the runtime owns how memory becomes model-visible context for a runner turn.
 
 ---
 
 ## Regression coverage
 
-The eval harness is being rebuilt. Until the replacement lands, retrieval
-changes should be covered with backend tests and targeted manual trace review.
+Retrieval changes should be covered with backend tests and targeted manual
+trace review.

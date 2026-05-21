@@ -12,7 +12,6 @@
 ## Verification & Testing
 <!-- OpenCouch requires strict validation of safety boundaries and routing logic. Check all that apply: -->
 - [ ] **Unit & Integration Tests:** `uv run pytest tests/unit tests/integration` completed successfully.
-- [ ] **Therapeutic Contract Eval:** `apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval --plain` executed and passed.
 - [ ] **Static Analysis:** `pre-commit run --all-files` completed without warnings.
 - [ ] **No Secrets:** Verified that no API keys or sensitive credentials are included in this PR.
 

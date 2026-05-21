@@ -281,7 +281,7 @@ class TestTokenRecallSearch:
     async def test_results_ordered_by_recall_score_desc(self) -> None:
         """When multiple records match, they should be returned in
         score-descending order — the best match first. This is the
-        behavior change that makes ``load_memory_node``'s top-k
+        behavior change that makes turn memory context top-k
         retrieval meaningful."""
 
         store = OpenCouchMemoryStore()

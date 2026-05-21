@@ -46,7 +46,7 @@ const LAYER_DEFS: LayerDef[] = [
     id: 'recall',
     label: 'Memory recall hint',
     dot: '#78b8af',
-    source: 'load_memory_node → recall toggle',
+    source: 'turn memory context → recall toggle',
     match: (l) => l.startsWith('═══ Memory reference guidance'),
   },
   {
@@ -60,7 +60,7 @@ const LAYER_DEFS: LayerDef[] = [
     id: 'instructions',
     label: 'Response instructions',
     dot: '#3d9990',
-    source: 'agent/therapeutic/prompting/instructions.py',
+    source: 'agent/runtime/agents/therapeutic_prompt_instructions.py',
     match: (l) => /^You are in [A-Z_]+ mode\./.test(l),
   },
   {

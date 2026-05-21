@@ -9,8 +9,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
-from agent.audit.models import SessionFeedbackRecord
-from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
+from agent.feedback.models import SessionFeedbackRecord
+from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
 _POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"

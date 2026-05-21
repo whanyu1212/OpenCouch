@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
-from agent.state import AgentState
+from agent.state import AgentState, cleared_exercise_state
 
 EXERCISE_STATE_FIELDS = (
     "exercise_type",
@@ -15,6 +16,84 @@ EXERCISE_STATE_FIELDS = (
     "exercise_version",
     "exercise_therapeutic_approach",
 )
+
+ACTIVE_FLOWS = {"none", "guided_exercise", "pending_memory_action"}
+ACTIVE_FLOW_ACTIONS = {"none", "start", "continue", "preserve", "resume", "clear"}
+
+
+@dataclass(frozen=True)
+class TurnLifecycleDecision:
+    """Resolved active-flow lifecycle metadata for the current turn."""
+
+    active_flow: str
+    action: str
+    state_delta: dict[str, object]
+
+
+def get_transcript(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return transcript turns from runtime state."""
+
+    transcript = state.get("transcript")
+    if isinstance(transcript, list):
+        return [turn for turn in transcript if isinstance(turn, dict)]
+
+    history = state.get("history")
+    if isinstance(history, list):
+        return [turn for turn in history if isinstance(turn, dict)]
+
+    return []
+
+
+def get_recent_history(
+    state: Mapping[str, Any], *, limit: int = 6
+) -> list[dict[str, Any]]:
+    """Return recent transcript turns for prompt/context use."""
+
+    if limit <= 0:
+        return []
+    return get_transcript(state)[-limit:]
+
+
+def format_recent_history(
+    state: Mapping[str, Any],
+    *,
+    limit: int = 6,
+    empty: str = "(no prior history)",
+) -> str:
+    """Format recent transcript turns for prompt injection."""
+
+    lines = []
+    for turn in get_recent_history(state, limit=limit):
+        content = str(turn.get("content", "") or "").strip()
+        if not content:
+            continue
+        role = str(turn.get("role", "unknown") or "unknown")
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines) or empty
+
+
+def current_turn_lifecycle(state: AgentState) -> TurnLifecycleDecision:
+    """Read the current turn's active-flow lifecycle decision from state."""
+
+    raw = state.get("turn_lifecycle")
+    if not isinstance(raw, Mapping):
+        raise ValueError("Missing or invalid turn_lifecycle state.")
+
+    active_flow = raw.get("active_flow")
+    action = raw.get("action")
+    if active_flow not in ACTIVE_FLOWS or action not in ACTIVE_FLOW_ACTIONS:
+        raise ValueError(f"Malformed turn_lifecycle state: {raw!r}.")
+    return TurnLifecycleDecision(str(active_flow), str(action), {})
+
+
+def clear_all_active_flows_delta() -> dict[str, object]:
+    """Return a delta that clears guided exercise and pending memory actions."""
+
+    return {
+        "exercise_state": cleared_exercise_state(),
+        "memory_control": {"action": {}, "pending_action": None},
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
+    }
 
 
 def transcript_length(state: AgentState | None) -> int:
@@ -128,10 +207,10 @@ def active_transcript_length(
 
 
 def crisis_level_from_state(state: AgentState) -> int:
-    """Extract the crisis level from a graph state.
+    """Extract the crisis level from a runtime state.
 
     Args:
-        state (AgentState): Graph state snapshot.
+        state (AgentState): Runtime state snapshot.
 
     Returns:
         int: Crisis level, defaulting to ``0`` when absent or unrecognized.

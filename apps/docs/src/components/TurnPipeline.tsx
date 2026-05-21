@@ -40,7 +40,7 @@ export default function TurnPipeline() {
           <Node num="2b" label="turn_dispatch_node" desc="LLM routes safe turns to memory control, grounded lookup, or therapeutic flow" accent="var(--safe-color)" compact />
           <Node num="3b" label="memory_control_node" desc="Operational memory replies for list/status/forget/recall/preference turns" accent="var(--safe-color)" compact />
           <Node num="3b" label="grounded_answer_node" desc="Search-grounded answer for explicit factual lookup turns" accent="var(--safe-color)" compact />
-          <Node num="4b" label="load_memory_node" desc="Hybrid RRF retrieval across 3 namespaces for ordinary support" accent="var(--safe-color)" compact />
+          <Node num="4b" label="turn_memory_context" desc="Runtime-owned retrieval across 3 namespaces for ordinary support" accent="var(--safe-color)" compact />
           <Node num="5b" label="therapeutic_subgraph" desc="LLM dispatcher → shared response node or guided exercise node" accent="var(--safe-color)" compact />
         </div>
       </div>

@@ -7,9 +7,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.reconciliation import is_active_semantic_record_value
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
+from tests.support.memory_fixtures import (
+    episodic_namespace,
+    seed_episodic_arc,
+    seed_procedural_profile,
+    seed_semantic_fact,
+    semantic_namespace,
+)
 
 
 def _make_memory_store() -> MemoryStore:
@@ -341,6 +349,124 @@ async def test_asearch_similar_filters_candidates_before_limit_truncation(
             "fact-22",
             "fact-23",
             "fact-24",
+        ]
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory",
+    [_make_memory_store, _make_sqlite_store],
+    ids=["memory", "sqlite"],
+)
+async def test_memory_fixture_seeds_semantic_fact_for_retrieval_parity(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    user_id = "user-fixture"
+
+    try:
+        fact = await seed_semantic_fact(
+            store,
+            user_id,
+            "My sister Sarah helps when panic starts.",
+            fact_id="fact-sarah",
+        )
+
+        results = await store.asearch_similar(
+            semantic_namespace(user_id),
+            query_text=(
+                "I'm getting that panic feeling again. "
+                "Who did I say I reach out to when panic starts?"
+            ),
+            query_embedding=None,
+            limit=10,
+        )
+
+        assert [record.key for record in results] == [fact.id]
+        assert results[0].value["evidence_quote"] == fact.evidence_quote
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory",
+    [_make_memory_store, _make_sqlite_store],
+    ids=["memory", "sqlite"],
+)
+async def test_memory_fixture_seeds_episodic_arc_for_retrieval_parity(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    user_id = "user-fixture"
+
+    try:
+        arc = await seed_episodic_arc(
+            store,
+            user_id,
+            (
+                "The user practiced a short presentation run and identified "
+                "a catastrophic prediction about freezing."
+            ),
+            arc_id="episode-presentation",
+            session_id="presentation-session",
+            primary_themes=[
+                "presentation anxiety",
+                "catastrophic predictions",
+            ],
+            approach_used="cbt",
+        )
+
+        results = await store.asearch_similar(
+            episodic_namespace(user_id),
+            query_text=(
+                "Before I present again, remind me what we worked out about "
+                "freezing during the presentation."
+            ),
+            query_embedding=None,
+            limit=10,
+        )
+
+        assert [record.key for record in results] == [arc.id]
+        assert results[0].value["summary"] == arc.summary
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "store_factory",
+    [_make_memory_store, _make_sqlite_store],
+    ids=["memory", "sqlite"],
+)
+async def test_memory_fixture_seeds_procedural_profile_parity(
+    store_factory: StoreFactory,
+) -> None:
+    store = store_factory()
+    user_id = "user-fixture"
+
+    try:
+        seeded_profile = await seed_procedural_profile(
+            store,
+            user_id,
+            [
+                "Use concise grounding prompts before offering reframes.",
+                "Ask before suggesting breathing exercises.",
+            ],
+            proactive_recall_enabled=True,
+            evidence=["The user asked for brief, consent-based support."],
+        )
+        stored_profile = await aget_procedural_profile(store, user_id=user_id)
+
+        assert stored_profile.proactive_recall_enabled is True
+        assert [rule.rule for rule in stored_profile.rules] == [
+            "Use concise grounding prompts before offering reframes.",
+            "Ask before suggesting breathing exercises.",
+        ]
+        assert [rule.rule for rule in seeded_profile.rules] == [
+            rule.rule for rule in stored_profile.rules
         ]
     finally:
         await store.aclose()

@@ -39,7 +39,7 @@ const STEPS: StepDef[] = [
   },
   {
     id: 'crisis_gate',
-    label: 'crisis_gate_node',
+    label: 'crisis_gate',
     sub: 'Safety first — every message, no exceptions',
     badges: [
       { label: 'LLM structured output', llm: true },
@@ -47,33 +47,33 @@ const STEPS: StepDef[] = [
     ],
     branch: {
       condition: 'needs_crisis_response',
-      targetA: 'crisis_response → crisis_log → finalize',
-      targetB: 'turn_dispatch → memory_control | grounded_answer | therapeutic',
+      targetA: 'crisis_resource_lookup → crisis_response → crisis_log → finalize',
+      targetB: 'turn_dispatch → memory_control | grounded_lookup | therapeutic',
       crisis: true,
     },
     detail: {
-      what: 'Hard safety boundary. Runs BEFORE memory retrieval — there is no path that loads context without first passing the safety check. Returns a Command(goto=...) that routes the turn.',
+      what: 'Hard safety boundary. Runs BEFORE memory retrieval — there is no path that loads context without first passing the safety check. Produces the route used by the runtime.',
       how: 'LLM-only classifier returns a structured CrisisAssessment with level 0–3. Local normalization enforces needs_crisis_response for levels 2–3 and needs_clarification for level 1; provider failures retry or surface instead of falling back to regex.',
       emits: 'state.crisis + state.routing.route ("crisis" | "therapeutic")',
     },
   },
   {
     id: 'turn_dispatch',
-    label: 'turn_dispatch_node',
+    label: 'turn_dispatch',
     sub: 'LLM route plan for safe turns',
     badges: [
       { label: 'LLM structured output', llm: true },
       { label: 'retry', retry: true },
     ],
     detail: {
-      what: 'Safe-turn router. Routes explicit saved-memory commands to memory_control_node, factual lookup requests to grounded_answer_node, and ordinary support to load_memory_node.',
+      what: 'Safe-turn router. Routes explicit saved-memory commands to memory control, factual lookup requests to grounded lookup, and ordinary support to load memory.',
       how: 'LLM-primary structured decision with local validation for active-flow actions, memory-control payloads, grounded lookup queries, and explicit memory-reference mode.',
-      emits: 'state.route + state.memory_control.action + state.grounded_lookup.query + Command(goto=...)',
+      emits: 'state.route + state.memory_control.action + state.grounded_lookup.query',
     },
   },
   {
     id: 'load_memory',
-    label: 'load_memory_node',
+    label: 'load_memory',
     sub: 'Therapeutic branch only — hybrid retrieval across 3 namespaces',
     badges: [
       { label: 'hybrid RRF' },
@@ -87,21 +87,21 @@ const STEPS: StepDef[] = [
   },
   {
     id: 'therapeutic',
-    label: 'therapeutic_subgraph',
-    sub: 'Dispatcher routes to shared response or guided exercise node',
+    label: 'TherapeuticAgent',
+    sub: 'Dispatcher routes to normal response or guided exercise',
     badges: [
-      { label: 'subgraph' },
-      { label: 'all nodes retry', retry: true },
+      { label: 'SDK agent' },
+      { label: 'guided handoff' },
     ],
     detail: {
-      what: 'Compiled StateGraph registered as a single parent node. Contains a dispatcher, one shared therapeutic response node, and one guided-exercise response node. Uses a narrow output schema so only response, approach, session action, diagnostics, and exercise state flow back to the parent.',
+      what: 'OpenAI Agents SDK specialist for safe therapeutic turns. The runtime owns dispatch, state transitions, session actions, diagnostics, and exercise state; the agent owns response generation.',
       how: 'Dispatcher is LLM-owned: the model picks response_style + therapeutic_approach, with local validation around active exercise state. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
       emits: 'response_style + response_text + therapeutic_approach + exercise_state',
     },
   },
   {
     id: 'finalize',
-    label: 'finalize_turn_node',
+    label: 'finalization',
     sub: 'Append assistant reply — single-element delta via operator.add reducer',
     badges: [
       { label: 'pure state' },
@@ -111,22 +111,6 @@ const STEPS: StepDef[] = [
       what: 'Appends the assistant response to transcript and history as a 1-element list. The operator.add reducer handles merging with the accumulated state from the checkpoint. Empty/whitespace responses produce an empty delta to keep the transcript clean.',
       how: 'Reads state.response_text, stamps routing metadata onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
       emits: 'state.transcript += [assistant_turn], state.history += [assistant_turn]',
-    },
-  },
-  {
-    id: 'extractors',
-    label: 'runtime extraction',
-    sub: 'Off-graph side effect after response finalization',
-    badges: [
-      { label: 'parallel', parallel: true },
-      { label: 'LLM structured output', llm: true },
-      { label: 'retry', retry: true },
-      { label: 'diagnostics reducer', reducer: true },
-    ],
-    detail: {
-      what: 'After the graph reaches END, the runtime schedules semantic and procedural extraction. Each lane extracts candidates with structured LLM output, then runs LLM-primary write policy with hard local safety/storage guards.',
-      how: 'Gating: crisis path -> skip, no LLM -> skip/error by path, incognito -> skip, small talk -> skip. Otherwise: structured-output extraction, policy decision, then immediate commit vs persisted active-session buffer vs drop. Session-end promotion later runs via runtime session finalization. Diagnostics record timing, write counts, policy drops, and policy errors.',
-      emits: 'state.diagnostics (extract_facts_ms, extract_procedural_ms, etc.)',
     },
   },
   {
@@ -239,7 +223,7 @@ export default function AgentGraph() {
 
   return (
     <div className={styles.root}>
-      <p className={styles.hint}>Click any step to expand. The pipeline shows the safety-first topology with runtime-owned post-response memory evaluation.</p>
+      <p className={styles.hint}>Click any step to expand. The pipeline shows the safety-first runtime topology.</p>
 
       <div className={styles.pipeline}>
         {STEPS.map((step) => {

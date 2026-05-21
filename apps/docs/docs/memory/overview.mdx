@@ -27,7 +27,7 @@ can report into the same turn without racing.
 :::
 
 :::info Working memory carries structured context
-`load_memory_node` returns `WorkingMemoryEntry` dicts with full
+The load-memory runtime stage returns `WorkingMemoryEntry` dicts with full
 semantic triples (category, subject, predicate, object) alongside the
 evidence quote. The response LLM sees entries like
 `[relationship] User WORRIES_ABOUT work — 'my boss is terrible'`
@@ -120,9 +120,6 @@ The `--user-id` flag decouples memory identity from thread identity
 | `agent/memory/policy/semantic.py` | Stable vs session-only semantic category policy constants |
 | `agent/memory/reconciliation.py` | LLM-primary bump / supersede / coexist handling for semantic + procedural writes |
 | `agent/memory/procedural_profile.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
-| `agent/memory/policy/small_talk.py` | Pre-extractor small-talk heuristic (length + vocabulary) |
-| `agent/memory/prompts/extraction.py` | Semantic extraction prompts |
-| `agent/memory/prompts/procedural.py` | Procedural extraction prompts |
 | `agent/memory/prompts/summarization.py` | Session summarization prompts |
 | `agent/memory/hashing.py` | `hash_session_id()`, `iso_now()` |
 | `agent/memory/types/` | Pydantic models grouped by concern (semantic, episodic, procedural, therapeutic, primitives) |
@@ -145,9 +142,7 @@ The `--user-id` flag decouples memory identity from thread identity
 |---|---|
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
 | `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
-| `agent/nodes/load_memory.py` | Per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
-| `agent/runtime/turn_extraction.py` | Runtime-owned turn extraction coordinator that schedules semantic/procedural memory work after graph `END` |
-| `agent/memory/turn_write_service.py` | Semantic/procedural candidate extraction and immediate-write orchestration |
+| `agent/memory/load_turn.py` | Per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
 | `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/session_commit_service.py` |
 | `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/episodic.py` |
 | `agent/persistence.py` | Shared session-end path, timeout handling, active-session buffering |

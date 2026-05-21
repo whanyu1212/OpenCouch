@@ -1,9 +1,9 @@
-"""Structured working-memory helpers.
+"""Prompt-facing working-memory view models and renderers.
 
-This module keeps the durable graph state raw and pushes any
-human-readable rendering to the surfaces that need it (prompt builders,
-dispatcher prompts, CLI panels). The state carries structured entries;
-formatting happens on demand.
+Durable memory models live under ``agent.memory.types``. This module defines
+the flattened, prompt-ready entries copied into turn state after retrieval, then
+renders those entries for human-facing surfaces such as prompts, SDK skill
+contexts, and CLI panels.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Literal, TypeAlias, TypedDict
 
 
 class SemanticWorkingMemoryEntry(TypedDict, total=False):
-    """Semantic fact retrieved for the current turn."""
+    """Prompt-ready projection of a retrieved semantic fact."""
 
     type: Literal["semantic"]
     evidence_quote: str
@@ -23,7 +23,7 @@ class SemanticWorkingMemoryEntry(TypedDict, total=False):
 
 
 class EpisodicWorkingMemoryEntry(TypedDict, total=False):
-    """Episodic session arc retrieved for the current turn."""
+    """Prompt-ready projection of a retrieved episodic session arc."""
 
     type: Literal["episodic"]
     summary: str
@@ -54,7 +54,7 @@ def make_semantic_working_memory_entry(
         object: Optional object identifier.
 
     Returns:
-        Structured entry for graph state.
+        Prompt-ready entry for turn working-memory state.
     """
 
     entry: SemanticWorkingMemoryEntry = {
@@ -90,7 +90,7 @@ def make_episodic_working_memory_entry(
         approach_context: Optional approach-specific session details.
 
     Returns:
-        Structured entry for graph state.
+        Prompt-ready entry for turn working-memory state.
     """
 
     entry: EpisodicWorkingMemoryEntry = {

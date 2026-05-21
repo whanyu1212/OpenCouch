@@ -8,7 +8,7 @@ import pytest
 from rich.console import Group
 from rich.spinner import Spinner
 
-from agent.memory.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
+from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.models import (
     AgentOutput,
     CrisisAssessment,
@@ -283,6 +283,8 @@ def test_render_status_guest_mode_hides_sqlite_path(capsys) -> None:
     assert "ephemeral" in out
     assert "owner id" in out
     assert "none (guest mode)" in out
+    assert "verbosity" in out
+    assert "compact" in out
     assert "sqlite path" not in out
 
 
@@ -302,6 +304,8 @@ def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
     assert "sqlite" in out
     assert "owner id" in out
     assert "thread-scoped" in out
+    assert "verbosity" in out
+    assert "compact" in out
     assert "sqlite path" in out
 
 
@@ -320,6 +324,7 @@ def test_help_command_registry_contains_current_public_commands() -> None:
     assert "/theme <mono|contrast|calm>" in displays
     assert "/mode <deterministic|hybrid|auto>" in displays
     assert "/response-tier <fast|quality>" in displays
+    assert "/verbosity <compact|verbose>" in displays
     assert "/trace on|off|once" in displays
     assert "/debug state" in displays
     assert "/end [new [thread-id]]" in displays
@@ -359,6 +364,7 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
     assert {"compact", "full"}.issubset(completions("/ui "))
     assert {"mono", "contrast", "calm"}.issubset(completions("/theme "))
     assert {"fast", "quality"}.issubset(completions("/response-tier "))
+    assert {"compact", "verbose"}.issubset(completions("/verbosity "))
     assert {"on", "off", "once"}.issubset(completions("/trace "))
 
 
@@ -480,6 +486,32 @@ def test_guest_pending_tail_status_avoids_memory_copy() -> None:
     assert "saving memory" not in text
 
 
+def test_split_stream_preview_text_hides_therapeutic_skill_loading_blob() -> None:
+    """Live preview should hide leaked skill-loading chatter from the reply panel."""
+
+    from opencouch_cli.app import _split_stream_preview_text
+
+    status, visible = _split_stream_preview_text(
+        'load_therapeutic_response_skill(response_style="supportive_guidance") '
+        'to=load_therapeutic_response_skill {"skill_context":"Use a brief, '
+        'attuned reflection."}That’s been sitting with you for years.'
+    )
+
+    assert status == "loading response style privately"
+    assert visible == "That’s been sitting with you for years."
+
+
+def test_split_stream_preview_text_leaves_normal_reply_text_unchanged() -> None:
+    """Ordinary streamed prose should render unchanged."""
+
+    from opencouch_cli.app import _split_stream_preview_text
+
+    status, visible = _split_stream_preview_text("That sounds really heavy.")
+
+    assert status is None
+    assert visible == "That sounds really heavy."
+
+
 def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
     """Route display should stay compact and source from AgentOutput metadata."""
 
@@ -503,6 +535,66 @@ def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
     assert "normal" in out
     assert "42ms" in out
     assert "saving memory" in out
+
+
+def test_render_turn_activity_compact_shows_tool_badges(capsys) -> None:
+    """Compact observability should show a terse tool badge row."""
+
+    from opencouch_cli.app import render_turn_activity
+
+    render_turn_activity(
+        AgentOutput(
+            response_text="done",
+            response_type=ResponseCategory.THERAPEUTIC,
+            crisis=CrisisAssessment(),
+            response_style="supportive",
+            diagnostics={
+                "openai_therapeutic_skill_tool_calls": [
+                    "load_therapeutic_response_skill"
+                ],
+                "openai_memory_tool_calls": ["show_saved_memory"],
+            },
+        ),
+        observability_mode="compact",
+    )
+    out = capsys.readouterr().out
+
+    assert "tools" in out
+    assert "response-style" in out
+    assert "memory" in out
+
+
+def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
+    """Verbose observability should expand into a richer activity block."""
+
+    from opencouch_cli.app import render_turn_activity
+
+    render_turn_activity(
+        AgentOutput(
+            response_text="done",
+            response_type=ResponseCategory.THERAPEUTIC,
+            crisis=CrisisAssessment(needs_clarification=True),
+            response_style="supportive",
+            therapeutic_approach="cbt",
+            diagnostics={
+                "openai_therapeutic_skill_tool_calls": [
+                    "load_therapeutic_response_skill"
+                ],
+                "openai_therapeutic_skill_response_style": "supportive",
+                "openai_grounded_tool_calls": ["answer_grounded_lookup"],
+            },
+        ),
+        observability_mode="verbose",
+    )
+    out = capsys.readouterr().out
+
+    assert "turn activity" in out
+    assert "route" in out
+    assert "supportive / cbt" in out
+    assert "response-style" in out
+    assert "load_therapeutic_response_skill → supportive" in out
+    assert "answer_grounded_lookup" in out
+    assert "awaiting safety clarification" in out
 
 
 def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
@@ -536,7 +628,7 @@ def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
                 ]
             },
         ),
-        status_stages=["crisis_gate", "turn_dispatch"],
+        status_stages=["load_memory", "therapeutic"],
         pending_status="finishing turn",
     )
     out = capsys.readouterr().out
@@ -1129,7 +1221,7 @@ async def test_chat_loop_renders_postgres_startup_hint(monkeypatch) -> None:
     assert messages[0][0] == "danger"
     assert "Postgres persistence is configured" in messages[0][1]
     assert "docker compose -f compose.yml up -d postgres --wait" in messages[0][1]
-    assert "./scripts/cli_dogfood.sh" in messages[0][1]
+    assert "./scripts/text_repl.sh" in messages[0][1]
 
 
 @pytest.mark.asyncio
@@ -1367,6 +1459,25 @@ async def test_response_tier_command_updates_session(monkeypatch) -> None:
     assert session.response_model_tier == "quality"
     assert session.response_llm_client is response_client
     assert messages == [("success", "Response tier updated. tier=quality")]
+
+
+@pytest.mark.asyncio
+async def test_verbosity_command_updates_session_mode(capsys) -> None:
+    """The /verbosity command should switch compact vs verbose observability."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/verbosity verbose", session, runtime) is True
+    assert session.observability_mode == "verbose"
+
+    assert await handle_command("/verbosity compact", session, runtime) is True
+    assert session.observability_mode == "compact"
+
+    assert await handle_command("/verbosity nope", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "Usage: /verbosity <compact|verbose>" in out
 
 
 @pytest.mark.asyncio
@@ -2846,11 +2957,7 @@ class TestRenderStageTimings:
             diagnostics={
                 "load_memory_ms": 1.23,
                 "crisis_gate_ms": 2.34,
-                "extract_facts_ms": 3.45,
-                "extract_procedural_ms": 4.56,
                 "turn_total_ms": 99.99,
-                "semantic_writes": 1,
-                "procedural_writes": 0,
             },
             memory_deltas={"semantic": 1, "episodic": 0, "procedural": 0},
         )
@@ -2858,8 +2965,8 @@ class TestRenderStageTimings:
 
         assert "load_memory" in out
         assert "crisis_gate" in out
-        assert "extract_facts" in out
-        assert "extract_procedural" in out
+        assert "semantic_memory" in out
+        assert "procedural_memory" in out
         assert "turn_total" in out
         assert "1.23" in out
         assert "2.34" in out
@@ -2879,31 +2986,23 @@ class TestRenderStageTimings:
         assert "5.00" in out
         # Rows for missing stages still appear with "-" in the time column
         assert "crisis_gate" in out
-        assert "extract_facts" in out
+        assert "semantic_memory" in out
 
-    def test_policy_hold_counts_render_in_writes_column(self, capsys) -> None:
-        """Phase-1 policy counters should surface in the writes column."""
+    def test_memory_deltas_render_in_store_delta_column(self, capsys) -> None:
+        """Store deltas should surface without extraction diagnostics."""
 
         from opencouch_cli.app import _render_stage_timings
 
         _render_stage_timings(
-            diagnostics={
-                "extract_facts_ms": 3.45,
-                "extract_procedural_ms": 4.56,
-                "semantic_writes": 1,
-                "semantic_session_end_holds": 2,
-                "semantic_repeat_required": 1,
-                "semantic_policy_drops": 1,
-                "procedural_writes": 0,
-                "procedural_session_end_holds": 1,
-                "procedural_policy_drops": 1,
-            },
+            diagnostics={},
             memory_deltas={"semantic": 1, "procedural": 0},
         )
         out = capsys.readouterr().out
 
-        assert "1 (h2 r1 d1)" in out
-        assert "0 (h1 d1)" in out
+        assert "semantic_memory" in out
+        assert "procedural_memory" in out
+        assert "+1" in out
+        assert " 0" in out or "│0" in out
 
 
 class TestDebugStateCommand:

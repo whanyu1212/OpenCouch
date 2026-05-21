@@ -7,10 +7,10 @@ from typing import Any, cast
 
 import pytest
 
-from agent.graph import build_initial_state
+from agent.runtime import build_initial_state
+from agent.tools.crisis import build_crisis_resource_lookup_delta
 from agent.memory.modes import MemoryMode
 from agent.models import AgentInput, CrisisAssessment
-from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
@@ -102,9 +102,9 @@ def _state(
 @pytest.mark.asyncio
 async def test_crisis_resource_lookup_node_requires_llm() -> None:
     with pytest.raises(RuntimeError, match="requires an LLM client"):
-        await run_crisis_resource_lookup_node(
+        await build_crisis_resource_lookup_delta(
             _state(),
-            cast(Any, _FakeRuntime(llm_client=None)),
+            _FakeRuntime(llm_client=None).context,
         )
 
 
@@ -132,9 +132,9 @@ async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() 
         ],
     )
 
-    delta = await run_crisis_resource_lookup_node(
+    delta = await build_crisis_resource_lookup_delta(
         _state(),
-        cast(Any, _FakeRuntime(llm_client=llm)),
+        _FakeRuntime(llm_client=llm).context,
     )
 
     assert delta == {
@@ -164,9 +164,9 @@ async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
         ]
     )
 
-    delta = await run_crisis_resource_lookup_node(
+    delta = await build_crisis_resource_lookup_delta(
         _state("I might hurt myself, but I don't want to share where I am."),
-        cast(Any, _FakeRuntime(llm_client=llm)),
+        _FakeRuntime(llm_client=llm).context,
     )
 
     assert delta == {
@@ -182,7 +182,7 @@ async def test_crisis_resource_lookup_node_surfaces_lookup_failure() -> None:
     llm = _FakeLookupLLM(structured_responses=[])
 
     with pytest.raises(AssertionError, match="No fake structured response configured"):
-        await run_crisis_resource_lookup_node(
+        await build_crisis_resource_lookup_delta(
             _state(),
-            cast(Any, _FakeRuntime(llm_client=llm)),
+            _FakeRuntime(llm_client=llm).context,
         )

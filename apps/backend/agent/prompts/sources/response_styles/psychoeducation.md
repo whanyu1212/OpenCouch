@@ -147,11 +147,11 @@ Psychoeducation is for **confusion about one's own reaction** — the user is tr
 - "Why do I always cry when she calls?" → psychoeducation (seeking a frame)
 - "I cried again today and I hate it" → supportive (expressing, with self-judgment that needs validation first)
 
-If the dispatcher routed to psychoeducation but the user's message is an expression of emotion rather than a question about their own reaction, use the permission-first pattern below.
+If this skill was selected but the user's message is an expression of emotion rather than a question about their own reaction, use the permission-first pattern below.
 
 ## Ask before explaining when the moment is acute
 
-Sometimes the dispatcher surfaces psychoeducation based on cue words like "why" or "what's happening," but the user's underlying state is too acute for a framing response. Signs of this:
+Sometimes psychoeducation is selected based on cue words like "why" or "what's happening," but the user's underlying state is too acute for a framing response. Signs of this:
 
 - Very short and emotionally charged message ("I can't. Why is this happening.")
 - Distress markers ("I'm scared", "this is too much", "I can't breathe")
@@ -162,7 +162,7 @@ In these cases, do not deliver a framing explanation. Use the shortest form of t
 Good example:
 > "Something's landing hard right now. I have a thought about what might be happening — but first, are you okay to sit with this for a moment, or do you need something steadier?"
 
-This is still psychoeducation — the response style is not refusing the dispatch or rerouting. It's doing psychoeducation in its minimal, permission-first form. Whatever the user says next will be handled by the dispatcher on the following turn.
+This is still psychoeducation — the response style is using its minimal, permission-first form. Whatever the user says next will be handled by the next turn's selected response skill.
 
 ## Pop-neuroscience shorthand
 

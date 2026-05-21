@@ -1,11 +1,10 @@
-"""Write policy for hot-path memory persistence.
+"""Write policy for memory persistence.
 
-The LLM extractors decide whether something is *candidate* memory.
-This module asks an LLM-primary policy classifier whether that candidate
-should commit immediately, wait for session-end review, require repeated
-evidence, or drop. Local code only enforces hard safety/storage
-invariants; it does not provide product-judgment fallback writes when the
-policy LLM is unavailable.
+Callers decide whether something is *candidate* memory. This module asks an
+LLM-primary policy classifier whether that candidate should commit immediately,
+wait for session-end review, require repeated evidence, or drop. Local code
+only enforces hard safety/storage invariants; it does not provide
+product-judgment fallback writes when the policy LLM is unavailable.
 """
 
 from __future__ import annotations

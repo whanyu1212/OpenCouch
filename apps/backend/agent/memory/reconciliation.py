@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent.memory.models import MemoryWrite, ProceduralRule, SemanticFact
+from agent.memory.types import MemoryWrite, ProceduralRule, SemanticFact
 from agent.memory.store import StoreRecord
 from llm.base import BaseLLMClient
 

@@ -105,7 +105,6 @@ STAGE_LABELS: dict[str, str] = {
     "memory_profile_save": "saving profile memory",
     "memory_graph_save": "writing graph memory",
     "crisis_gate": "safety check",
-    "turn_dispatch": "routing turn",
     "memory_control": "updating memory",
     "grounded_lookup": "looking up factual answer",
     "crisis_resource_lookup": "looking up crisis resources",
@@ -113,8 +112,6 @@ STAGE_LABELS: dict[str, str] = {
     "crisis_clarification": "checking immediate safety",
     "crisis_log": "writing crisis log",
     "therapeutic": "generating therapeutic reply",
-    "extract_facts": "extracting facts",
-    "extract_procedural": "extracting style rules",
     "finalize": "finalizing turn",
     "session_stage": "reading context",
     "response_generation": "generating",
@@ -148,10 +145,9 @@ class ResponseReadyEvent(BaseModel):
     """Non-terminal event emitted when the reply is finalized.
 
     This fires after ``finalize_turn_node`` has appended the assistant
-    reply to transcript, but before post-response memory writers
-    finish. The output payload is intentionally partial: response text,
-    routing, and crisis metadata are ready; tail diagnostics like
-    ``turn_total_ms`` still land on the terminal ``DoneEvent``.
+    reply to transcript. The output payload is intentionally partial:
+    response text, routing, and crisis metadata are ready; tail diagnostics
+    like ``turn_total_ms`` still land on the terminal ``DoneEvent``.
     """
 
     type: Literal["response_ready"] = "response_ready"

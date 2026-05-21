@@ -57,23 +57,6 @@ services:
     ports:
       - "8080:8080"
 
-  voice-agent:
-    <<: *backend-service
-    build:
-      context: .
-      dockerfile: apps/backend/Dockerfile
-      target: voice-dev
-    command:
-      - python
-      - -m
-      - agent.voice.agent
-      - start
-    depends_on:
-      postgres:
-        condition: service_healthy
-      api:
-        condition: service_started
-
   web:
     build:
       context: .

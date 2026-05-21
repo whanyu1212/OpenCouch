@@ -36,7 +36,7 @@ from agent.state import AgentState, resolve_owner_id
 
 if TYPE_CHECKING:
     from agent.memory.embeddings import EmbeddingProvider
-    from agent.memory.models import StoredSessionArc
+    from agent.memory.types import StoredSessionArc
     from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ def _user_turn_texts(state: AgentState) -> list[str]:
     """Return the user-turn transcript texts for session-end scoring.
 
     Args:
-        state: Current graph state containing the session transcript.
+        state: Current runtime state containing the session transcript.
 
     Returns:
         Non-empty user turn texts.
@@ -467,7 +467,7 @@ async def commit_session_memory(
     """Commit buffered semantic/procedural candidates that survived review.
 
     Args:
-        state: Current graph state at session end.
+        state: Current runtime state at session end.
         memory_store: Store used for semantic/procedural writes.
         session_buffer: Runtime buffer containing held memory candidates.
         stored_arc: Optional episodic arc generated for the completed session.

@@ -1,23 +1,22 @@
-"""Unit tests for the refactored load_memory_node and finalize_turn_node.
+"""Unit tests for turn memory context and assistant-turn finalization stages.
 
-The pre-refactor version of ``run_load_memory_node`` wrote to seven state
+The pre-refactor memory-load stage wrote to seven state
 keys (transcript, history, working_memory, memory, session_progress,
 exercise_state, routing,
 response) including a deterministic bootstrap reply that was appended
-to the transcript every turn. That behavior was wrong because the node
-runs on the spine, not once per session — see the header comment in
-``agent/nodes/load_memory.py`` for the full history.
+to the transcript every turn. That behavior was wrong because turn memory
+loading runs on the response path, not once per session.
 
-The refactored node only writes ``working_memory``, ``session_memory``,
-and ``procedural_profile``.
+The refactored turn memory context only writes ``working_memory``,
+``session_memory``, and ``procedural_profile``.
 These tests pin that shape and verify the specific regressions the
 refactor fixed:
 
 1. No phantom assistant turns get appended to the transcript.
-2. The node does NOT touch routing/response/session_progress/exercise_state.
+2. Turn memory loading does NOT touch routing/response/session_progress/exercise_state.
 3. Guest mode still short-circuits and returns an empty working memory.
 4. Real retrieval still returns formatted memory snippets.
-5. finalize_turn_node appends the assistant response exactly once at
+5. Assistant-turn finalization appends the assistant response exactly once at
    turn end, guarded against empty responses.
 """
 
@@ -36,8 +35,8 @@ from agent.memory.recall import (
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
-from agent.nodes.finalize_turn import run_finalize_turn_node
-from agent.nodes.load_memory import run_load_memory_node
+from agent.runtime.turn_finalization import finalize_assistant_turn_delta
+from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entry
@@ -47,7 +46,7 @@ from agent.memory.entries import format_working_memory_entry
 
 
 class _FakeRuntime:
-    """Minimal runtime stand-in that mimics langgraph.runtime.Runtime.
+    """Minimal runtime stand-in with the context shape used by memory loading.
 
     The real Runtime is a pydantic-backed object with a ``context``
     attribute. These tests accept context overrides and materialize a
@@ -98,11 +97,11 @@ def _make_state(
     session_memory: dict[str, Any] | None = None,
     procedural_profile: dict[str, Any] | None = None,
 ) -> AgentState:
-    """Build a minimal AgentState for unit testing the node helpers.
+    """Build a minimal AgentState for unit testing turn memory helpers.
 
     AgentState is a TypedDict; the type annotation is an assertion for
     the type checker, not a runtime constructor. A plain dict with the
-    keys the node reads is sufficient. Keys the node doesn't touch can
+    keys the helper reads is sufficient. Keys the helper doesn't touch can
     be omitted.
     """
 
@@ -129,11 +128,11 @@ def _make_state(
     return state  # type: ignore[return-value]
 
 
-# ─── load_memory_node tests ─────────────────────────────────────────────
+# ─── Turn memory context tests ──────────────────────────────────────────
 
 
-class TestLoadMemoryNode:
-    """Regression tests for the refactored load_memory_node."""
+class TestTurnMemoryContext:
+    """Regression tests for the runtime-owned turn memory context."""
 
     @pytest.mark.asyncio
     async def test_returns_only_working_memory_and_memory_state_keys(
@@ -141,10 +140,10 @@ class TestLoadMemoryNode:
     ) -> None:
         """The delta must contain only the expected load-memory channels.
 
-        The node now owns ``working_memory``, ``session_memory``,
+        The turn memory context owns ``working_memory``, ``session_memory``,
         ``procedural_profile``, and ``diagnostics`` — no transcript,
         history, response, routing, session_progress, or exercise_state.
-        This is the core regression: the old node wrote to seven keys,
+        This is the core regression: the old loader wrote to seven keys,
         and the response/routing/transcript writes caused the phantom
         assistant turn bug.
 
@@ -159,7 +158,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state()
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert set(delta.keys()) == {
             "working_memory",
@@ -194,7 +193,7 @@ class TestLoadMemoryNode:
         )
         state = _make_state(message="Sarah")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["working_memory"] == []
         assert (
@@ -216,7 +215,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="Sarah")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert len(delta["working_memory"]) == 1
         _assert_semantic_entry(
@@ -269,7 +268,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="sister moved")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert len(delta["working_memory"]) == 1
         _assert_semantic_entry(
@@ -311,7 +310,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="sister moved")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert [entry["evidence_quote"] for entry in delta["working_memory"]] == [
             f"My sister moved active entry {index}"
@@ -335,7 +334,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="something totally unrelated")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["working_memory"] == []
         # Empty stores (0 semantic, 0 episodic, 0 procedural), 3 meaningful
@@ -382,7 +381,7 @@ class TestLoadMemoryNode:
         # Query has no topical overlap with either stored fact.
         state = _make_state(message="tell me about octopuses")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # 0 hits, BUT store size is 2 — this is the discriminating line.
         assert delta["working_memory"] == []
@@ -405,7 +404,7 @@ class TestLoadMemoryNode:
         # because adjectives are content words, not stopwords.
         state = _make_state(message="I am so tired of the work that I worry about")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # Expect "(query had 3 meaningful token(s))." — the stopword
         # filter dropped the pronouns, copulas, and connectives, but
@@ -429,7 +428,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="I am so the")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["working_memory"] == []
         assert "0 of 1 semantic record(s)" in delta["session_memory"]["summary"]
@@ -437,10 +436,10 @@ class TestLoadMemoryNode:
 
     @pytest.mark.asyncio
     async def test_preserves_other_session_memory_fields_via_spread(self) -> None:
-        """When updating ``session_memory.summary``, the node preserves peers.
+        """When updating ``session_memory.summary``, the helper preserves peers.
 
         runtime's default reducer replaces whole dict values, so the
-        node must spread the existing ``session_memory`` dict before
+        helper must spread the existing ``session_memory`` dict before
         overwriting ``summary``.
         """
 
@@ -455,7 +454,7 @@ class TestLoadMemoryNode:
             }
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["session_memory"]["active_concerns"] == ["work stress"]
         assert delta["session_memory"]["open_loops"] == ["unresolved grief"]
@@ -478,7 +477,7 @@ class TestLoadMemoryNode:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="Sarah", session_id="session-abc", user_id=None)
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert len(delta["working_memory"]) == 1
 
@@ -503,7 +502,7 @@ class TestLoadMemoryNode:
             user_id="user-42",
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert len(delta["working_memory"]) == 1
 
@@ -511,7 +510,7 @@ class TestLoadMemoryNode:
 # ─── Speculative memory pre-fetch tests ───────────────────────────────
 #
 # When the runtime schedules ``load_memory_for_turn`` at turn start so it
-# overlaps with the crisis/control/grounded gates, ``run_load_memory_node``
+# overlaps with the crisis/control/grounded gates, the memory-load stage
 # must:
 #
 # 1. Prefer the pre-fetched task when present and successful, exposing a
@@ -533,7 +532,7 @@ class TestSpeculativeMemoryPrefetch:
 
     @pytest.mark.asyncio
     async def test_speculation_hit_uses_pre_fetched_result(self) -> None:
-        """When the pre-fetched task resolves before the node runs, the node
+        """When the pre-fetched task resolves before memory loading runs, it
         should consume its result and tag the diagnostics as a hit."""
 
         import asyncio
@@ -547,7 +546,7 @@ class TestSpeculativeMemoryPrefetch:
             {"evidence_quote": "I love hiking on weekends"},
         )
 
-        # Schedule the pre-fetch and let it complete before the node runs.
+        # Schedule the pre-fetch and let it complete before memory loading runs.
         pre_fetched = asyncio.create_task(
             load_memory_for_turn(
                 memory_store=store,
@@ -557,7 +556,7 @@ class TestSpeculativeMemoryPrefetch:
                 is_first_turn=False,
             )
         )
-        await pre_fetched  # Force resolution before invoking the node.
+        await pre_fetched  # Force resolution before invoking the helper.
 
         runtime = _FakeRuntime(
             {
@@ -568,7 +567,7 @@ class TestSpeculativeMemoryPrefetch:
         )
         state = _make_state(message="hiking", session_id="thread-spec")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["diagnostics"]["load_memory_speculation_used"] is True
         # Already resolved → wait time is essentially zero.
@@ -578,7 +577,7 @@ class TestSpeculativeMemoryPrefetch:
 
     @pytest.mark.asyncio
     async def test_speculation_failure_falls_back_to_fresh_call(self) -> None:
-        """If the pre-fetched task raises, the node must catch and fall back
+        """If the pre-fetched task raises, the helper must catch and fall back
         to a fresh ``load_memory_for_turn`` call rather than failing the turn."""
 
         import asyncio
@@ -604,7 +603,7 @@ class TestSpeculativeMemoryPrefetch:
         )
         state = _make_state(message="hiking", session_id="thread-spec")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # Fallback path → speculation_used=False, but the turn still got memory.
         assert delta["diagnostics"]["load_memory_speculation_used"] is False
@@ -616,7 +615,7 @@ class TestSpeculativeMemoryPrefetch:
         self,
     ) -> None:
         """When the runtime does not schedule a pre-fetch (e.g., the flag is
-        off, or for one-shot ``run_agent`` callers), the node must call
+        off, or for one-shot ``run_agent`` callers), the helper must call
         ``load_memory_for_turn`` inline and report a clean miss."""
 
         store = OpenCouchMemoryStore()
@@ -635,7 +634,7 @@ class TestSpeculativeMemoryPrefetch:
         )
         state = _make_state(message="hiking", session_id="thread-spec")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["diagnostics"]["load_memory_speculation_used"] is False
         assert delta["diagnostics"]["load_memory_speculation_wait_ms"] == 0.0
@@ -644,7 +643,7 @@ class TestSpeculativeMemoryPrefetch:
 
 # ─── v0.7 Stage C procedural retrieval tests ───────────────────────────
 #
-# load_memory_node now also loads the user's procedural profile (rules
+# Turn memory context now also loads the user's procedural profile (rules
 # + recall toggle) and attaches it to ``state["procedural_profile"]``.
 # These fields are STRUCTURALLY SEPARATE from working_memory because
 # procedural rules
@@ -662,7 +661,7 @@ class TestSpeculativeMemoryPrefetch:
 
 
 class TestProceduralRetrieval:
-    """Tests for the Stage C procedural read path in load_memory_node."""
+    """Tests for the Stage C procedural read path in turn memory context."""
 
     @pytest.mark.asyncio
     async def test_guest_mode_returns_empty_procedural_state(self) -> None:
@@ -693,7 +692,7 @@ class TestProceduralRetrieval:
         )
         state = _make_state()
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         procedural_profile = delta["procedural_profile"]
         assert procedural_profile["procedural_rules"] == []
@@ -709,7 +708,7 @@ class TestProceduralRetrieval:
 
         The empty-default-on-miss behavior comes from Stage A's
         ``aget_procedural_profile`` helper. This test pins that the
-        load_memory node propagates those defaults to state without
+        turn memory context propagates those defaults to state without
         creating a stray record in the store.
         """
 
@@ -717,7 +716,7 @@ class TestProceduralRetrieval:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="hello")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         procedural_profile = delta["procedural_profile"]
         assert procedural_profile["procedural_rules"] == []
@@ -759,7 +758,7 @@ class TestProceduralRetrieval:
         # return both (non-query-based semantics).
         state = _make_state(message="tell me about the weather today")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         procedural_profile = delta["procedural_profile"]
         assert procedural_profile["procedural_rules"] == [
@@ -786,7 +785,7 @@ class TestProceduralRetrieval:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state()
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["procedural_profile"]["proactive_recall_enabled"] is True
 
@@ -809,7 +808,7 @@ class TestProceduralRetrieval:
             },
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         session_memory = delta["session_memory"]
         # Preserved:
@@ -855,7 +854,7 @@ class TestProceduralRetrieval:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="hello")
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         summary = delta["session_memory"]["summary"]
         assert "1 procedural rule(s)" in summary
@@ -889,7 +888,7 @@ def _make_episodic_record_value(
     """Build a dict that matches the serialized StoredSessionArc shape.
 
     We construct the dict directly rather than going through the pydantic
-    model to keep these tests focused on load_memory_node behavior.
+    model to keep these tests focused on turn memory behavior.
     The shape here mirrors what the summarizer actually writes via
     ``stored_arc.model_dump(mode='json')``.
     """
@@ -933,7 +932,7 @@ def _multi_turn_transcript() -> list[dict[str, str]]:
 
 
 class TestEpisodicRetrieval:
-    """Tests for v0.4's episodic branch of load_memory_node."""
+    """Tests for v0.4's episodic branch of turn memory context."""
 
     @pytest.mark.asyncio
     async def test_catch_up_fires_on_first_turn_regardless_of_query(
@@ -965,7 +964,7 @@ class TestEpisodicRetrieval:
             ),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert len(delta["working_memory"]) == 1
         entry = delta["working_memory"][0]
@@ -1000,7 +999,7 @@ class TestEpisodicRetrieval:
             transcript=_multi_turn_transcript(),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["working_memory"] == []
         # And the summary should say 0 of 1 episodic (store has a record
@@ -1032,7 +1031,7 @@ class TestEpisodicRetrieval:
             transcript=_multi_turn_transcript(),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert len(delta["working_memory"]) == 1
         _assert_episodic_entry(
@@ -1085,7 +1084,7 @@ class TestEpisodicRetrieval:
             transcript=_single_turn_transcript("hi"),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # The catch-up entry should be the MOST RECENT arc (arc-3),
         # not the oldest (arc-1). Because "hi" has no token overlap with
@@ -1129,7 +1128,7 @@ class TestEpisodicRetrieval:
             transcript=_multi_turn_transcript(),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # Both should surface — semantic via token-recall, episodic via
         # query-based retrieval (not catch-up, since this is multi-turn).
@@ -1171,7 +1170,7 @@ class TestEpisodicRetrieval:
             transcript=_single_turn_transcript("let me tell you about my work anxiety"),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # Only one entry, even though both code paths matched
         assert len(delta["working_memory"]) == 1
@@ -1205,7 +1204,7 @@ class TestEpisodicRetrieval:
         runtime = _FakeRuntime({"memory_store": store, "memory_mode": MemoryMode.LOCAL})
         state = _make_state(message="Sarah", transcript=_multi_turn_transcript())
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         summary_str = delta["session_memory"]["summary"]
         # Semantic count: 2 in store, 1 hit on "Sarah" query
@@ -1236,7 +1235,7 @@ class TestEpisodicRetrieval:
             transcript=_single_turn_transcript("hi"),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["working_memory"] == []
         assert (
@@ -1275,7 +1274,7 @@ class TestEpisodicRetrieval:
             transcript=_single_turn_transcript("hi"),
         )
 
-        delta = await run_load_memory_node(state, runtime)  # type: ignore[arg-type]
+        delta = await build_turn_memory_delta(state, runtime.context)
 
         # The catch-up entry MUST be the newest arc (session-54), not the
         # 50th-oldest (session-49) which the old code would have returned.
@@ -1315,9 +1314,7 @@ class TestFinalizeTurnNode:
             "transcript": [{"role": "user", "content": "Hi"}],
             "response_text": "Hello, how can I help?",
         }
-        runtime = _FakeRuntime({})
-
-        delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
+        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
 
         assert len(delta["transcript"]) == 1
         assert delta["transcript"][0] == {
@@ -1338,9 +1335,7 @@ class TestFinalizeTurnNode:
             "history": [{"role": "user", "content": "Hi"}],
             "response_text": "",
         }
-        runtime = _FakeRuntime({})
-
-        delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
+        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
 
         assert "transcript" not in delta
         assert "finalize_done_at_monotonic" in delta["diagnostics"]
@@ -1355,9 +1350,7 @@ class TestFinalizeTurnNode:
             "history": [],
             "response_text": "   \n\t  ",
         }
-        runtime = _FakeRuntime({})
-
-        delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
+        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
 
         assert "transcript" not in delta
         assert "finalize_done_at_monotonic" in delta["diagnostics"]
@@ -1371,9 +1364,7 @@ class TestFinalizeTurnNode:
             "transcript": [{"role": "user", "content": "Hi"}],
             "history": [],
         }
-        runtime = _FakeRuntime({})
-
-        delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
+        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
 
         assert "transcript" not in delta
         assert "finalize_done_at_monotonic" in delta["diagnostics"]
@@ -1391,9 +1382,7 @@ class TestFinalizeTurnNode:
             "response_style": "supportive",
             "session_memory": {"summary": "x"},
         }
-        runtime = _FakeRuntime({})
-
-        delta = await run_finalize_turn_node(state, runtime)  # type: ignore[arg-type]
+        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
 
         assert set(delta.keys()) == {"transcript", "diagnostics"}
         assert set(delta["diagnostics"].keys()) == {"finalize_done_at_monotonic"}

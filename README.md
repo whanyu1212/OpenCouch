@@ -2,13 +2,11 @@
 
 <img src="apps/docs/static/img/opencouch-banner-1280x420.png" width="100%" alt="OpenCouch banner" />
 
-**A chat and voice mental health companion that supports your well-being through reflection, guided exercises, and a memory that grows with you.**
+**A chat mental health companion that supports your well-being through reflection, guided exercises, and a memory that grows with you.**
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C?style=flat-square&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
-[![LiveKit](https://img.shields.io/badge/LiveKit-voice-FF2E63?style=flat-square&logo=livekit&logoColor=white)](https://livekit.io/)
-[![OpenAI Realtime](https://img.shields.io/badge/OpenAI-Realtime-412991?style=flat-square&logo=openai&logoColor=white)](https://platform.openai.com/docs/guides/realtime)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
@@ -19,7 +17,7 @@
 > OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
 
 > [!WARNING]
-> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/cli_dogfood.sh`](scripts/cli_dogfood.sh) to start the text agent and [`scripts/voice_agent.sh`](scripts/voice_agent.sh) to start the LiveKit voice agent. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
+> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/text_repl.sh`](scripts/text_repl.sh) to start the text agent. Voice support is temporarily removed and will be rebuilt from scratch. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
 
 ---
 
@@ -44,13 +42,13 @@
 
 ## 📖 Overview
 
-OpenCouch is a chat and voice companion for day-to-day emotional support, self-reflection, and practical coping. It combines modern conversational AI with structured therapeutic patterns, so users can move between open-ended conversation, guided exercises, and longer-term reflection without starting over each time.
+OpenCouch is a chat companion for day-to-day emotional support, self-reflection, and practical coping. It combines modern conversational AI with structured therapeutic patterns, so users can move between open-ended conversation, guided exercises, and longer-term reflection without starting over each time.
 
 Unlike chatting with ChatGPT, Gemini, or Claude on the web, OpenCouch is not a blank general-purpose assistant. It is built around mental-health-adjacent product needs: safety-aware routing, continuity across sessions, structured memory, and concrete coping workflows. General AI chat can be helpful in the moment, but OpenCouch is designed to support ongoing daily use—remembering what has mattered, guiding users through exercises like grounding or thought work, and keeping the experience focused on emotional support rather than generic task completion.
 
-Under the hood, the text runtime is a [LangGraph](https://langchain-ai.github.io/langgraph/) graph behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing, and local evals plus Opik traces help catch regressions in core routing behavior.
+Under the hood, the text runtime uses the OpenAI Agents SDK behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing, and backend tests plus Opik traces help catch regressions in core routing behavior.
 
-Voice support is experimental and LiveKit-native. The browser joins a LiveKit room, a LiveKit Agents worker owns the speech loop, and OpenAI Realtime handles the speech-to-speech model interaction. The voice worker now lives under `agent/voice/` and uses OpenCouch plain services for crisis classification, turn policy, memory context, exercise consent, tools, and transcript finalization.
+Voice support is intentionally absent during the current runtime cleanup and will be rebuilt from scratch after the text agent architecture settles.
 
 The project is still pre-beta; a closed beta is planned.
 
@@ -58,7 +56,6 @@ The project is still pre-beta; a closed beta is planned.
 - **Persistent Memory:** Retains context across sessions using semantic facts, episodic arcs, and procedural rules.
 - **Safety First:** Built-in safety routing evaluates every turn before responding, backed by a durable crisis-audit log.
 - **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
-- **Voice Support:** Browser voice sessions via LiveKit and OpenAI Realtime, with configurable voices, transcription hints, and interruption handling.
 - **Optional Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
 - **Tracing & Regression Checks:** Backend tests, live-provider checks, and Opik traces for regression tracking.
 
@@ -107,20 +104,10 @@ OPENAI_API_KEY=...
 # GOOGLE_API_KEY=...
 
 # Local persistence backend for memory, checkpoints, audit, feedback,
-# active-session state, and LiveKit voice finalization status.
+# and active-session state.
 # The Docker Compose stack defaults to these values automatically.
 OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
-```
-
-Voice needs extra configuration for browser or LiveKit console sessions:
-
-```env
-# Web voice via LiveKit + OpenAI Realtime model.
-LIVEKIT_URL=wss://your-project.livekit.cloud
-LIVEKIT_API_KEY=...
-LIVEKIT_API_SECRET=...
-OPENAI_API_KEY=...
 ```
 
 <details>
@@ -142,10 +129,10 @@ Keep real `.env` files local and out of version control.
 
 ### Local run commands
 
-The most reliable dogfood paths are `scripts/cli_dogfood.sh` for text and `scripts/voice_agent.sh` for local voice. Compose starts the browser stack: Postgres, backend API, LiveKit voice worker, and web.
+The most reliable dogfood path is `scripts/text_repl.sh` for text. Compose starts the browser stack: Postgres, backend API, and web.
 
 <details>
-<summary><b>View commands for Compose, CLI, voice, web, Telegram, and docs</b></summary>
+<summary><b>View commands for Compose, CLI, web, Telegram, and docs</b></summary>
 
 #### Compose stack
 
@@ -162,8 +149,8 @@ docker compose -f compose.yml up --build
 # Rebuild only the web container after frontend edits.
 docker compose -f compose.yml up --build web
 
-# Follow API + voice logs after background start.
-docker compose -f compose.yml logs -f api voice-agent
+# Follow API logs after background start.
+docker compose -f compose.yml logs -f api
 
 # Stop the stack.
 docker compose -f compose.yml down
@@ -171,42 +158,21 @@ docker compose -f compose.yml down
 
 Local URLs: web at [localhost:3000](http://localhost:3000), API at [localhost:8080](http://localhost:8080), health at [localhost:8080/api/health](http://localhost:8080/api/health), and Postgres at `postgresql://opencouch:opencouch@localhost:5432/opencouch`.
 
-Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Browser voice needs `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `OPENAI_API_KEY`. Inside Compose, API and voice use the in-network Postgres URL automatically.
+Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, API uses the in-network Postgres URL automatically.
 
 #### Text CLI
 
 ```bash
 # Preferred persistent dogfood command.
-./scripts/cli_dogfood.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
+./scripts/text_repl.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
 
 # Raw backend CLI commands.
 cd apps/backend
 uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread-id scratch
 uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
-uv run python -m opencouch_cli --voice
 ```
 
-`scripts/cli_dogfood.sh` starts Dockerized Postgres first and forwards flags to `opencouch_cli`.
-
-#### Voice
-
-```bash
-# Local microphone voice session.
-./scripts/voice_agent.sh --user-id dogfood console
-
-# Same voice runtime, but typed input/output for quick smoke checks.
-./scripts/voice_agent.sh --user-id dogfood console --text
-
-# Incognito voice session; no durable memory writes.
-./scripts/voice_agent.sh --memory-mode incognito console
-
-# Worker mode for browser/LiveKit room sessions.
-# This waits for a LiveKit room participant and does not listen to
-# your terminal microphone.
-./scripts/voice_agent.sh --user-id dogfood start
-```
-
-`scripts/voice_agent.sh` starts Postgres by default and forwards flags to `agent.voice.agent`. If `console` starts but cannot hear you, check macOS microphone permission for your terminal app under System Settings → Privacy & Security → Microphone.
+`scripts/text_repl.sh` starts Dockerized Postgres first and forwards flags to `opencouch_cli`.
 
 #### Manual web stack
 
@@ -218,9 +184,6 @@ cd apps/backend && uv run uvicorn main:app --port 8000 --reload
 
 # Terminal 2: frontend, from the repo root.
 pnpm install && pnpm --dir apps/web dev
-
-# Optional terminal 3: LiveKit voice worker.
-./scripts/voice_agent.sh start
 ```
 
 #### Optional Telegram gateway
@@ -255,9 +218,8 @@ Before response generation, each turn runs through safety routing. Memory writes
 
 ### Supported Interfaces
 
-- **CLI:** Local text and voice harness for development and testing.
+- **CLI:** Local text harness for development and testing.
 - **Web chat:** Next.js text UI backed by FastAPI REST and WebSocket streaming routes.
-- **Web voice:** LiveKit browser sessions with a LiveKit Agents worker and OpenAI Realtime model.
 - **Optional Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
 - **Backend API:** FastAPI route layer used by the web UI and other clients.
 
@@ -274,14 +236,11 @@ flowchart TD
     subgraph SURF ["Runtime Surfaces"]
         CLI["CLI"]:::inputNode
         WEB["Next.js web chat"]:::inputNode
-        VOICE["LiveKit voice<br/>separate Agents runtime"]:::inputNode
         TG["Optional Telegram DM gateway<br/>thread rotation"]:::inputNode
         API["FastAPI REST/WebSocket"]:::inputNode
     end
 
     IN(["Text user message"]):::inputNode
-    VIN(["Voice turn / transcript"]):::inputNode
-
     subgraph GATE ["Safety Gate"]
         CG{"crisis_gate<br/>LLM-only classifier"}:::gateNode
     end
@@ -321,15 +280,7 @@ flowchart TD
     subgraph POST ["Runtime Memory Work (outside LangGraph)"]
         direction LR
         MP["memory prefetch<br/>turn-start speculation"]:::sysNode
-        MX["TurnExtractionCoordinator<br/>background after graph END<br/>drain before next turn/session end"]:::sysNode
-        EF["semantic extraction + write policy<br/>commit_now • session_end • repeat/drop"]:::sysNode
-        EP["procedural extraction + write policy<br/>commit_now • session_end • drop"]:::sysNode
-        SB[("session buffer<br/>held semantic/procedural candidates")]:::sysNode
         MP -.-> LM
-        MX -.-> EF
-        MX -.-> EP
-        EF -.->|hold| SB
-        EP -.->|hold| SB
     end
 
     subgraph SESSION ["Session-End Commit (ActiveSessionManager, outside the LangGraph workflow)"]
@@ -361,11 +312,6 @@ flowchart TD
     TR ==> FT
     GE ==> FT
     CL -.-> FT
-    FT -.->|runtime schedules| MX
-    EF -.->|immediate writes| DB
-    EP -.->|immediate writes| DB
-    MX -.->|persist active-session buffer| DB
-    SB -.->|held candidates| CM
     CM -.->|promoted / reconciled writes| DB
     SS -.->|episodic arc| DB
 
@@ -396,7 +342,6 @@ OpenCouch/
 │   │   │   ├── nodes/          # Individual graph nodes
 │   │   │   ├── memory/         # Memory retrieval, deduplication, embeddings
 │   │   │   ├── therapeutic/    # Therapeutic subgraph, exercises, prompt logic
-│   │   │   └── voice/          # LiveKit voice worker, agents, tasks, tools
 │   │   ├── llm/                # LLM adapters (Gemini, OpenAI, etc.)
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── channels/           # Telegram gateway and channel adapters
@@ -482,16 +427,16 @@ We welcome contributions. Run the relevant checks in [Development & Validation](
 
 ## 🗺️ Roadmap
 
-OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory, safety, and voice experience before expanding to more platforms.
+OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory, and safety experience before expanding to more platforms.
 
 | Horizon | Area | Focus |
 |:---|:---|:---|
 | ✅ **Shipped** | **Core product** | Web chat, threading, persistent/incognito sessions, memory inspection, and session feedback |
-| ✅ **Shipped** | **Voice** | LiveKit-backed browser voice sessions with OpenAI Realtime, safety routing, transcript handling, and memory integration |
 | ✅ **Shipped** | **Guided support** | 13 state-tracked coping exercises for grounding, breathing, thought work, values reflection, and related flows |
 | ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, Postgres-backed persistence, LangGraph checkpoints, crisis audit, and feedback storage |
 | 🧪 **Dogfood** | **Messaging** | Telegram direct-message gateway with allow-listing, Markdown rendering, `/end`, and session rotation |
 | 🔜 **Next** | **Product stabilization** | Closed beta readiness, onboarding polish, reliability improvements, clearer session lifecycle, and feedback-driven UX fixes |
+| 🔜 **Next** | **Voice rebuild** | Rebuild voice from scratch after the text runtime cleanup, without carrying the legacy LiveKit worker forward |
 | 🔜 **Next** | **Memory quality** | Background fact consolidation, dormant/obsolete memory handling, better review controls, and undo support |
 | 🔜 **Next** | **Safety & evaluation** | Broader eval coverage, clinician-informed review of safety behavior, and stronger regression monitoring |
 | 🧭 **Later** | **Mobile** | Native iOS app once the web and backend voice paths are stable |

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from agent.memory.dedup import find_near_duplicate
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.models import MemoryWrite, SemanticFact
+from agent.memory.types import MemoryWrite, SemanticFact
 from agent.memory.reconciliation import (
     filter_semantic_collision_candidates,
     plan_semantic_write_llm_primary,

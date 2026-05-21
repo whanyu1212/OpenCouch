@@ -258,7 +258,7 @@ def build_summarization_user_prompt(
     """Build the session-summarizer user prompt.
 
     Args:
-        state (AgentState): Current graph state with the full transcript.
+        state (AgentState): Current runtime state with the full transcript.
         session_id (str): Session identifier copied into the summary payload.
         started_at (str): ISO-8601 session start timestamp.
         ended_at (str): ISO-8601 session end timestamp.

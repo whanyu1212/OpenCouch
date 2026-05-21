@@ -65,21 +65,19 @@ skip directly to response generation. Prompt hardening reduces this
 risk but cannot eliminate it — especially under adversarial input or
 model version changes.
 
-### 2. Extraction is scheduled only after the response path finishes
+### 2. The response path finishes before side effects
 
 ```python
 workflow.add_edge("finalize_turn_node", END)
-# PersistentAgentRuntime schedules TurnExtractionCoordinator after graph END.
+# PersistentAgentRuntime persists the sealed turn after graph END.
 ```
 
-The response must be finalized (appended to transcript) before
-extractors see it. Extraction is now runtime-owned rather than a graph
-fan-out, but the ordering guarantee is the same: memory writes never
-run before the user-visible reply is sealed.
+The response must be finalized (appended to transcript) before the
+runtime persists the turn. Long-term memory writes are explicit tool or
+session-end operations, not automatic cleanup after every response.
 
-**In a ReAct loop**, extraction is typically a cleanup step that
-could be skipped for latency, or run before the response is
-complete, corrupting the memory with in-progress reasoning.
+**In a ReAct loop**, persistence and other cleanup side effects can
+be skipped for latency or run before the response is complete.
 
 ### 3. Tool invocation is positional, not emergent
 
@@ -142,9 +140,9 @@ while True:
     elif action == "respond":
         # BUG: agent responded without safety or memory
         response = generate_response(state)
-    elif action == "extract":
+    elif action == "persist_state":
         # BUG: agent might never reach this
-        extract_facts(state)
+        persist_turn(state)
 ```
 
 Every `elif` branch is a potential skip. The LLM *should* follow the

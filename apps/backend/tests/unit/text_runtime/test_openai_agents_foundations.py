@@ -1,4 +1,4 @@
-"""Tests for dormant OpenAI Agents SDK text-runtime foundations."""
+"""Tests for OpenAI Agents SDK text-runtime foundations."""
 
 from __future__ import annotations
 
@@ -15,35 +15,42 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
-from agent.text_runtime import resolve_text_agent_runtime
-from agent.text_runtime.openai_agents import (
-    CRISIS_AGENT_NAME,
+from agent.specialists.crisis import CRISIS_AGENT_NAME
+from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
+from agent.specialists.roster import build_openai_text_agent_roster
+from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.runtime.context import MemoryToolCallRecord, OpenAITextRunContext
+from agent.tools import (
     CrisisResourceLookupToolResult,
-    GUIDED_EXERCISE_AGENT_NAME,
-    GuidedExerciseSkillToolResult,
-    THERAPEUTIC_AGENT_NAME,
+    CrisisSupportTemplateToolResult,
     GroundedLookupToolResult,
+    GuidedExerciseProgressToolResult,
+    GuidedExerciseSkillDiscoveryToolResult,
+    GuidedExerciseSkillToolResult,
     MemoryReadToolResult,
     MemoryToolResult,
-    MemoryToolCallRecord,
-    OpenAITextRunContext,
+    TherapeuticResponseSkillToolResult,
     answer_grounded_lookup,
     build_memory_tools,
-    build_openai_text_agent_roster,
-    build_read_only_memory_tools,
     execute_crisis_resource_lookup_tool,
+    execute_crisis_support_template_tool,
+    execute_guided_exercise_discovery_tool,
+    execute_guided_exercise_progress_tool,
     execute_guided_exercise_skill_tool,
     execute_grounded_lookup_tool,
+    execute_read_only_memory_action,
+    execute_therapeutic_response_skill_tool,
+    list_guided_exercise_skills,
+    load_guided_exercise_skill,
+    record_guided_exercise_progress,
+    get_crisis_support_template,
+    load_therapeutic_response_skill,
+    lookup_crisis_resources,
+    memory_control_request_from_context,
     save_response_preference,
     set_proactive_memory_recall,
-    execute_read_only_memory_action,
-    load_guided_exercise_skill,
-    lookup_crisis_resources,
     show_memory_status,
     show_saved_memory,
-)
-from agent.text_runtime.openai_agents.memory_tools import (
-    memory_control_request_from_context,
 )
 from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 
@@ -144,12 +151,6 @@ def test_openai_agents_dependency_imports() -> None:
     assert SQLAlchemySession.__name__ == "SQLAlchemySession"
 
 
-def test_openai_runtime_selector_is_enabled_for_hybrid_slice() -> None:
-    """The OpenAI selector is now enabled behind explicit runtime config."""
-
-    assert resolve_text_agent_runtime("openai") == "openai"
-
-
 def test_agent_roster_builds_dormant_specialists() -> None:
     """The dormant roster should define specialists without wiring runtime use."""
 
@@ -162,6 +163,7 @@ def test_agent_roster_builds_dormant_specialists() -> None:
     assert roster.crisis_agent.model == "gpt-test"
     assert roster.guided_exercise_agent.model == "gpt-test"
     assert [tool.name for tool in roster.therapeutic_agent.tools] == [
+        "load_therapeutic_response_skill",
         "show_saved_memory",
         "show_memory_status",
         "set_proactive_memory_recall",
@@ -170,32 +172,18 @@ def test_agent_roster_builds_dormant_specialists() -> None:
         "prepare_memory_deletion_by_query",
         "confirm_memory_deletion",
         "cancel_memory_deletion",
+        "list_guided_exercise_skills",
         "answer_grounded_lookup",
     ]
     assert [tool.name for tool in roster.crisis_agent.tools] == [
-        "lookup_crisis_resources"
+        "lookup_crisis_resources",
+        "get_crisis_support_template",
     ]
     assert [tool.name for tool in roster.guided_exercise_agent.tools] == [
-        "load_guided_exercise_skill"
+        "load_guided_exercise_skill",
+        "record_guided_exercise_progress",
     ]
     assert roster.therapeutic_agent.handoffs == []
-
-
-def test_read_only_memory_tool_metadata_is_explicit() -> None:
-    """Tool contracts should state scope, side effects, and retry safety."""
-
-    tools = build_read_only_memory_tools()
-
-    assert [tool.name for tool in tools] == [
-        "show_saved_memory",
-        "show_memory_status",
-    ]
-    for tool in tools:
-        assert "Side effects: none" in tool.description
-        assert "Retry safety: safe" in tool.description
-        assert tool.strict_json_schema is True
-        assert tool.params_json_schema["additionalProperties"] is False
-        assert tool.params_json_schema["required"] == []
 
 
 def test_operational_tool_metadata_is_explicit() -> None:
@@ -220,8 +208,8 @@ def test_operational_tool_metadata_is_explicit() -> None:
         assert tool.params_json_schema["additionalProperties"] is False
 
 
-def test_local_context_builds_neutral_memory_request_without_graph_state() -> None:
-    """Local SDK context should hand tools neutral input, not graph state."""
+def test_local_context_builds_neutral_memory_request_without_runtime_state() -> None:
+    """Local SDK context should hand tools neutral input, not runtime state."""
 
     context = _run_context()
 
@@ -376,6 +364,75 @@ async def test_grounded_lookup_function_tool_invokes_with_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_therapeutic_response_skill_tool_records_skill_context() -> None:
+    """TherapeuticResponseAgent should own response-style prompt skills."""
+
+    context = _run_context()
+    context.agent_state = {
+        "message": "I feel tense today",
+        "history": [],
+        "transcript": [],
+        "working_memory": [],
+        "session_memory": {},
+        "procedural_profile": {},
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
+        "memory_reference": {"mode": "none"},
+        "session_progress": {"turn_count": 1},
+        "response_guidance": "",
+    }
+
+    result = await execute_therapeutic_response_skill_tool(
+        context,
+        response_style="supportive",
+        therapeutic_approach="none",
+    )
+
+    assert isinstance(result, TherapeuticResponseSkillToolResult)
+    assert result.response_style == "supportive"
+    assert result.therapeutic_approach == "none"
+    assert result.side_effect == "none"
+    assert result.retry_safe is True
+    assert result.skill_context.startswith("Therapeutic response skill:")
+    assert "SUPPORTIVE response style" in result.skill_context
+    assert context.therapeutic_response_skill_tool_calls[-1].tool_name == (
+        "load_therapeutic_response_skill"
+    )
+
+
+@pytest.mark.asyncio
+async def test_therapeutic_response_skill_function_tool_invokes_with_context() -> None:
+    """The SDK response skill wrapper should pass selected style args."""
+
+    context = _run_context()
+    context.agent_state = {
+        "message": "I feel tense today",
+        "history": [],
+        "transcript": [],
+        "working_memory": [],
+        "session_memory": {},
+        "procedural_profile": {},
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
+        "memory_reference": {"mode": "none"},
+        "session_progress": {"turn_count": 1},
+        "response_guidance": "",
+    }
+
+    result = await _invoke_tool(
+        load_therapeutic_response_skill,
+        context,
+        {
+            "response_style": "reflective",
+            "therapeutic_approach": "cbt",
+        },
+    )
+
+    assert isinstance(result, TherapeuticResponseSkillToolResult)
+    assert result.response_style == "reflective"
+    assert result.therapeutic_approach == "cbt"
+    assert "REFLECTIVE response style" in result.skill_context
+
+
+@pytest.mark.asyncio
 async def test_crisis_resource_tool_records_lookup_result() -> None:
     """CrisisResponseAgent should own crisis-resource lookup as an SDK tool."""
 
@@ -408,6 +465,115 @@ async def test_crisis_resource_function_tool_invokes_with_context() -> None:
     assert result.resource_lookup_status == "found"
     assert result.side_effect == "none"
     assert result.retry_safe is True
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_tool_returns_imminent_scaffold() -> None:
+    """The crisis template tool should provide deterministic safety scaffolding."""
+
+    result = await execute_crisis_support_template_tool(
+        risk_level="imminent",
+        inferred_location="Singapore",
+        found_resources=[
+            {
+                "name": "Samaritans of Singapore",
+                "phone": "1767",
+                "url": "https://www.sos.org.sg",
+                "region": "Singapore",
+            }
+        ],
+        resource_lookup_status="found",
+    )
+
+    assert isinstance(result, CrisisSupportTemplateToolResult)
+    assert result.risk_level == "imminent"
+    assert "emergency services" in result.immediate_safety_step
+    assert "1767" in result.resource_guidance
+    assert "Samaritans of Singapore" in result.response_text
+    assert any("Do not invent phone numbers" in item for item in result.avoid)
+    assert result.side_effect == "none"
+    assert result.retry_safe is True
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_tool_uses_fallback_without_resources() -> None:
+    """The template should stay useful when verified local resources are absent."""
+
+    result = await execute_crisis_support_template_tool(
+        risk_level="moderate",
+        resource_lookup_status="no_location",
+    )
+
+    assert result.risk_level == "moderate"
+    assert "local emergency services" in result.resource_guidance
+    assert "Do not invent phone numbers" in result.resource_guidance
+    assert "Are you somewhere safe enough" in result.one_question
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_function_tool_invokes_with_arguments() -> None:
+    """The SDK template wrapper should pass explicit scaffold arguments."""
+
+    context = _run_context()
+
+    result = await _invoke_tool(
+        get_crisis_support_template,
+        context,
+        {
+            "risk_level": "level 3",
+            "inferred_location": "Singapore",
+            "resource_lookup_status": "found",
+            "resource_name": "Samaritans of Singapore",
+            "resource_phone": "1767",
+            "resource_url": "https://www.sos.org.sg",
+            "resource_region": "Singapore",
+        },
+    )
+
+    assert isinstance(result, CrisisSupportTemplateToolResult)
+    assert result.risk_level == "imminent"
+    assert "1767" in result.resource_guidance
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_discovery_tool_returns_metadata_only() -> None:
+    """TherapeuticAgent should discover guided exercise metadata without scripts."""
+
+    context = _run_context()
+    context.agent_state = {"therapeutic_approach": "none"}
+
+    result = await execute_guided_exercise_discovery_tool(context)
+
+    assert isinstance(result, GuidedExerciseSkillDiscoveryToolResult)
+    assert result.side_effect == "none"
+    assert result.retry_safe is True
+    assert result.skills
+    assert all(skill.skill_id for skill in result.skills)
+    assert all(skill.description for skill in result.skills)
+    assert all(
+        "canonical_instruction" not in skill.model_dump_json()
+        for skill in result.skills
+    )
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_discovery_function_tool_invokes_with_context() -> None:
+    """The SDK discovery wrapper should pass filtering args."""
+
+    context = _run_context()
+
+    result = await _invoke_tool(
+        list_guided_exercise_skills,
+        context,
+        {
+            "therapeutic_approach": "none",
+            "channel": "text",
+        },
+    )
+
+    assert isinstance(result, GuidedExerciseSkillDiscoveryToolResult)
+    assert result.channel == "text"
+    assert result.skills
 
 
 @pytest.mark.asyncio
@@ -454,3 +620,128 @@ async def test_guided_exercise_skill_function_tool_invokes_with_context() -> Non
     assert result.side_effect == "none"
     assert result.retry_safe is True
     assert result.skill_context.startswith("Exercise skill:")
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_progress_tool_advances_valid_step() -> None:
+    """Progress tool should validate active state and compute next step."""
+
+    context = _run_context()
+    context.agent_state = {
+        "exercise_state": {
+            "exercise_type": "grounding_box_breathing",
+            "exercise_step": 0,
+            "exercise_step_id": "inhale",
+            "exercise_version": 1,
+            "exercise_therapeutic_approach": "dbt_skills",
+        }
+    }
+
+    result = await execute_guided_exercise_progress_tool(
+        context,
+        expected_skill_id="grounding_box_breathing",
+        expected_step_id="inhale",
+        outcome="complete",
+        user_response_summary="User completed the inhale step.",
+    )
+
+    assert isinstance(result, GuidedExerciseProgressToolResult)
+    assert result.status == "active"
+    assert result.runtime_action == "advance"
+    assert result.current_step_id == "hold_full"
+    assert result.exercise_state_delta["exercise_state"]["exercise_step"] == 1
+    assert (
+        result.exercise_state_delta["exercise_state"]["exercise_step_id"] == "hold_full"
+    )
+    assert result.side_effect == "active_skill_state_update"
+    assert result.retry_safe is False
+    assert context.guided_exercise_progress_tool_calls[-1].tool_name == (
+        "record_guided_exercise_progress"
+    )
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_progress_tool_conflict_is_safe() -> None:
+    """Progress tool should not mutate when expected state is stale."""
+
+    context = _run_context()
+    context.agent_state = {
+        "exercise_state": {
+            "exercise_type": "grounding_box_breathing",
+            "exercise_step": 1,
+            "exercise_step_id": "hold_full",
+        }
+    }
+
+    result = await execute_guided_exercise_progress_tool(
+        context,
+        expected_skill_id="grounding_box_breathing",
+        expected_step_id="inhale",
+        outcome="complete",
+        user_response_summary="Stale update for prior step.",
+    )
+
+    assert result.status == "conflict"
+    assert result.runtime_action == "conflict"
+    assert result.side_effect == "none"
+    assert result.retry_safe is True
+    assert result.exercise_state_delta == {}
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_progress_tool_exit_clears_state() -> None:
+    """Exit outcome should produce a runtime delta that clears active exercise."""
+
+    context = _run_context()
+    context.agent_state = {
+        "exercise_state": {
+            "exercise_type": "grounding_box_breathing",
+            "exercise_step": 1,
+            "exercise_step_id": "hold_full",
+            "exercise_version": 1,
+        }
+    }
+
+    result = await execute_guided_exercise_progress_tool(
+        context,
+        expected_skill_id="grounding_box_breathing",
+        expected_step_id="hold_full",
+        outcome="exit",
+        user_response_summary="User wants to stop the exercise.",
+    )
+
+    assert result.status == "cancelled"
+    assert result.runtime_action == "cancel"
+    assert result.exercise_state_delta["exercise_state"]["exercise_type"] is None
+    assert result.exercise_state_delta["exercise_state"]["exercise_step"] is None
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_progress_function_tool_invokes_with_context() -> None:
+    """The SDK progress wrapper should pass validated state args."""
+
+    context = _run_context()
+    context.agent_state = {
+        "exercise_state": {
+            "exercise_type": "grounding_box_breathing",
+            "exercise_step": 0,
+            "exercise_step_id": "inhale",
+            "exercise_version": 1,
+        }
+    }
+
+    result = await _invoke_tool(
+        record_guided_exercise_progress,
+        context,
+        {
+            "expected_skill_id": "grounding_box_breathing",
+            "expected_step_id": "inhale",
+            "outcome": "hold",
+            "user_response_summary": "User needs a moment.",
+        },
+    )
+
+    assert isinstance(result, GuidedExerciseProgressToolResult)
+    assert result.status == "active"
+    assert result.runtime_action == "hold"
+    assert result.side_effect == "none"

@@ -10,9 +10,8 @@ It exercises the entire stack:
 
 - ``PersistentAgentRuntime.__init__`` picking SqliteMemoryStore +
   SqliteCrisisLogBackend based on memory_mode (Stage D wiring)
-- ``run_turn`` invoking the full OpenAI text runtime, which calls
-  ``load_memory_node``, the therapeutic dispatcher, a response
-  node, and ``extract_semantic_facts_node`` (Stage B reads/writes)
+- ``run_turn`` invoking the full OpenAI text runtime, which builds turn
+  memory context and dispatches the therapeutic response path
 - ``end_session`` invoking the summarizer, which writes an episodic
   arc (Stage C writes)
 - Runtime close via ``__aexit__`` releasing the SQLite connections
@@ -22,7 +21,7 @@ It exercises the entire stack:
 
 What these tests DON'T cover (intentionally):
 - LLM quality — all tests use a deterministic fake LLM dispatcher
-  that produces canned extractions and summaries
+  that produces canned summaries and routing decisions
 - Specific prompt behavior — that's what the individual node test
   suites cover
 - CLI interaction — that's covered by the manual dogfood loop and
@@ -31,7 +30,7 @@ What these tests DON'T cover (intentionally):
 Test strategy: build a fake LLM that dispatches on
 ``response_schema.__name__`` and returns canned results for every
 structured-output call the graph makes (crisis classifier, dispatcher,
-extraction, summarization). Use ``tmp_path`` fixtures so all three
+summarization). Use ``tmp_path`` fixtures so all three
 SQLite files are isolated per test and clean up automatically.
 """
 
@@ -56,9 +55,10 @@ from agent.memory.models import (
     SummarizationResult,
 )
 from agent.memory.modes import MemoryMode
+from agent.memory.policy.candidates import PolicyDecision, build_semantic_candidate
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
-from agent.persistence import PersistedActiveSessionState, PersistentAgentRuntime
+from agent.runtime import PersistedActiveSessionState, PersistentAgentRuntime
 from llm.base import StructuredResponseT
 from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
 
@@ -180,6 +180,78 @@ def _held_trigger_extraction_result(
     )
 
 
+def _sarah_memory_write(
+    *,
+    thread_id: str = "thread-a",
+    user_id: str = "thread-a",
+    person: str = "Sarah",
+    evidence_quote: str = "I have a sister named Sarah",
+) -> MemoryWrite:
+    """Build a semantic relationship fact for persistence fixtures."""
+
+    return MemoryWrite(
+        category="relationship",
+        subject=EntityRef(type="User", identifier=user_id),
+        predicate="KNOWS",
+        object=EntityRef(type="Person", identifier=person),
+        evidence_quote=evidence_quote,
+        confidence="high",
+        source_session_id=thread_id,
+        source_turn_index=0,
+    )
+
+
+async def _seed_semantic_fact(
+    runtime: PersistentAgentRuntime,
+    *,
+    owner_id: str,
+    key: str,
+    write: MemoryWrite,
+) -> None:
+    """Write a semantic fixture directly to the runtime memory store."""
+
+    await runtime.memory_store.aput(
+        (owner_id, "semantic"),
+        key,
+        {
+            **write.model_dump(mode="json"),
+            "id": key,
+            "created_at": "2026-04-11T09:00:00Z",
+            "last_referenced_at": "2026-04-11T09:00:00Z",
+            "dormant_at": None,
+            "superseded_by": None,
+            "user_visible": True,
+            "write_timing": "test_seed",
+        },
+    )
+
+
+async def _hold_trigger_candidate(
+    runtime: PersistentAgentRuntime,
+    *,
+    thread_id: str,
+    user_id: str = "user-1",
+) -> None:
+    """Seed one held semantic candidate into the active-session buffer."""
+
+    write = _held_trigger_extraction_result(
+        thread_id=thread_id,
+        user_id=user_id,
+    ).facts[0]
+    runtime._session_memory_buffer_for_thread(thread_id).hold_semantic(  # noqa: SLF001
+        build_semantic_candidate(
+            write,
+            message="Family conflict is a big trigger for panic.",
+        ),
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test buffers trigger candidate for session end",
+            policy_version="test_policy_v1",
+        ),
+    )
+    await runtime._persist_runtime_session_tracking(thread_id)  # noqa: SLF001
+
+
 def _trigger_supporting_summarization_result(
     *,
     thread_id: str = "thread-a",
@@ -225,7 +297,7 @@ def _postgres_memory_database_url() -> str | None:
 
 @pytest.mark.asyncio
 async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -> None:
-    """The core v0.8 contract: extract a fact in runtime A, close A,
+    """The core persistence contract: write a fact in runtime A, close A,
     open runtime B against the same SQLite files, and verify the fact
     is still readable.
 
@@ -241,9 +313,6 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
         **paths,
         memory_mode=MemoryMode.LOCAL,
         finalize_active_sessions_on_close=False,
-        # Synchronous extraction so post-turn assertions see the fact in
-        # the store immediately, not after the next turn's drain.
-        extract_in_foreground=True,
     ) as runtime_a:
         result = await runtime_a.run_turn(
             thread_id="thread-a",
@@ -253,8 +322,12 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
         )
         # Sanity check: the turn ran end-to-end and produced output.
         assert result.output.response_text
-        # Extraction ran once (crisis_calls is 1 for the crisis gate)
-        assert llm_a.extraction_calls == 1
+        await _seed_semantic_fact(
+            runtime_a,
+            owner_id="thread-a",
+            key="fact-sarah",
+            write=_sarah_memory_write(thread_id="thread-a", user_id="thread-a"),
+        )
         # The fact landed in the SQLite store
         assert await runtime_a.memory_store.arecord_count() == 1
 
@@ -320,7 +393,12 @@ async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
             llm_client=llm_a,
         )
         assert result.output.response_text
-        assert llm_a.extraction_calls == 1
+        await _seed_semantic_fact(
+            runtime_a,
+            owner_id=thread_id,
+            key=f"fact-sarah-{thread_id}",
+            write=_sarah_memory_write(thread_id=thread_id, user_id=thread_id),
+        )
 
         stored_arc = await runtime_a.end_session(thread_id, llm_client=llm_a)
         assert stored_arc is not None
@@ -473,18 +551,21 @@ async def test_all_three_layers_persist_across_full_lifecycle(
         memory_mode=MemoryMode.LOCAL,
         finalize_active_sessions_on_close=False,
     ) as runtime_a:
-        # Turn 1: substantive message that triggers extraction
+        # Turn 1: substantive message; semantic memory is seeded
+        # explicitly because per-turn automatic extraction is disabled.
         await runtime_a.run_turn(
             thread_id="thread-a",
             message="I have a sister named Sarah",
             channel=Channel.TEST,
             llm_client=llm_a,
         )
-        # Turn 2: a follow-up — the fake extractor produces the same
-        # canned result, but dedup should catch it as a duplicate and
-        # bump last_referenced_at instead of writing a second row.
-        # (The fake ExtractionResult has the exact same evidence_quote
-        # and triple, so find_near_duplicate should match.)
+        await _seed_semantic_fact(
+            runtime_a,
+            owner_id="thread-a",
+            key="fact-sarah",
+            write=_sarah_memory_write(thread_id="thread-a", user_id="thread-a"),
+        )
+        # Turn 2: a follow-up that should preserve the existing seeded fact.
         await runtime_a.run_turn(
             thread_id="thread-a",
             message="tell me more about Sarah",
@@ -495,7 +576,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
         arc = await runtime_a.end_session("thread-a", llm_client=llm_a)
         assert arc is not None
 
-        # Before close: semantic=1 (dedup held), episodic=1
+        # Before close: semantic=1, episodic=1
         semantic_count = await runtime_a.memory_store.arecord_count(
             ("thread-a", "semantic")
         )
@@ -526,8 +607,8 @@ async def test_all_three_layers_persist_across_full_lifecycle(
         assert await runtime_b.memory_store.arecord_count(("thread-a", "episodic")) == 1
 
         # Run a new turn on thread-a through runtime B. This exercises
-        # the full graph against the persisted data — load_memory_node
-        # will query the SQLite store and should find the Sarah fact
+        # the full runtime path against the persisted data — turn memory
+        # context will query the SQLite store and should find the Sarah fact
         # via token-recall retrieval.
         result = await runtime_b.run_turn(
             thread_id="thread-a",
@@ -545,6 +626,113 @@ async def test_all_three_layers_persist_across_full_lifecycle(
             and "Sarah" in entry.get("evidence_quote", "")
             for entry in working_memory
         ), f"expected working_memory to contain a Sarah reference, got {working_memory}"
+
+
+@pytest.mark.asyncio
+async def test_full_trajectory_parity_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Postgres-backed runtime should preserve transcript, memory, and crisis data."""
+
+    memory_database_url = _postgres_memory_database_url()
+    if not memory_database_url:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
+
+    paths = runtime_paths(tmp_path)
+    thread_id = f"thread-trajectory-{uuid4()}"
+    user_id = f"user-trajectory-{uuid4()}"
+    llm_a = FakeCrossRestartLLM()
+
+    from agent.memory.models import CrisisLogRecord
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        crisis_log_backend="postgres",
+        crisis_log_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime_a:
+        await runtime_a.run_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            message="I have a sister named Sarah",
+            channel=Channel.TEST,
+            llm_client=llm_a,
+        )
+        await _seed_semantic_fact(
+            runtime_a,
+            owner_id=user_id,
+            key=f"fact-sarah-{thread_id}",
+            write=_sarah_memory_write(thread_id=thread_id, user_id=user_id),
+        )
+        crisis_record = CrisisLogRecord(
+            id=f"rec-{thread_id}",
+            session_id_opaque="b" * 64,
+            user_id_or_null=user_id,
+            detected_at="2026-04-11T10:00:00Z",
+            level=2,
+            override_kind="none",
+            classifier_path="llm_primary",
+            reason="postgres trajectory parity test record",
+            response_node_completed=True,
+            llm_failure_occurred=False,
+        )
+        await runtime_a.crisis_log_backend.aappend(crisis_record)
+        stored_arc = await runtime_a.end_session(thread_id, llm_client=llm_a)
+
+        assert stored_arc is not None
+        assert await runtime_a.memory_store.arecord_count((user_id, "semantic")) == 1
+        assert await runtime_a.memory_store.arecord_count((user_id, "episodic")) == 1
+        assert await runtime_a.crisis_log_backend.arecord_count() == 1
+
+    llm_b = FakeCrossRestartLLM()
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        crisis_log_backend="postgres",
+        crisis_log_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+    ) as runtime_b:
+        history = await runtime_b.get_history(thread_id)
+        assert len(history) > 0
+        assert await runtime_b.memory_store.arecord_count((user_id, "semantic")) == 1
+        assert await runtime_b.memory_store.arecord_count((user_id, "episodic")) == 1
+        assert await runtime_b.crisis_log_backend.arecord_count() == 1
+
+        result = await runtime_b.run_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            message="what did I say about Sarah",
+            channel=Channel.TEST,
+            llm_client=llm_b,
+        )
+        assert result.output.response_text
+        working_memory = result.state.get("working_memory", [])
+        assert any(
+            entry.get("type") == "semantic"
+            and "Sarah" in entry.get("evidence_quote", "")
+            for entry in working_memory
+        ), f"expected working_memory to contain a Sarah reference, got {working_memory}"
+
+        from datetime import date
+
+        day_records = await runtime_b.crisis_log_backend.alist_by_date(
+            date(2026, 4, 11)
+        )
+        assert len(day_records) == 1
+        assert day_records[0].id == f"rec-{thread_id}"
+        assert day_records[0].user_id_or_null == user_id
 
 
 @pytest.mark.asyncio
@@ -566,27 +754,10 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     paths = runtime_paths(tmp_path)
 
     # Runtime A: write a record under user-alice via thread-old
-    llm_a = FakeCrossRestartLLM(
-        extraction_result=ExtractionResult(
-            facts=[
-                MemoryWrite(
-                    category="relationship",
-                    subject=EntityRef(type="User", identifier="user-alice"),
-                    predicate="KNOWS",
-                    object=EntityRef(type="Person", identifier="Emma"),
-                    evidence_quote="My best friend Emma lives nearby",
-                    confidence="high",
-                    source_session_id="thread-old",
-                    source_turn_index=0,
-                )
-            ],
-            reason="fake extractor for cross-thread test",
-        )
-    )
+    llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
-        extract_in_foreground=True,
     ) as runtime_a:
         await runtime_a.run_turn(
             thread_id="thread-old",
@@ -594,6 +765,17 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
             channel=Channel.TEST,
             user_id="user-alice",
             llm_client=llm_a,
+        )
+        await _seed_semantic_fact(
+            runtime_a,
+            owner_id="user-alice",
+            key="fact-emma",
+            write=_sarah_memory_write(
+                thread_id="thread-old",
+                user_id="user-alice",
+                person="Emma",
+                evidence_quote="My best friend Emma lives nearby",
+            ),
         )
         # Record should land under owner_id="user-alice"
         assert (
@@ -659,6 +841,11 @@ async def test_held_session_buffer_survives_restart_until_end_session(
             channel=Channel.TEST,
             user_id="user-1",
             llm_client=llm_a,
+        )
+        await _hold_trigger_candidate(
+            runtime_a,
+            thread_id="thread-held",
+            user_id="user-1",
         )
         assert await runtime_a.memory_store.arecord_count(("user-1", "semantic")) == 0
         persisted = (
@@ -742,6 +929,11 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             channel=Channel.TEST,
             user_id=user_id,
             llm_client=llm_a,
+        )
+        await _hold_trigger_candidate(
+            runtime_a,
+            thread_id=thread_id,
+            user_id=user_id,
         )
         assert await runtime_a.memory_store.arecord_count((user_id, "semantic")) == 0
         persisted = (
@@ -869,6 +1061,11 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
             user_id="user-1",
             llm_client=llm,
             response_llm_client=llm,
+        )
+        await _hold_trigger_candidate(
+            runtime,
+            thread_id="thread-timeout",
+            user_id="user-1",
         )
         prior_state = await runtime.get_state("thread-timeout")
         prior_transcript_len = len((prior_state or {}).get("transcript", []))
@@ -1033,6 +1230,11 @@ async def test_finalize_active_sessions_commits_pending_memory_on_shutdown(
             user_id="user-1",
             llm_client=llm,
         )
+        await _hold_trigger_candidate(
+            runtime,
+            thread_id="thread-shutdown",
+            user_id="user-1",
+        )
 
         await runtime.finalize_active_sessions(llm_client=llm)
 
@@ -1072,6 +1274,11 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
             user_id="user-1",
             llm_client=llm,
         )
+        await _hold_trigger_candidate(
+            runtime,
+            thread_id="thread-sweeper",
+            user_id="user-1",
+        )
         persisted = await runtime._active_session_manager.load_persisted_active_session(
             "thread-sweeper"
         )
@@ -1101,10 +1308,10 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
 
 
 @pytest.mark.asyncio
-async def test_end_transcript_session_writes_semantic_procedural_and_episodic_memory(
+async def test_end_transcript_session_writes_episodic_memory_only(
     tmp_path: Path,
 ) -> None:
-    """Voice-style transcript finalization should reuse the text memory pipeline."""
+    """Transcript finalization should summarize without replaying extraction."""
 
     paths = runtime_paths(tmp_path)
     llm = FakeCrossRestartLLM(
@@ -1172,13 +1379,12 @@ async def test_end_transcript_session_writes_semantic_procedural_and_episodic_me
 
         assert stored_arc is not None
         assert stored_arc.write_timing == "session_end"
-        assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
+        assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 0
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
         profile = await runtime.memory_store.aget(
             ("user-1", "procedural"), "user_response_style"
         )
-        assert profile is not None
-        assert len(profile.value["rules"]) == 1
+        assert profile is None
 
 
 @pytest.mark.asyncio
@@ -1241,6 +1447,17 @@ async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
                 message=f"iteration {i} message",
                 channel=Channel.TEST,
                 llm_client=llm,
+            )
+            await _seed_semantic_fact(
+                runtime,
+                owner_id=f"thread-{i}",
+                key=f"fact-{i}",
+                write=_sarah_memory_write(
+                    thread_id=f"thread-{i}",
+                    user_id=f"thread-{i}",
+                    person=f"Person {i}",
+                    evidence_quote=f"iteration {i} message",
+                ),
             )
 
     # After 3 iterations, check the total record count via a fresh runtime

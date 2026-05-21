@@ -1,13 +1,10 @@
 """Candidate models for the memory write policy.
 
-These types sit between the LLM extractor output and the persistent
-memory store. The node layer first promotes extractor outputs into
-``MemoryCandidate`` instances, then the write-policy layer decides
-whether to commit immediately, defer, require repetition, or drop.
-
-The extractor still owns *detection* of potentially memory-worthy
-content. Candidates carry provenance and payload only; write timing is
-owned by the policy decision.
+These types sit between proposed memory payloads and the persistent memory
+store. Callers promote payloads into ``MemoryCandidate`` instances, then the
+write-policy layer decides whether to commit immediately, defer, require
+repetition, or drop. Candidates carry provenance and payload only; write timing
+is owned by the policy decision.
 """
 
 from __future__ import annotations
@@ -17,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agent.memory.models import MemoryWrite, ProceduralRuleDraft
+from agent.memory.types import MemoryWrite, ProceduralRuleDraft
 
 CandidateLayer = Literal["semantic", "procedural"]
 PolicyAction = Literal[
@@ -40,7 +37,7 @@ class MemoryCandidate(BaseModel):
 
 
 class SemanticCandidate(MemoryCandidate):
-    """Semantic candidate built from one ``MemoryWrite`` extractor item."""
+    """Semantic candidate built from one proposed ``MemoryWrite`` item."""
 
     layer: Literal["semantic"] = "semantic"
     payload: MemoryWrite
@@ -185,10 +182,10 @@ def build_semantic_candidate(
     *,
     message: str,
 ) -> SemanticCandidate:
-    """Promote an extracted semantic fact into a memory candidate.
+    """Promote a semantic fact into a memory candidate.
 
     Args:
-        write (MemoryWrite): Extracted semantic fact.
+        write (MemoryWrite): Semantic fact payload.
         message (str): Current user message.
 
     Returns:
@@ -212,10 +209,10 @@ def build_procedural_candidate(
     session_id: str,
     turn_index: int,
 ) -> ProceduralCandidate:
-    """Promote an extracted procedural draft into a memory candidate.
+    """Promote a procedural draft into a memory candidate.
 
     Args:
-        draft (ProceduralRuleDraft): Extracted procedural rule draft.
+        draft (ProceduralRuleDraft): Procedural rule draft.
         message (str): Current user message.
         session_id (str): Session identifier for candidate provenance.
         turn_index (int): Turn index for candidate provenance.

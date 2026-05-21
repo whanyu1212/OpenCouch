@@ -42,5 +42,4 @@ default. Current examples:
 
 ## Regression coverage
 
-The eval harness is being rebuilt. Until the replacement lands, routing changes
-should update backend tests and targeted live-provider checks.
+Routing changes should update backend tests and targeted live-provider checks.

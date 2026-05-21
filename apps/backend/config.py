@@ -30,7 +30,7 @@ DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
 
 # Shared, actionable error text raised by every postgres-without-URL guard
 # in the runtime. Lives here so the message stays consistent across the
-# checkpointer and voice-finalization validators that reference it.
+# runtime persistence and voice-finalization validators that reference it.
 MISSING_MEMORY_DATABASE_URL_MESSAGE = (
     "OPENCOUCH_PERSISTENCE_BACKEND=postgres requires "
     "OPENCOUCH_MEMORY_DATABASE_URL. Add it to your .env — for the "

@@ -40,17 +40,17 @@ delta on the right, and where the turn ends up routing.
 
 | Final level | Route | Pipeline |
 |---|---|---|
-| 0 / 1 | `therapeutic` | `turn_dispatch_node → load_memory_node → therapeutic_subgraph` |
-| 2 / 3 | `crisis` | `crisis_resource_lookup_node → crisis_response_node → crisis_log_node` |
+| 0 / 1 | `therapeutic` | `turn_dispatch → load_memory → TherapeuticAgent` |
+| 2 / 3 | `crisis` | `crisis_resource_lookup → crisis_response → crisis_log` |
 
 **Level 1 stays therapeutic.** `needs_clarification=true` is set in
 state but doesn't trigger the crisis branch — the therapeutic
 dispatcher picks `clarifying` or `supportive` based on the
 message.
 
-The crisis branch leads with `crisis_resource_lookup_node` so any
+The crisis branch leads with crisis-resource lookup so any
 verified hotlines for the user's region land in the same crisis
-reply. `crisis_log_node` is always-on regardless of memory mode —
+reply. Crisis logging is always-on regardless of memory mode —
 even in incognito the event is recorded with `user_id` scrubbed
 and `session_id` opaqued.
 
@@ -98,14 +98,13 @@ window (exclusive boundary — the cutoff date itself is preserved).
 
 | File | Purpose |
 |---|---|
-| `agent/nodes/crisis_gate.py` | Crisis gate orchestration, truth-table normalization, graph routing |
-| `agent/gates/safety/service.py` | LLM-only crisis classifier service and structured output schema |
-| `agent/gates/safety/prompts.py` | Crisis classifier prompt and system instruction |
-| `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup (runs first on the crisis branch) |
-| `agent/nodes/crisis_response.py` | Crisis reply with optional resource overlay |
-| `agent/nodes/crisis_log.py` | Always-on audit record writer (graph node) |
-| `agent/audit/crisis_log.py` | Backend protocol + in-memory + null implementations |
+| `agent/runtime/guardrails/assessment.py` | Crisis gate orchestration and truth-table normalization |
+| `agent/runtime/guardrails/service.py` | LLM-only crisis classifier service and structured output schema |
+| `agent/runtime/guardrails/prompts.py` | Crisis classifier prompt and system instruction |
+| `agent/runtime/guardrails/crisis.py` | OpenAI Agents SDK input guardrail wrapper |
+| `agent/runtime/tools/crisis.py` | Crisis resource lookup tool and crisis response delta |
+| `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory/null implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
 | `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
-| `agent/tools/grounded_search.py` | `find_crisis_resources` (called by `crisis_resource_lookup_node`) |
+| `agent/runtime/tools/grounded_search.py` | `find_crisis_resources` for crisis-resource surfacing |

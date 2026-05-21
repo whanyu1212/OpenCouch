@@ -397,7 +397,7 @@ If the user signals they want to stop the exercise ("I don't want to do this", "
 - do not try to redirect back to the exercise
 - do not argue that the exercise would help if they just kept going
 
-The next dispatcher turn will route to whatever response style fits the user's current state. This response style's job is just to exit gracefully.
+The next turn will use whatever response skill fits the user's current state. This response style's job is just to exit gracefully.
 
 ### When an exercise naturally completes
 

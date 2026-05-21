@@ -28,7 +28,7 @@ const LAYERS: Layer[] = [
     id: 'instructions',
     depth: 2,
     label: '4. Response instructions',
-    source: 'agent/therapeutic/prompting/instructions.py',
+    source: 'agent/runtime/agents/therapeutic_prompt_instructions.py',
     desc: 'Per-response-style behavioral instructions assembled by build_*_system_prompt(). Supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, and closing each have their own instruction block.',
   },
   {

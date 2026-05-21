@@ -24,25 +24,25 @@ from pathlib import Path
 
 import pytest
 
-from agent.runtime.active_session import (
+from agent.runtime.session.active_session import (
     PostgresActiveSessionStore,
     SqliteActiveSessionStore,
 )
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode
-from agent.audit.session_feedback import (
+from agent.feedback.session_feedback import (
     InMemorySessionFeedbackBackend,
     NullSessionFeedbackBackend,
 )
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
-from agent.audit.postgres_session_feedback import PostgresSessionFeedbackBackend
+from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.audit.sqlite_session_feedback import SqliteSessionFeedbackBackend
+from agent.feedback.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.store import OpenCouchMemoryStore
-from agent.persistence import (
+from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_FEEDBACK_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
@@ -56,7 +56,7 @@ from agent.persistence import (
 def test_default_memory_db_path_is_distinct_from_thread_db() -> None:
     """The memory SQLite file must not share a path with runtime state."""
 
-    from agent.persistence import DEFAULT_THREAD_DB_PATH
+    from agent.runtime import DEFAULT_THREAD_DB_PATH
 
     # All four OpenCouch-owned SQLite files must be distinct so schemas
     # cannot collide across stores.
@@ -73,7 +73,7 @@ def test_default_paths_live_next_to_thread_db() -> None:
     """All four OpenCouch-owned SQLite files should sit in the same
     directory (``apps/backend/``) so operators can find them together."""
 
-    from agent.persistence import DEFAULT_THREAD_DB_PATH
+    from agent.runtime import DEFAULT_THREAD_DB_PATH
 
     assert DEFAULT_MEMORY_DB_PATH.parent == DEFAULT_THREAD_DB_PATH.parent
     assert DEFAULT_CRISIS_LOG_DB_PATH.parent == DEFAULT_THREAD_DB_PATH.parent
@@ -513,7 +513,7 @@ async def test_aexit_closes_feedback_backend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_aenter_prewarms_embedding_provider_and_text_adapter() -> None:
+async def test_aenter_prewarms_embedding_provider_and_text_runtime() -> None:
     """``__aenter__`` should finish warmup before the runtime is usable."""
 
     class _WarmableEmbeddingProvider(NullEmbeddingProvider):
@@ -535,4 +535,4 @@ async def test_aenter_prewarms_embedding_provider_and_text_adapter() -> None:
 
     async with runtime:
         assert embedding_provider.warmup_calls == 1
-        assert runtime._text_agent_adapter is not None  # noqa: SLF001
+        assert runtime._openai_text_runtime is not None  # noqa: SLF001

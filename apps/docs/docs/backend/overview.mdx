@@ -79,21 +79,21 @@ composition logic.
 
 | Package | Owns |
 |---|---|
-| `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
-| `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `turn_dispatch`, `memory_control`, `grounded_answer`, `load_memory`, etc.) |
-| `agent/therapeutic/` | Subgraph: LLM-primary dispatcher, shared therapeutic response node, guided-exercise node, exercise registry/state machine, and prompt builders |
+| `agent/` | State schema, models, and runtime context |
+| `agent/runtime/` | OpenAI Agents SDK text runtime, guardrails, specialist agents, tools, SDK sessions, persistence, and lifecycle orchestration |
+| `agent/runtime/tools/crisis.py`, `agent/runtime/tools/grounded.py` | SDK tool surfaces and fallback deltas for crisis and grounded lookup |
+| `agent/skills/` | Therapeutic response skills and guided-exercise skill catalog/state machine |
 | `agent/memory/` | Store protocol, Postgres/SQLite backends, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
-| `agent/audit/` | Always-on safety records — crisis log and session feedback with in-memory, Postgres, and SQLite backends |
-| `agent/gates/safety/` | LLM-only crisis classification, prompts, and truth-table normalization |
+| `agent/audit/` | Always-on safety records, currently crisis log backends |
+| `agent/feedback/` | Session feedback records and in-memory, Postgres, and SQLite backends |
 | `agent/gates/memory_control/` | User-facing memory-control actions and operations |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
-| `agent/tools/` | `find_crisis_resources` (grounded search for hotlines), `answer_factual_lookup` (factual search grounding) |
 | `llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |
 | `channels/` | Standalone channel adapters, currently Telegram DM polling |
 | `agent/voice/` | LiveKit-Agents voice runtime — worker process, agent handoffs, bounded tasks, room transport, and transcript finalization |
 | `api/` | FastAPI routes (chat, threads, memory, voice token/finalization) |
-| `tests/` | Pytest suites for nodes, memory, retrieval, dispatcher, persistence |
+| `tests/` | Pytest suites for runtime stages, memory, retrieval, dispatcher, persistence |
 
 ---
 
@@ -102,7 +102,6 @@ composition logic.
 | Topic | Page |
 |---|---|
 | Agent graph | [Graph](/docs/agent/graph) |
-| Node catalog | [Nodes](/docs/agent/nodes) |
 | Tools | [Tools](/docs/agent/tools) |
 | State schema | [State](/docs/agent/state) |
 | Memory | [Memory](/docs/memory/overview) |
