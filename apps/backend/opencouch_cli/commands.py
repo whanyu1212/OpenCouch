@@ -36,6 +36,12 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         example="/status",
     ),
     SlashCommand(
+        ("/doctor",),
+        "Check runtime readiness for the current CLI session.",
+        "session",
+        example="/doctor",
+    ),
+    SlashCommand(
         ("/history",),
         "Show the last n transcript messages. Default: 6.",
         "session",

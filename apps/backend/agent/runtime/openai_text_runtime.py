@@ -11,7 +11,7 @@ from typing import Any, cast
 from agents import Runner
 from agent.runtime.session.state import format_recent_history
 from agent.guardrails.prompts import build_crisis_response_prompt
-from agent.models import Channel
+from agent.models import Channel, CrisisAssessment, MessageRole
 from agent.observability.timing import elapsed_ms
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.guided_exercise import (
@@ -149,6 +149,13 @@ class OpenAITextRuntime:
     ) -> Mapping[str, Any]:
         """Run one turn through the OpenAI text runtime."""
 
+        if context.llm_client is None:
+            return _deterministic_smoke_state(
+                initial_state,
+                prior_state=prior_state,
+                streamed=False,
+            )
+
         prepared = await self._prepare_turn(
             initial_state,
             config=config,
@@ -225,6 +232,17 @@ class OpenAITextRuntime:
         prior_state: AgentState | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming turn through the OpenAI text runtime."""
+
+        if context.llm_client is None:
+            yield TextRuntimeStatusEvent(stage="deterministic")
+            final_state = _deterministic_smoke_state(
+                initial_state,
+                prior_state=prior_state,
+                streamed=True,
+            )
+            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+            yield TextRuntimeStateEvent(state=final_state)
+            return
 
         prepared = await self._prepare_turn(
             initial_state,
@@ -1039,6 +1057,84 @@ def _effective_turn_state(
         else:
             state[key] = value
     return cast(AgentState, state)
+
+
+def _deterministic_smoke_state(
+    initial_state: AgentTurnInputState,
+    *,
+    prior_state: AgentState | None,
+    streamed: bool,
+) -> AgentState:
+    """Return a local-only final state for deterministic CLI smoke runs."""
+
+    state = _effective_turn_state(prior_state, initial_state)
+    response_text = _deterministic_smoke_response_text(state)
+    response_style = "deterministic_smoke"
+    assistant_turn = {
+        "role": MessageRole.ASSISTANT.value,
+        "content": response_text,
+        "response_style": response_style,
+    }
+    diagnostics = {
+        **dict(state.get("diagnostics", {}) or {}),
+        "text_agent_runtime": "deterministic_smoke",
+        "openai_text_runtime_mode": "deterministic_smoke",
+        "openai_selected_agent": None,
+        "openai_streamed": streamed,
+        "deterministic_smoke": True,
+        "finalize_done_at_monotonic": time.monotonic(),
+        "routing_trace": [
+            {
+                "stage": "runtime",
+                "decision": "deterministic_smoke",
+                "source": "no_llm_client",
+                "reason": "No LLM client is configured for this turn.",
+            }
+        ],
+    }
+    return cast(
+        AgentState,
+        {
+            **dict(state),
+            "response_text": response_text,
+            "response_style": response_style,
+            "therapeutic_approach": "none",
+            "session_action": "none",
+            "should_persist_memory": False,
+            "route": "therapeutic",
+            "crisis": CrisisAssessment(
+                reason=("Deterministic smoke mode did not run crisis classification."),
+            ),
+            "diagnostics": diagnostics,
+            "turn_lifecycle": {
+                "active_flow": "none",
+                "action": "none",
+            },
+            "grounded_lookup": {
+                "query": "",
+                "status": "not_attempted",
+            },
+            "memory_reference": {
+                "mode": "none",
+            },
+            "transcript": [
+                *list(state.get("transcript", [])),
+                assistant_turn,
+            ],
+        },
+    )
+
+
+def _deterministic_smoke_response_text(state: Mapping[str, Any]) -> str:
+    """Return the deterministic user-facing smoke response text."""
+
+    message = str(state.get("message") or "").strip()
+    suffix = f" Received message: {message}" if message else ""
+    return (
+        "Deterministic smoke mode: kept this turn local because no LLM client "
+        "is configured. Crisis classification, therapeutic generation, and "
+        f"memory extraction did not run.{suffix}"
+    )
 
 
 def _crisis_resource_tool_input_text_for_state(state: AgentState) -> str:

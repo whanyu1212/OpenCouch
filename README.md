@@ -6,7 +6,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
-[![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C?style=flat-square&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![OpenAI Agents SDK](https://img.shields.io/badge/OpenAI_Agents_SDK-runtime-10B981?style=flat-square)](apps/backend/agent/README.md)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
@@ -223,106 +223,93 @@ Before response generation, each turn runs through safety routing. Memory writes
 - **Optional Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
 - **Backend API:** FastAPI route layer used by the web UI and other clients.
 
+OpenCouch owns the graph-like product state machine: thread locks, state
+snapshots, routing policy, memory lifecycle, audit, and persistence. The
+OpenAI Agents SDK Runner owns the model/tool execution loop for the selected
+agent, plus the model-visible SDK session history used during that loop.
+
 ```mermaid
 flowchart TD
-    %% Define Node Styles (Tinted for Light/Dark Mode)
-    classDef inputNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
-    classDef gateNode fill:#EF44441A,stroke:#EF4444,stroke-width:2px
-    classDef safeNode fill:#10B9811A,stroke:#10B981,stroke-width:2px
-    classDef riskNode fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
-    classDef sysNode fill:#3B82F61A,stroke:#3B82F6,stroke-width:2px
-    classDef dbNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
+    classDef surfaceNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
+    classDef appNode fill:#2563EB1A,stroke:#2563EB,stroke-width:2px
+    classDef sdkNode fill:#10B9811A,stroke:#10B981,stroke-width:2px
+    classDef toolNode fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
+    classDef storeNode fill:#7C3AED1A,stroke:#7C3AED,stroke-width:2px
 
     subgraph SURF ["Runtime Surfaces"]
-        CLI["CLI"]:::inputNode
-        WEB["Next.js web chat"]:::inputNode
-        TG["Optional Telegram DM gateway<br/>thread rotation"]:::inputNode
-        API["FastAPI REST/WebSocket"]:::inputNode
+        CLI["CLI / TUI"]:::surfaceNode
+        WEB["Next.js web chat"]:::surfaceNode
+        TG["Optional Telegram DM gateway"]:::surfaceNode
+        API["FastAPI REST / WebSocket"]:::surfaceNode
     end
 
-    IN(["Text user message"]):::inputNode
-    subgraph GATE ["Safety Gate"]
-        CG{"crisis_gate<br/>LLM-only classifier"}:::gateNode
-    end
-
-    subgraph SAFE ["Therapeutic Branch"]
+    subgraph APP ["OpenCouch-owned runtime and graph-like state"]
         direction TB
-        TDISP{"turn_dispatch<br/>LLM route + active-flow lifecycle"}:::safeNode
-        MC[["memory_control<br/>natural-language memory ops"]]:::safeNode
-        GA[["grounded_answer<br/>search-grounded answer"]]:::safeNode
-        LM["load_memory<br/>awaits recall / prefetch"]:::safeNode
-        TDISP ==>|memory control| MC
-        TDISP ==>|lookup| GA
-        TDISP ==>|support| LM
+        PR["PersistentAgentRuntime<br/>thread locks • active session lifecycle"]:::appNode
+        STATE["AgentState snapshot<br/>transcript fallback • route • crisis metadata<br/>exercise state • diagnostics • pending memory actions"]:::appNode
+        MEM["Memory orchestration<br/>turn recall • write policy • session-end commit"]:::appNode
+        POLICY{"OpenAITextRuntime policy<br/>prepare turn • safety result • branch selection<br/>consent and exercise lifecycle"}:::appNode
+        FINAL["Finalize turn<br/>public history • response metadata • audit hooks"]:::appNode
     end
 
-    subgraph THERAPY ["Therapeutic Subgraph"]
+    subgraph SDK ["OpenAI Agents SDK Runner-owned execution"]
         direction TB
-        TD{"therapeutic_dispatch<br/>LLM route plan + continuity"}:::safeNode
-        TR[["therapeutic_response<br/>shared response node"]]:::safeNode
-        GE[["guided_exercise_response<br/>LangGraph adapter"]]:::safeNode
-        ER[["ExerciseRunner service<br/>selection • step state • deltas"]]:::safeNode
-        TD ==>|response style| TR
-        TD ==>|guided exercise| GE
-        GE -.-> ER
+        RUN["Runner.run / Runner.run_streamed<br/>agent loop • model calls • max turns • streaming events"]:::sdkNode
+        ROSTER["Agent roster<br/>TherapeuticAgent • CrisisAgent • GuidedExerciseAgent"]:::sdkNode
+        SDKSESSION["SDK session<br/>model-visible short-term conversation history"]:::sdkNode
+        SDKTOOLS["SDK tool-call dispatch<br/>invoke registered tools and return tool outputs"]:::sdkNode
+        TRACE["SDK tracing and guardrail plumbing"]:::sdkNode
     end
 
-    subgraph RISK ["Crisis Branch"]
-        RL[["crisis_resource_lookup<br/>location-aware resources"]]:::riskNode
-        CR[["crisis_response<br/>PFA overlay • local hotlines"]]:::riskNode
-        CL[/"crisis_log"/]:::riskNode
-        RL ==> CR
-        CR ==> CL
-    end
-
-    FT{{"finalize_turn<br/>checkpoint reply • set route"}}:::sysNode
-
-    subgraph POST ["Runtime Memory Work (outside LangGraph)"]
-        direction LR
-        MP["memory prefetch<br/>turn-start speculation"]:::sysNode
-        MP -.-> LM
-    end
-
-    subgraph SESSION ["Session-End Commit (ActiveSessionManager, outside the LangGraph workflow)"]
+    subgraph TOOLS ["OpenCouch tool implementations exposed to the SDK"]
         direction TB
-        SE(["session_end trigger<br/>/end • timeout • shutdown • voice disconnect"]):::sysNode
-        SS(["summarize_session<br/>episodic arc"]):::sysNode
-        CM(["commit_session_memory<br/>promote held semantic • procedural"]):::sysNode
-        SE ==> SS
-        SS ==> CM
+        MEMTOOLS["memory ops"]:::toolNode
+        LOOKUP["grounded lookup"]:::toolNode
+        CRISIS["crisis resources"]:::toolNode
+        EXERCISE["guided-exercise skills"]:::toolNode
     end
 
-    DB[("Postgres + pgvector<br/>threads • memory • active sessions • crisis log • feedback • voice status")]:::dbNode
+    APPDB[("OpenCouch persistence<br/>thread state • long-term memory • active sessions<br/>crisis log • feedback")]:::storeNode
+    SDKDB[("SDK session persistence<br/>model-visible conversation items")]:::storeNode
 
-    %% Logic Flows
-    CLI ==> IN
-    WEB ==> API
-    API ==> IN
-    TG ==> IN
-    VOICE ==> VIN
-    VIN -.->|startup/mid-session memory| DB
-    VIN -.->|disconnect transcript finalization| SE
-    IN ==> CG
-    IN -.->|runtime context| MP
-    CG ==>|Safe| TDISP
-    CG -.->|Risk| RL
-    MC ==> FT
-    GA ==> FT
-    LM ==> TD
-    TR ==> FT
-    GE ==> FT
-    CL -.-> FT
-    CM -.->|promoted / reconciled writes| DB
-    SS -.->|episodic arc| DB
+    CLI --> PR
+    WEB --> API
+    TG --> API
+    API --> PR
+    PR <--> STATE
+    PR <--> APPDB
+    PR --> MEM
+    MEM <--> APPDB
+    MEM --> POLICY
+    STATE --> POLICY
 
-    %% Subgraph Styling (Removes default gray background)
+    POLICY -->|"selected agent + input + app context + SDK session"| RUN
+    RUN --> ROSTER
+    RUN <--> SDKSESSION
+    SDKSESSION <--> SDKDB
+    RUN --> SDKTOOLS
+    RUN --> TRACE
+
+    SDKTOOLS --> MEMTOOLS
+    SDKTOOLS --> LOOKUP
+    SDKTOOLS --> CRISIS
+    SDKTOOLS --> EXERCISE
+    MEMTOOLS --> MEM
+    LOOKUP --> POLICY
+    CRISIS --> POLICY
+    EXERCISE --> STATE
+
+    RUN -->|"RunResult or stream events"| POLICY
+    POLICY --> FINAL
+    FINAL --> STATE
+    FINAL --> APPDB
+
+    SDKSESSION -.->|"separate from app-owned state snapshot"| STATE
+
     style SURF fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style GATE fill:none,stroke:#EF4444,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style SAFE fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style THERAPY fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style RISK fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style POST fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style SESSION fill:none,stroke:#3B82F6,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style APP fill:none,stroke:#2563EB,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style SDK fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    style TOOLS fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
 ```
 
 ---
@@ -337,11 +324,12 @@ This repository is a monorepo managed with `uv` and `pnpm`.
 ```text
 OpenCouch/
 ├── apps/
-│   ├── backend/                # Python backend (FastAPI, LangGraph)
-│   │   ├── agent/              # Conversation graph, nodes, state, runtime context
-│   │   │   ├── nodes/          # Individual graph nodes
-│   │   │   ├── memory/         # Memory retrieval, deduplication, embeddings
-│   │   │   ├── therapeutic/    # Therapeutic subgraph, exercises, prompt logic
+│   ├── backend/                # Python backend (FastAPI, OpenAI Agents SDK)
+│   │   ├── agent/              # Runtime agents, tools, state, memory, and services
+│   │   │   ├── runtime/        # OpenAI text runtime, SDK sessions, persistence lifecycle
+│   │   │   ├── specialists/    # Therapeutic, crisis, and guided-exercise agent roles
+│   │   │   ├── tools/          # Tool implementations exposed to the SDK runner
+│   │   │   ├── memory/         # Memory retrieval, write policy, embeddings, stores
 │   │   ├── llm/                # LLM adapters (Gemini, OpenAI, etc.)
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── channels/           # Telegram gateway and channel adapters
@@ -433,7 +421,7 @@ OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory
 |:---|:---|:---|
 | ✅ **Shipped** | **Core product** | Web chat, threading, persistent/incognito sessions, memory inspection, and session feedback |
 | ✅ **Shipped** | **Guided support** | 13 state-tracked coping exercises for grounding, breathing, thought work, values reflection, and related flows |
-| ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, Postgres-backed persistence, LangGraph checkpoints, crisis audit, and feedback storage |
+| ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, OpenAI Agents SDK text runtime, Postgres-backed state/session persistence, crisis audit, and feedback storage |
 | 🧪 **Dogfood** | **Messaging** | Telegram direct-message gateway with allow-listing, Markdown rendering, `/end`, and session rotation |
 | 🔜 **Next** | **Product stabilization** | Closed beta readiness, onboarding polish, reliability improvements, clearer session lifecycle, and feedback-driven UX fixes |
 | 🔜 **Next** | **Voice rebuild** | Rebuild voice from scratch after the text runtime cleanup, without carrying the legacy LiveKit worker forward |
