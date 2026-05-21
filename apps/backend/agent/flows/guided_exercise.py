@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from agents import Agent
 from llm.base import BaseLLMClient, StructuredResponseT
 
 from agent.runtime.context import OpenAITextRunContext
@@ -563,16 +564,32 @@ async def run_guided_exercise_turn_stream(
 
 
 def _build_guided_exercise_agent(
-    agent: Any,
+    agent: Agent[OpenAITextRunContext],
     *,
     system_instruction: str | None,
     runtime_instructions: str,
-) -> Any:
+) -> Agent[OpenAITextRunContext]:
     instructions = runtime_instructions
     if system_instruction:
         instructions = f"{instructions}\n\n{system_instruction}"
-    agent.instructions = instructions
-    return agent
+    return Agent[OpenAITextRunContext](
+        name=agent.name,
+        handoff_description=agent.handoff_description,
+        tools=list(agent.tools),
+        mcp_servers=list(agent.mcp_servers),
+        mcp_config=agent.mcp_config,
+        instructions=instructions,
+        prompt=agent.prompt,
+        handoffs=list(agent.handoffs),
+        model=agent.model,
+        model_settings=agent.model_settings,
+        input_guardrails=list(agent.input_guardrails),
+        output_guardrails=list(agent.output_guardrails),
+        output_type=agent.output_type,
+        hooks=agent.hooks,
+        tool_use_behavior=agent.tool_use_behavior,
+        reset_tool_choice=agent.reset_tool_choice,
+    )
 
 
 def _replace_exercise_skill_context_with_tool_instruction(

@@ -12,11 +12,15 @@ from agents import Agent
 from agents.tool_context import ToolContext
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.flows.guided_exercise import _build_guided_exercise_agent
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime_context import WorkflowContext
 from agent.specialists.crisis import CRISIS_AGENT_NAME
-from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
+from agent.specialists.guided_exercise import (
+    GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    GUIDED_EXERCISE_AGENT_NAME,
+)
 from agent.specialists.roster import build_openai_text_agent_roster
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.context import MemoryToolCallRecord, OpenAITextRunContext
@@ -184,6 +188,33 @@ def test_agent_roster_builds_dormant_specialists() -> None:
         "record_guided_exercise_progress",
     ]
     assert roster.therapeutic_agent.handoffs == []
+
+
+def test_runtime_guided_exercise_agent_does_not_mutate_roster_agent() -> None:
+    """Runtime prompt variants must not mutate the cached roster agent."""
+
+    roster = build_openai_text_agent_roster(model="gpt-test")
+    base_agent = roster.guided_exercise_agent
+    original_instructions = base_agent.instructions
+
+    first_agent = _build_guided_exercise_agent(
+        base_agent,
+        system_instruction="first turn instructions",
+        runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    )
+    second_agent = _build_guided_exercise_agent(
+        base_agent,
+        system_instruction="second turn instructions",
+        runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    )
+
+    assert first_agent is not base_agent
+    assert second_agent is not base_agent
+    assert first_agent is not second_agent
+    assert base_agent.instructions == original_instructions
+    assert "first turn instructions" in first_agent.instructions
+    assert "second turn instructions" in second_agent.instructions
+    assert "first turn instructions" not in second_agent.instructions
 
 
 def test_operational_tool_metadata_is_explicit() -> None:
