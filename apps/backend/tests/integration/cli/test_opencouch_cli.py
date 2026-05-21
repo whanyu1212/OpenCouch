@@ -283,6 +283,8 @@ def test_render_status_guest_mode_hides_sqlite_path(capsys) -> None:
     assert "ephemeral" in out
     assert "owner id" in out
     assert "none (guest mode)" in out
+    assert "verbosity" in out
+    assert "compact" in out
     assert "sqlite path" not in out
 
 
@@ -302,6 +304,8 @@ def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
     assert "sqlite" in out
     assert "owner id" in out
     assert "thread-scoped" in out
+    assert "verbosity" in out
+    assert "compact" in out
     assert "sqlite path" in out
 
 
@@ -320,6 +324,7 @@ def test_help_command_registry_contains_current_public_commands() -> None:
     assert "/theme <mono|contrast|calm>" in displays
     assert "/mode <deterministic|hybrid|auto>" in displays
     assert "/response-tier <fast|quality>" in displays
+    assert "/verbosity <compact|verbose>" in displays
     assert "/trace on|off|once" in displays
     assert "/debug state" in displays
     assert "/end [new [thread-id]]" in displays
@@ -359,6 +364,7 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
     assert {"compact", "full"}.issubset(completions("/ui "))
     assert {"mono", "contrast", "calm"}.issubset(completions("/theme "))
     assert {"fast", "quality"}.issubset(completions("/response-tier "))
+    assert {"compact", "verbose"}.issubset(completions("/verbosity "))
     assert {"on", "off", "once"}.issubset(completions("/trace "))
 
 
@@ -480,6 +486,32 @@ def test_guest_pending_tail_status_avoids_memory_copy() -> None:
     assert "saving memory" not in text
 
 
+def test_split_stream_preview_text_hides_therapeutic_skill_loading_blob() -> None:
+    """Live preview should hide leaked skill-loading chatter from the reply panel."""
+
+    from opencouch_cli.app import _split_stream_preview_text
+
+    status, visible = _split_stream_preview_text(
+        'load_therapeutic_response_skill(response_style="supportive_guidance") '
+        'to=load_therapeutic_response_skill {"skill_context":"Use a brief, '
+        'attuned reflection."}That’s been sitting with you for years.'
+    )
+
+    assert status == "loading response style privately"
+    assert visible == "That’s been sitting with you for years."
+
+
+def test_split_stream_preview_text_leaves_normal_reply_text_unchanged() -> None:
+    """Ordinary streamed prose should render unchanged."""
+
+    from opencouch_cli.app import _split_stream_preview_text
+
+    status, visible = _split_stream_preview_text("That sounds really heavy.")
+
+    assert status is None
+    assert visible == "That sounds really heavy."
+
+
 def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
     """Route display should stay compact and source from AgentOutput metadata."""
 
@@ -503,6 +535,66 @@ def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
     assert "normal" in out
     assert "42ms" in out
     assert "saving memory" in out
+
+
+def test_render_turn_activity_compact_shows_tool_badges(capsys) -> None:
+    """Compact observability should show a terse tool badge row."""
+
+    from opencouch_cli.app import render_turn_activity
+
+    render_turn_activity(
+        AgentOutput(
+            response_text="done",
+            response_type=ResponseCategory.THERAPEUTIC,
+            crisis=CrisisAssessment(),
+            response_style="supportive",
+            diagnostics={
+                "openai_therapeutic_skill_tool_calls": [
+                    "load_therapeutic_response_skill"
+                ],
+                "openai_memory_tool_calls": ["show_saved_memory"],
+            },
+        ),
+        observability_mode="compact",
+    )
+    out = capsys.readouterr().out
+
+    assert "tools" in out
+    assert "response-style" in out
+    assert "memory" in out
+
+
+def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
+    """Verbose observability should expand into a richer activity block."""
+
+    from opencouch_cli.app import render_turn_activity
+
+    render_turn_activity(
+        AgentOutput(
+            response_text="done",
+            response_type=ResponseCategory.THERAPEUTIC,
+            crisis=CrisisAssessment(needs_clarification=True),
+            response_style="supportive",
+            therapeutic_approach="cbt",
+            diagnostics={
+                "openai_therapeutic_skill_tool_calls": [
+                    "load_therapeutic_response_skill"
+                ],
+                "openai_therapeutic_skill_response_style": "supportive",
+                "openai_grounded_tool_calls": ["answer_grounded_lookup"],
+            },
+        ),
+        observability_mode="verbose",
+    )
+    out = capsys.readouterr().out
+
+    assert "turn activity" in out
+    assert "route" in out
+    assert "supportive / cbt" in out
+    assert "response-style" in out
+    assert "load_therapeutic_response_skill → supportive" in out
+    assert "answer_grounded_lookup" in out
+    assert "awaiting safety clarification" in out
 
 
 def test_render_turn_trace_shows_ascii_flow_and_reasons(capsys) -> None:
@@ -1367,6 +1459,25 @@ async def test_response_tier_command_updates_session(monkeypatch) -> None:
     assert session.response_model_tier == "quality"
     assert session.response_llm_client is response_client
     assert messages == [("success", "Response tier updated. tier=quality")]
+
+
+@pytest.mark.asyncio
+async def test_verbosity_command_updates_session_mode(capsys) -> None:
+    """The /verbosity command should switch compact vs verbose observability."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/verbosity verbose", session, runtime) is True
+    assert session.observability_mode == "verbose"
+
+    assert await handle_command("/verbosity compact", session, runtime) is True
+    assert session.observability_mode == "compact"
+
+    assert await handle_command("/verbosity nope", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "Usage: /verbosity <compact|verbose>" in out
 
 
 @pytest.mark.asyncio

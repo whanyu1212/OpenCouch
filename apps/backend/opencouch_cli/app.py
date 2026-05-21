@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import difflib
+import json
 import os
 import textwrap
 from contextlib import AsyncExitStack
@@ -140,10 +141,89 @@ console = Console(theme=CLI_THEME)
 
 TraceMode = Literal["off", "on", "once"]
 UIMode = Literal["full", "compact"]
+ObservabilityMode = Literal["compact", "verbose"]
 PromptThemeName = Literal["mono", "contrast", "calm"]
 
 # Prompt-toolbar "last action" line (best-effort, display-only).
 _LAST_INFO_MESSAGE: str | None = None
+
+
+def _split_stream_preview_text(
+    accumulated_text: str,
+) -> tuple[str | None, str]:
+    """Separate tool-loading chatter from user-facing streamed reply text.
+
+    The OpenAI Agents SDK can occasionally leak the therapeutic skill-loading
+    call and its JSON payload into the raw text delta stream before the actual
+    reply text arrives. For the live CLI preview we keep that internal chatter
+    visually separate and only show the user-facing reply text in the reply
+    panel.
+
+    Args:
+        accumulated_text: Raw streamed text accumulated so far.
+
+    Returns:
+        Tuple of ``(status_label, visible_text)`` where ``status_label`` is a
+        muted helper line for the live preview, and ``visible_text`` is the
+        cleaned reply text that should appear in the panel body.
+    """
+
+    stripped = accumulated_text.lstrip()
+    tool_prefix = "load_therapeutic_response_skill("
+    if not stripped.startswith(tool_prefix):
+        return None, accumulated_text
+
+    tool_status = "loading response style privately"
+    payload_marker = "to=load_therapeutic_response_skill"
+    payload_start = stripped.find(payload_marker)
+    if payload_start == -1:
+        return tool_status, ""
+
+    json_start = stripped.find("{", payload_start + len(payload_marker))
+    if json_start == -1:
+        return tool_status, ""
+
+    try:
+        _, json_end = json.JSONDecoder().raw_decode(stripped[json_start:])
+    except json.JSONDecodeError:
+        return tool_status, ""
+
+    visible_text = stripped[json_start + json_end :].lstrip()
+    return tool_status, visible_text
+
+
+def _live_preview_renderable(
+    accumulated_text: str,
+    *,
+    thread_id: str,
+) -> Group | Panel | Text:
+    """Build the live-stream preview renderable for the current turn."""
+
+    preview_status, visible_text = _split_stream_preview_text(accumulated_text)
+    renderables: list[Panel | Text] = []
+
+    if preview_status is not None:
+        renderables.append(Text.from_markup(f"[muted]{preview_status}[/muted]"))
+
+    if visible_text:
+        renderables.append(
+            Panel(
+                visible_text,
+                title="[success]  reply  [/success]",
+                subtitle=Text.from_markup(
+                    f"[muted]thread[/muted] [info]{thread_id}[/info]"
+                ),
+                border_style="panel",
+                box=box.ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+    if not renderables:
+        return Text("", style="muted")
+    if len(renderables) == 1:
+        return renderables[0]
+    return Group(*renderables)
 
 
 def _response_panel(
@@ -237,6 +317,7 @@ class RunnerSession:
     response_llm_client: BaseLLMClient | None = None
     trace_mode: TraceMode = "off"
     ui_mode: UIMode = "full"
+    observability_mode: ObservabilityMode = "compact"
     prompt_theme: PromptThemeName = "mono"
     show_onboarding: bool = True
 
@@ -806,6 +887,108 @@ def render_meta(
         console.print()
 
 
+def _route_label(output: AgentOutput) -> str:
+    """Return the user-facing route label for one output."""
+
+    route_label = output.response_style or "unknown"
+    if output.therapeutic_approach and output.therapeutic_approach != "none":
+        route_label = f"{route_label} / {output.therapeutic_approach}"
+    return route_label
+
+
+def _tool_badges(output: AgentOutput) -> list[str]:
+    """Return compact tool badges derived from turn diagnostics."""
+
+    diagnostics = output.diagnostics or {}
+    badges: list[str] = []
+
+    if diagnostics.get("openai_therapeutic_skill_tool_calls"):
+        badges.append("response-style")
+    if diagnostics.get("openai_memory_tool_calls"):
+        badges.append("memory")
+    if diagnostics.get("openai_grounded_tool_calls"):
+        badges.append("grounded lookup")
+
+    return badges
+
+
+def _tool_activity_lines(output: AgentOutput) -> list[str]:
+    """Return verbose tool-activity lines derived from diagnostics."""
+
+    diagnostics = output.diagnostics or {}
+    lines: list[str] = []
+
+    therapeutic_calls = diagnostics.get("openai_therapeutic_skill_tool_calls") or []
+    if therapeutic_calls:
+        style = str(
+            diagnostics.get("openai_therapeutic_skill_response_style") or ""
+        ).strip()
+        detail = f" → {style}" if style else ""
+        lines.append(f"{therapeutic_calls[-1]}{detail}")
+
+    memory_calls = diagnostics.get("openai_memory_tool_calls") or []
+    lines.extend(str(call) for call in memory_calls if call)
+
+    grounded_calls = diagnostics.get("openai_grounded_tool_calls") or []
+    lines.extend(str(call) for call in grounded_calls if call)
+
+    return lines
+
+
+def render_turn_activity(
+    output: AgentOutput,
+    *,
+    observability_mode: ObservabilityMode,
+) -> None:
+    """Render tool activity after the route line.
+
+    Compact mode shows a single badge row. Verbose mode expands into a
+    lightweight panel with route, tool activity, and a small state highlight.
+    """
+
+    tool_badges = _tool_badges(output)
+    if observability_mode == "compact":
+        if not tool_badges:
+            return
+        console.print(
+            Text.from_markup(
+                "   [muted]tools[/muted] "
+                + "  [panel]·[/panel]  ".join(
+                    f"[accent]{badge}[/accent]" for badge in tool_badges
+                )
+            )
+        )
+        console.print()
+        return
+
+    table = Table(show_header=False, box=box.SIMPLE)
+    table.add_column(style="hint", no_wrap=True)
+    table.add_column(style="info")
+
+    table.add_row("route", _route_label(output))
+    if tool_badges:
+        table.add_row("badges", ", ".join(tool_badges))
+
+    tool_lines = _tool_activity_lines(output)
+    if tool_lines:
+        table.add_row("activity", "\n".join(f"• {line}" for line in tool_lines))
+
+    if output.crisis.needs_clarification:
+        table.add_row("state", "awaiting safety clarification")
+    elif output.crisis.needs_crisis_response:
+        table.add_row("state", "crisis response active")
+
+    console.print(
+        Panel(
+            table,
+            title="[muted]turn activity[/muted]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
 def render_turn_route(
     output: AgentOutput,
     *,
@@ -835,10 +1018,6 @@ def render_turn_route(
         safety_label = "normal"
         safety_style = "success"
 
-    route_label = output.response_style or "unknown"
-    if output.therapeutic_approach and output.therapeutic_approach != "none":
-        route_label = f"{route_label} / {output.therapeutic_approach}"
-
     diagnostics = output.diagnostics or {}
     latency = diagnostics.get("turn_total_ms")
     try:
@@ -848,7 +1027,7 @@ def render_turn_route(
 
     parts: list[tuple[str, str]] = [
         ("   route ", "muted"),
-        (route_label, "primary"),
+        (_route_label(output), "primary"),
         ("  ·  safety ", "panel"),
         (safety_label, safety_style),
     ]
@@ -2907,6 +3086,7 @@ def render_status(session: RunnerSession) -> None:
     table.add_row("response tier", session.response_model_tier)
     table.add_row("trace mode", session.trace_mode)
     table.add_row("ui mode", session.ui_mode)
+    table.add_row("verbosity", session.observability_mode)
     table.add_row("prompt theme", session.prompt_theme)
     table.add_row(
         "response llm",
@@ -3113,6 +3293,23 @@ def set_ui_mode(session: RunnerSession, ui_mode: UIMode) -> None:
     """
 
     session.ui_mode = ui_mode
+
+
+def set_observability_mode(
+    session: RunnerSession,
+    observability_mode: ObservabilityMode,
+) -> None:
+    """Update turn observability detail for subsequent turns.
+
+    Args:
+        session (RunnerSession): Mutable CLI session state.
+        observability_mode (ObservabilityMode): New observability mode.
+
+    Returns:
+        None.
+    """
+
+    session.observability_mode = observability_mode
 
 
 def set_session_prompt_theme(
@@ -3575,6 +3772,17 @@ async def handle_command(
         render_info(f"Theme updated. theme={session.prompt_theme}", style="success")
         return True
 
+    if command == "/verbosity":
+        if len(args) != 1 or args[0] not in {"compact", "verbose"}:
+            render_info("Usage: /verbosity <compact|verbose>", style="warning")
+            return True
+        set_observability_mode(session, args[0])  # type: ignore[arg-type]
+        render_info(
+            f"Verbosity updated. verbosity={session.observability_mode}",
+            style="success",
+        )
+        return True
+
     if command == "/status":
         render_status(session)
         return True
@@ -3997,19 +4205,9 @@ async def chat_loop(
                                 ),
                                 style="primary",
                             )
-                            body = (
-                                Panel(
-                                    accumulated_text,
-                                    title="[success]  reply  [/success]",
-                                    subtitle=Text.from_markup(
-                                        f"[muted]thread[/muted] [info]{session.thread_id}[/info]"
-                                    ),
-                                    border_style="panel",
-                                    box=box.ROUNDED,
-                                    padding=(1, 2),
-                                )
-                                if accumulated_text
-                                else Text("", style="muted")
+                            body = _live_preview_renderable(
+                                accumulated_text,
+                                thread_id=session.thread_id,
                             )
                             live.update(_stream_group(body))
 
@@ -4017,15 +4215,9 @@ async def chat_loop(
                             accumulated_text += event.text
                             live.update(
                                 _stream_group(
-                                    Panel(
+                                    _live_preview_renderable(
                                         accumulated_text,
-                                        title="[success]  reply  [/success]",
-                                        subtitle=Text.from_markup(
-                                            f"[muted]thread[/muted] [info]{session.thread_id}[/info]"
-                                        ),
-                                        border_style="panel",
-                                        box=box.ROUNDED,
-                                        padding=(1, 2),
+                                        thread_id=session.thread_id,
                                     )
                                 )
                             )
@@ -4080,6 +4272,10 @@ async def chat_loop(
                         response_ready_output,
                         pending_status=_pending_tail_status(session),
                     )
+                    render_turn_activity(
+                        response_ready_output,
+                        observability_mode=session.observability_mode,
+                    )
                     render_info(
                         _pending_tail_message(session),
                         style="muted",
@@ -4094,6 +4290,10 @@ async def chat_loop(
                         )
                         _consume_trace_once(session)
                     render_turn_route(final_output)
+                    render_turn_activity(
+                        final_output,
+                        observability_mode=session.observability_mode,
+                    )
                     session.last_context = await runtime.get_state(session.thread_id)
                     session.history = await runtime.get_history(session.thread_id)
         finally:

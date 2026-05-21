@@ -629,6 +629,113 @@ async def test_all_three_layers_persist_across_full_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_full_trajectory_parity_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Postgres-backed runtime should preserve transcript, memory, and crisis data."""
+
+    memory_database_url = _postgres_memory_database_url()
+    if not memory_database_url:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
+
+    paths = runtime_paths(tmp_path)
+    thread_id = f"thread-trajectory-{uuid4()}"
+    user_id = f"user-trajectory-{uuid4()}"
+    llm_a = FakeCrossRestartLLM()
+
+    from agent.memory.models import CrisisLogRecord
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        crisis_log_backend="postgres",
+        crisis_log_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+        finalize_active_sessions_on_close=False,
+    ) as runtime_a:
+        await runtime_a.run_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            message="I have a sister named Sarah",
+            channel=Channel.TEST,
+            llm_client=llm_a,
+        )
+        await _seed_semantic_fact(
+            runtime_a,
+            owner_id=user_id,
+            key=f"fact-sarah-{thread_id}",
+            write=_sarah_memory_write(thread_id=thread_id, user_id=user_id),
+        )
+        crisis_record = CrisisLogRecord(
+            id=f"rec-{thread_id}",
+            session_id_opaque="b" * 64,
+            user_id_or_null=user_id,
+            detected_at="2026-04-11T10:00:00Z",
+            level=2,
+            override_kind="none",
+            classifier_path="llm_primary",
+            reason="postgres trajectory parity test record",
+            response_node_completed=True,
+            llm_failure_occurred=False,
+        )
+        await runtime_a.crisis_log_backend.aappend(crisis_record)
+        stored_arc = await runtime_a.end_session(thread_id, llm_client=llm_a)
+
+        assert stored_arc is not None
+        assert await runtime_a.memory_store.arecord_count((user_id, "semantic")) == 1
+        assert await runtime_a.memory_store.arecord_count((user_id, "episodic")) == 1
+        assert await runtime_a.crisis_log_backend.arecord_count() == 1
+
+    llm_b = FakeCrossRestartLLM()
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url=memory_database_url,
+        crisis_log_backend="postgres",
+        crisis_log_database_url=memory_database_url,
+        thread_persistence_backend="postgres",
+        thread_database_url=memory_database_url,
+    ) as runtime_b:
+        history = await runtime_b.get_history(thread_id)
+        assert len(history) > 0
+        assert await runtime_b.memory_store.arecord_count((user_id, "semantic")) == 1
+        assert await runtime_b.memory_store.arecord_count((user_id, "episodic")) == 1
+        assert await runtime_b.crisis_log_backend.arecord_count() == 1
+
+        result = await runtime_b.run_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            message="what did I say about Sarah",
+            channel=Channel.TEST,
+            llm_client=llm_b,
+        )
+        assert result.output.response_text
+        working_memory = result.state.get("working_memory", [])
+        assert any(
+            entry.get("type") == "semantic"
+            and "Sarah" in entry.get("evidence_quote", "")
+            for entry in working_memory
+        ), f"expected working_memory to contain a Sarah reference, got {working_memory}"
+
+        from datetime import date
+
+        day_records = await runtime_b.crisis_log_backend.alist_by_date(
+            date(2026, 4, 11)
+        )
+        assert len(day_records) == 1
+        assert day_records[0].id == f"rec-{thread_id}"
+        assert day_records[0].user_id_or_null == user_id
+
+
+@pytest.mark.asyncio
 async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     tmp_path: Path,
 ) -> None:

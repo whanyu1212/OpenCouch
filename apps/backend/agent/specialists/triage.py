@@ -36,6 +36,10 @@ the user explicitly asks to inspect or change saved memory state. Use
 guided_exercise only when the user explicitly asks to start an exercise or when
 the current active exercise should continue.
 
+Set confidence to low when the user's intent is ambiguous across multiple route
+contracts or when you would otherwise be guessing. In those cases, prefer the
+most conservative interpretation in your reasoning rather than overcommitting.
+
 Do not classify crisis risk yourself. Crisis routing remains application-owned
 and happens before triage.
 """

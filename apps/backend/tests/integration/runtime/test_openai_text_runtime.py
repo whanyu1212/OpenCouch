@@ -578,6 +578,44 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
 
 
 @pytest.mark.asyncio
+async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_reply(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Low-confidence triage should fall back to a clarifying therapeutic reply."""
+
+    runner = FakeOpenAISDKRunner("Could you say a little more about what you mean?")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        result = await runtime.run_turn(
+            thread_id="thread-low-confidence-triage",
+            user_id="user-1",
+            message="What about the thing?",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="grounded_lookup",
+                triage_confidence="low",
+            ),
+        )
+
+        assert result.output.response_text == (
+            "Could you say a little more about what you mean?"
+        )
+        assert result.output.response_style == "clarifying"
+        assert result.output.response_type.value == "therapeutic"
+        assert result.output.diagnostics["openai_triage_route"] == "therapeutic"
+        assert result.output.diagnostics["openai_triage_confidence"] == "low"
+        state = await runtime.get_state("thread-low-confidence-triage")
+        assert state is not None
+        assert state["route"] == "therapeutic"
+        assert state["response_style"] == "clarifying"
+        assert runner.run_calls
+        assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_streaming_surface(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

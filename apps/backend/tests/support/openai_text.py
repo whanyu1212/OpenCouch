@@ -212,6 +212,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         crisis_location_status: str = "provided",
         crisis_location: str = "Singapore",
         crisis_resource_status: str = "found",
+        triage_confidence: str = "high",
     ) -> None:
         super().__init__()
         self.route = route
@@ -234,6 +235,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.crisis_location_status = crisis_location_status
         self.crisis_location = crisis_location
         self.crisis_resource_status = crisis_resource_status
+        self.triage_confidence = triage_confidence
 
     async def generate_structured(
         self,
@@ -257,7 +259,7 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 "route": self.route,
                 "active_flow_action": self.active_flow_action,
                 "reasoning": f"scripted {self.route} route",
-                "confidence": "high",
+                "confidence": self.triage_confidence,
                 "memory_reference_mode": self.memory_reference_mode,
             }
             if self.route == "memory_control":

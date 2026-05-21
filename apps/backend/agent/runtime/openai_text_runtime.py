@@ -425,7 +425,20 @@ class OpenAITextRuntime:
             response_schema=TurnDispatchDecision,
             system_instruction=self._roster.triage_agent.instructions,
         )
+        if decision.confidence == "low":
+            decision.route = "therapeutic"
         apply_state_delta(state, _state_delta_for_turn_dispatch(state, decision))
+        if decision.confidence == "low":
+            apply_state_delta(
+                state,
+                {
+                    "response_style": "clarifying",
+                    "turn_lifecycle": {
+                        "active_flow": "none",
+                        "action": decision.active_flow_action,
+                    },
+                },
+            )
         return state
 
     async def _load_turn_memory(
