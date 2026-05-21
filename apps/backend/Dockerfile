@@ -38,8 +38,9 @@ COPY apps/backend ./apps/backend
 WORKDIR /workspace/apps/backend
 
 ENV PATH="/opt/opencouch-backend-venv/bin:$PATH" \
+    HOST=0.0.0.0 \
     PORT=8080
 
 EXPOSE 8080
 
-CMD ["python", "run_server.py"]
+CMD ["sh", "-c", "python -m uvicorn main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8080} --log-level ${LOG_LEVEL:-info}"]
