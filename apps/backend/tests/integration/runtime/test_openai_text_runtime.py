@@ -607,10 +607,16 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
         assert result.output.response_type.value == "therapeutic"
         assert result.output.diagnostics["openai_triage_route"] == "therapeutic"
         assert result.output.diagnostics["openai_triage_confidence"] == "low"
+        assert (
+            result.output.diagnostics["openai_triage_tentative_route"]
+            == "grounded_lookup"
+        )
         state = await runtime.get_state("thread-low-confidence-triage")
         assert state is not None
         assert state["route"] == "therapeutic"
         assert state["response_style"] == "clarifying"
+        assert state["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+        assert state["turn_lifecycle"]["triage_confidence"] == "low"
         assert runner.run_calls
         assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
 
@@ -677,14 +683,24 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending
         assert result.output.response_type.value == "therapeutic"
         assert result.output.diagnostics["openai_triage_route"] == "therapeutic"
         assert result.output.diagnostics["openai_triage_confidence"] == "low"
+        assert (
+            result.output.diagnostics["openai_triage_tentative_route"]
+            == "grounded_lookup"
+        )
         state = await runtime.get_state("thread-low-confidence-memory")
         assert state is not None
         assert state["route"] == "therapeutic"
         assert state["response_style"] == "clarifying"
         assert state["turn_lifecycle"]["active_flow"] == "pending_memory_action"
+        assert state["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+        assert state["turn_lifecycle"]["triage_confidence"] == "low"
         assert state["memory_control"]["pending_action"]["target"]["key"] == "fact-1"
         assert runner.run_calls
-        assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
+        assert runner.run_calls[-1]["agent"].name == THERAPEUTIC_AGENT_NAME
+        assert (
+            "Triage tentatively suggested 'grounded_lookup'"
+            in runner.run_calls[-1]["input_text"]
+        )
 
 
 @pytest.mark.asyncio
@@ -743,9 +759,15 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_
         assert second.output.diagnostics["openai_triage_route"] == "therapeutic"
         assert second.output.diagnostics["openai_triage_confidence"] == "low"
         assert (
+            second.output.diagnostics["openai_triage_tentative_route"]
+            == "grounded_lookup"
+        )
+        assert (
             second.output.diagnostics["openai_guided_exercise_selection_basis"]
             == "active_exercise"
         )
+        assert second.state["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+        assert second.state["turn_lifecycle"]["triage_confidence"] == "low"
         assert second.state.get("exercise_state", {}).get("exercise_type") == (
             "grounding_box_breathing"
         )

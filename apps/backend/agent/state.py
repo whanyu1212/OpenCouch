@@ -170,6 +170,11 @@ class TurnLifecycleState(TypedDict):
 
     active_flow: Literal["none", "guided_exercise", "pending_memory_action"]
     action: Literal["none", "start", "continue", "preserve", "resume", "clear"]
+    tentative_route: NotRequired[
+        Literal["therapeutic", "memory_control", "grounded_lookup", "guided_exercise"]
+        | None
+    ]
+    triage_confidence: NotRequired[Literal["low", "medium", "high"] | None]
 
 
 class MemoryReferenceState(TypedDict):

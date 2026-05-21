@@ -425,6 +425,7 @@ class OpenAITextRuntime:
             response_schema=TurnDispatchDecision,
             system_instruction=self._roster.triage_agent.instructions,
         )
+        tentative_route = decision.route if decision.confidence == "low" else None
         if decision.confidence == "low":
             decision.route = "therapeutic"
         apply_state_delta(state, _state_delta_for_turn_dispatch(state, decision))
@@ -436,6 +437,11 @@ class OpenAITextRuntime:
                     "turn_lifecycle": {
                         "active_flow": self._active_flow_for_state(state),
                         "action": decision.active_flow_action,
+                        "tentative_route": tentative_route,
+                        "triage_confidence": decision.confidence,
+                    },
+                    "diagnostics": {
+                        "openai_triage_tentative_route": tentative_route,
                     },
                 },
             )
@@ -468,6 +474,11 @@ class OpenAITextRuntime:
             if isinstance(turn_lifecycle, Mapping)
             else None
         )
+        lifecycle_metadata = {}
+        if isinstance(turn_lifecycle, Mapping):
+            for key in ("tentative_route", "triage_confidence"):
+                if turn_lifecycle.get(key) is not None:
+                    lifecycle_metadata[key] = turn_lifecycle[key]
         if has_active_exercise and lifecycle_action == "clear":
             apply_state_delta(state, clear_exercise_delta(state))
             if state.get("route") != "guided_exercise":
@@ -490,6 +501,7 @@ class OpenAITextRuntime:
                     "turn_lifecycle": {
                         "active_flow": "guided_exercise",
                         "action": "preserve",
+                        **lifecycle_metadata,
                     },
                 },
             )
@@ -520,6 +532,7 @@ class OpenAITextRuntime:
                 "turn_lifecycle": {
                     "active_flow": "guided_exercise",
                     "action": action,
+                    **lifecycle_metadata,
                 },
                 "diagnostics": {
                     "openai_guided_exercise_selection_basis": guided_exercise_basis,

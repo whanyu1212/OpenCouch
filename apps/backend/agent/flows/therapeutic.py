@@ -342,6 +342,20 @@ def operational_context_for_prompt(state: AgentState) -> str:
             pending_line = f"{pending_line} Target preview: {preview}"
         lines.append(pending_line)
 
+    turn_lifecycle = state.get("turn_lifecycle", {}) or {}
+    if (
+        isinstance(turn_lifecycle, Mapping)
+        and turn_lifecycle.get("triage_confidence") == "low"
+    ):
+        tentative_route = str(turn_lifecycle.get("tentative_route") or "").strip()
+        if tentative_route:
+            lines.append(
+                "- The user's intent is ambiguous. Triage tentatively suggested "
+                f"'{tentative_route}'. Clarify whether the user wants to proceed "
+                "with that intent or continue the current flow before taking "
+                "route-specific action."
+            )
+
     memory_reference = state.get("memory_reference", {}) or {}
     if (
         isinstance(memory_reference, Mapping)
