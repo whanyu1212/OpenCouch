@@ -178,6 +178,19 @@ Covers:
 Use this file with `run_live_text_runtime_eval.py --live` when credentials are
 configured and you want live provider coverage beyond deterministic fakes.
 
+### `datasets/live_text_runtime_trajectories.jsonl`
+Opt-in live LLM trajectory coverage for real OpenAI runtime paths.
+
+Covers:
+- OpenAI Agents SDK guided-exercise start / resume continuity
+- OpenAI Agents SDK grounded lookup followed by ordinary support
+- OpenAI Agents SDK repeated crisis-resource handling
+- OpenAI response-LLM persistent-memory trajectory quality
+- OpenAI response-LLM incognito-memory privacy behavior
+
+Use this file directly with `run_live_text_runtime_eval.py --live --dataset`
+until the runner grows first-class suite selection.
+
 ## Runners
 
 ### `runners/run_routing_eval.py`
@@ -235,19 +248,12 @@ The pytest wrappers are additionally gated by explicit flags:
 This is separate from the older classifier/style live-test flags so enabling
 basic live tests does not unexpectedly run tool-using runtime evals.
 
-### Planned OpenAI trajectory coverage
+### Next live trajectory runner slice
 
-The next live-eval patch should extend `run_live_text_runtime_eval.py` beyond
-smoke checks with an OpenAI-only trajectory suite:
-
-- `openai_agents_sdk_guided_exercise_resume_trajectory_live`
-- `openai_agents_sdk_grounded_then_support_trajectory_live`
-- `openai_agents_sdk_crisis_resource_trajectory_live`
-- `openai_response_llm_persistent_memory_trajectory_live`
-- `openai_response_llm_incognito_memory_trajectory_live`
-
-Add these as a separate JSONL dataset and expose them through a
-`--suite smoke|trajectories|all` runner option. Gate pytest wrappers with
+The trajectory cases now live in
+`datasets/live_text_runtime_trajectories.jsonl`. The next live-eval patch should
+expose them through a `--suite smoke|trajectories|all` runner option instead of
+requiring a manual `--dataset` path. Gate pytest wrappers with
 `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`, and use session-level judge scoring for
 coherence, specificity, safety, and memory handling.
 
@@ -267,7 +273,7 @@ coherence, specificity, safety, and memory handling.
 | Session quality trajectories | judged full-session coherence / memory / safety quality | `session_quality_trajectories.jsonl` |
 | Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
 | Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
-| Live text runtime | OpenAI-backed Agents SDK / response-LLM smoke paths | `live_text_runtime_smoke.jsonl` |
+| Live text runtime | OpenAI-backed Agents SDK / response-LLM smoke and trajectory paths | `live_text_runtime_smoke.jsonl`, `live_text_runtime_trajectories.jsonl` |
 
 ## Current known gaps
 

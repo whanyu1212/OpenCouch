@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.flows.therapeutic import sanitize_response_llm_text
 from agent.memory.procedural_profile import aset_proactive_recall
 from agent.runtime import build_initial_state
 from agent.memory.modes import MemoryMode
@@ -65,6 +67,68 @@ def _context(llm: Any | None = None) -> WorkflowContext:
     )
 
 
+class _RecordingResponseLLM(FakeCrossRestartLLM):
+    def __init__(self, text: str, *, stream_chunks: list[str] | None = None) -> None:
+        super().__init__()
+        self.text = text
+        self.stream_chunks = stream_chunks or [text]
+        self.prompts: list[str] = []
+        self.system_instructions: list[str | None] = []
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        del use_search
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        return self.text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        for chunk in self.stream_chunks:
+            yield chunk
+
+
+@pytest.mark.parametrize(
+    ("raw_text", "expected_text"),
+    [
+        (
+            '<tool_call>{"name":"load_therapeutic_response_skill"}</tool_call>'
+            "I can help you plan the first minute.",
+            "I can help you plan the first minute.",
+        ),
+        (
+            'load_therapeutic_response_skill({"response_style":"supportive"})'
+            "I can help you plan the first minute.",
+            "I can help you plan the first minute.",
+        ),
+        (
+            'to=load_therapeutic_response_skill {"response_style":"supportive"}'
+            "I can help you plan the first minute.",
+            "I can help you plan the first minute.",
+        ),
+    ],
+)
+def test_sanitize_response_llm_text_strips_leading_pseudo_tool_calls(
+    raw_text: str,
+    expected_text: str,
+) -> None:
+    response_text = sanitize_response_llm_text(raw_text)
+
+    assert response_text.text == expected_text
+    assert response_text.sanitized is True
+
+
 @pytest.mark.asyncio
 async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() -> None:
     workflow = _StatefulWorkflow()
@@ -105,6 +169,86 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
         "user",
         "assistant",
     ]
+
+
+@pytest.mark.asyncio
+async def test_response_llm_omits_tool_prompt_and_sanitizes_pseudo_tool_text() -> None:
+    """Response-LLM output should keep tool traces out of user-facing text."""
+
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
+    response_llm = _RecordingResponseLLM(
+        '<tool_call>{"name":"load_therapeutic_response_skill","arguments":'
+        '{"response_style":"supportive"}}</tool_call>I can help you plan '
+        "the first minute."
+    )
+    context = WorkflowContext(
+        llm_client=FakeCrossRestartLLM(),
+        response_llm=response_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    state = await runtime.run_turn(
+        cast(Any, _initial_state("Can we make a tiny plan?")),
+        config={"configurable": {"thread_id": "thread-response-llm"}},
+        context=context,
+    )
+
+    assert "load_therapeutic_response_skill" not in response_llm.prompts[-1]
+    assert "load_therapeutic_response_skill" not in (
+        response_llm.system_instructions[-1] or ""
+    )
+    assert state["response_text"] == "I can help you plan the first minute."
+    assert state["diagnostics"]["openai_response_llm_output_sanitized"] is True
+    assert "openai_response_llm_raw_text_sha256" in state["diagnostics"]
+    assert (
+        "load_therapeutic_response_skill"
+        in (state["diagnostics"]["openai_response_llm_raw_text_preview"])
+    )
+
+
+@pytest.mark.asyncio
+async def test_response_llm_stream_sanitizes_pseudo_tool_text() -> None:
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
+    response_llm = _RecordingResponseLLM(
+        "unused",
+        stream_chunks=[
+            "<tool_call>{",
+            '"name":"load_therapeutic_response_skill"',
+            "}</tool_call>",
+            "I can help you plan the first minute.",
+        ],
+    )
+    context = WorkflowContext(
+        llm_client=FakeCrossRestartLLM(),
+        response_llm=response_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    events = [
+        event
+        async for event in runtime.run_turn_stream(
+            cast(Any, _initial_state("Can we make a tiny plan?")),
+            config={"configurable": {"thread_id": "thread-response-llm-stream"}},
+            context=context,
+        )
+    ]
+
+    chunks = [
+        event.text for event in events if isinstance(event, TextRuntimeChunkEvent)
+    ]
+    state_event = next(
+        event for event in events if isinstance(event, TextRuntimeStateEvent)
+    )
+    assert chunks == ["I can help you plan the first minute."]
+    assert state_event.state["response_text"] == "I can help you plan the first minute."
+    assert (
+        state_event.state["diagnostics"]["openai_response_llm_output_sanitized"] is True
+    )
+    assert "load_therapeutic_response_skill" not in state_event.state["response_text"]
 
 
 @pytest.mark.asyncio
