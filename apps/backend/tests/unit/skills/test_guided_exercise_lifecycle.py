@@ -145,6 +145,29 @@ async def test_lifecycle_advances_confirmation_step_on_explicit_next_step_reques
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I'm not ready to move on.",
+        "I can't keep going right now.",
+    ],
+)
+async def test_lifecycle_does_not_auto_advance_negated_confirmation_cues(
+    message: str,
+) -> None:
+    llm = _StepClassifierLLM(
+        step_state="hold",
+        response_text="Let's stay with this same step for now.",
+    )
+
+    delta = await _service(llm).run_turn(_state(message, EXERCISE_BOX_BREATHING, 0))
+
+    assert llm.structured_calls == 1
+    assert "exercise_state" not in delta
+    assert "same step" in delta["response_text"].lower()
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_exit_clears_active_skill_state() -> None:
     llm = _StepClassifierLLM(
         step_state="exit",

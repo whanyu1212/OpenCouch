@@ -93,8 +93,34 @@ def _message_requests_next_confirmation_step(
 ) -> bool:
     if current_step.completion_mode != "confirmation":
         return False
-    text = " ".join(str(state.get("message") or "").casefold().split())
+    text = " ".join(
+        str(state.get("message") or "")
+        .casefold()
+        .replace("’", "'")
+        .replace("`", "'")
+        .split()
+    )
     if not text:
+        return False
+    decline_cues = (
+        "not ready",
+        "not able",
+        "not yet",
+        "not sure i can",
+        "not sure i'm ready",
+        "can't",
+        "cant",
+        "cannot",
+        "can not",
+        "unable",
+        "don't want",
+        "do not want",
+        "won't",
+        "wouldn't",
+        "rather not",
+        "need more time",
+    )
+    if any(cue in text for cue in decline_cues):
         return False
     hold_cues = (
         "distracted",
