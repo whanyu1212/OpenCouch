@@ -23,21 +23,21 @@ interface Scenario {
 
 /* ── Scenario data ──────────────────────────────────────────────────────────── */
 /*
- * Updated 2026-04-25 to match the shipped graph topology.
+ * Updated 2026-05-22 to match the OpenAITextRuntime topology.
  *
- * Response style names match the 7 therapeutic subgraph nodes: supportive,
+ * Response style names match the 7 TherapeuticAgent styles: supportive,
  * reflective, clarifying, psychoeducation, technique, guided_exercise,
  * closing. Plus the crisis-gate outcomes: crisis_response,
  * safety_check.
  *
  * Routing-trace conventions:
- *   - Level 0 (safe): crisis_gate(safe) → turn_dispatch → load_memory → therapeutic_subgraph → <response style>
+ *   - Level 0 (safe): crisis_gate(safe) → turn_dispatch → load_memory → TherapeuticAgent → <response style>
  *   - Level 1 (ambiguous, needs_clarification=true): SAME path as level 0; the dispatcher typically picks clarifying or supportive. The response_style "safety_check" is reserved for the crisis branch.
- *   - Level ≥ 2 (needs_crisis_response=true): crisis_gate(level=N) → crisis_resource_lookup_node → crisis_response_node → crisis_log_node
+ *   - Level ≥ 2 (needs_crisis_response=true): crisis_gate(level=N) → crisis_resource_lookup → CrisisAgent → crisis_log
  *
  * Style picks (supportive vs reflective vs psychoeducation) are
  * LLM-primary — the live agent could land slightly differently.
- * The "why" lines describe the dispatcher's decision rule, not a
+ * The "why" lines describe the agent's decision rule, not a
  * guarantee of which response style fires for the exact wording shown.
  */
 
@@ -66,7 +66,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Let's do that. Try the 5-4-3-2-1 technique with me: name 5 things you can see right now. Take your time — there's no rush.",
         route: 'safe gate → load_memory → therapeutic → guided_exercise',
         responseStyle: 'guided_exercise', responseCategory: 'therapeutic',
-        why: 'Explicit exercise request: "grounding exercise" + "calm down"; the LLM dispatcher selects guided_exercise.',
+        why: 'Explicit exercise request: "grounding exercise" + "calm down"; the TherapeuticAgent selects guided_exercise.',
       },
     ],
   },
@@ -108,7 +108,7 @@ const SCENARIOS: Scenario[] = [
         agent: "Absolutely. Let's slow it down. What's the specific situation? Tell me about the presentation — when is it, and what's the thought that keeps showing up.",
         route: 'safe gate → load_memory → therapeutic → guided_exercise',
         responseStyle: 'guided_exercise', responseCategory: 'therapeutic',
-        why: 'Explicit "thought record" request; the LLM dispatcher selects guided_exercise and the selector chooses the matching exercise.',
+        why: 'Explicit "thought record" request; the TherapeuticAgent selects guided_exercise and the selector chooses the matching exercise.',
       },
       {
         user: "It's a team update on Friday. The thought is 'everyone will think I'm incompetent and I'll get fired.'",

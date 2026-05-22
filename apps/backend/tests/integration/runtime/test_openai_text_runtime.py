@@ -12,7 +12,7 @@ import agent.runtime.openai_text_runtime as openai_runtime
 from agent.runtime import PersistentAgentRuntime
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
-from agent.runtime.session_store import messages_from_sdk_session_items
+from agent.runtime.session.history import messages_from_sdk_session_items
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
@@ -454,7 +454,8 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
         assert runner.run_calls
         assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
         assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
-            "lookup_crisis_resources"
+            "lookup_crisis_resources",
+            "get_crisis_support_template",
         ]
 
 
@@ -696,7 +697,6 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending
             {
                 **dict(state),
                 "memory_control": {
-                    "action": {},
                     "pending_action": {
                         "type": "delete",
                         "target": {

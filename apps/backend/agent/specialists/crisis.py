@@ -81,15 +81,10 @@ def build_runtime_crisis_agent(
 
     if runtime_mode == "crisis_response":
         system_prompt = build_crisis_response_system_prompt()
-        tools = (
-            [
-                tool
-                for tool in base_agent.tools
-                if tool.name == "lookup_crisis_resources"
-            ]
-            if enable_resource_tools is not False
-            else []
-        )
+        allowed_tool_names = {"get_crisis_support_template"}
+        if enable_resource_tools is not False:
+            allowed_tool_names.add("lookup_crisis_resources")
+        tools = [tool for tool in base_agent.tools if tool.name in allowed_tool_names]
     elif runtime_mode == "crisis_clarification":
         system_prompt = build_clarifying_system_prompt(state)
         tools = []

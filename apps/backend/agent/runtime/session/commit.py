@@ -8,6 +8,7 @@ from agent.memory.session_commit_service import (
     SessionMemoryCommitResult,
     commit_session_memory,
 )
+from agent.runtime.session.history import SessionConversation
 from agent.state import AgentState
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ async def run_commit_session_memory(
     stored_arc: "StoredSessionArc | None",
     embedding_provider: "EmbeddingProvider | None" = None,
     llm_client: "BaseLLMClient | None" = None,
+    conversation: SessionConversation | None = None,
 ) -> SessionMemoryCommitResult | None:
     """Commit buffered semantic/procedural candidates that survived review.
 
@@ -36,6 +38,8 @@ async def run_commit_session_memory(
         stored_arc: Optional episodic arc generated for the completed session.
         embedding_provider: Optional provider for semantic fact embeddings.
         llm_client: Optional classifier client for reconciliation.
+        conversation: Canonical public conversation projection for the completed
+            session. Used for support scoring when supplied.
 
     Returns:
         Commit result when work was attempted, otherwise ``None``.
@@ -48,4 +52,5 @@ async def run_commit_session_memory(
         stored_arc=stored_arc,
         embedding_provider=embedding_provider,
         llm_client=llm_client,
+        user_turn_texts=conversation.user_texts() if conversation is not None else None,
     )

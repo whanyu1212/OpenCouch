@@ -45,30 +45,13 @@ class TurnDispatchDecision(BaseModel):
     route: TurnRoute
     active_flow_action: ActiveFlowAction = "none"
     memory_reference_mode: Literal["none", "explicit"] = "none"
-    memory_action_type: (
-        Literal[
-            "status",
-            "list",
-            "set_recall",
-            "save_preference",
-            "forget_by_index",
-            "forget_by_query",
-            "confirm_pending",
-            "cancel_pending",
-        ]
-        | None
-    ) = None
     query: str = Field(
         default="",
         description=(
-            "Lookup query for grounded_lookup or query text for query-based memory "
-            "actions when relevant."
+            "Lookup query for grounded_lookup when the user's request needs "
+            "external or source-backed information."
         ),
     )
-    enabled: bool | None = None
-    target_kind: str | None = None
-    target_index: int | None = None
-    preference_text: str = ""
     exercise_start_basis: ExerciseStartBasis = "ambiguous_or_none"
     exercise_type: str = ""
     reasoning: str = Field(min_length=1, max_length=240)

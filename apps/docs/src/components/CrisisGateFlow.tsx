@@ -14,8 +14,8 @@ import styles from './CrisisGateFlow.module.css';
    classifier_path, override_kind, response_style).
 
    This is documentation, not a live classifier — every trace is
-   hand-authored to mirror what `agent/runtime/guardrails/assessment.py` and
-   `agent/runtime/guardrails/service.py` would actually emit.
+   hand-authored to mirror what `agent/guardrails/assessment.py` and
+   `agent/guardrails/service.py` would actually emit.
    ================================================================ */
 
 type ClassifierPath = 'llm_primary';
@@ -142,7 +142,7 @@ const TRACES: Trace[] = [
       classifierPath: 'llm_primary',
       overrideKind: 'none',
       llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
+      responseStyle: '(picked downstream by TherapeuticAgent)',
       pipeline: 'turn_dispatch → load_memory → TherapeuticAgent',
     },
   },
@@ -173,7 +173,7 @@ const TRACES: Trace[] = [
       classifierPath: 'llm_primary',
       overrideKind: 'none',
       llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
+      responseStyle: '(picked downstream by TherapeuticAgent)',
       pipeline: 'turn_dispatch → load_memory → TherapeuticAgent',
     },
   },
@@ -204,7 +204,7 @@ const TRACES: Trace[] = [
       classifierPath: 'llm_primary',
       overrideKind: 'none',
       llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
+      responseStyle: '(picked downstream by TherapeuticAgent)',
       pipeline: 'turn_dispatch → load_memory → TherapeuticAgent',
     },
   },
@@ -505,7 +505,7 @@ function StatePanel({ trace, stageIdx, phase }: { trace: Trace; stageIdx: number
           comment={
             final.route === 'crisis'
               ? 'safety_check stamped on entry to the crisis branch'
-              : 'left to the therapeutic dispatcher'
+              : 'left to the TherapeuticAgent'
           }
         />
         <div className={styles.stateDivider} />

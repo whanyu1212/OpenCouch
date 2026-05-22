@@ -22,7 +22,7 @@ from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
-from agent.memory.recall import LoadMemoryResult, load_memory_for_turn
+from agent.memory.recall import load_memory_for_turn
 from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.types import StoredSessionArc
 from agent.runtime.session import (
@@ -35,11 +35,11 @@ from agent.runtime.session import (
     transcript_length,
     turn_count_from_state,
 )
+from agent.runtime.session.history import messages_from_transcript
 from agent.runtime.session_feedback import (
     record_session_feedback as record_runtime_session_feedback,
 )
 from agent.runtime.streaming import (
-    messages_from_transcript,
     response_ready_output,
     stamp_turn_total_ms,
 )
@@ -87,6 +87,7 @@ from agent.runtime.types import (
     TextRuntimeStatusEvent,
     ThreadSummary,
 )
+from agent.runtime_context import PrefetchedTurnMemory
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
 from llm.base import BaseLLMClient
@@ -861,7 +862,7 @@ class PersistentAgentRuntime:
         user_id: str | None,
         message: str,
         prior_state: AgentState | None,
-    ) -> asyncio.Task[LoadMemoryResult] | None:
+    ) -> PrefetchedTurnMemory | None:
         """Schedule a speculative turn-memory load when applicable.
 
         The fetch overlaps with the crisis/control/grounded gates so that the
@@ -880,7 +881,7 @@ class PersistentAgentRuntime:
                 compute ``is_first_turn``.
 
         Returns:
-            The scheduled ``asyncio.Task`` when speculation is active; ``None``
+            The scheduled prefetch wrapper when speculation is active; ``None``
             when speculation is disabled, the runtime is incognito, or the
             owner could not be resolved (defensive — should not occur for
             normal turn inputs).
@@ -896,15 +897,20 @@ class PersistentAgentRuntime:
             return None
 
         is_first_turn = transcript_length(prior_state) == 0
-        return asyncio.create_task(
-            load_memory_for_turn(
-                memory_store=self._memory_store,
-                embedding_provider=self._embedding_provider,
-                owner_id=owner_id,
-                query=message,
-                is_first_turn=is_first_turn,
+        return PrefetchedTurnMemory(
+            task=asyncio.create_task(
+                load_memory_for_turn(
+                    memory_store=self._memory_store,
+                    embedding_provider=self._embedding_provider,
+                    owner_id=owner_id,
+                    query=message,
+                    is_first_turn=is_first_turn,
+                ),
+                name=f"memory-prefetch:{thread_id}",
             ),
-            name=f"memory-prefetch:{thread_id}",
+            owner_id=owner_id,
+            query=message,
+            is_first_turn=is_first_turn,
         )
 
     def _get_openai_text_runtime(self) -> OpenAITextRuntime:

@@ -1,4 +1,4 @@
-"""Live-API tests for the OpenAI-backed therapeutic dispatcher.
+"""Live-API tests for OpenAI-backed therapeutic response selection.
 
 Mirror of ``test_gemini_therapeutic_live.py`` — same ambiguous cases,
 same assertions, different provider. Gated behind ``RUN_LIVE_OPENAI_TESTS=1``

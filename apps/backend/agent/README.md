@@ -3,7 +3,7 @@
 The backend text agent now runs through the OpenAI Agents SDK. The runtime is
 organized around plain product services and one serving SDK runtime:
 
-- `agent.runtime.text.OpenAITextRuntime` owns text-agent
+- `agent.runtime.OpenAITextRuntime` owns text-agent
   execution, specialist agent selection, SDK tool calls, and stream events.
 - `agent.runtime.PersistentAgentRuntime` owns thread locks, app-owned state
   snapshots, OpenAI SDK sessions, active-session lifecycle,
@@ -42,11 +42,11 @@ or call the tool required by the runtime-selected branch.
 
 Source layout:
 
-- `agent/runtime/text.py`: OpenAI-backed text turn execution.
-- `agent/runtime/agents/`: therapeutic, crisis, and guided-exercise agent
-  definitions split by owner.
-- `agent/runtime/tools/`: memory, grounded lookup, crisis lookup, and
-  guided-exercise skill tools.
+- `agent/runtime/openai_text_runtime.py`: OpenAI-backed text turn execution.
+- `agent/specialists/`: triage, therapeutic, crisis, and guided-exercise
+  specialist agent definitions split by owner.
+- `agent/tools/`: memory, grounded lookup, crisis lookup, therapeutic skill,
+  and guided-exercise skill tools exposed to the SDK.
 
 ## Memory And Session Boundaries
 

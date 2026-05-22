@@ -7,10 +7,9 @@ import StateFields from '@site/src/components/StateFields';
 
 # Agent State
 
-One `AgentState` dict flows through every node. Nodes read from it
-and return **partial deltas**; LangGraph merges those deltas back
-in — using a reducer when one is declared, or last-write-wins
-otherwise.
+One `AgentState` dict is the app-owned turn snapshot. Runtime stages
+read from it and return **partial deltas**; reducer-backed fields
+accumulate across turns, while ordinary fields are last-write-wins.
 
 ## Mental model
 
@@ -49,14 +48,14 @@ older checkpoints pass through unchanged.
 ## Public contract
 
 The external API only sees `AgentInput` and `AgentOutput` — the
-state itself is internal to the graph.
+state itself is internal to the runtime.
 
 | Model | Public fields |
 |---|---|
 | `AgentInput` | `message`, `channel`, `user_id`, `session_id`, `history`, `working_memory`, `installed_skills` |
 | `AgentOutput` | `response_text`, `response_type`, `crisis`, `response_style`, `response_style_type`, `response_style_source`, `therapeutic_approach`, `should_persist_memory`, `diagnostics` |
 | `CrisisAssessment` | `level` (0–3), `confidence`, `reason`, `needs_crisis_response`, `needs_clarification` |
-| `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by `finalize_turn_node`) |
+| `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by turn finalization) |
 
 ## Runtime context
 
@@ -83,8 +82,8 @@ persists across restarts.
 
 The schema is built from six TypedDict fragments — `AgentIdentityState`,
 `AgentConversationState`, `AgentPersistentState`, `AgentCrisisState`,
-`AgentGraphOutputState`, and `AgentPrivateState`. The parent graph
-declares three views over them:
+`AgentGraphOutputState`, and `AgentPrivateState`. The runtime declares
+three views over them:
 
 | Schema | Used as |
 |---|---|
@@ -92,10 +91,9 @@ declares three views over them:
 | `AgentState` | Internal — the full union, used by every node |
 | `AgentGraphOutputState` | Output — what `state_to_output()` reads back |
 
-You don't need to think about the fragments to use the agent —
-they exist so the parent graph can give LangGraph distinct input
-and output schemas, which prevents reducer double-counting when the
-therapeutic subgraph completes.
+You don't need to think about the fragments to use the agent — they exist so
+the runtime can keep input, internal state, and public output boundaries
+explicit.
 
 </details>
 
@@ -107,5 +105,5 @@ therapeutic subgraph completes.
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
 | `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ResponseStyleType`, stream events, `STAGE_LABELS` |
 | `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |
-| `agent/graph.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
+| `agent/runtime/turn.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |

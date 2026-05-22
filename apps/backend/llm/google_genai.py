@@ -11,7 +11,7 @@ from google.genai import types
 
 from llm.base import BaseLLMClient, StructuredResponseT
 
-DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 class GeminiLLMClient(BaseLLMClient):

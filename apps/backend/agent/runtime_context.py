@@ -13,7 +13,8 @@ keeping state snapshots scoped to the thread.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
@@ -22,6 +23,38 @@ from agent.memory.modes import MemoryMode
 from agent.memory.recall import LoadMemoryResult
 from agent.memory.store import MemoryStore
 from llm.base import BaseLLMClient
+
+
+@dataclass(slots=True, frozen=True)
+class PrefetchedTurnMemory:
+    """In-flight turn-memory fetch plus the turn tuple it belongs to."""
+
+    task: asyncio.Task[LoadMemoryResult]
+    owner_id: str
+    query: str
+    is_first_turn: bool
+    scheduled_at_monotonic: float = field(default_factory=time.monotonic)
+
+    def matches(self, *, owner_id: str, query: str, is_first_turn: bool) -> bool:
+        """Return whether this prefetch belongs to the current turn."""
+
+        return (
+            self.owner_id == owner_id
+            and self.query == query
+            and self.is_first_turn is is_first_turn
+        )
+
+    def cancel_if_pending(self) -> None:
+        """Cancel unused speculative work so stale tasks do not linger."""
+
+        if not self.task.done():
+            self.task.cancel()
+            return
+
+        try:
+            self.task.exception()
+        except asyncio.CancelledError:
+            pass
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,10 +79,9 @@ class WorkflowContext:
         session_memory_buffer: Optional per-thread candidate buffer. Hot-path
             extractors add held semantic/procedural candidates here so
             session-end commit can promote or drop them.
-        pre_fetched_memory: Optional in-flight memory fetch the runtime
-            scheduled at turn start so it overlaps with crisis/control/grounded
-            gates. The runtime turn memory context awaits it on the therapeutic
-            path.
+        pre_fetched_memory: Optional in-flight memory fetch plus the
+            owner/query/first-turn tuple it was scheduled for. The runtime turn
+            memory context validates that tuple before awaiting it.
             ``None`` when speculation is disabled, the turn is incognito, or
             the runtime did not pre-schedule (e.g., one-shot calls via
             ``run_agent``).
@@ -62,7 +94,7 @@ class WorkflowContext:
     response_llm: BaseLLMClient | None = None
     embedding_provider: EmbeddingProvider | None = None
     session_memory_buffer: SessionMemoryBuffer | None = None
-    pre_fetched_memory: asyncio.Task[LoadMemoryResult] | None = None
+    pre_fetched_memory: PrefetchedTurnMemory | None = None
 
     @property
     def control_llm(self) -> BaseLLMClient | None:

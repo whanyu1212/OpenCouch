@@ -33,7 +33,7 @@ long-term memory.
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/threads` | `GET` | List known text threads |
-| `/api/threads/{thread_id}/state` | `GET` | Return raw graph state for a thread |
+| `/api/threads/{thread_id}/state` | `GET` | Return raw runtime state for a thread |
 | `/api/threads/{thread_id}/history` | `GET` | Return user/assistant transcript turns |
 | `/api/threads/{thread_id}/session-status` | `GET` | Return active-session tracking status |
 | `/api/threads/{thread_id}/end` | `POST` | Finalize a text session and persist session-end memory |

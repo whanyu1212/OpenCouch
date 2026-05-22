@@ -129,7 +129,7 @@ If you are trying to understand a specific behavior, start here:
   Start in [prompts/](./prompts).
 
 - "How does the user toggle recall or save a preference?"
-  Start with [agent/gates/memory_control](../gates/memory_control).
+  Start with [control](./control).
 
 - "Where did the crisis log / session feedback code go?"
   Crisis logs live in [agent/audit](../audit); session feedback lives in
@@ -141,10 +141,11 @@ This package is mostly infrastructure. The main runtime integration points are o
 
 - [agent/runtime/runtime.py](../runtime/runtime.py): chooses memory store implementation and owns lifecycle.
 - [agent/runtime/backends.py](../runtime/backends.py): selects Postgres vs SQLite vs in-memory based on settings.
-- [agent/gates/memory_control](../gates/memory_control): handles user-facing memory commands.
+- [control](./control): handles user-facing memory tool requests and
+  memory-control service operations.
 - [agent/runtime/memory_context.py](../runtime/memory_context.py): builds the
   runner-turn memory delta consumed by the text runtime.
-- [agent/runtime/text.py](../runtime/text.py): wires
+- [agent/runtime/openai_text_runtime.py](../runtime/openai_text_runtime.py): wires
   memory loading into the OpenAI Agents SDK text runtime.
 
 ## Persistence Backend

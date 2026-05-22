@@ -32,6 +32,7 @@ from agent.memory.episodic import (
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.session import run_commit_session_memory
+from agent.runtime.session.history import session_conversation_from_transcript
 from agent.runtime import PersistentAgentRuntime
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
@@ -261,6 +262,44 @@ class _FakeSessionCommitLLM(BaseLLMClient):
             )
 
         raise RuntimeError(f"_FakeSessionCommitLLM: unexpected schema {schema_name}")
+
+
+@pytest.mark.asyncio
+async def test_commit_scoring_uses_explicit_session_conversation() -> None:
+    store = OpenCouchMemoryStore()
+    candidate = build_semantic_candidate(
+        _semantic_write(),
+        message="Family conflict is a big trigger for panic.",
+    )
+    buffer = _held_semantic_buffer(candidate)
+    conversation = session_conversation_from_transcript(
+        [
+            {
+                "role": "user",
+                "content": "Family conflict is a big trigger for panic.",
+            },
+            {"role": "assistant", "content": "That sounds intense."},
+        ]
+    )
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "stale state transcript without supporting evidence",
+                }
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(),
+        conversation=conversation,
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 1
+    assert result.semantic_skips == 0
 
 
 @pytest.mark.asyncio

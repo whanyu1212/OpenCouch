@@ -366,12 +366,12 @@ class TestRunTurnStreamDiagnostics:
     @pytest.mark.asyncio
     async def test_diagnostics_carry_post_finalize_ms(self) -> None:
         """``post_finalize_ms`` measures the wall-clock between
-        ``finalize_turn_node`` writing the response and the graph
-        terminating.
+        turn finalization writing the response and the runtime finishing
+        the turn.
 
         Invariants:
             - The key must be present and numeric on a normal turn.
-            - It must be ≥ 0 (graph cannot terminate before finalize).
+            - It must be ≥ 0 (runtime cannot finish before finalization).
             - It must be ≤ ``turn_total_ms`` (post-finalize is a subset
               of the turn's total wall-clock).
             - The internal scaffolding key

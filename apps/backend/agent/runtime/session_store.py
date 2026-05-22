@@ -11,6 +11,10 @@ from agents.memory import SQLiteSession, SessionSettings
 
 from agent.memory.modes import MemoryMode
 from agent.models import Message, MessageRole
+from agent.runtime.session.history import (
+    content_to_text,
+    messages_from_sdk_session_items,
+)
 
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
@@ -277,7 +281,7 @@ class TextSessionTurn:
                     continue
                 content = (
                     self._current_user_message
-                    or _content_to_text(item.get("content")).strip()
+                    or content_to_text(item.get("content")).strip()
                 )
                 if content:
                     normalized.append({"role": "user", "content": content})
@@ -286,7 +290,7 @@ class TextSessionTurn:
             if role != "assistant":
                 continue
 
-            content = _content_to_text(item.get("content")).strip()
+            content = content_to_text(item.get("content")).strip()
             if not content or content in self._stored_assistant_texts:
                 continue
             normalized.append({"role": "assistant", "content": content})
@@ -323,29 +327,6 @@ def normalize_sqlalchemy_async_url(url: str) -> str:
     return normalized
 
 
-def messages_from_sdk_session_items(items: list[Any]) -> list[Message]:
-    """Convert SDK session items into public conversation messages."""
-
-    messages: list[Message] = []
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
-        role = str(item.get("role") or "")
-        if role not in {"system", "user", "assistant"}:
-            continue
-        content = _content_to_text(item.get("content")).strip()
-        if not content:
-            continue
-        messages.append(
-            Message(
-                role=MessageRole(role),
-                content=content,
-                response_style=None,
-            )
-        )
-    return messages
-
-
 def _history_ends_with_turn(
     history: list[Message],
     *,
@@ -373,20 +354,3 @@ def _history_ends_with_message(
         return False
     latest = history[-1]
     return latest.role == role and latest.content == content
-
-
-def _content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-
-    parts: list[str] = []
-    for part in content:
-        if isinstance(part, str):
-            parts.append(part)
-        elif isinstance(part, Mapping):
-            text = part.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-    return "\n".join(part.strip() for part in parts if part.strip())

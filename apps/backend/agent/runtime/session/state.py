@@ -91,7 +91,7 @@ def clear_all_active_flows_delta() -> dict[str, object]:
 
     return {
         "exercise_state": cleared_exercise_state(),
-        "memory_control": {"action": {}, "pending_action": None},
+        "memory_control": {"pending_action": None},
         "turn_lifecycle": {"active_flow": "none", "action": "none"},
     }
 

@@ -24,7 +24,7 @@ some pages may lag briefly after larger refactors or dogfood changes.
 Every message passes through the same pipeline. Safety runs first.
 Then one LLM-primary turn dispatcher short-circuits the turn for
 explicit memory commands or factual lookup requests; everything else
-loads memory and routes through the therapeutic subgraph. After the
+loads memory and enters the TherapeuticAgent. After the
 reply is sealed, the runtime schedules off-graph extraction work to
 evaluate what, if anything, is worth remembering.
 
@@ -33,16 +33,16 @@ evaluate what, if anything, is worth remembering.
 The therapeutic path can end in one of four ways:
 
 - **Memory command** (`"forget that"`, `"recall off"`,
-  `"remember that I prefer…"`) → `memory_control_node` executes the
-  action selected by `turn_dispatch_node` and replies operationally.
+  `"remember that I prefer…"`) → the memory tool executes the
+  action selected by turn triage and replies operationally.
   No memory retrieval and no therapeutic response generation.
 - **Factual lookup** (`"verify…"`, `"look up the latest…"`) →
-  `grounded_answer_node` runs a search-grounded LLM call and
+  the grounded lookup tool runs a search-grounded LLM call and
   replies with sources. No therapeutic framing.
-- **Therapeutic turn** (the default) → memory loads, the dispatcher
-  picks one of seven response styles plus a therapeutic approach, and
-  the matching response node generates the reply.
-- **Crisis turn** (when `crisis_gate_node` raises level ≥ 2) →
+- **Therapeutic turn** (the default) → memory loads, the TherapeuticAgent
+  picks one of seven response styles plus a therapeutic approach and
+  generates the reply.
+- **Crisis turn** (when the crisis gate raises level ≥ 2) →
   region-aware hotline lookup, crisis reply, audit log. Memory is
   never loaded on this branch.
 
@@ -111,7 +111,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
       <strong>Privacy controls</strong>
     </div>
-    <p>Memory commands are first-class graph traffic — natural-language <code>list</code>, <code>forget</code>, <code>recall on/off</code>, and explicit-preference saves all run through <code>memory_control_node</code>. Destructive deletes carry a pending action across turns for confirm/cancel.</p>
+    <p>Memory commands are first-class runtime branches — natural-language <code>list</code>, <code>forget</code>, <code>recall on/off</code>, and explicit-preference saves all run through the memory-control tool surface. Destructive deletes carry a pending action across turns for confirm/cancel.</p>
   </div>
 
   <div className="doc-card">
@@ -119,7 +119,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       <strong>Observability</strong>
     </div>
-    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions, and runtime side-effect counters. Graph nodes and runtime services merge diagnostics through the same structured channel; Opik captures the full trace.</p>
+    <p>Per-turn stage timings, classifier paths, retrieval-path mode, write-policy decisions, and runtime side-effect counters. Runtime stages and side-effect services merge diagnostics through the same structured channel; Opik captures the full trace.</p>
   </div>
 
   <div className="doc-card">
@@ -127,7 +127,7 @@ which is what makes cross-session personalization possible.
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       <strong>Cost &amp; latency levers</strong>
     </div>
-    <p>The runtime prefetches memory at turn start, keeps the SDK session responsible for short-term conversation context, and emits <code>response_ready</code> as soon as <code>finalize_turn_node</code> seals the reply.</p>
+    <p>The runtime prefetches memory at turn start, keeps the SDK session responsible for short-term conversation context, and emits <code>response_ready</code> as soon as turn finalization seals the reply.</p>
   </div>
 
   <div className="doc-card">

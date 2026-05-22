@@ -72,7 +72,7 @@ Covers:
 - guided exercise preserve-without-advance
 - memory missing-tool safety
 - proactive recall enable / disable side effects
-- save-preference and forget-by-query dispatch
+- save-preference and forget-by-query memory-tool execution
 
 Use this file when validating state transitions, diagnostics, and response constraints.
 
@@ -164,6 +164,20 @@ Covers:
 
 Use this file to validate the crisis resource lookup layer directly.
 
+### `datasets/live_text_runtime_smoke.jsonl`
+Opt-in live LLM smoke coverage for real runtime paths.
+
+Covers:
+- OpenAI Agents SDK therapeutic response generation
+- OpenAI Agents SDK guided-exercise tool use
+- OpenAI Agents SDK grounded-lookup tool use
+- OpenAI Agents SDK crisis response with resource lookup and audit logging
+- OpenAI/Gemini response-LLM override for persistent memory
+- OpenAI/Gemini response-LLM override for incognito privacy behavior
+
+Use this file with `run_live_text_runtime_eval.py --live` when credentials are
+configured and you want live provider coverage beyond deterministic fakes.
+
 ## Runners
 
 ### `runners/run_routing_eval.py`
@@ -198,6 +212,37 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
   --judge --provider openai
 ```
 
+### `runners/run_live_text_runtime_eval.py`
+Opt-in live runtime runner for broader provider-backed smoke coverage.
+
+Run from `apps/backend` with OpenAI:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai
+```
+
+Run only Gemini-compatible response-LLM cases:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider gemini
+```
+
+Run with LLM-as-judge scoring for cases that define `session_expected`:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --judge
+```
+
+The pytest wrappers are additionally gated by explicit flags:
+- `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
+- `RUN_LIVE_GEMINI_RUNTIME_EVALS=1`
+
+These are separate from the older classifier/style live-test flags so enabling
+basic live tests does not unexpectedly run tool-using runtime evals.
+
 ## Coverage matrix
 
 | Area | Route / Mode focus | Main datasets |
@@ -214,6 +259,7 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
 | Session quality trajectories | judged full-session coherence / memory / safety quality | `session_quality_trajectories.jsonl` |
 | Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
 | Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
+| Live text runtime | provider-backed Agents SDK / response-LLM smoke paths | `live_text_runtime_smoke.jsonl` |
 
 ## Current known gaps
 
@@ -226,8 +272,8 @@ The JSONL files were the practical source of truth, but there was no single docu
 ### 2. Memory-control breadth is stronger, but conflicting-intent depth is still limited
 Current evals now cover:
 - enable/disable proactive recall
-- save-preference dispatch
-- forget-by-query dispatch
+- save-preference memory-tool execution
+- forget-by-query memory-tool execution
 - preservation of pending memory actions across safe, grounded, and crisis side turns
 
 Still weak or missing:
@@ -290,6 +336,15 @@ is still lighter on:
 - richer retrieval-quality assertions beyond presence/absence of recalled state
 - judged coverage for additional nuanced scenarios beyond the current curated fourteen full-session cases
 
+### 8. Live LLM coverage is opt-in smoke coverage, not a full benchmark
+The live runtime eval runner now covers real provider paths for SDK response
+generation, tool use, crisis response, grounded lookup, and memory-mode behavior.
+Remaining gaps:
+- no automated live CI budget or scheduled cadence
+- no large transcript-quality benchmark with repeated sampling
+- no Postgres-backed live persistence parity in the eval harness
+- no live voice-runtime eval equivalent
+
 ## Conventions for adding cases
 
 When adding a new eval case:
@@ -323,3 +378,4 @@ Priority candidates:
 - mixed-intent precedence cases
 - explicit guided-exercise exit / restart cases
 - deeper memory save / retrieval behavior coverage
+- scheduled or manually approved live runtime eval runs with saved artifacts

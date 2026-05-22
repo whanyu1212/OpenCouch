@@ -31,7 +31,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from config import load_runtime_env  # noqa: E402
-from agent.runtime.tools.grounded_search import (  # noqa: E402
+from agent.tools.grounded_search import (  # noqa: E402
     CrisisResourceLookupRequest,
     find_crisis_resources_for_request,
 )

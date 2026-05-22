@@ -88,14 +88,14 @@ const STEPS: StepDef[] = [
   {
     id: 'therapeutic',
     label: 'TherapeuticAgent',
-    sub: 'Dispatcher routes to normal response or guided exercise',
+    sub: 'Agent chooses normal response or guided exercise',
     badges: [
       { label: 'SDK agent' },
       { label: 'guided handoff' },
     ],
     detail: {
-      what: 'OpenAI Agents SDK specialist for safe therapeutic turns. The runtime owns dispatch, state transitions, session actions, diagnostics, and exercise state; the agent owns response generation.',
-      how: 'Dispatcher is LLM-owned: the model picks response_style + therapeutic_approach, with local validation around active exercise state. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
+      what: 'OpenAI Agents SDK specialist for safe therapeutic turns. The runtime owns triage, state transitions, session actions, diagnostics, and exercise state; the agent owns response generation.',
+      how: 'The model picks response_style + therapeutic_approach, with local validation around active exercise state. Mid-exercise side-turns preserve the approach stored in exercise_therapeutic_approach.',
       emits: 'response_style + response_text + therapeutic_approach + exercise_state',
     },
   },
@@ -140,7 +140,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'reflective', label: 'reflective',
     detail: {
       what: 'User describing a recurring pattern they\'ve already named. Reflects on themes, connections, cycles.',
-      how: 'Picked by the LLM dispatcher when the user is already naming a pattern.',
+      how: 'Picked by the TherapeuticAgent when the user is already naming a pattern.',
       emits: 'AgentOutput.response_type = therapeutic',
     },
   },
@@ -148,7 +148,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'clarifying', label: 'clarifying',
     detail: {
       what: 'Ambiguous or very short message — agent needs context before responding.',
-      how: 'Picked by the LLM dispatcher when the next useful move is one small clarifying question.',
+      how: 'Picked by the TherapeuticAgent when the next useful move is one small clarifying question.',
       emits: 'AgentOutput.response_type = therapeutic',
     },
   },
@@ -164,7 +164,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'technique', label: 'technique',
     detail: {
       what: 'User wants structured therapeutic work without launching a named exercise — examining a thought, weighing evidence for a belief, working through a dilemma. The therapeutic_approach knowledge drives the response shape.',
-      how: 'Picked by the LLM dispatcher when the user asks for structure but not a specific exercise. Requires an active therapeutic_approach.',
+      how: 'Picked by the TherapeuticAgent when the user asks for structure but not a specific exercise. Requires an active therapeutic_approach.',
       emits: 'therapeutic_approach',
     },
   },
@@ -172,7 +172,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'guided_exercise', label: 'guided_exercise',
     detail: {
       what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_therapeutic_approach) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
-      how: 'Active-exercise context is passed to the LLM dispatcher. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
+      how: 'Active-exercise context is passed to the TherapeuticAgent. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
       emits: 'exercise_state.{exercise_type, exercise_step, exercise_therapeutic_approach}',
     },
   },
@@ -180,7 +180,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
     id: 'closing', label: 'closing',
     detail: {
       what: 'User signals wind-down ("I should go", "thanks, this helped"). Graceful session close. May set should_persist_memory=True.',
-      how: 'LLM dispatcher distinguishes a real wind-down ("I have to head out") from mid-conversation thanks ("thanks, that helps").',
+      how: 'The TherapeuticAgent distinguishes a real wind-down ("I have to head out") from mid-conversation thanks ("thanks, that helps").',
       emits: 'response_text',
     },
   },
@@ -290,14 +290,14 @@ export default function AgentGraph() {
               {/* Step detail panel */}
               {isActive && !isTherapeuticStep && <DetailPanel detail={step.detail} key={`d-${step.id}`} />}
 
-              {/* Therapeutic subgraph expansion */}
+              {/* Therapeutic response expansion */}
               {isTherapeuticStep && isTherapeuticExpanded && (
                 <>
                   {isActive && <DetailPanel detail={step.detail} key={`d-${step.id}`} />}
 
                   <div className={styles.responseStyleSection}>
                     <div className={styles.responseStyleSectionHeader}>
-                      <span className={styles.responseStyleGridLabel}>Therapeutic responses — dispatcher picks exactly one per turn</span>
+                      <span className={styles.responseStyleGridLabel}>Therapeutic responses — agent picks exactly one per turn</span>
                     </div>
                     <div className={styles.responseStyleGrid}>
                       {THERAPEUTIC_RESPONSE_STYLES.map(m => {

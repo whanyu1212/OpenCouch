@@ -12,11 +12,20 @@ from agents import Agent
 from agents.tool_context import ToolContext
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
+from agent.flows.guided_exercise import _build_guided_exercise_agent
+from agent.flows.therapeutic import run_therapeutic_turn
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
+from agent.models import AgentInput
+from agent.runtime import build_initial_state
 from agent.runtime_context import WorkflowContext
+from agent.runtime.services import TextRuntimeServices
+from agent.runtime.state_ops import finalize_openai_turn
 from agent.specialists.crisis import CRISIS_AGENT_NAME
-from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
+from agent.specialists.guided_exercise import (
+    GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    GUIDED_EXERCISE_AGENT_NAME,
+)
 from agent.specialists.roster import build_openai_text_agent_roster
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.context import MemoryToolCallRecord, OpenAITextRunContext
@@ -52,7 +61,10 @@ from agent.tools import (
     show_memory_status,
     show_saved_memory,
 )
-from tests.support.openai_text import ScriptedOpenAITextRouteLLM
+from tests.support.openai_text import (
+    FakeOpenAISDKRunner,
+    ScriptedOpenAITextRouteLLM,
+)
 
 
 def _workflow_context(
@@ -184,6 +196,103 @@ def test_agent_roster_builds_dormant_specialists() -> None:
         "record_guided_exercise_progress",
     ]
     assert roster.therapeutic_agent.handoffs == []
+
+
+def test_runtime_guided_exercise_agent_does_not_mutate_roster_agent() -> None:
+    """Runtime prompt variants must not mutate the cached roster agent."""
+
+    roster = build_openai_text_agent_roster(model="gpt-test")
+    base_agent = roster.guided_exercise_agent
+    original_instructions = base_agent.instructions
+
+    first_agent = _build_guided_exercise_agent(
+        base_agent,
+        system_instruction="first turn instructions",
+        runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    )
+    second_agent = _build_guided_exercise_agent(
+        base_agent,
+        system_instruction="second turn instructions",
+        runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+    )
+
+    assert first_agent is not base_agent
+    assert second_agent is not base_agent
+    assert first_agent is not second_agent
+    assert base_agent.instructions == original_instructions
+    assert "first turn instructions" in first_agent.instructions
+    assert "second turn instructions" in second_agent.instructions
+    assert "first turn instructions" not in second_agent.instructions
+
+
+@pytest.mark.asyncio
+async def test_therapeutic_flow_uses_explicit_runtime_services_boundary() -> None:
+    """Therapeutic flows should depend on services, not runtime internals."""
+
+    runner = FakeOpenAISDKRunner("services reply")
+    roster = build_openai_text_agent_roster(model="gpt-test")
+    state = build_initial_state(
+        AgentInput(
+            message="I feel tense today",
+            user_id="user-1",
+            session_id="thread-1",
+        )
+    )
+
+    async def run_agent_with(
+        state,
+        *,
+        agent,
+        input_text,
+        run_context,
+        session=None,
+    ):
+        result = await runner.run(
+            agent=agent,
+            input_text=input_text,
+            context=run_context,
+            session=session,
+        )
+        return str(result.final_output), 12.0
+
+    async def finalize_turn(state, **kwargs):
+        kwargs.pop("config", None)
+        return finalize_openai_turn(state, **kwargs)
+
+    async def load_turn_memory(state, context):
+        return state
+
+    services = TextRuntimeServices(
+        runner=runner,
+        roster=roster,
+        build_run_context=lambda state, config, context: OpenAITextRunContext(
+            thread_id="thread-1",
+            workflow_context=context,
+            current_user_message=str(state.get("message") or ""),
+            user_id="user-1",
+            session_id="thread-1",
+            agent_state=state,
+        ),
+        build_agent=lambda state: roster.therapeutic_agent,
+        input_text_for_state=lambda state, include_recent_history=True: (
+            f"services prompt: {state['message']}"
+        ),
+        crisis_input_text_for_state=lambda *args, **kwargs: "crisis prompt",
+        run_openai_agent_with=run_agent_with,
+        finalize_turn=finalize_turn,
+        load_turn_memory=load_turn_memory,
+    )
+
+    result = await run_therapeutic_turn(
+        services,
+        state,
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_workflow_context(llm=ScriptedOpenAITextRouteLLM(route="therapeutic")),
+    )
+
+    assert result.response_text == "services reply"
+    assert runner.run_calls[0]["agent"].name == THERAPEUTIC_AGENT_NAME
+    assert runner.run_calls[0]["input_text"] == "services prompt: I feel tense today"
 
 
 def test_operational_tool_metadata_is_explicit() -> None:

@@ -49,9 +49,9 @@ Runtime stages own deterministic state deltas, persistence boundaries, and
 tool-result validation. Specialist agents own natural-language response
 generation and the tools assigned to their branch.
 
-## Therapeutic subgraph
+## Therapeutic Response Selection
 
-The dispatcher picks exactly one therapeutic response style per turn:
+The TherapeuticAgent selects exactly one therapeutic response style per turn:
 
 | Response style | When it fires |
 |---|---|
@@ -63,7 +63,7 @@ The dispatcher picks exactly one therapeutic response style per turn:
 | `guided_exercise` | User requests a structured exercise ([13 exercises](/docs/agent/guided-exercises)) |
 | `closing` | User signals wind-down ("I should go", "thanks, this helped") |
 
-The dispatcher is **LLM-owned** with local validation around active
+The style decision is **LLM-owned** with local validation around active
 exercise state. When a guided exercise is active, the dispatcher preserves the pinned
 `exercise_therapeutic_approach` for exercise continuations and narrow
 clarifying turns. Psychoeducation side-turns keep the exercise active, but may
@@ -124,40 +124,40 @@ for the full breakdown.
 
 | File | What it does |
 |---|---|
-| `agent/graph.py` | Compatibility entrypoint for `build_initial_state()`, `state_to_output()`, and `run_agent()` |
+| `agent/runtime/turn.py` | Compatibility entrypoint for `build_initial_state()`, `state_to_output()`, and `run_agent()` |
 | `agent/state.py` | `AgentState` TypedDict with reducer annotations and split input/output schemas |
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types, factory functions, formatters |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
-| `agent/runtime/text.py` | OpenAI Agents SDK text runtime orchestration |
-| `agent/runtime/agents/` | Therapeutic, crisis, and guided-exercise specialist agent definitions |
-| `agent/runtime/tools/` | Agent-owned memory, grounded lookup, crisis lookup, therapeutic response skill, and guided-exercise tools |
+| `agent/runtime/openai_text_runtime.py` | OpenAI Agents SDK text runtime orchestration |
+| `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
+| `agent/tools/` | Agent-owned memory, grounded lookup, crisis lookup, therapeutic response skill, and guided-exercise tools |
 | `agent/skills/therapeutic_response.py` | Response-style guidance rendered as prompt-local SDK skill context |
-| `agent/runtime/agents/therapeutic_prompts.py` | Therapeutic response prompt composition owned by the therapeutic agent |
-| `agent/runtime/agents/guided_exercise.py` | Guided-exercise agent instructions and system prompt ownership |
+| `agent/specialists/therapeutic_prompts.py` | Therapeutic response prompt composition owned by the therapeutic agent |
+| `agent/specialists/guided_exercise.py` | Guided-exercise agent instructions and system prompt ownership |
 | `agent/skills/guided_exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and skill rendering |
-| `agent/memory/load_turn.py` | Retrieval orchestration backed by `agent/memory/recall.py` |
-| `agent/runtime/guardrails/` | Crisis input guardrail, classifier service, prompts, and safety delta construction |
-| `agent/runtime/tools/crisis.py` | Crisis resource lookup tool and response delta |
-| `agent/gates/memory_control/service.py` | Executes memory commands (list, forget, recall toggle, save preference) |
-| `agent/runtime/tools/grounded.py` | Search-grounded factual replies |
+| `agent/runtime/memory_context.py` | Runtime-owned turn-memory loading backed by `agent/memory/recall.py` |
+| `agent/guardrails/` | Crisis input guardrail, classifier service, prompts, and safety delta construction |
+| `agent/tools/crisis.py` | Crisis resource lookup tool and response delta |
+| `agent/memory/control/service.py` | Executes memory commands (list, forget, recall toggle, save preference) |
+| `agent/tools/grounded.py` | Search-grounded factual replies |
 | `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/session_commit_service.py` |
 | `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/episodic.py` |
 | `agent/runtime/turn_finalization.py` | Transcript finalization (single-element delta) |
 | `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
 | `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
-| `agent/persistence.py` | `PersistentAgentRuntime` — configured persistent thread state |
+| `agent/runtime/runtime.py` | `PersistentAgentRuntime` — configured persistent thread state |
 
 ## Adding a new therapeutic response style
 
 1. Create `agent/prompts/sources/response_styles/your_style.md` with the
    response style's knowledge content
-2. Add prompt-source wiring in `agent/runtime/agents/therapeutic_prompt_sources.py`
-   and instructions in `agent/runtime/agents/therapeutic_prompt_instructions.py`
+2. Add prompt-source wiring in `agent/specialists/therapeutic_prompt_sources.py`
+   and instructions in `agent/specialists/therapeutic_prompt_instructions.py`
 3. Update `agent/skills/therapeutic_response.py` if the style needs different
    prompt-local skill metadata
 4. Update `load_therapeutic_response_skill` guidance if the therapeutic
    response agent needs clearer selection criteria for the new style
 5. Add or update backend tests for the route and state contract
-6. Add a `STAGE_LABELS` entry in `agent/models.py` if the
-   node name differs from the stage label vocabulary
+6. Add a `STAGE_LABELS` entry in `agent/models.py` if the runtime
+   stage name needs a distinct user-facing label

@@ -11,9 +11,9 @@ interface NodeState {
   1: crisis_gate active
   2: turn_dispatch active
   3: load_memory active
-  4: therapeutic_subgraph active
+  4: TherapeuticAgent active
   5: finalize active
-  6: graph END
+  6: runtime complete
 */
 const TOTAL_STEPS = 7;
 const STEP_DELAY = 1000;

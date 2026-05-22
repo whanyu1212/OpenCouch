@@ -32,6 +32,7 @@ from agent.memory.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
 from agent.runtime.session import run_summarize_session
+from agent.runtime.session.history import session_conversation_from_transcript
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -118,6 +119,7 @@ class _FakeSummarizerLLM(BaseLLMClient):
         self.summarization_result = summarization_result
         self.raise_on_summarization = raise_on_summarization
         self.summarization_calls = 0
+        self.summarization_prompts: list[str] = []
 
     async def generate_text(
         self,
@@ -145,6 +147,7 @@ class _FakeSummarizerLLM(BaseLLMClient):
     ) -> StructuredResponseT:
         if response_schema.__name__ == "SummarizationResult":
             self.summarization_calls += 1
+            self.summarization_prompts.append(prompt)
             if self.raise_on_summarization:
                 raise RuntimeError("simulated summarization LLM failure")
             return cast(StructuredResponseT, self.summarization_result)
@@ -285,6 +288,48 @@ class TestSummarizerEarlyExits:
 
 class TestSummarizerHappyPath:
     """The normal flow: LLM returns a valid arc or None with reason."""
+
+    @pytest.mark.asyncio
+    async def test_uses_explicit_session_conversation_over_state_transcript(
+        self,
+    ) -> None:
+        """Finalization passes one canonical conversation source to the summarizer."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeSummarizerLLM(
+            summarization_result=SummarizationResult(
+                arc=None,
+                reason="prompt inspection test",
+            )
+        )
+        state = _partial_state(
+            transcript=[
+                {"role": "user", "content": "stale state transcript"},
+            ],
+            user_id="user-42",
+        )
+        conversation = session_conversation_from_transcript(
+            [
+                {"role": "user", "content": "canonical session turn"},
+                {"role": "assistant", "content": "canonical reply"},
+            ]
+        )
+
+        result = await run_summarize_session(
+            state,
+            llm_client=fake,
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+            session_id="session-test",
+            started_at="2026-04-10T12:00:00Z",
+            conversation=conversation,
+        )
+
+        assert result is None
+        assert fake.summarization_calls == 1
+        assert "canonical session turn" in fake.summarization_prompts[0]
+        assert "canonical reply" in fake.summarization_prompts[0]
+        assert "stale state transcript" not in fake.summarization_prompts[0]
 
     @pytest.mark.asyncio
     async def test_writes_arc_to_episodic_namespace(self) -> None:

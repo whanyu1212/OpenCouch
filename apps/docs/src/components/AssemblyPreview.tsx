@@ -60,7 +60,7 @@ const LAYER_DEFS: LayerDef[] = [
     id: 'instructions',
     label: 'Response instructions',
     dot: '#3d9990',
-    source: 'agent/runtime/agents/therapeutic_prompt_instructions.py',
+    source: 'agent/specialists/therapeutic_prompt_instructions.py',
     match: (l) => /^You are in [A-Z_]+ mode\./.test(l),
   },
   {
@@ -140,7 +140,7 @@ const SCENARIOS: ScenarioMeta[] = [
     file: 'prompt-dumps/guided_exercise_act_drift.txt',
     sub: 'response_style=guided_exercise · approach=act · mid-exercise side-turn',
     blurb:
-      'Mid-exercise side-turn: the dispatcher could re-pick an approach, but exercise_state.exercise_therapeutic_approach is pinned at "act" so ACT framing stays loaded.',
+      'Mid-exercise side-turn: the TherapeuticAgent could re-pick an approach, but exercise_state.exercise_therapeutic_approach is pinned at "act" so ACT framing stays loaded.',
     expects: ['core', 'response', 'approach', 'instructions', 'recall', 'task'],
   },
   {

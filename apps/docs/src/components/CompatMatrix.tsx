@@ -83,7 +83,7 @@ export default function CompatMatrix() {
         This is the intended routing surface, not a hard static registry.
         The therapeutic response agent selects a response skill through
         <code>load_therapeutic_response_skill</code>; prompt source loading lives
-        in <code>agent/runtime/agents/therapeutic_prompt_sources.py</code>.
+        in <code>agent/specialists/therapeutic_prompt_sources.py</code>.
         Hover a column to highlight it.
       </p>
     </div>

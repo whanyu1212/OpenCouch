@@ -163,11 +163,11 @@ constraint on the opaque `id`.
 
 | File | What it does |
 |---|---|
-| `agent/audit/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord`, plus crisis-log models |
-| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
-| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
-| `agent/audit/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
-| `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
+| `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord` |
+| `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
+| `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
+| `agent/feedback/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
+| `agent/runtime/runtime.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |
 | `opencouch_cli/app.py` | `_prompt_for_session_feedback`, `_summarize_and_render` |
