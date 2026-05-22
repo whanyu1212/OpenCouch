@@ -145,7 +145,7 @@ This package is mostly infrastructure. The main runtime integration points are o
   memory-control service operations.
 - [agent/runtime/memory_context.py](../runtime/memory_context.py): builds the
   runner-turn memory delta consumed by the text runtime.
-- [agent/runtime/text.py](../runtime/text.py): wires
+- [agent/runtime/openai_text_runtime.py](../runtime/openai_text_runtime.py): wires
   memory loading into the OpenAI Agents SDK text runtime.
 
 ## Persistence Backend

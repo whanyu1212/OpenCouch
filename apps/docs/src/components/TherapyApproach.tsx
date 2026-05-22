@@ -90,7 +90,7 @@ interface ResponseStyle {
 }
 
 const RESPONSE_STYLES: ResponseStyle[] = [
-  // ── Therapeutic response styles (dispatched per turn by the subgraph) ──
+  // ── Therapeutic response styles selected per turn by the TherapeuticAgent ──
   { id: 'supportive', label: 'Supportive', when: 'Default — user seeking emotional support, sharing feelings, or greeting', goal: 'Validate before suggesting. Reflect emotional state. One helpful next step. Concise.' },
   { id: 'reflective', label: 'Reflective', when: 'User is describing a recurring pattern they\'ve already named', goal: 'Name 1–2 patterns carefully. Tentative, testable. Preserve user\'s framing.' },
   { id: 'clarifying', label: 'Clarifying', when: 'Ambiguous message — agent doesn\'t know what "it" refers to', goal: 'One context-gathering question. About context, not content. No assumptions.' },
@@ -141,7 +141,7 @@ export default function TherapyApproach() {
       <section className={styles.approachSection}>
         <h3 className={styles.sectionTitle}>Therapeutic approaches</h3>
         <p className={styles.sectionSub}>
-          Designed as overlays and stances — not full treatments. All seven approaches are wired and selected per turn by the LLM dispatcher based on the user&apos;s message context. Click to see what each is good for and what to avoid.
+          Designed as overlays and stances — not full treatments. All seven approaches are wired and selected per turn by the TherapeuticAgent based on the user&apos;s message context. Click to see what each is good for and what to avoid.
         </p>
         <div className={styles.approachRow}>
           {APPROACHES.map(m => (
@@ -182,7 +182,7 @@ export default function TherapyApproach() {
       <section className={styles.responseStylesSection}>
         <h3 className={styles.sectionTitle}>Therapeutic response styles</h3>
         <p className={styles.sectionSub}>
-          Seven response styles are dispatched per turn by the therapeutic subgraph. The LLM classifier owns natural-language style decisions; local code validates active exercise state and structured output. Crisis responses bypass this subgraph entirely and are handled by the crisis gate (see <Link to="/docs/philosophy/crisis-gate">Crisis Gate</Link>).
+          Seven response styles are selected per turn by the TherapeuticAgent. The model owns natural-language style decisions; local code validates active exercise state and structured output. Crisis responses bypass this agent entirely and are handled by the crisis gate (see <Link to="/docs/philosophy/crisis-gate">Crisis Gate</Link>).
         </p>
         <div className={styles.responseStyleTable}>
           {RESPONSE_STYLES.map(m => (

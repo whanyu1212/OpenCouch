@@ -1,33 +1,34 @@
 ---
-title: Why a Graph, Not a ReAct Loop
+title: Why a Runtime Topology, Not a ReAct Loop
 sidebar_position: 1
 ---
 
 import GraphVsReact from '@site/src/components/GraphVsReact';
 
-# Why a Graph, Not a ReAct Loop
+# Why a Runtime Topology, Not a ReAct Loop
 
-OpenCouch uses a **compiled directed graph** (LangGraph) instead of
-a ReAct-style agent loop. This isn't a framework preference — it's a
-safety and correctness decision driven by the domain.
+OpenCouch uses an **app-owned runtime topology** around the OpenAI Agents
+SDK runner instead of a ReAct-style agent loop. This isn't a framework
+preference — it's a safety and correctness decision driven by the domain.
 
 ---
 
 ## The core difference
 
-| | ReAct loop | Compiled graph |
+| | ReAct loop | Runtime topology |
 |---|---|---|
 | **Execution order** | LLM *chooses* what runs next | Topology *enforces* what runs next |
-| **Safety guarantee** | Prompt says "check safety first" | Graph makes it impossible to skip |
-| **Tool usage** | LLM decides when/if to call tools | Nodes invoke tools at fixed positions |
-| **Extraction** | Optional step the LLM might skip | Hard edge — always runs after response |
+| **Safety guarantee** | Prompt says "check safety first" | Runtime makes it impossible to skip |
+| **Tool usage** | LLM decides when/if to call tools | Runtime branches invoke tools at fixed lifecycle points |
+| **Extraction** | Optional step the LLM might skip | Runtime side effect — always runs after response |
 | **Enforcement** | Runtime guideline (can drift) | Compile-time invariant (cannot drift) |
 
 A ReAct loop is a programming pattern where an LLM picks actions.
 Those choices can be shaped by prompting, but they aren't
-*architecturally guaranteed*. A compiled graph is a declarative
-topology where ordering is enforced by the executor, not by the
-model's compliance.
+*architecturally guaranteed*. OpenCouch keeps ordering in application code:
+crisis classification, safe-turn triage, retrieval, SDK specialist execution,
+finalization, and side effects are explicit runtime steps rather than actions
+the model is allowed to reorder.
 
 ---
 
@@ -42,8 +43,10 @@ In a support agent, two failure classes are unacceptable:
 
 Both failures are *possible* in a ReAct loop through prompt drift,
 model updates, cost-optimization shortcuts, or adversarial input.
-Both are *impossible* in a compiled graph because the topology
-doesn't contain an edge that permits them.
+Both are prevented by the runtime topology because there is no serving path
+that reaches ordinary response generation before the crisis gate, and
+post-response side effects are scheduled by the runtime rather than by the
+model.
 
 ---
 
@@ -51,14 +54,13 @@ doesn't contain an edge that permits them.
 
 ### 1. Safety always runs first
 
-```python
-workflow.add_edge(START, "crisis_gate_node")
+```text
+message → crisis_gate → crisis branch | safe-turn triage
 ```
 
-Every message enters the graph at `START` and immediately hits the
-crisis gate. There is no edge from `START` to any other node. The
-gate returns a `Command(goto=...)` that routes to either crisis
-response or the therapeutic branch.
+Every message enters the runtime through the crisis gate. The gate writes
+the crisis assessment and routes to either crisis response handling or
+safe-turn triage.
 
 **In a ReAct loop**, the LLM could decide to load memory first, or
 skip directly to response generation. Prompt hardening reduces this
@@ -67,28 +69,26 @@ model version changes.
 
 ### 2. The response path finishes before side effects
 
-```python
-workflow.add_edge("finalize_turn_node", END)
-# PersistentAgentRuntime persists the sealed turn after graph END.
+```text
+SDK response → turn finalization → persistence → post-response side effects
 ```
 
-The response must be finalized (appended to transcript) before the
-runtime persists the turn. Long-term memory writes are explicit tool or
-session-end operations, not automatic cleanup after every response.
+The response must be finalized (appended to transcript) before the runtime
+persists the turn. Long-term memory writes are explicit tool or session-end
+operations, not automatic cleanup after every response.
 
 **In a ReAct loop**, persistence and other cleanup side effects can
 be skipped for latency or run before the response is complete.
 
 ### 3. Tool invocation is positional, not emergent
 
-The web search for crisis resources is called from
-`crisis_resource_lookup_node`, and factual lookup is called from
-`grounded_answer_node`. Both are fixed graph positions chosen by
-typed routing, not emergent ReAct tool calls that can be hallucinated,
-omitted, or sequenced incorrectly.
+The web search for crisis resources is called from the crisis branch, and
+factual lookup is called from the grounded-lookup branch. Both are fixed
+runtime branches chosen by typed routing, not emergent ReAct tool calls that
+can be hallucinated, omitted, or sequenced incorrectly.
 
 ```python
-# Inside crisis_resource_lookup_node - always runs on the crisis branch
+# Inside the crisis-resource branch - always runs before crisis response
 location, resources, status = await find_crisis_resources(state, llm_client=llm_client)
 ```
 
@@ -97,14 +97,14 @@ location, resources, status = await find_crisis_resources(state, llm_client=llm_
 might hallucinate a tool, forget to call it, or call it at the wrong
 time.
 
-### 4. Routing is atomic with state updates
+### 4. Routing is paired with state updates
 
-The crisis gate returns a `Command` that bundles the routing decision
-*and* the state delta (assessment, diagnostics, audit metadata) into
-a single atomic operation:
+The crisis gate and safe-turn triage each return a state delta alongside
+the route decision. The runtime applies those deltas before selecting the
+next branch:
 
 ```python
-return Command(update=delta, goto=next_node)
+apply_state_delta(state, routing_delta)
 ```
 
 **In a ReAct loop**, routing and state updates are separate steps —
@@ -115,9 +115,8 @@ leave state inconsistent.
 ### 5. Transcript continuity via reducers
 
 State fields like `history` and `transcript` use `operator.add`
-reducers. When `finalize_turn_node` returns
-`{"transcript": [assistant_turn]}`, LangGraph's reducer appends it
-to the checkpointed prior turns automatically.
+reducers. When turn finalization returns `{"transcript": [assistant_turn]}`,
+the reducer appends it to the checkpointed prior turns automatically.
 
 **In a ReAct loop**, manual `state["transcript"].append(...)` calls
 are error-prone across checkpoint/restore cycles — duplicate turns,
@@ -161,9 +160,8 @@ ReAct loops excel when:
 
 OpenCouch's pipeline is the opposite: the sequence is known, safety
 ordering is critical, and the cost of a wrong action (missed crisis)
-is high. A graph encodes these constraints once and enforces them
-forever, regardless of prompt changes, model updates, or adversarial
-inputs.
+is high. The runtime encodes these constraints once and enforces them
+regardless of prompt changes, model updates, or adversarial inputs.
 
 ---
 

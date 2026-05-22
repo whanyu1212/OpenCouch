@@ -64,9 +64,10 @@ class TestHashSessionId:
 
 
 class TestIsoNow:
-    """Behaviour mirrors the private ``_iso_now`` helper that previously
-    lived in ``agent/persistence.py``. The ``Z`` suffix is a deliberate
-    choice callers depend on."""
+    """Behaviour mirrors the private runtime ``_iso_now`` helper.
+
+    The ``Z`` suffix is a deliberate choice callers depend on.
+    """
 
     def test_ends_with_z_suffix(self) -> None:
         """Callers and stored records rely on the ``Z`` suffix rather

@@ -72,7 +72,7 @@ Covers:
 - guided exercise preserve-without-advance
 - memory missing-tool safety
 - proactive recall enable / disable side effects
-- save-preference and forget-by-query dispatch
+- save-preference and forget-by-query memory-tool execution
 
 Use this file when validating state transitions, diagnostics, and response constraints.
 
@@ -226,8 +226,8 @@ The JSONL files were the practical source of truth, but there was no single docu
 ### 2. Memory-control breadth is stronger, but conflicting-intent depth is still limited
 Current evals now cover:
 - enable/disable proactive recall
-- save-preference dispatch
-- forget-by-query dispatch
+- save-preference memory-tool execution
+- forget-by-query memory-tool execution
 - preservation of pending memory actions across safe, grounded, and crisis side turns
 
 Still weak or missing:

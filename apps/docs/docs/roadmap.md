@@ -90,7 +90,7 @@ production telemetry layer is not yet in place.
 ### Clinical Review
 
 A trained clinician reviews the `agent/prompts/sources/response_styles/*.md`
-files, the agent-owned prompt builders in `agent/runtime/agents/`, and
+files, the agent-owned prompt builders in `agent/specialists/`, and
 agent responses across dogfood sessions. This is the gate before
 "a trusted friend could try it" becomes a defensible claim. Calendar
 dependency, not engineering.

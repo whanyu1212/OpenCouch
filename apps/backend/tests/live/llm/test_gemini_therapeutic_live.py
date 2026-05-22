@@ -1,6 +1,6 @@
-"""Live-API tests for the Gemini-backed therapeutic dispatcher.
+"""Live-API tests for Gemini-backed therapeutic response selection.
 
-These tests exercise the dispatcher's LLM path against the real Gemini
+These tests exercise the TherapeuticAgent LLM path against the real Gemini
 provider. They use messages that require semantic judgment rather than the
 minimal no-LLM dispatch fallback.
 
@@ -39,7 +39,7 @@ async def test_live_gemini_picks_reflective_for_implicit_pattern() -> None:
     """Live Gemini should recognize implicit pattern language as reflective.
 
     The user describes a recurring dynamic without using any of the
-    obvious keywords ('keep', 'always', 'every time'). The LLM dispatcher
+    obvious keywords ('keep', 'always', 'every time'). The TherapeuticAgent
     should pick reflective from the described dynamic.
     """
 

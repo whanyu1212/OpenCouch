@@ -171,7 +171,7 @@ async def test_answer_factual_lookup_accepts_neutral_request() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grounded_answer_node_returns_operational_response() -> None:
+async def test_grounded_lookup_returns_operational_response() -> None:
     llm = _FakeSearchLLM(
         [
             {
@@ -233,7 +233,7 @@ async def test_answer_factual_lookup_appends_structured_sources() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grounded_answer_node_requires_llm() -> None:
+async def test_grounded_lookup_requires_llm() -> None:
     state = _state("Can you look up the current rule?")
     state["grounded_lookup"] = {"query": "Can you look up the current rule?"}
 

@@ -38,14 +38,14 @@ crisis_gate                load_memory
                     ▼
              finalize_turn
                     │
-                 graph END
+              response ready
                     │
             AgentOutput.diagnostics
               + turn_total_ms (stamped by runtime)
 ```
 
 :::info Runtime diagnostics
-Runtime and graph stages use the same structured diagnostics channel, so
+Runtime stages and side-effect services use the same structured diagnostics channel, so
 turn-level timings and retrieval counters land in one `AgentOutput`.
 :::
 
@@ -53,11 +53,11 @@ turn-level timings and retrieval counters land in one `AgentOutput`.
 
 ## Observability
 
-For text runs, Opik captures the LangGraph execution trace, including
-the top-level run plus child spans for graph nodes and subgraphs. In
+For text runs, Opik captures the runtime execution trace, including
+the top-level run plus child spans for runtime stages and SDK calls. In
 OpenCouch, Opik is the primary external surface for:
 
-- inspecting graph execution paths
+- inspecting runtime execution paths
 - filtering runs by thread and runtime metadata
 - reviewing failures from tests and manual trace runs
 - comparing behavior across prompt, model, or routing changes
@@ -109,7 +109,7 @@ graph is still running:
 
 The stream now also has a non-terminal `response_ready` event. That
 means the CLI can render the finished reply as soon as
-`finalize_turn_node` seals it.
+turn finalization seals it.
 
 ### 3. On-demand inspection commands
 
@@ -119,11 +119,11 @@ means the CLI can render the finished reply as soon as
 | `/history [n]` | Recent transcript with `mode` column per assistant turn |
 | `/context` | Structured session context snapshot, including working memory and procedural rules |
 | `/memory status` | Owner-scoped semantic / episodic / procedural counts, recall toggle, and store totals |
-| `/debug state` | Raw graph state as pretty-printed JSON |
+| `/debug state` | Raw runtime state as pretty-printed JSON |
 
 The old auto-rendered Turn Diagnostics, Stage Timings, and Session
 Context panels are no longer part of the default chat loop. Their
-underlying diagnostics still exist in graph state and traces; the CLI
+underlying diagnostics still exist in runtime state and traces; the CLI
 just no longer prints those panels automatically after every turn.
 
 ---
@@ -149,7 +149,7 @@ consistent text:
 | `memory_profile_save` | saving profile memory |
 | `memory_graph_save` | writing graph memory |
 | `therapeutic` | generating therapeutic reply |
-| `runtime_extraction` | extracting facts and style rules after graph END |
+| `runtime_extraction` | extracting facts and style rules after response finalization |
 | `finalize` | finalizing turn |
 | `session_stage` | reading context |
 | `response_generation` | generating |

@@ -100,7 +100,7 @@ def _state(
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_requires_llm() -> None:
+async def test_crisis_resource_lookup_requires_llm() -> None:
     with pytest.raises(RuntimeError, match="requires an LLM client"):
         await build_crisis_resource_lookup_delta(
             _state(),
@@ -109,7 +109,7 @@ async def test_crisis_resource_lookup_node_requires_llm() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() -> None:
+async def test_crisis_resource_lookup_writes_verified_singapore_resource() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
@@ -153,7 +153,7 @@ async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() 
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
+async def test_crisis_resource_lookup_records_location_refusal() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
@@ -178,7 +178,7 @@ async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_surfaces_lookup_failure() -> None:
+async def test_crisis_resource_lookup_surfaces_lookup_failure() -> None:
     llm = _FakeLookupLLM(structured_responses=[])
 
     with pytest.raises(AssertionError, match="No fake structured response configured"):

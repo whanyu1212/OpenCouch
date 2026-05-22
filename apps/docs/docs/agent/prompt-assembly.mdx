@@ -16,7 +16,7 @@ separation of concerns.
 ## Layer architecture
 
 Lower layers are always present. Upper layers are selected at
-runtime by the graph.
+runtime by the OpenAI text runtime.
 
 <PromptLayerStack />
 
@@ -29,7 +29,7 @@ runtime by the graph.
 | **Core** | Who is this system? What are the hard rules? | `core_identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/shared.py`) | Never changes |
 | **Response style** | What response shape is this turn? | `response_styles/*.md` — support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check | Selected by agent-owned skill/tool context |
 | **Therapeutic approach** | What therapeutic framework overlay? | `therapeutic_approaches/*.md` — motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, selected by runtime state and skill context |
-| **Instructions** | How should it respond on this turn specifically? | `agent/runtime/agents/therapeutic_prompt_instructions.py`, `agent/runtime/agents/guided_exercise.py`, and `agent/runtime/guardrails/prompts.py` | Per response style |
+| **Instructions** | How should it respond on this turn specifically? | `agent/specialists/therapeutic_prompt_instructions.py`, `agent/specialists/guided_exercise.py`, and `agent/guardrails/prompts.py` | Per response style |
 | **Working memory** | What does it know about the user? | Semantic + episodic entries from the load-memory stage | Re-retrieved each turn |
 | **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
 
@@ -59,7 +59,7 @@ than a full crisis response.
 | Safety policy can't be overwritten | Core layer (including `policy/boundaries.md` + `policy/privacy.md`) is always first; no style/approach can weaken it |
 | Response knowledge is reviewable | Each response style's knowledge is a standalone `.md` in `agent/prompts/sources/response_styles/` |
 | Procedural rules can't be overridden | Injected last as system prompt suffix; safety-conflict rules ("skip the safety check") are dropped by the procedural extractor |
-| Each layer has a clear owner | `agent/prompts/sources/` for content, `agent/runtime/agents/` for agent-owned assembly, and `agent/runtime/guardrails/` for crisis prompt assembly |
+| Each layer has a clear owner | `agent/prompts/sources/` for content, `agent/specialists/` for agent-owned assembly, and `agent/guardrails/` for crisis prompt assembly |
 
 ---
 
@@ -69,18 +69,18 @@ than a full crisis response.
 |---|---|
 | `agent/prompts/__init__.py` | Re-exports `compose_sources`, `CORE_SOURCES`, crisis prompt builders |
 | `agent/prompts/shared.py` | `CORE_SOURCES` tuple, `load_prompt_source()`, `compose_sources()`, `format_recent_history()` |
-| `agent/runtime/guardrails/prompts.py` | Crisis classifier + crisis response prompt builders |
-| `agent/runtime/agents/therapeutic_prompt_sources.py` | `_knowledge_for_response_style()` and response-style / approach source selection |
-| `agent/runtime/agents/therapeutic_prompt_instructions.py` | Per-response-style instruction blocks |
-| `agent/runtime/agents/therapeutic_prompts.py` | Therapeutic-agent system/task prompt builders |
-| `agent/runtime/agents/guided_exercise.py` | Guided-exercise specialist instructions and system prompt builder |
+| `agent/guardrails/prompts.py` | Crisis classifier + crisis response prompt builders |
+| `agent/specialists/therapeutic_prompt_sources.py` | `_knowledge_for_response_style()` and response-style / approach source selection |
+| `agent/specialists/therapeutic_prompt_instructions.py` | Per-response-style instruction blocks |
+| `agent/specialists/therapeutic_prompts.py` | Therapeutic-agent system/task prompt builders |
+| `agent/specialists/guided_exercise.py` | Guided-exercise specialist instructions and system prompt builder |
 | `agent/prompts/sources/core_identity.md` | Assistant role, product stance, voice, tone, pacing, directness, and core boundaries |
 | `agent/prompts/sources/policy/` | Safety + privacy + crisis policy (3 files) |
 | `agent/prompts/sources/response_styles/` | One file per response style (7 files) |
 | `agent/prompts/sources/therapeutic_approaches/` | 8 therapeutic-approach knowledge files, dynamically loaded per turn |
-| `agent/prompts/sources/session_stages.md` | Stage-aware response guidance (not yet wired into the graph) |
+| `agent/prompts/sources/session_stages.md` | Stage-aware response guidance (not yet wired into the runtime) |
 | `agent/prompts/sources/cross_session_continuity.md` | First-turn catch-up framing |
-| `agent/memory/load_turn.py` | Populates `working_memory` and `procedural_profile.procedural_rules` |
+| `agent/runtime/memory_context.py` | Populates `working_memory` and `procedural_profile.procedural_rules` |
 
 ---
 

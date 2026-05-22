@@ -223,7 +223,7 @@ Once inside the text CLI:
 | `/mode <deterministic\|hybrid\|auto>` | Switch LLM resolution mode |
 | `/response-tier <fast\|quality>` | Switch response quality/latency tradeoff |
 | `/trace on\|off\|once` | Show or hide routing trace overlay |
-| `/debug state` | Raw graph state as JSON |
+| `/debug state` | Raw runtime state as JSON |
 
 ### Aliases
 

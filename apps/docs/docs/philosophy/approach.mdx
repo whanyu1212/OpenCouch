@@ -39,12 +39,12 @@ clinical authority.
 
 ## Response styles vs. therapeutic approaches
 
-Two axes, selected independently per turn by the LLM dispatcher:
+Two axes, selected independently per turn by the TherapeuticAgent:
 
 | Axis | What it is | How many | Selected by |
 |---|---|---|---|
 | **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | LLM structured-output classifier with local active-flow validation |
-| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | LLM dispatcher, alongside the response style |
+| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | TherapeuticAgent, alongside the response style |
 
 **Response styles** shape *what* the agent does this turn.
 **Therapeutic approaches** shape *how* — which knowledge file
@@ -55,7 +55,7 @@ rhythm or ACT defusion language).
 Two style families have hard structural contracts: `guided_exercise`
 must produce a step (and pin its approach so it can't drift on
 mid-exercise side-turns), `closing` must wrap up. Crisis reply has
-its own contract handled outside this subgraph by the crisis gate.
+its own contract handled outside the TherapeuticAgent by the crisis gate.
 The remaining styles form a soft continuum where label fuzziness at
 the edges is by design — the dispatcher prompt teaches the LLM how
 to distinguish them, and ambiguous cases default to `supportive`.
@@ -64,7 +64,7 @@ to distinguish them, and ambiguous cases default to `supportive`.
 
 ## Safety contract
 
-The crisis gate is the **first node in the graph** — it runs before
+The crisis gate is the **first runtime stage** — it runs before
 memory loading, before any operational gate, before any therapeutic
 response.
 
@@ -87,7 +87,7 @@ flowchart LR
 **When the gate raises level ≥ 2 (clear ideation or imminent risk),
 the agent:**
 
-1. **Skips** memory retrieval and the therapeutic subgraph entirely
+1. **Skips** memory retrieval and the TherapeuticAgent entirely
    — no operational gates, no mode dispatch.
 2. **Looks up** verified hotlines for the user's inferred region
    first, so resources land in the same reply.

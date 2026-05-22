@@ -20,16 +20,16 @@ It exercises the entire stack:
   the SQLite files, and reading back every record
 
 What these tests DON'T cover (intentionally):
-- LLM quality — all tests use a deterministic fake LLM dispatcher
+- LLM quality — all tests use deterministic fake LLM decisions
   that produces canned summaries and routing decisions
-- Specific prompt behavior — that's what the individual node test
+- Specific prompt behavior — that's what the focused runtime test
   suites cover
 - CLI interaction — that's covered by the manual dogfood loop and
   ``test_opencouch_cli.py``
 
 Test strategy: build a fake LLM that dispatches on
 ``response_schema.__name__`` and returns canned results for every
-structured-output call the graph makes (crisis classifier, dispatcher,
+structured-output call the runtime makes (crisis classifier, triage,
 summarization). Use ``tmp_path`` fixtures so all three
 SQLite files are isolated per test and clean up automatically.
 """

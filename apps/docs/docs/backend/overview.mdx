@@ -8,7 +8,8 @@ import PromptLayersVisual from '@site/src/components/PromptLayers';
 
 # Architecture
 
-Single Python backend. Explicit LangGraph text-agent graph. Three memory
+Single Python backend. OpenAI Agents SDK text runtime with app-owned state and
+deterministic routing stages. Three memory
 layers backed by Postgres-first durable persistence with a legacy SQLite
 fallback. Shared runtime for CLI, API, web text, and Telegram; separate
 LiveKit runtime for voice.
@@ -18,7 +19,7 @@ LiveKit runtime for voice.
 ## Turn pipeline
 
 :::tip Safety-first ordering
-The crisis gate is the **first node** in the graph. Memory only
+The crisis gate is the **first runtime stage**. Memory only
 loads on the therapeutic branch — and only after two operational
 gates (memory commands, factual lookups) have had a chance to
 short-circuit the turn. If a message triggers a crisis response,
@@ -33,7 +34,7 @@ memory retrieval and all operational gates are skipped entirely.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Execution | LangGraph `StateGraph` with split input/internal/output schemas | Explicit branches, deterministic ordering, checkpoint persistence; narrow output schema avoids reducer double-counting on subgraph completion |
+| Execution | OpenAI Agents SDK runner with app-owned runtime state | Explicit branches, deterministic ordering, checkpoint persistence; SDK sessions carry short-term model-visible history while OpenCouch owns product state |
 | LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface; `WorkflowContext` exposes both control LLM and optional response LLM |
 | Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` first, Gemini `gemini-embedding-001` fallback; null provider when no API key |
 | Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
@@ -80,13 +81,14 @@ composition logic.
 | Package | Owns |
 |---|---|
 | `agent/` | State schema, models, and runtime context |
-| `agent/runtime/` | OpenAI Agents SDK text runtime, guardrails, specialist agents, tools, SDK sessions, persistence, and lifecycle orchestration |
-| `agent/runtime/tools/crisis.py`, `agent/runtime/tools/grounded.py` | SDK tool surfaces and fallback deltas for crisis and grounded lookup |
+| `agent/runtime/` | OpenAI Agents SDK text runtime, SDK sessions, persistence, and lifecycle orchestration |
+| `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
+| `agent/tools/` | SDK tool surfaces and fallback deltas for memory control, crisis, guided exercise, and grounded lookup |
 | `agent/skills/` | Therapeutic response skills and guided-exercise skill catalog/state machine |
 | `agent/memory/` | Store protocol, Postgres/SQLite backends, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
 | `agent/audit/` | Always-on safety records, currently crisis log backends |
 | `agent/feedback/` | Session feedback records and in-memory, Postgres, and SQLite backends |
-| `agent/gates/memory_control/` | User-facing memory-control actions and operations |
+| `agent/memory/control/` | User-facing memory-control actions and operations |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
 | `llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
 | `opencouch_cli/` | Rich-based interactive CLI |

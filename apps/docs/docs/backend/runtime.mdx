@@ -20,9 +20,9 @@ shared session-end path (`/end`, timeout, shutdown, API end-session).
 <RuntimeLayers />
 
 :::tip The difference is between turns, not within a turn
-Both layers run identical graph nodes in identical order. The
-persistent layer saves state through the configured backend after each
-turn and restores it via reducers on the next.
+Both layers run the same runtime stages in the same order. The
+persistent layer saves app-owned state through the configured backend
+after each turn and restores reducer-backed fields on the next.
 :::
 
 :::note Voice has its own finalization path
@@ -62,13 +62,13 @@ persistent turn.
 | Field | Reducer | Behavior |
 |---|---|---|
 | `history` | `operator.add` | Each turn appends new entries; checkpointer accumulates |
-| `transcript` | `operator.add` | `finalize_turn_node` appends a 1-element delta |
+| `transcript` | `operator.add` | Turn finalization appends a 1-element delta |
 | `session_progress` | `_merge_dicts` | `turn_count` increments while preserving sibling fields |
 | `session_memory` | `_merge_dicts` | Summary / active concerns / open loops merge across turns |
 | `procedural_profile` | `_merge_dicts` | Procedural rules + recall toggle merge |
 | `exercise_state` | `_merge_dicts` | Active exercise continuity; `exercise_therapeutic_approach` pins the approach used when guidance resumes |
 | `memory_control` | `_merge_dicts` | `pending_action` carries destructive deletes across turns |
-| `diagnostics` | `_merge_dicts` | Graph nodes and runtime side effects write independently; gate timings, retrieval path, and write counts merge |
+| `diagnostics` | `_merge_dicts` | Runtime stages and side effects write independently; gate timings, retrieval path, and write counts merge |
 
 **Non-reducer fields** (`crisis`, `crisis_audit`, `route`,
 `response_text`, `response_style`, `therapeutic_approach`, the
@@ -121,7 +121,7 @@ $ opencouch --thread-id s2 --user-id alice   # sees alice's facts from s1`}
 
 `PersistentAgentRuntime` does not generate thread ids. Its text turn
 methods require callers to pass `thread_id`, and the runtime carries
-that value as `session_id` inside graph state. Defaults live at the
+that value as `session_id` inside runtime state. Defaults live at the
 caller boundary:
 
 | Surface | Missing `thread_id` | Missing `user_id` | Memory owner |
@@ -144,7 +144,7 @@ isolated by default.
 
 ## WorkflowContext
 
-Runtime dependencies injected as a **frozen dataclass**. Nodes
+Runtime dependencies injected as a **frozen dataclass**. Runtime stages
 access via `runtime.context.llm_client` — not dict access.
 
 ```python
@@ -160,11 +160,11 @@ class WorkflowContext:
 ```
 
 A convenience property `control_llm` returns `llm_client` for
-nodes that just want "the safety / routing / memory model"
+stages that just want "the safety / routing / memory model"
 without caring whether a separate response model is configured.
 
 :::note Why frozen?
-Immutability guarantees that no node can accidentally modify a
+Immutability guarantees that no stage can accidentally modify a
 shared dependency during a turn. The `slots=True` flag reduces
 memory overhead. Both are free correctness wins.
 :::
@@ -192,13 +192,13 @@ skipped.
 
 | File | Purpose |
 |---|---|
-| `agent/persistence.py` | `PersistentAgentRuntime` — `run_turn`, `run_turn_stream`, `end_session`, `record_session_feedback`, sweeper, active-session recovery |
-| `agent/graph.py` | `build_agent_workflow`, `build_initial_state`, `state_to_output`, `run_agent` |
+| `agent/runtime/runtime.py` | `PersistentAgentRuntime` — `run_turn`, `run_turn_stream`, `end_session`, `record_session_feedback`, sweeper, active-session recovery |
+| `agent/runtime/turn.py` | `build_initial_state`, `state_to_output`, `run_agent` |
 | `agent/state.py` | All state fragments + `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` |
 | `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
 | `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
-| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
-| `agent/audit/postgres_session_feedback.py` | Primary Postgres feedback store |
-| `agent/audit/sqlite_session_feedback.py` | SQLite feedback fallback backend |
+| `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/feedback/postgres_session_feedback.py` | Primary Postgres feedback store |
+| `agent/feedback/sqlite_session_feedback.py` | SQLite feedback fallback backend |

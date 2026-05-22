@@ -1092,7 +1092,7 @@ class TestEpisodicRetrieval:
     @pytest.mark.asyncio
     async def test_catch_up_does_not_fire_on_later_turns(self) -> None:
         """On turn 2+ of a session (transcript has >1 entries because
-        finalize_turn_node has appended an assistant reply), the catch-
+        turn finalization has appended an assistant reply), the catch-
         up injection should NOT fire. Only query-matched arcs appear."""
 
         store = OpenCouchMemoryStore()
@@ -1402,23 +1402,23 @@ class TestEpisodicRetrieval:
         )
 
 
-# ─── finalize_turn_node tests ───────────────────────────────────────────
+# ─── turn finalization tests ───────────────────────────────────────────
 
 
 class TestFinalizeTurnNode:
-    """Tests for the terminal transcript-append node."""
+    """Tests for terminal transcript appends."""
 
     @pytest.mark.asyncio
     async def test_appends_assistant_response_to_transcript(
         self,
     ) -> None:
-        """The node should return a single-turn transcript delta.
+        """Turn finalization should return a single-turn transcript delta.
 
         v0.8 observability: the assistant turn dict also carries a
         ``response_style`` field sourced from top-level state. This state
         has no style set, so the mode resolves to ``None``.
 
-        The transcript is reducer-backed, so finalize_turn_node must emit
+        The transcript is reducer-backed, so turn finalization must emit
         ONLY the assistant turn. Returning the full reconstructed transcript
         would duplicate prior entries when the reducer merges the delta into
         state snapshoted state.

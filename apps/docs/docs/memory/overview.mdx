@@ -14,7 +14,7 @@ layer to see how it writes, reads, and stores.
 <MemoryArchitecture />
 
 :::tip Post-response extraction is runtime-owned
-After the graph reaches `END`, the runtime schedules semantic and
+After the response is finalized, the runtime schedules semantic and
 procedural extraction work. The extractors don't write everything they
 extract directly into long-term memory. They:
 
@@ -35,14 +35,14 @@ instead of raw quotes. Formatting happens on demand at prompt-build
 time via `format_working_memory_entries()`.
 :::
 
-:::note Audit and memory are separate packages
-Crisis logs and session feedback live in
-[`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit) —
-not under `agent/memory/`. The split is enforced because audit
-records are operationally always-on, never feed the prompt, and never
-participate in the user-facing memory-recall toggle.
-`agent/memory/types/audit.py` only keeps compatibility re-exports of
-the audit record schemas.
+:::note Audit, feedback, and memory are separate packages
+Crisis logs live in
+[`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit),
+and session feedback lives in
+[`agent/feedback/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/feedback) —
+not under `agent/memory/`. The split is enforced because those records are
+operationally always-on, never feed the prompt, and never participate in the
+user-facing memory-recall toggle.
 :::
 
 ---
@@ -128,21 +128,27 @@ The `--user-id` flag decouples memory identity from thread identity
 
 | File | Purpose |
 |---|---|
-| `agent/audit/models.py` | `CrisisLogRecord`, `SessionFeedbackRecord`, classifier-path enums |
+| `agent/audit/models.py` | `CrisisLogRecord` and classifier-path enums |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
-| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
 | `agent/audit/sqlite_crisis_log.py` | SQLite crisis log fallback backend |
-| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
-| `agent/audit/sqlite_session_feedback.py` | SQLite session feedback fallback backend |
 
-### Graph integration
+### Feedback package (`agent/feedback/`)
+
+| File | Purpose |
+|---|---|
+| `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, and `SessionFeedbackRecord` |
+| `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
+| `agent/feedback/sqlite_session_feedback.py` | SQLite session feedback fallback backend |
+
+### Runtime integration
 
 | File | Purpose |
 |---|---|
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
 | `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
-| `agent/memory/load_turn.py` | Per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
+| `agent/runtime/memory_context.py` | Runtime-owned per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
 | `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/session_commit_service.py` |
 | `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/episodic.py` |
-| `agent/persistence.py` | Shared session-end path, timeout handling, active-session buffering |
+| `agent/runtime/runtime.py` | Shared session-end path, timeout handling, active-session buffering |

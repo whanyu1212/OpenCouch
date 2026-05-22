@@ -138,19 +138,15 @@ def _crisis_schema(
 
 def _crisis_goto(update: dict[str, Any]) -> str:
     crisis = update["crisis"]
-    return (
-        "crisis_resource_lookup_node"
-        if crisis.needs_crisis_response
-        else "safe_runtime"
-    )
+    return "crisis_resource_lookup" if crisis.needs_crisis_response else "safe_runtime"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("level", "expected_goto", "expected_route", "expected_decision"),
     [
-        (3, "crisis_resource_lookup_node", "crisis", "crisis"),
-        (2, "crisis_resource_lookup_node", "crisis", "crisis"),
+        (3, "crisis_resource_lookup", "crisis", "crisis"),
+        (2, "crisis_resource_lookup", "crisis", "crisis"),
         (1, "safe_runtime", "therapeutic", "check"),
         (0, "safe_runtime", "therapeutic", "normal"),
     ],

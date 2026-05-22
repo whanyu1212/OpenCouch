@@ -12,15 +12,15 @@ const preGate: FlowNode[] = [
   {id: 'gate', label: 'Crisis Gate', variant: 'danger'},
 ];
 
-// Safe branch — one turn dispatcher runs before memory loads.
-// Most turns end up at the therapeutic subgraph; memory commands
+// Safe branch — one turn triage step runs before memory loads.
+// Most turns end up at the TherapeuticAgent; memory commands
 // ("forget #3", "recall off") and factual lookups ("look up the
-// crisis line for X") short-circuit to dedicated reply nodes.
+// crisis line for X") short-circuit to dedicated runtime branches.
 const safePath: FlowNode[] = [
   {id: 'turn_dispatch', label: 'Turn Dispatch', variant: 'default'},
   {id: 'memory_control', label: 'Memory Control / Grounded Lookup', variant: 'default'},
   {id: 'load', label: 'Load Memory', variant: 'warm'},
-  {id: 'therapy', label: 'Therapeutic Subgraph', variant: 'safe'},
+  {id: 'therapy', label: 'TherapeuticAgent', variant: 'safe'},
 ];
 
 // Crisis branch — region-aware hotline lookup runs before the reply

@@ -29,7 +29,7 @@ interface Tool {
   id: string;
   name: string;
   status: 'active' | 'planned';
-  triggerPath: string; // where in the graph this fires from
+  triggerPath: string; // where in the runtime this fires from
   triggerCondition: string;
   providers: Provider[]; // which providers support this tool
   description: string;
@@ -79,8 +79,8 @@ const TOOLS: Tool[] = [
       'state.resource_lookup_status',
     ],
     gracefulDegradation:
-      'No-location, location-refused, and no-verified-result cases return explicit statuses. Missing LLM configuration or provider failures retry or surface through the graph instead of silently continuing.',
-    file: 'agent/runtime/tools/grounded_search.py',
+      'No-location, location-refused, and no-verified-result cases return explicit statuses. Missing LLM configuration or provider failures retry or surface through the runtime instead of silently continuing.',
+    file: 'agent/tools/grounded_search.py',
     fn: 'find_crisis_resources',
     tests: 'tests/unit/runtime/test_grounded_search_crisis_resources.py',
   },
@@ -88,11 +88,11 @@ const TOOLS: Tool[] = [
     id: 'grounded_lookup',
     name: 'answer_factual_lookup',
     status: 'active',
-    triggerPath: 'grounded_answer_node',
-    triggerCondition: 'turn_dispatch_node routes an explicit factual lookup request AND llm_client is available',
+    triggerPath: 'grounded_lookup runtime branch',
+    triggerCondition: 'turn triage routes an explicit factual lookup request AND llm_client is available',
     providers: ['gemini', 'openai'],
     description:
-      'Answers explicit, non-therapeutic factual lookup requests ("look up the eligibility for…", "search for the latest guidelines on…", "verify whether X is true"). Uses provider-native search grounding via use_search=True. Returns ("answer", status) where status reports whether the answer is verified or not verified. The therapeutic subgraph never runs on these turns — the user gets a single grounded reply with sources.',
+      'Answers explicit, non-therapeutic factual lookup requests ("look up the eligibility for…", "search for the latest guidelines on…", "verify whether X is true"). Uses provider-native search grounding via use_search=True. Returns ("answer", status) where status reports whether the answer is verified or not verified. The TherapeuticAgent does not generate an ordinary therapeutic reply on these turns — the user gets a single grounded reply with sources.',
     pipeline: [
       {
         id: 'detect_intent',
@@ -100,7 +100,7 @@ const TOOLS: Tool[] = [
         systemPrompt: 'LLM structured routing decision',
         temperature: 0,
         useSearch: false,
-        onFailure: 'graph retry/error; no silent regex fallback',
+        onFailure: 'runtime retry/error; no silent regex fallback',
         produces: 'state.grounded_lookup.query (str) when matched',
       },
       {
@@ -129,7 +129,7 @@ const TOOLS: Tool[] = [
     ],
     gracefulDegradation:
       'Weak or missing sources produce an explicit "I couldn\'t verify that" reply rather than an invented answer. Missing LLM configuration or provider failures retry or surface. The status field (answered / no_verified_answer) drives observability.',
-    file: 'agent/runtime/tools/grounded_search.py',
+    file: 'agent/tools/grounded_search.py',
     fn: 'answer_factual_lookup',
   },
 ];
@@ -300,8 +300,8 @@ export default function ToolRegistry(): React.JSX.Element {
       <div className={s.patternNote}>
         <span className={s.patternNoteLabel}>pattern</span>
         <span className={s.patternNoteText}>
-          Tools in OpenCouch are <strong>node-invoked</strong>, not LangGraph-registered.
-          A node calls the tool function directly when its condition is met.
+          Tools in OpenCouch are <strong>runtime-invoked</strong>, not graph-registered.
+          The owning runtime branch or SDK specialist calls the tool function when its condition is met.
           Provider-native grounding (Google Search, OpenAI web_search) is enabled
           via the <code>use_search=True</code> kwarg on <code>generate_text()</code>.
         </span>
