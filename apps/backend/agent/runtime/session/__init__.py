@@ -24,10 +24,12 @@ from __future__ import annotations
 from agent.runtime.session.commit import run_commit_session_memory
 from agent.runtime.session.finalization import finalize_session_window
 from agent.runtime.session.history import (
+    SessionConversation,
     content_to_text,
     include_prompt_history,
     messages_from_sdk_session_items,
     messages_from_transcript,
+    session_conversation_from_transcript,
     state_without_prompt_history,
     strip_recent_history_from_prompt,
 )
@@ -46,6 +48,7 @@ from agent.runtime.session.tracking import RuntimeSessionTracker
 __all__ = [
     "EXERCISE_STATE_FIELDS",
     "RuntimeSessionTracker",
+    "SessionConversation",
     "active_transcript_length",
     "content_to_text",
     "crisis_level_from_state",
@@ -55,6 +58,7 @@ __all__ = [
     "messages_from_transcript",
     "run_commit_session_memory",
     "run_summarize_session",
+    "session_conversation_from_transcript",
     "session_continuity_clear_delta",
     "slice_state_to_active_session",
     "state_without_prompt_history",

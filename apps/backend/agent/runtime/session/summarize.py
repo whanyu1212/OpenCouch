@@ -53,6 +53,10 @@ from agent.memory.prompts.summarization import (
     build_summarization_system_prompt,
     build_summarization_user_prompt,
 )
+from agent.runtime.session.history import (
+    SessionConversation,
+    session_conversation_from_transcript,
+)
 from agent.state import AgentState, resolve_owner_id
 from llm.base import BaseLLMClient
 
@@ -74,6 +78,7 @@ async def run_summarize_session(
     crisis_level_max: int = 0,
     embedding_provider: "EmbeddingProvider | None" = None,
     approach_hint: str | None = None,
+    conversation: SessionConversation | None = None,
 ) -> StoredSessionArc | None:
     """Summarize a completed session and write the arc to episodic memory.
 
@@ -87,9 +92,9 @@ async def run_summarize_session(
     in the common case.
 
     Args:
-        state: Current runtime state at session end. Reads ``transcript``
-            and ``user_id`` / ``session_id``. The transcript is the full
-            session history, not a window.
+        state: Current runtime state at session end. Reads ``user_id`` /
+            ``session_id`` and, for legacy direct callers without an explicit
+            conversation, ``transcript``.
         llm_client: The runtime's LLM client, passed explicitly rather
             than pulled from ``runtime.context``. When ``None``, the
             summarizer skips silently.
@@ -116,6 +121,9 @@ async def run_summarize_session(
             summarization prompt so the LLM extracts approach-specific
             structured context. When None, the summarizer produces a
             general arc (backward-compatible behavior).
+        conversation: Canonical public conversation projection for the
+            completed session. When omitted, the service derives it from
+            ``state["transcript"]`` for direct callers.
 
     Returns:
         The written :class:`StoredSessionArc` on success, or ``None`` on
@@ -136,12 +144,15 @@ async def run_summarize_session(
         return None
 
     owner_id = resolve_owner_id(state)
+    session_conversation = conversation or session_conversation_from_transcript(
+        state.get("transcript", [])
+    )
+    transcript_entries = session_conversation.transcript_entries()
 
-    transcript = state.get("transcript", [])
     duration_seconds, user_turn_count = prepare_session_summary_metadata(
         started_at=started_at,
         ended_at=ended_at,
-        transcript=transcript,
+        transcript=transcript_entries,
     )
 
     try:
@@ -154,6 +165,7 @@ async def run_summarize_session(
                 duration_seconds=duration_seconds,
                 turn_count=user_turn_count,
                 approach_hint=approach_hint,
+                transcript_entries=transcript_entries,
             ),
             response_schema=SummarizationResult,
             system_instruction=build_summarization_system_prompt(),

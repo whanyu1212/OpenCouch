@@ -7,6 +7,7 @@ from agent.runtime.session.history import (
     include_prompt_history,
     messages_from_sdk_session_items,
     messages_from_transcript,
+    session_conversation_from_transcript,
     state_without_prompt_history,
     strip_recent_history_from_prompt,
 )
@@ -97,3 +98,30 @@ def test_state_without_prompt_history_clears_copy_only() -> None:
 def test_include_prompt_history_only_when_sdk_session_is_absent() -> None:
     assert include_prompt_history(None) is True
     assert include_prompt_history(object()) is False
+
+
+def test_session_conversation_projects_public_turns_once() -> None:
+    conversation = session_conversation_from_transcript(
+        [
+            {"role": "system", "content": "hidden system prompt"},
+            {"role": "user", "content": "  I argued with Maya.  "},
+            {
+                "role": "assistant",
+                "content": "  That sounds painful.  ",
+                "response_style": "supportive",
+            },
+            {"role": "tool", "content": "tool output"},
+            {"role": "assistant", "content": ""},
+        ]
+    )
+
+    assert conversation.transcript_entries() == [
+        {"role": "user", "content": "I argued with Maya."},
+        {
+            "role": "assistant",
+            "content": "That sounds painful.",
+            "response_style": "supportive",
+        },
+    ]
+    assert conversation.user_texts() == ["I argued with Maya."]
+    assert conversation.user_turn_count == 1

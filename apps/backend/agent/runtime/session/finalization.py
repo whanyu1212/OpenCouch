@@ -10,6 +10,10 @@ from agent.memory.types import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.session.commit import run_commit_session_memory
+from agent.runtime.session.history import (
+    SessionConversation,
+    session_conversation_from_transcript,
+)
 from agent.runtime.session.summarize import run_summarize_session
 from agent.state import AgentState
 from llm.base import BaseLLMClient
@@ -29,6 +33,7 @@ async def finalize_session_window(
     memory_store: MemoryStore,
     memory_mode: MemoryMode,
     embedding_provider: EmbeddingProvider | None,
+    conversation: SessionConversation | None = None,
 ) -> StoredSessionArc | None:
     """Run the shared session-end summarization and memory commit path.
 
@@ -45,6 +50,9 @@ async def finalize_session_window(
         memory_mode (MemoryMode): Runtime memory mode.
         embedding_provider (EmbeddingProvider | None): Optional embedding
             provider for memory writes.
+        conversation (SessionConversation | None): Canonical public
+            conversation projection for this session. If absent, it is derived
+            from the provided state window once and reused across finalization.
 
     Returns:
         StoredSessionArc | None: The stored session arc, or ``None`` when
@@ -52,6 +60,9 @@ async def finalize_session_window(
     """
 
     approach_hint = session_buffer.dominant_approach() if session_buffer else None
+    session_conversation = conversation or session_conversation_from_transcript(
+        state.get("transcript", [])
+    )
 
     stored_arc = await run_summarize_session(
         state,
@@ -64,6 +75,7 @@ async def finalize_session_window(
         crisis_level_max=crisis_level_max,
         embedding_provider=embedding_provider,
         approach_hint=approach_hint,
+        conversation=session_conversation,
     )
 
     commit_result = await run_commit_session_memory(
@@ -73,6 +85,7 @@ async def finalize_session_window(
         stored_arc=stored_arc,
         embedding_provider=embedding_provider,
         llm_client=llm_client,
+        conversation=session_conversation,
     )
     if commit_result is not None:
         logger.info(

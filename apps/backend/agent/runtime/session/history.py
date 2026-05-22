@@ -3,12 +3,51 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.models import Message, MessageRole
 from agent.state import AgentState
 
 PUBLIC_CONVERSATION_ROLES = {MessageRole.USER.value, MessageRole.ASSISTANT.value}
+
+
+@dataclass(frozen=True)
+class SessionConversation:
+    """Canonical public conversation projection for session-end memory work."""
+
+    messages: tuple[Message, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.messages
+
+    @property
+    def user_turn_count(self) -> int:
+        return sum(1 for message in self.messages if message.role == MessageRole.USER)
+
+    def transcript_entries(self) -> list[dict[str, str]]:
+        """Return transcript-shaped entries for summarization prompts."""
+
+        entries: list[dict[str, str]] = []
+        for message in self.messages:
+            entry = {
+                "role": message.role.value,
+                "content": message.content,
+            }
+            if message.role == MessageRole.ASSISTANT and message.response_style:
+                entry["response_style"] = message.response_style
+            entries.append(entry)
+        return entries
+
+    def user_texts(self) -> list[str]:
+        """Return user turn text for session-end support scoring."""
+
+        return [
+            message.content
+            for message in self.messages
+            if message.role == MessageRole.USER and message.content.strip()
+        ]
 
 
 def include_prompt_history(session: Any | None) -> bool:
@@ -60,6 +99,14 @@ def messages_from_transcript(
 ) -> list[Message]:
     """Materialize public user/assistant messages from app transcript entries."""
 
+    return list(session_conversation_from_transcript(transcript).messages)
+
+
+def session_conversation_from_transcript(
+    transcript: list[dict[str, Any]],
+) -> SessionConversation:
+    """Project app transcript entries into canonical public conversation turns."""
+
     messages: list[Message] = []
     for turn in transcript:
         if not isinstance(turn, Mapping):
@@ -67,7 +114,7 @@ def messages_from_transcript(
         message = _message_from_mapping(turn)
         if message is not None:
             messages.append(message)
-    return messages
+    return SessionConversation(tuple(messages))
 
 
 def messages_from_sdk_session_items(items: list[Any]) -> list[Message]:
@@ -118,10 +165,12 @@ def _message_from_mapping(item: Mapping[str, Any]) -> Message | None:
 
 
 __all__ = [
+    "SessionConversation",
     "content_to_text",
     "include_prompt_history",
     "messages_from_sdk_session_items",
     "messages_from_transcript",
+    "session_conversation_from_transcript",
     "state_without_prompt_history",
     "strip_recent_history_from_prompt",
 ]

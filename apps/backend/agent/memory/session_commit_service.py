@@ -463,6 +463,7 @@ async def commit_session_memory(
     stored_arc: "StoredSessionArc | None",
     embedding_provider: "EmbeddingProvider | None" = None,
     llm_client: "BaseLLMClient | None" = None,
+    user_turn_texts: list[str] | None = None,
 ) -> SessionMemoryCommitResult | None:
     """Commit buffered semantic/procedural candidates that survived review.
 
@@ -473,6 +474,9 @@ async def commit_session_memory(
         stored_arc: Optional episodic arc generated for the completed session.
         embedding_provider: Optional provider for semantic fact embeddings.
         llm_client: Optional classifier client for reconciliation.
+        user_turn_texts: Explicit canonical user-turn texts from the completed
+            session. When omitted, derives them from ``state["transcript"]`` for
+            direct callers.
 
     Returns:
         Commit result when work was attempted, otherwise ``None``.
@@ -486,7 +490,11 @@ async def commit_session_memory(
         return None
 
     owner_id = resolve_owner_id(state)
-    user_turn_texts = _user_turn_texts(state)
+    user_turn_texts = (
+        list(user_turn_texts)
+        if user_turn_texts is not None
+        else _user_turn_texts(state)
+    )
     result = SessionMemoryCommitResult()
     current_session_id = (
         state.get("session_id")
