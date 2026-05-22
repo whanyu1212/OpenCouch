@@ -1243,25 +1243,6 @@ def _apply_crisis_resource_fallback_diagnostics(
     apply_state_delta(state, {"diagnostics": diagnostics})
 
 
-def _memory_control_action_from_turn_dispatch(
-    decision: TurnDispatchDecision,
-) -> dict[str, Any] | None:
-    action_type = decision.memory_action_type
-    if action_type is None:
-        return None
-    action: dict[str, Any] = {"type": action_type}
-    if action_type == "set_recall":
-        action["enabled"] = bool(decision.enabled)
-    elif action_type == "save_preference":
-        action["preference_text"] = decision.preference_text
-    elif action_type == "forget_by_index":
-        action["target_kind"] = decision.target_kind or "fact"
-        action["target_index"] = decision.target_index or 1
-    elif action_type == "forget_by_query":
-        action["query"] = decision.query
-    return action
-
-
 def _state_delta_for_turn_dispatch(
     state: AgentState,
     decision: TurnDispatchDecision,
@@ -1296,12 +1277,6 @@ def _state_delta_for_turn_dispatch(
         },
         "diagnostics": diagnostics,
     }
-    if decision.route == "memory_control":
-        memory_action = _memory_control_action_from_turn_dispatch(decision)
-        delta["memory_control"] = {
-            **dict(state.get("memory_control", {}) or {}),
-            "action": memory_action or {},
-        }
     if decision.route == "grounded_lookup":
         delta["grounded_lookup"] = {
             **dict(state.get("grounded_lookup", {}) or {}),

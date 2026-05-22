@@ -3,25 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.runtime import build_initial_state
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.models import EntityRef, SemanticFact
 from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
-from agent.gates.memory_control.service import (
+from agent.memory.control.service import (
     MemoryControlRequest,
-    execute_memory_control_action,
     execute_memory_control_request,
 )
-from agent.models import AgentInput
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState
 
 
 class _FakePreferenceRuleLLM:
@@ -69,14 +65,6 @@ class _FakePreferenceRuleLLM:
         )
 
 
-def _state(message: str, *, user_id: str = "user-1") -> AgentState:
-    state = build_initial_state(
-        AgentInput(message=message, user_id=user_id, session_id="thread-1"),
-        include_input_history=True,
-    )
-    return cast(AgentState, dict(state))
-
-
 def _context(
     *,
     store: OpenCouchMemoryStore | None = None,
@@ -88,6 +76,22 @@ def _context(
         memory_store=store or OpenCouchMemoryStore(),
         crisis_log_backend=InMemoryCrisisLogBackend(),
         memory_mode=memory_mode,
+    )
+
+
+def _request(
+    message: str,
+    action: dict[str, Any],
+    *,
+    owner_id: str | None = "user-1",
+    pending_action: dict[str, Any] | None = None,
+) -> MemoryControlRequest:
+    return MemoryControlRequest(
+        owner_id=owner_id,
+        current_user_message=message,
+        action=action,
+        pending_action=pending_action,
+        session_id="thread-1",
     )
 
 
@@ -113,26 +117,9 @@ async def _seed_fact(store: OpenCouchMemoryStore, *, owner_id: str = "user-1") -
 async def test_service_lists_saved_memory() -> None:
     store = OpenCouchMemoryStore()
     await _seed_fact(store)
-    state = _state("What do you remember about me?")
-    state["memory_control"]["action"] = {"type": "list"}
-
-    result = await execute_memory_control_action(state, _context(store=store))
-
-    assert "Presentations make me anxious" in result.response_text
-    assert result.memory_control == {"pending_action": None}
-
-
-@pytest.mark.asyncio
-async def test_service_lists_saved_memory_from_neutral_request() -> None:
-    store = OpenCouchMemoryStore()
-    await _seed_fact(store)
 
     result = await execute_memory_control_request(
-        MemoryControlRequest(
-            owner_id="user-1",
-            current_user_message="What do you remember about me?",
-            action={"type": "list"},
-        ),
+        _request("What do you remember about me?", {"type": "list"}),
         _context(store=store),
     )
 
@@ -142,11 +129,8 @@ async def test_service_lists_saved_memory_from_neutral_request() -> None:
 
 @pytest.mark.asyncio
 async def test_service_noops_in_incognito_mode() -> None:
-    state = _state("What do you remember about me?")
-    state["memory_control"]["action"] = {"type": "list"}
-
-    result = await execute_memory_control_action(
-        state,
+    result = await execute_memory_control_request(
+        _request("What do you remember about me?", {"type": "list"}),
         _context(memory_mode=MemoryMode.INCOGNITO),
     )
 
@@ -156,11 +140,11 @@ async def test_service_noops_in_incognito_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_service_unknown_action_raises() -> None:
-    state = _state("memory help")
-    state["memory_control"]["action"] = {"type": "unknown"}
-
-    with pytest.raises(ValueError, match="Invalid memory_control.action payload"):
-        await execute_memory_control_action(state, _context())
+    with pytest.raises(ValueError, match="Invalid memory action payload"):
+        await execute_memory_control_request(
+            _request("memory help", {"type": "unknown"}),
+            _context(),
+        )
 
 
 @pytest.mark.asyncio
@@ -172,11 +156,12 @@ async def test_service_set_recall_without_enabled_raises() -> None:
     """
 
     store = OpenCouchMemoryStore()
-    state = _state("turn proactive recall")
-    state["memory_control"]["action"] = {"type": "set_recall"}
 
-    with pytest.raises(ValueError, match="Invalid memory_control.action payload"):
-        await execute_memory_control_action(state, _context(store=store))
+    with pytest.raises(ValueError, match="Invalid memory action payload"):
+        await execute_memory_control_request(
+            _request("turn proactive recall", {"type": "set_recall"}),
+            _context(store=store),
+        )
 
     profile = await aget_procedural_profile(store, user_id="user-1")
     assert profile.proactive_recall_enabled is False
@@ -187,11 +172,12 @@ async def test_service_save_preference_without_text_raises() -> None:
     """Malformed save_preference must not save a blank rule."""
 
     store = OpenCouchMemoryStore()
-    state = _state("remember preference")
-    state["memory_control"]["action"] = {"type": "save_preference"}
 
-    with pytest.raises(ValueError, match="Invalid memory_control.action payload"):
-        await execute_memory_control_action(state, _context(store=store))
+    with pytest.raises(ValueError, match="Invalid memory action payload"):
+        await execute_memory_control_request(
+            _request("remember preference", {"type": "save_preference"}),
+            _context(store=store),
+        )
 
     profile = await aget_procedural_profile(store, user_id="user-1")
     assert profile.rules == []
@@ -200,14 +186,15 @@ async def test_service_save_preference_without_text_raises() -> None:
 @pytest.mark.asyncio
 async def test_service_save_preference_writes_rule_with_llm() -> None:
     store = OpenCouchMemoryStore()
-    state = _state("Remember that I prefer direct answers when I am spiraling.")
-    state["memory_control"]["action"] = {
-        "type": "save_preference",
-        "preference_text": "direct answers when I am spiraling",
-    }
 
-    result = await execute_memory_control_action(
-        state,
+    result = await execute_memory_control_request(
+        _request(
+            "Remember that I prefer direct answers when I am spiraling.",
+            {
+                "type": "save_preference",
+                "preference_text": "direct answers when I am spiraling",
+            },
+        ),
         _context(
             store=store,
             llm_client=_FakePreferenceRuleLLM(
@@ -227,14 +214,18 @@ async def test_service_save_preference_writes_rule_with_llm() -> None:
 @pytest.mark.asyncio
 async def test_service_save_preference_requires_llm() -> None:
     store = OpenCouchMemoryStore()
-    state = _state("Remember that I prefer direct answers when I am spiraling.")
-    state["memory_control"]["action"] = {
-        "type": "save_preference",
-        "preference_text": "direct answers when I am spiraling",
-    }
 
     with pytest.raises(RuntimeError, match="save_preference requires an LLM client"):
-        await execute_memory_control_action(state, _context(store=store))
+        await execute_memory_control_request(
+            _request(
+                "Remember that I prefer direct answers when I am spiraling.",
+                {
+                    "type": "save_preference",
+                    "preference_text": "direct answers when I am spiraling",
+                },
+            ),
+            _context(store=store),
+        )
 
     profile = await aget_procedural_profile(store, user_id="user-1")
     assert profile.rules == []
@@ -244,22 +235,24 @@ async def test_service_save_preference_requires_llm() -> None:
 async def test_service_confirm_pending_deletes_target() -> None:
     store = OpenCouchMemoryStore()
     await _seed_fact(store)
-    state = _state("yes, delete it")
-    state["memory_control"] = {
-        "action": {"type": "confirm_pending"},
-        "pending_action": {
-            "type": "delete",
-            "target": {
-                "kind": "fact",
-                "namespace": ["user-1", "semantic"],
-                "key": "fact-presentations",
-                "rule_id": None,
-                "preview": "trigger: presentations",
-            },
-        },
-    }
 
-    result = await execute_memory_control_action(state, _context(store=store))
+    result = await execute_memory_control_request(
+        _request(
+            "yes, delete it",
+            {"type": "confirm_pending"},
+            pending_action={
+                "type": "delete",
+                "target": {
+                    "kind": "fact",
+                    "namespace": ["user-1", "semantic"],
+                    "key": "fact-presentations",
+                    "rule_id": None,
+                    "preview": "trigger: presentations",
+                },
+            },
+        ),
+        _context(store=store),
+    )
 
     assert "Deleted that saved fact" in result.response_text
     assert result.memory_control == {"pending_action": None}

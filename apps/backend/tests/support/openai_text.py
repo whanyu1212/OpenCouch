@@ -195,18 +195,13 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         route: str,
         crisis_level: int = 0,
         memory_reference_mode: str = "none",
-        memory_action_type: str = "status",
         active_flow_action: str = "none",
         therapeutic_response_style: str = "supportive",
         therapeutic_approach: str = "none",
         exercise_start_basis: str = "ambiguous_or_none",
         exercise_type: str = "grounding_5_4_3_2_1",
         exercise_step_state: str = "complete",
-        enabled: bool = True,
-        target_kind: str = "fact",
-        target_index: int = 1,
         query: str = "saved memory",
-        preference_text: str = "direct answers when I am spiraling",
         grounded_answer: str = "Official answer.\n\nSources:\n- Official source",
         grounded_status: str = "answered",
         crisis_location_status: str = "provided",
@@ -218,18 +213,13 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.route = route
         self.crisis_level = crisis_level
         self.memory_reference_mode = memory_reference_mode
-        self.memory_action_type = memory_action_type
         self.active_flow_action = active_flow_action
         self.therapeutic_response_style = therapeutic_response_style
         self.therapeutic_approach = therapeutic_approach
         self.exercise_start_basis = exercise_start_basis
         self.exercise_type = exercise_type
         self.exercise_step_state = exercise_step_state
-        self.enabled = enabled
-        self.target_kind = target_kind
-        self.target_index = target_index
         self.query = query
-        self.preference_text = preference_text
         self.grounded_answer = grounded_answer
         self.grounded_status = grounded_status
         self.crisis_location_status = crisis_location_status
@@ -264,17 +254,6 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 "confidence": self.triage_confidence,
                 "memory_reference_mode": self.memory_reference_mode,
             }
-            if self.route == "memory_control":
-                kwargs["memory_action_type"] = self.memory_action_type
-                if self.memory_action_type == "set_recall":
-                    kwargs["enabled"] = self.enabled
-                if self.memory_action_type == "forget_by_index":
-                    kwargs["target_kind"] = self.target_kind
-                    kwargs["target_index"] = self.target_index
-                if self.memory_action_type == "forget_by_query":
-                    kwargs["query"] = self.query
-                if self.memory_action_type == "save_preference":
-                    kwargs["preference_text"] = self.preference_text
             if self.route == "grounded_lookup":
                 kwargs["query"] = "grounded query"
             return response_schema(**kwargs)

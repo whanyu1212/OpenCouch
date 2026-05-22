@@ -7,7 +7,7 @@ from typing import Any, Literal, Mapping, cast
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
-from agent.gates.memory_control.service import (
+from agent.memory.control.service import (
     MemoryControlRequest,
     execute_memory_control_request,
 )

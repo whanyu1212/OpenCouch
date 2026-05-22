@@ -128,7 +128,6 @@ class TextRuntimeShadowResult:
     active_flow: str | None = None
     active_flow_action: str | None = None
     memory_reference_mode: str | None = None
-    memory_action_type: str | None = None
     grounded_lookup_query: str | None = None
     crisis_level: int | None = None
     needs_crisis_response: bool | None = None

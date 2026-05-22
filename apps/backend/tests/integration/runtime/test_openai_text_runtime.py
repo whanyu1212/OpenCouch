@@ -696,7 +696,6 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending
             {
                 **dict(state),
                 "memory_control": {
-                    "action": {},
                     "pending_action": {
                         "type": "delete",
                         "target": {

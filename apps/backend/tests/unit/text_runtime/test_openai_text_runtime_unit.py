@@ -320,6 +320,25 @@ async def test_openai_runtime_runs_memory_recall_update_through_sdk_tool() -> No
 
 
 @pytest.mark.asyncio
+async def test_openai_runtime_memory_control_route_does_not_synthesize_state_action() -> (
+    None
+):
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("I need an explicit memory tool call to change that.")
+    runtime = _runtime(workflow, runner)
+
+    result = await runtime.run_turn(
+        cast(Any, _initial_state("Turn proactive recall on.")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(_RouteLLM(route="memory_control")),
+    )
+
+    assert "action" not in dict(result.get("memory_control", {}) or {})
+    assert result["route"] == "therapeutic"
+    assert "openai_memory_tool_calls" not in result["diagnostics"]
+
+
+@pytest.mark.asyncio
 async def test_openai_runtime_runs_preference_save_through_sdk_tool() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner(
@@ -447,7 +466,6 @@ async def test_openai_runtime_handles_pending_memory_cancel() -> None:
         context=_context(
             _RouteLLM(
                 route="memory_control",
-                memory_action_type="cancel_pending",
                 active_flow_action="continue",
             )
         ),
@@ -484,7 +502,6 @@ async def test_openai_runtime_confirms_pending_memory_deletion_through_sdk_tool(
     context = _context(
         _RouteLLM(
             route="memory_control",
-            memory_action_type="confirm_pending",
             active_flow_action="continue",
         )
     )
@@ -540,7 +557,6 @@ async def test_openai_runtime_does_not_mutate_memory_without_sdk_tool_call() -> 
     context = _context(
         _RouteLLM(
             route="memory_control",
-            memory_action_type="confirm_pending",
             active_flow_action="continue",
         )
     )
@@ -904,7 +920,6 @@ async def test_openai_runtime_shadow_keeps_tools_disabled_for_memory_requests() 
     assert result.eligible is True
     assert result.fallback_reason is None
     assert result.route == "therapeutic"
-    assert result.memory_action_type is None
     assert result.selected_agent == THERAPEUTIC_AGENT_NAME
     assert result.response_text_length == len("shadow memory reply")
     assert runner.run_calls
