@@ -454,7 +454,8 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
         assert runner.run_calls
         assert runner.run_calls[0]["agent"].name == CRISIS_AGENT_NAME
         assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
-            "lookup_crisis_resources"
+            "lookup_crisis_resources",
+            "get_crisis_support_template",
         ]
 
 

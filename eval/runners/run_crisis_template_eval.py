@@ -31,7 +31,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from config import load_runtime_env  # noqa: E402
 from agent.runtime.context import CrisisResourceToolStatus  # noqa: E402
-from agent.runtime.tools.crisis import (  # noqa: E402
+from agent.tools.crisis import (  # noqa: E402
     CrisisSupportTemplateToolResult,
     execute_crisis_support_template_tool,
 )

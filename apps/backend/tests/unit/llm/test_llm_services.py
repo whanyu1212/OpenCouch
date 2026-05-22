@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from llm.factory import create_llm_client
+from llm.google_genai import DEFAULT_GEMINI_MODEL
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 from llm.openai_client import OpenAILLMClient
 
@@ -146,6 +147,19 @@ def test_create_llm_client_routes_gemini_with_model_override(monkeypatch) -> Non
     assert isinstance(client, _FakeProviderClient)
     assert _FakeProviderClient.calls == [
         {"api_key": "gemini-key", "model": "gemini-test-model"}
+    ]
+
+
+def test_create_llm_client_routes_gemini_with_default_model(monkeypatch) -> None:
+    """Factory should route Gemini clients with the stable Gemini default model."""
+
+    monkeypatch.setattr("llm.factory.GeminiLLMClient", _FakeProviderClient)
+
+    client = create_llm_client(provider="gemini", api_key="gemini-key")
+
+    assert isinstance(client, _FakeProviderClient)
+    assert _FakeProviderClient.calls == [
+        {"api_key": "gemini-key", "model": DEFAULT_GEMINI_MODEL}
     ]
 
 

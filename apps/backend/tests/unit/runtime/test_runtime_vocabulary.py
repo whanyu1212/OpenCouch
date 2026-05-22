@@ -205,6 +205,8 @@ STALE_PHRASES = {
         "graph state",
     ),
     "apps/backend/agent/memory/README.md": ("agent/runtime/text.py",),
+    "eval/runners/run_crisis_template_eval.py": ("agent.runtime.tools",),
+    "eval/runners/run_crisis_resource_eval.py": ("agent.runtime.tools",),
 }
 
 
