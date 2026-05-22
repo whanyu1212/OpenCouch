@@ -57,6 +57,10 @@ def _trajectory_judge_min_score() -> int:
     return int(os.getenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE", "4"))
 
 
+def _trajectory_judge_samples() -> int:
+    return int(os.getenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_SAMPLES", "1"))
+
+
 def test_live_openai_trajectory_judge_eval_env_requires_dedicated_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -75,9 +79,11 @@ def test_live_openai_trajectory_judge_policy_defaults(
 ) -> None:
     monkeypatch.delenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL", raising=False)
     monkeypatch.delenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE", raising=False)
+    monkeypatch.delenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_SAMPLES", raising=False)
 
     assert _trajectory_judge_model() is None
     assert _trajectory_judge_min_score() == 4
+    assert _trajectory_judge_samples() == 1
 
 
 def test_live_openai_trajectory_judge_policy_env_overrides(
@@ -85,9 +91,11 @@ def test_live_openai_trajectory_judge_policy_env_overrides(
 ) -> None:
     monkeypatch.setenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL", "gpt-5.4")
     monkeypatch.setenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE", "5")
+    monkeypatch.setenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_SAMPLES", "3")
 
     assert _trajectory_judge_model() == "gpt-5.4"
     assert _trajectory_judge_min_score() == 5
+    assert _trajectory_judge_samples() == 3
 
 
 @pytest.mark.asyncio
@@ -100,6 +108,7 @@ async def test_run_live_suite_threads_judge_client_and_threshold(
     calls: list[dict[str, object]] = []
     monkeypatch.setenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE", "5")
     monkeypatch.setenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL", "gpt-5.4")
+    monkeypatch.setenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_SAMPLES", "3")
     monkeypatch.setattr(
         sys.modules[__name__], "create_llm_client", lambda provider: live_client
     )
@@ -116,11 +125,11 @@ async def test_run_live_suite_threads_judge_client_and_threshold(
     monkeypatch.setattr(live_eval, "_load_cases_from_paths", lambda paths: [case])
     monkeypatch.setattr(live_eval, "_select_cases", lambda cases, **kwargs: cases)
 
-    async def fake_run_case(case_arg, **kwargs):
+    async def fake_run_case_samples(case_arg, **kwargs):
         calls.append({"case": case_arg, **kwargs})
         return SimpleNamespace(id="case-1", failures=[], passed=True)
 
-    monkeypatch.setattr(live_eval, "_run_case", fake_run_case)
+    monkeypatch.setattr(live_eval, "_run_case_samples", fake_run_case_samples)
 
     failures = await _run_live_suite("trajectories", judge=True)
 
@@ -132,6 +141,7 @@ async def test_run_live_suite_threads_judge_client_and_threshold(
             "judge_client": judge_client,
             "min_judge_score": 5,
             "openai_agent_model": live_eval.DEFAULT_OPENAI_MODEL,
+            "samples": 3,
         }
     ]
 
@@ -155,12 +165,13 @@ async def _run_live_suite(
     )
 
     results = [
-        await live_eval._run_case(
+        await live_eval._run_case_samples(
             case,
             live_client=live_client,
             judge_client=judge_client,
             min_judge_score=min_judge_score,
             openai_agent_model=live_eval.DEFAULT_OPENAI_MODEL,
+            samples=_trajectory_judge_samples() if judge else 1,
         )
         for case in cases
     ]

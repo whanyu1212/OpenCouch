@@ -256,6 +256,17 @@ Run with LLM-as-judge scoring for cases that define `session_expected`:
   --judge-model gpt-5.4 --min-judge-score 4
 ```
 
+Run repeated judged samples to inspect transcript-quality variance:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite trajectories --judge \
+  --judge-model gpt-5.4 --min-judge-score 4 --samples 3
+```
+
+With `--samples` greater than `1`, each result includes a per-sample payload
+with its own checks, failures, output transcript, and judge result.
+
 The pytest wrappers are additionally gated by explicit flags:
 - `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
 - `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`
@@ -266,6 +277,7 @@ configured OpenAI model, and requires every qualitative judge dimension to score
 at least `4`. Override those defaults with:
 - `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL`
 - `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE`
+- `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_SAMPLES`
 
 This is separate from the older classifier/style live-test flags so enabling
 basic live tests does not unexpectedly run tool-using runtime evals.
@@ -371,7 +383,7 @@ The live runtime eval runner now covers real provider paths for SDK response
 generation, tool use, crisis response, grounded lookup, and memory-mode behavior.
 Remaining gaps:
 - no automated live CI budget or scheduled cadence
-- no large transcript-quality benchmark with repeated sampling
+- repeated live judged sampling is supported, but the curated case set is still small
 - no Postgres-backed live persistence parity in the eval harness
 - no live voice-runtime eval equivalent
 
