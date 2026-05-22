@@ -13,7 +13,7 @@ import cliScreenshot from '@site/static/img/cli-example.png';
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) for backend dependency management
 - pnpm for the web and docs apps
-- A Gemini or OpenAI API key for LLM-backed runs
+- An OpenAI API key for LLM-backed runs
 
 Deterministic CLI mode works without external model keys.
 
@@ -30,18 +30,13 @@ uv sync`}
 ## Environment
 
 OpenCouch loads local environment files from the repo root and
-`apps/backend` (`.env`, then `.env.local`). Real model runs need at
-least one provider:
+`apps/backend` (`.env`, then `.env.local`). Real model runs need an
+OpenAI API key:
 
 <TerminalWindow title="env — text models">
 {`# Defaults to openai when unset.
 LLM_PROVIDER=openai
-OPENAI_API_KEY=...
-
-# Alternative provider.
-# LLM_PROVIDER=gemini
-# GEMINI_API_KEY=...
-# GOOGLE_API_KEY=...`}
+OPENAI_API_KEY=...`}
 </TerminalWindow>
 
 Optional channels need additional variables:

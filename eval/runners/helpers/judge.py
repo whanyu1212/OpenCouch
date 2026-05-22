@@ -9,13 +9,13 @@ from config import load_runtime_env
 from llm.base import BaseLLMClient
 from llm.factory import LLMProvider, create_llm_client
 
-ProviderName = Literal["openai", "gemini"]
+ProviderName = Literal["openai"]
 
 
 def clear_empty_provider_env_vars() -> None:
     """Treat empty provider API-key env vars as unset before loading dotenv files."""
 
-    for key in ("OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+    for key in ("OPENAI_API_KEY",):
         if os.getenv(key) == "":
             os.environ.pop(key, None)
 
@@ -23,9 +23,9 @@ def clear_empty_provider_env_vars() -> None:
 def provider_as_literal(provider: str) -> LLMProvider:
     """Return the provider name as the factory's typed literal."""
 
-    if provider not in {"openai", "gemini"}:
+    if provider != "openai":
         raise ValueError(f"Unsupported provider: {provider}")
-    return provider  # type: ignore[return-value]
+    return "openai"
 
 
 def make_judge_client(

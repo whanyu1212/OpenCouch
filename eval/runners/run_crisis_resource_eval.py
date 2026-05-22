@@ -146,7 +146,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["openai", "gemini"],
+        choices=["openai"],
         default="openai",
         help="Live provider to use when --live is set.",
     )
@@ -389,7 +389,7 @@ def _check_found_resource_fields(
 def _clear_empty_provider_env_vars() -> None:
     """Treat empty provider API-key env vars as unset before loading dotenv files."""
 
-    for key in ("OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+    for key in ("OPENAI_API_KEY",):
         if os.getenv(key) == "":
             os.environ.pop(key, None)
 
@@ -405,9 +405,9 @@ def _make_live_client(
 
 
 def provider_as_literal(provider: str) -> LLMProvider:
-    if provider not in {"openai", "gemini"}:
+    if provider != "openai":
         raise ValueError(f"Unsupported provider: {provider}")
-    return provider  # type: ignore[return-value]
+    return "openai"
 
 
 async def _amain() -> int:

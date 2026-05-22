@@ -7,16 +7,11 @@ dense retrieval path that complements lexical recall when credentials
 are configured.
 
 This module declares the :class:`EmbeddingProvider` protocol and
-three concrete implementations:
+two concrete implementations:
 
 - :class:`OpenAIEmbeddingProvider` — calls OpenAI's
   ``text-embedding-3-large`` via the existing ``openai`` client.
   This is the default when ``OPENAI_API_KEY`` is configured.
-
-- :class:`GeminiEmbeddingProvider` — calls Google's
-  ``gemini-embedding-001`` via the existing ``google.genai`` client.
-  This is the fallback real provider when only ``GEMINI_API_KEY``
-  or ``GOOGLE_API_KEY`` is configured.
 
 - :class:`NullEmbeddingProvider` — a no-op that always returns
   ``None`` for embedding calls. Used when no API key is available,
@@ -43,8 +38,8 @@ Design decisions:
    cohorts until a re-embed sweep runs.
 
 3. **Batch support.** ``aembed`` takes a list of texts and returns
-   a list of embeddings (one per input). This matches the Gemini
-   and OpenAI batch embedding APIs and lets callers efficiently
+   a list of embeddings (one per input). This matches the OpenAI
+   batch embedding API and lets callers efficiently
    embed multiple records in a single network round-trip when
    they need to.
 
@@ -73,7 +68,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +83,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-large"
 DEFAULT_OPENAI_EMBEDDING_DIMENSION = 3072
 
-# Gemini's gemini-embedding-001 remains supported as a fallback
-# provider when OpenAI credentials are unavailable.
-DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
-DEFAULT_GEMINI_EMBEDDING_DIMENSION = 3072
-
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
@@ -100,7 +90,6 @@ class EmbeddingProvider(Protocol):
 
     Concrete implementations:
     - :class:`OpenAIEmbeddingProvider` — OpenAI text-embedding-3-large
-    - :class:`GeminiEmbeddingProvider` — Google gemini-embedding-001
     - :class:`NullEmbeddingProvider` — the no-embedding fallback
 
     All nodes that need embeddings should type their dependencies
@@ -171,8 +160,7 @@ class NullEmbeddingProvider:
     Returns ``None`` for every embedding request. This is the
     default runtime wiring when:
 
-    - No Gemini or OpenAI API key is configured (deterministic mode,
-      CI, some test setups)
+    - No OpenAI API key is configured (deterministic mode, CI, some test setups)
     - Memory mode is INCOGNITO (no long-term writes means no
       embeddings to store either)
     - A test wants to exercise the token-recall fallback path
@@ -357,186 +345,11 @@ class OpenAIEmbeddingProvider:
         return embeddings_out
 
 
-class GeminiEmbeddingProvider:
-    """Google Gen AI implementation of :class:`EmbeddingProvider`.
-
-    Uses the existing ``google.genai`` SDK that the project already
-    depends on for the chat/structured-output clients. Calls
-    ``client.aio.models.embed_content(...)`` and pulls the vector
-    out of the response's ``embeddings[i].values`` field.
-
-    Construction requires a Gemini API key, either passed explicitly
-    or resolved from ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``. If no
-    key is available, prefer :class:`NullEmbeddingProvider` at the
-    runtime wiring layer — don't catch the ValueError from
-    construction and silently fall back, because that would hide
-    configuration mistakes. The runtime's
-    :func:`agent.memory.embeddings.create_configured_embedding_provider`
-    helper handles the key-missing case explicitly.
-    """
-
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        model: str = DEFAULT_GEMINI_EMBEDDING_MODEL,
-        dimension: int = DEFAULT_GEMINI_EMBEDDING_DIMENSION,
-    ) -> None:
-        """Initialize a Gemini-backed embedding provider.
-
-        Args:
-            api_key: Optional explicit Gemini API key. Falls back to
-                ``GEMINI_API_KEY`` or ``GOOGLE_API_KEY`` env vars.
-            model: Embedding model identifier. Defaults to
-                ``gemini-embedding-001``. Changing this requires a
-                re-embed sweep for records already stored with the
-                old model, since cosine similarity across model
-                cohorts is not meaningful.
-            dimension: The model's output dimensionality. Used by
-                the store to validate stored-vs-current matches.
-                Defaults to 3072 (the current
-                ``gemini-embedding-001`` setting used here).
-
-        Raises:
-            ValueError: if no Gemini API key can be resolved.
-        """
-
-        resolved_key = (
-            api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        )
-        if not resolved_key:
-            raise ValueError(
-                "Gemini embedding provider: no API key. "
-                "Set GEMINI_API_KEY or GOOGLE_API_KEY."
-            )
-
-        # Import lazily so this module can load when google-genai is
-        # unavailable or unused.
-        from google import genai
-
-        self._client = genai.Client(api_key=resolved_key)
-        self._model = model
-        self._dimension = dimension
-
-    @property
-    def model_name(self) -> str:
-        """Return the configured Gemini embedding model name.
-
-        Returns:
-            str: Embedding model identifier.
-        """
-
-        return self._model
-
-    @property
-    def dimension(self) -> int:
-        """Return the configured Gemini embedding dimensionality.
-
-        Returns:
-            int: Expected embedding vector dimension.
-        """
-
-        return self._dimension
-
-    async def awarmup(self) -> None:
-        """Warm the Gemini provider.
-
-        Returns:
-            None: Issues a lightweight embed call.
-        """
-        await self.aembed([" "], task_type="RETRIEVAL_QUERY")
-
-    async def aembed(
-        self,
-        texts: list[str],
-        *,
-        task_type: str = "RETRIEVAL_DOCUMENT",
-    ) -> list[list[float] | None]:
-        """Embed a batch of texts with Gemini.
-
-        Args:
-            texts (list[str]): Input texts to embed.
-            task_type (str): Gemini embedding task type.
-
-        Returns:
-            list[list[float] | None]: One embedding result per input text.
-        """
-
-        if not texts:
-            return []
-
-        # Guard against empty strings which Gemini rejects with a
-        # 400. Replace with a single space which embeds to a
-        # near-zero vector — still meaningless, but doesn't fail
-        # the batch. Callers should avoid passing empty strings
-        # in the first place.
-        sanitized = [t if t else " " for t in texts]
-
-        from google.genai import types
-
-        try:
-            response = await self._client.aio.models.embed_content(
-                model=self._model,
-                contents=cast(Any, sanitized),
-                config=types.EmbedContentConfig(
-                    task_type=task_type,
-                ),
-            )
-        except Exception:
-            logger.warning(
-                "GeminiEmbeddingProvider: embed_content failed for batch of %d; "
-                "returning all-None. Caller should fall back to token-recall.",
-                len(sanitized),
-                exc_info=True,
-            )
-            return [None] * len(texts)
-
-        # The response's ``.embeddings`` field is a list of
-        # ContentEmbedding objects, each with a ``.values`` field
-        # that is a list of floats. Match order is preserved:
-        # embeddings[i] corresponds to contents[i].
-        embeddings_out: list[list[float] | None] = []
-        response_embeddings = getattr(response, "embeddings", None) or []
-
-        if len(response_embeddings) != len(sanitized):
-            # Shape mismatch from the provider is a protocol
-            # violation; log it and degrade gracefully.
-            logger.warning(
-                "GeminiEmbeddingProvider: response length %d != input length %d. "
-                "Returning all-None for the batch.",
-                len(response_embeddings),
-                len(sanitized),
-            )
-            return [None] * len(texts)
-
-        for embedding_obj in response_embeddings:
-            values = getattr(embedding_obj, "values", None)
-            if values is None:
-                embeddings_out.append(None)
-                continue
-            # Validate dimensionality against the configured
-            # provider dimension. Off-dimension results usually
-            # mean a model-version mismatch or an API drift, both
-            # of which we should surface rather than silently mix.
-            if len(values) != self._dimension:
-                logger.warning(
-                    "GeminiEmbeddingProvider: got embedding of dim %d, "
-                    "expected %d. Dropping this entry.",
-                    len(values),
-                    self._dimension,
-                )
-                embeddings_out.append(None)
-                continue
-            embeddings_out.append([float(v) for v in values])
-
-        return embeddings_out
-
-
 def create_configured_embedding_provider() -> EmbeddingProvider:
     """Build the configured embedding provider for the current environment.
 
     Returns:
-        EmbeddingProvider: OpenAI, Gemini, or null provider based on env config.
+        EmbeddingProvider: OpenAI or null provider based on env config.
     """
 
     if os.getenv("OPENAI_API_KEY"):
@@ -556,20 +369,9 @@ def create_configured_embedding_provider() -> EmbeddingProvider:
         except Exception:
             logger.warning(
                 "create_configured_embedding_provider: OpenAIEmbeddingProvider "
-                "construction failed; falling back to Gemini/Null provider. "
+                "construction failed; falling back to NullEmbeddingProvider. "
                 "Retrieval may degrade to token-recall only.",
                 exc_info=True,
             )
 
-    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
-        try:
-            return GeminiEmbeddingProvider()
-        except Exception:
-            logger.warning(
-                "create_configured_embedding_provider: GeminiEmbeddingProvider "
-                "construction failed; falling back to NullEmbeddingProvider. "
-                "Retrieval will use token-recall only.",
-                exc_info=True,
-            )
-            return NullEmbeddingProvider()
     return NullEmbeddingProvider()

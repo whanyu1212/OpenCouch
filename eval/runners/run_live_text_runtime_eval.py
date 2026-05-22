@@ -5,7 +5,7 @@ clients for control-plane classification and, depending on the case runtime,
 either:
 
 - ``agents_sdk``: real OpenAI Agents SDK specialist response path.
-- ``response_llm``: real provider response override for OpenAI or Gemini.
+- ``response_llm``: real OpenAI response override.
 
 The runner is intentionally opt-in:
 
@@ -111,7 +111,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["openai", "gemini"],
+        choices=["openai"],
         default="openai",
         help="Provider used for live control and response-override calls.",
     )
@@ -138,7 +138,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--judge-provider",
-        choices=["openai", "gemini"],
+        choices=["openai"],
         default=None,
         help="Judge provider. Defaults to --provider.",
     )
@@ -220,7 +220,7 @@ def _parse_providers(raw: Any) -> tuple[ProviderName, ...]:
         raise ValueError(f"providers must be a list, got {raw!r}")
     providers: list[ProviderName] = []
     for provider in raw:
-        if provider not in {"openai", "gemini"}:
+        if provider != "openai":
             raise ValueError(f"Unsupported provider: {provider!r}")
         providers.append(provider)
     return tuple(providers)
@@ -278,9 +278,7 @@ def _select_cases(
 
 
 def _case_supports_provider(case: EvalCase, provider: ProviderName) -> bool:
-    if provider not in case.providers:
-        return False
-    return not (case.runtime == "agents_sdk" and provider != "openai")
+    return provider in case.providers
 
 
 def _initial_state(case_id: str, turn_index: int, turn: EvalTurn) -> dict[str, Any]:

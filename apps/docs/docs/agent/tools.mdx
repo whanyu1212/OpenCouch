@@ -28,9 +28,9 @@ the capability. Benefits:
 
 - **Explicit call sites.** You always know which agent or branch will invoke
   which tool — no LLM-driven tool-selection layer to debug.
-- **Provider-native grounding.** Web search uses Google Search
-  (Gemini) or `web_search` (OpenAI) via `use_search=True` on
-  `generate_text()`, not a custom tool attachment.
+- **Provider-native grounding.** Web search uses OpenAI `web_search`
+  via `use_search=True` on `generate_text()`, not a custom tool
+  attachment.
 - **Explicit failure semantics.** Missing LLM clients and provider
   failures retry or surface at the runtime boundary; verified-but-empty
   results return explicit status values so callers do not guess.

@@ -172,8 +172,8 @@ Covers:
 - OpenAI Agents SDK guided-exercise tool use
 - OpenAI Agents SDK grounded-lookup tool use
 - OpenAI Agents SDK crisis response with resource lookup and audit logging
-- OpenAI/Gemini response-LLM override for persistent memory
-- OpenAI/Gemini response-LLM override for incognito privacy behavior
+- OpenAI response-LLM override for persistent memory
+- OpenAI response-LLM override for incognito privacy behavior
 
 Use this file with `run_live_text_runtime_eval.py --live` when credentials are
 configured and you want live provider coverage beyond deterministic fakes.
@@ -213,20 +213,13 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
 ```
 
 ### `runners/run_live_text_runtime_eval.py`
-Opt-in live runtime runner for broader provider-backed smoke coverage.
+Opt-in live runtime runner for broader OpenAI-backed smoke coverage.
 
 Run from `apps/backend` with OpenAI:
 
 ```bash
 .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
   --live --provider openai
-```
-
-Run only Gemini-compatible response-LLM cases:
-
-```bash
-.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
-  --live --provider gemini
 ```
 
 Run with LLM-as-judge scoring for cases that define `session_expected`:
@@ -238,10 +231,25 @@ Run with LLM-as-judge scoring for cases that define `session_expected`:
 
 The pytest wrappers are additionally gated by explicit flags:
 - `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
-- `RUN_LIVE_GEMINI_RUNTIME_EVALS=1`
 
-These are separate from the older classifier/style live-test flags so enabling
+This is separate from the older classifier/style live-test flags so enabling
 basic live tests does not unexpectedly run tool-using runtime evals.
+
+### Planned OpenAI trajectory coverage
+
+The next live-eval patch should extend `run_live_text_runtime_eval.py` beyond
+smoke checks with an OpenAI-only trajectory suite:
+
+- `openai_agents_sdk_guided_exercise_resume_trajectory_live`
+- `openai_agents_sdk_grounded_then_support_trajectory_live`
+- `openai_agents_sdk_crisis_resource_trajectory_live`
+- `openai_response_llm_persistent_memory_trajectory_live`
+- `openai_response_llm_incognito_memory_trajectory_live`
+
+Add these as a separate JSONL dataset and expose them through a
+`--suite smoke|trajectories|all` runner option. Gate pytest wrappers with
+`RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`, and use session-level judge scoring for
+coherence, specificity, safety, and memory handling.
 
 ## Coverage matrix
 
@@ -259,7 +267,7 @@ basic live tests does not unexpectedly run tool-using runtime evals.
 | Session quality trajectories | judged full-session coherence / memory / safety quality | `session_quality_trajectories.jsonl` |
 | Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
 | Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
-| Live text runtime | provider-backed Agents SDK / response-LLM smoke paths | `live_text_runtime_smoke.jsonl` |
+| Live text runtime | OpenAI-backed Agents SDK / response-LLM smoke paths | `live_text_runtime_smoke.jsonl` |
 
 ## Current known gaps
 

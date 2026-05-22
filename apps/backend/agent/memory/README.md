@@ -56,7 +56,7 @@ There are 3 main memory shapes:
 
 - [retrieval.py](./retrieval.py): lexical ranking, dense ranking, cosine similarity, Reciprocal Rank Fusion.
 - [recall.py](./recall.py): per-turn retrieval entry point used by the runtime turn memory context; assembles the semantic + episodic + procedural working-memory bundle.
-- [embeddings.py](./embeddings.py): embedding provider protocol, OpenAI / Gemini / null providers, provider factory.
+- [embeddings.py](./embeddings.py): embedding provider protocol, OpenAI / null providers, provider factory.
 - [text_tokens.py](./text_tokens.py): shared tokenizer used by retrieval and dedup.
 
 ### Write Pipeline

@@ -112,7 +112,7 @@ The `--user-id` flag decouples memory identity from thread identity
 | `agent/memory/store/sqlite.py` | SQLite fallback backend with embedding BLOB storage and transactional batch writes |
 | `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
 | `agent/memory/retrieval.py` | RRF fusion (`k=60`), lexical/dense rank, cosine similarity |
-| `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + Gemini / OpenAI / Null providers |
+| `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + OpenAI / Null providers |
 | `agent/memory/text_tokens.py` | Unicode-aware tokenizer with CJK character splitting |
 | `agent/memory/policy/candidates.py` | Candidate models + `SessionMemoryBuffer` |
 | `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |

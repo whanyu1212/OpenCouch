@@ -29,13 +29,6 @@ def _has_live_openai_runtime_eval_env() -> bool:
     )
 
 
-def _has_live_gemini_runtime_eval_env() -> bool:
-    return (
-        bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
-        and os.getenv("RUN_LIVE_GEMINI_RUNTIME_EVALS") == "1"
-    )
-
-
 @pytest.mark.asyncio
 @pytest.mark.live_api
 @pytest.mark.skipif(
@@ -48,38 +41,6 @@ async def test_live_openai_text_runtime_smoke_eval_cases() -> None:
         live_eval._load_cases(live_eval.DEFAULT_DATASET),
         case_ids=None,
         provider="openai",
-    )
-
-    results = [
-        await live_eval._run_case(
-            case,
-            live_client=live_client,
-            judge_client=None,
-            min_judge_score=4,
-            openai_agent_model=live_eval.DEFAULT_OPENAI_MODEL,
-        )
-        for case in cases
-    ]
-
-    failures = {result.id: result.failures for result in results if not result.passed}
-    assert failures == {}
-
-
-@pytest.mark.asyncio
-@pytest.mark.live_api
-@pytest.mark.skipif(
-    not _has_live_gemini_runtime_eval_env(),
-    reason=(
-        "Set GEMINI_API_KEY or GOOGLE_API_KEY and "
-        "RUN_LIVE_GEMINI_RUNTIME_EVALS=1 to run."
-    ),
-)
-async def test_live_gemini_response_runtime_smoke_eval_cases() -> None:
-    live_client = create_llm_client(provider="gemini")
-    cases = live_eval._select_cases(
-        live_eval._load_cases(live_eval.DEFAULT_DATASET),
-        case_ids=None,
-        provider="gemini",
     )
 
     results = [

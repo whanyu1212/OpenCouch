@@ -103,7 +103,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["openai", "gemini"],
+        choices=["openai"],
         default="openai",
         help="Judge provider to use when --judge is set.",
     )

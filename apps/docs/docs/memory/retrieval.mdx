@@ -78,9 +78,7 @@ The provider factory (`create_configured_embedding_provider` in
 
 1. **OpenAI** `text-embedding-3-large` (3072 dims) when
    `OPENAI_API_KEY` is set.
-2. **Gemini** `gemini-embedding-001` (3072 dims) when
-   `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
-3. **`NullEmbeddingProvider`** otherwise — retrieval degrades to
+2. **`NullEmbeddingProvider`** otherwise — retrieval degrades to
    token-recall only.
 
 Mismatched-dimension records are skipped during dense rank, so

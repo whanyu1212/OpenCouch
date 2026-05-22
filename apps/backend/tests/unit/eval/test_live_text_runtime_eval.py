@@ -21,7 +21,7 @@ def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) ->
             {
                 "id": "response_memory",
                 "runtime": "response_llm",
-                "providers": ["openai", "gemini"],
+                "providers": ["openai"],
                 "memory_mode": "incognito",
                 "user_id": "eval-user",
                 "turns": [
@@ -51,13 +51,13 @@ def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) ->
     assert len(cases) == 1
     assert cases[0].id == "response_memory"
     assert cases[0].runtime == "response_llm"
-    assert cases[0].providers == ("openai", "gemini")
+    assert cases[0].providers == ("openai",)
     assert cases[0].memory_mode.value == "incognito"
     assert cases[0].turns[0].message == "I am anxious about presentations again."
     assert cases[0].turns[0].memory_seed[0]["key"] == "fact-presentations"
 
 
-def test_select_cases_filters_incompatible_provider_and_agents_sdk() -> None:
+def test_select_cases_keeps_openai_runtime_cases() -> None:
     cases = [
         live_eval.EvalCase(
             id="openai_sdk",
@@ -69,18 +69,9 @@ def test_select_cases_filters_incompatible_provider_and_agents_sdk() -> None:
             session_expected=None,
         ),
         live_eval.EvalCase(
-            id="gemini_response",
+            id="openai_response",
             runtime="response_llm",
-            providers=("gemini",),
-            turns=[],
-            memory_mode=live_eval.MemoryMode.LOCAL,
-            user_id="eval-user",
-            session_expected=None,
-        ),
-        live_eval.EvalCase(
-            id="bad_gemini_sdk",
-            runtime="agents_sdk",
-            providers=("gemini",),
+            providers=("openai",),
             turns=[],
             memory_mode=live_eval.MemoryMode.LOCAL,
             user_id="eval-user",
@@ -91,10 +82,19 @@ def test_select_cases_filters_incompatible_provider_and_agents_sdk() -> None:
     selected = live_eval._select_cases(
         cases,
         case_ids=None,
-        provider="gemini",
+        provider="openai",
     )
 
-    assert [case.id for case in selected] == ["gemini_response"]
+    assert [case.id for case in selected] == ["openai_sdk", "openai_response"]
+
+
+def test_parse_providers_rejects_non_openai_provider() -> None:
+    try:
+        live_eval._parse_providers(["legacy"])
+    except ValueError as exc:
+        assert "Unsupported provider" in str(exc)
+    else:  # pragma: no cover - defensive assertion clarity
+        raise AssertionError("expected ValueError for unsupported provider")
 
 
 def test_score_expected_supports_live_runtime_quality_guards() -> None:
