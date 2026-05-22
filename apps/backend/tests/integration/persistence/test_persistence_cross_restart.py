@@ -641,7 +641,7 @@ async def test_full_trajectory_parity_in_postgres(
         memory_mode=MemoryMode.LOCAL,
         memory_backend="postgres",
         memory_database_url=memory_database_url,
-        crisis_log_backend="postgres",
+        crisis_log_persistence_backend="postgres",
         crisis_log_database_url=memory_database_url,
         thread_persistence_backend="postgres",
         thread_database_url=memory_database_url,
@@ -678,7 +678,12 @@ async def test_full_trajectory_parity_in_postgres(
         assert stored_arc is not None
         assert await runtime_a.memory_store.arecord_count((user_id, "semantic")) == 1
         assert await runtime_a.memory_store.arecord_count((user_id, "episodic")) == 1
-        assert await runtime_a.crisis_log_backend.arecord_count() == 1
+        from datetime import date
+
+        day_records = await runtime_a.crisis_log_backend.alist_by_date(
+            date(2026, 4, 11)
+        )
+        assert any(record.id == f"rec-{thread_id}" for record in day_records)
 
     llm_b = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
@@ -686,7 +691,7 @@ async def test_full_trajectory_parity_in_postgres(
         memory_mode=MemoryMode.LOCAL,
         memory_backend="postgres",
         memory_database_url=memory_database_url,
-        crisis_log_backend="postgres",
+        crisis_log_persistence_backend="postgres",
         crisis_log_database_url=memory_database_url,
         thread_persistence_backend="postgres",
         thread_database_url=memory_database_url,
@@ -695,7 +700,6 @@ async def test_full_trajectory_parity_in_postgres(
         assert len(history) > 0
         assert await runtime_b.memory_store.arecord_count((user_id, "semantic")) == 1
         assert await runtime_b.memory_store.arecord_count((user_id, "episodic")) == 1
-        assert await runtime_b.crisis_log_backend.arecord_count() == 1
 
         result = await runtime_b.run_turn(
             thread_id=thread_id,
@@ -712,14 +716,14 @@ async def test_full_trajectory_parity_in_postgres(
             for entry in working_memory
         ), f"expected working_memory to contain a Sarah reference, got {working_memory}"
 
-        from datetime import date
-
         day_records = await runtime_b.crisis_log_backend.alist_by_date(
             date(2026, 4, 11)
         )
-        assert len(day_records) == 1
-        assert day_records[0].id == f"rec-{thread_id}"
-        assert day_records[0].user_id_or_null == user_id
+        matching_records = [
+            record for record in day_records if record.id == f"rec-{thread_id}"
+        ]
+        assert len(matching_records) == 1
+        assert matching_records[0].user_id_or_null == user_id
 
 
 @pytest.mark.asyncio

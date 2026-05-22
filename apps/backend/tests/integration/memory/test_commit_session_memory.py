@@ -478,6 +478,70 @@ async def test_repetition_candidate_commits_after_two_turns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_similar_repetition_candidates_promote_once() -> None:
+    store = OpenCouchMemoryStore()
+    candidate_a = build_semantic_candidate(
+        _semantic_write(
+            category="context",
+            predicate="WORRIES_ABOUT",
+            object_identifier="belief that one mistake means incompetence",
+            evidence_quote="I always assume one mistake means I am incompetent.",
+            source_turn_index=0,
+        ),
+        message="I always assume one mistake means I am incompetent.",
+    )
+    candidate_b = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="EXPERIENCED",
+            object_identifier="one small mistake leading to self-labeling as incompetent",
+            evidence_quote=(
+                "This comes up every week: one small mistake and I tell myself "
+                "I am incompetent."
+            ),
+            source_turn_index=1,
+        ),
+        message=(
+            "This comes up every week: one small mistake and I tell myself "
+            "I am incompetent."
+        ),
+    )
+    buffer = _held_semantic_buffer(
+        candidate_a,
+        candidate_b,
+        hold_action="require_repetition",
+    )
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "I always assume one mistake means I am incompetent.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "This comes up every week: one small mistake and I tell "
+                        "myself I am incompetent."
+                    ),
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=None,
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 1
+    assert result.semantic_skips == 0
+    records = await store.asearch(("user-1", "semantic"), query=None)
+    assert len(records) == 1
+    assert records[0].value["write_timing"] == "promotion"
+
+
+@pytest.mark.asyncio
 async def test_single_turn_negative_self_belief_does_not_promote_from_summary_alone() -> (
     None
 ):
@@ -507,6 +571,95 @@ async def test_single_turn_negative_self_belief_does_not_promote_from_summary_al
         stored_arc=_stored_arc(
             summary="User kept returning to fears that one mistake means they are incompetent.",
             primary_themes=["work stress", "shame"],
+        ),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 0
+    assert result.semantic_skips == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+
+
+@pytest.mark.asyncio
+async def test_repetition_candidate_does_not_treat_current_arc_as_prior_support() -> (
+    None
+):
+    store = OpenCouchMemoryStore()
+    stored_arc = _stored_arc(
+        summary=(
+            "User described a fear that one mistake at work means they are incompetent."
+        ),
+        primary_themes=["work stress", "shame"],
+        open_loops=["one mistake can become a global self-judgment"],
+    )
+    await store.aput(
+        ("user-1", "episodic"),
+        key=stored_arc.id,
+        value=stored_arc.model_dump(mode="json"),
+    )
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="context",
+            object_identifier="making mistakes at work",
+            evidence_quote="I always assume one mistake means I'm incompetent.",
+            source_turn_index=0,
+        ),
+        message="I always assume one mistake means I'm incompetent.",
+    )
+    buffer = _held_semantic_buffer(candidate, hold_action="require_repetition")
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            session_id="runtime-session-id",
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "I always assume one mistake means I'm incompetent.",
+                }
+            ],
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=stored_arc,
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 0
+    assert result.semantic_skips == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+
+
+@pytest.mark.asyncio
+async def test_session_end_self_belief_candidate_still_requires_repetition() -> None:
+    store = OpenCouchMemoryStore()
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="EXPERIENCED",
+            object_identifier="one mistake triggers incompetence belief",
+            evidence_quote="I always assume one mistake means I am incompetent.",
+            source_turn_index=0,
+        ),
+        message="I always assume one mistake means I am incompetent.",
+    )
+    buffer = _held_semantic_buffer(candidate, hold_action="commit_at_session_end")
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "I always assume one mistake means I am incompetent.",
+                }
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(
+            summary=(
+                "User described a fear that one mistake means they are incompetent."
+            ),
+            primary_themes=["self-judgment"],
         ),
     )
 

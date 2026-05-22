@@ -190,6 +190,20 @@ Covers:
 
 Run these cases with `run_live_text_runtime_eval.py --live --suite trajectories`.
 
+### `datasets/live_memory_write_quality.jsonl`
+Opt-in live LLM coverage for saved-memory quality.
+
+Covers:
+- semantic memory candidate extraction from real support transcripts
+- procedural preference extraction from repeated user preferences
+- write-policy timing decisions for save, hold, drop, and promotion paths
+- session-end memory commit behavior
+- transient mood not becoming durable memory
+- incognito no-write behavior
+- Postgres-backed saved-memory readback when `--persistence-backend postgres` is used
+
+Run these cases with `run_live_text_runtime_eval.py --live --suite memory_writes`.
+
 ## Runners
 
 ### `runners/run_routing_eval.py`
@@ -248,6 +262,13 @@ Run smoke and trajectory cases together:
   --live --provider openai --suite all
 ```
 
+Run saved-memory quality cases:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite memory_writes
+```
+
 Run with LLM-as-judge scoring for cases that define `session_expected`:
 
 ```bash
@@ -255,6 +276,9 @@ Run with LLM-as-judge scoring for cases that define `session_expected`:
   --live --provider openai --suite trajectories --judge \
   --judge-model gpt-5.4 --min-judge-score 4
 ```
+
+For `memory_writes`, `--judge` also scores the saved records themselves for
+grounding, usefulness, specificity, sensitivity, and privacy-mode correctness.
 
 Run repeated judged samples to inspect transcript-quality variance:
 
@@ -267,10 +291,25 @@ Run repeated judged samples to inspect transcript-quality variance:
 With `--samples` greater than `1`, each result includes a per-sample payload
 with its own checks, failures, output transcript, and judge result.
 
+Run against the local Docker Compose Postgres memory backend:
+
+```bash
+docker compose -f ../../compose.yml up -d postgres --wait
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite memory_writes \
+  --persistence-backend postgres \
+  --memory-database-url postgresql://opencouch:opencouch@localhost:5432/opencouch
+```
+
+The default `--persistence-backend memory` keeps live eval runs isolated in an
+in-memory store. Use `postgres` only for opt-in persistence parity checks.
+
 The pytest wrappers are additionally gated by explicit flags:
 - `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
 - `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`
 - `RUN_LIVE_OPENAI_TRAJECTORY_JUDGE_EVALS=1`
+- `RUN_LIVE_OPENAI_MEMORY_WRITE_EVALS=1`
+- `RUN_LIVE_OPENAI_MEMORY_WRITE_JUDGE_EVALS=1`
 
 The trajectory judge pytest wrapper uses OpenAI as judge, defaults to the
 configured OpenAI model, and requires every qualitative judge dimension to score
@@ -302,6 +341,7 @@ The runner also accepts `--dataset path/to/custom.jsonl`, which overrides
 | Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
 | Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
 | Live text runtime | OpenAI-backed Agents SDK / response-LLM smoke and trajectory paths | `live_text_runtime_smoke.jsonl`, `live_text_runtime_trajectories.jsonl` |
+| Live memory write quality | OpenAI-backed extraction, write policy, session commit, and saved-record judging | `live_memory_write_quality.jsonl` |
 
 ## Current known gaps
 
@@ -374,17 +414,16 @@ now improve persistent-vs-incognito coverage for durable recall behavior plus lo
 exercise/crisis/recovery switching and whole-session quality scoring, but the eval suite
 is still lighter on:
 - even longer 7-10+ turn conversational endurance checks
-- backend-specific persistence parity inside the eval harness itself
 - richer retrieval-quality assertions beyond presence/absence of recalled state
 - judged coverage for additional nuanced scenarios beyond the current curated fourteen full-session cases
 
 ### 8. Live LLM coverage is opt-in smoke coverage, not a full benchmark
 The live runtime eval runner now covers real provider paths for SDK response
-generation, tool use, crisis response, grounded lookup, and memory-mode behavior.
+generation, tool use, crisis response, grounded lookup, memory-mode behavior, and
+saved-memory write quality.
 Remaining gaps:
 - no automated live CI budget or scheduled cadence
 - repeated live judged sampling is supported, but the curated case set is still small
-- no Postgres-backed live persistence parity in the eval harness
 - no live voice-runtime eval equivalent
 
 ## Conventions for adding cases

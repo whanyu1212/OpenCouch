@@ -23,4 +23,21 @@ class SessionQualityJudgeResult(BaseModel):
     rationale: str = Field(min_length=1, max_length=1000)
 
 
-__all__ = ["SessionQualityJudgeResult"]
+class MemoryWriteQualityJudgeResult(BaseModel):
+    """Structured LLM judge output for saved-memory quality evaluation."""
+
+    passes_quality_bar: bool = Field(
+        description="Whether the saved-memory outcome clears the quality bar."
+    )
+    memory_mode_respected: bool = Field(
+        description="Whether persistent/incognito memory behavior matched expectations."
+    )
+    saved_memory_grounded: int = Field(ge=1, le=5)
+    saved_memory_usefulness: int = Field(ge=1, le=5)
+    saved_memory_specificity: int = Field(ge=1, le=5)
+    saved_memory_sensitivity: int = Field(ge=1, le=5)
+    no_transient_or_creepy_memory: bool
+    rationale: str = Field(min_length=1, max_length=1000)
+
+
+__all__ = ["MemoryWriteQualityJudgeResult", "SessionQualityJudgeResult"]
