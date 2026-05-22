@@ -10,9 +10,9 @@ from agent.runtime.session_store import (
     TextSessionStore,
     TextSessionStoreConfig,
     create_text_session_store,
-    messages_from_sdk_session_items,
     normalize_sqlalchemy_async_url,
 )
+from agent.runtime.session.history import messages_from_sdk_session_items
 
 
 @pytest.mark.asyncio

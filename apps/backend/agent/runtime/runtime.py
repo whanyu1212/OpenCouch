@@ -35,11 +35,11 @@ from agent.runtime.session import (
     transcript_length,
     turn_count_from_state,
 )
+from agent.runtime.session.history import messages_from_transcript
 from agent.runtime.session_feedback import (
     record_session_feedback as record_runtime_session_feedback,
 )
 from agent.runtime.streaming import (
-    messages_from_transcript,
     response_ready_output,
     stamp_turn_total_ms,
 )

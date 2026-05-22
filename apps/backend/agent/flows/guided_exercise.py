@@ -16,6 +16,8 @@ from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.prompt_utils import (
     chunk_from_sdk_event,
     final_output_text,
+)
+from agent.runtime.session.history import (
     include_prompt_history,
     strip_recent_history_from_prompt,
 )

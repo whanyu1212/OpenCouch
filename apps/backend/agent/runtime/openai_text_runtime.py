@@ -56,8 +56,8 @@ from agent.runtime.state_ops import (
     build_shadow_result,
     finalize_openai_turn,
 )
-from agent.runtime.prompt_utils import (
-    final_output_text,
+from agent.runtime.prompt_utils import final_output_text
+from agent.runtime.session.history import (
     include_prompt_history,
     state_without_prompt_history,
 )

@@ -21,8 +21,8 @@ from agent.runtime.session.state import format_recent_history
 from agent.runtime.prompt_utils import (
     chunk_from_sdk_event,
     final_output_text,
-    include_prompt_history,
 )
+from agent.runtime.session.history import include_prompt_history
 from agent.runtime.services import TextRuntimeServices
 from agent.runtime.types import (
     TextRuntimeChunkEvent,
