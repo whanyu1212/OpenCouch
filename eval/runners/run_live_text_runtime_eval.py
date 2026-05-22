@@ -11,6 +11,7 @@ The runner is intentionally opt-in:
 
     .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py --live --provider openai
     .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py --live --suite trajectories --provider openai
+    .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py --live --suite trajectories --provider openai --judge --samples 3
 """
 
 from __future__ import annotations
@@ -100,6 +101,8 @@ class EvalResult:
     failures: list[str]
     output: dict[str, Any]
     judge: dict[str, Any] | None = None
+    sample_count: int = 1
+    samples: list[dict[str, Any]] | None = None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -165,7 +168,20 @@ def _parse_args() -> argparse.Namespace:
         default=4,
         help="Minimum acceptable qualitative judge score.",
     )
+    parser.add_argument(
+        "--samples",
+        type=_positive_int,
+        default=1,
+        help="Number of independent samples to run per selected case.",
+    )
     return parser.parse_args()
+
+
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
 
 
 def _dataset_paths_for_suite(suite: str) -> tuple[Path, ...]:
@@ -437,6 +453,68 @@ async def _run_case(
         output={"turns": outputs},
         judge=judge_payload,
     )
+
+
+async def _run_case_samples(
+    case: EvalCase,
+    *,
+    live_client: BaseLLMClient,
+    judge_client: BaseLLMClient | None,
+    min_judge_score: int,
+    openai_agent_model: str,
+    samples: int,
+) -> EvalResult:
+    if samples < 1:
+        raise ValueError("samples must be at least 1")
+
+    if samples == 1:
+        return await _run_case(
+            case,
+            live_client=live_client,
+            judge_client=judge_client,
+            min_judge_score=min_judge_score,
+            openai_agent_model=openai_agent_model,
+        )
+
+    sample_payloads: list[dict[str, Any]] = []
+    checks: list[str] = []
+    failures: list[str] = []
+    for sample_index in range(1, samples + 1):
+        result = await _run_case(
+            case,
+            live_client=live_client,
+            judge_client=judge_client,
+            min_judge_score=min_judge_score,
+            openai_agent_model=openai_agent_model,
+        )
+        sample_payloads.append(_sample_payload(sample_index, result))
+        checks.extend(f"sample {sample_index}: {check}" for check in result.checks)
+        failures.extend(
+            f"sample {sample_index}: {failure}" for failure in result.failures
+        )
+
+    return EvalResult(
+        id=case.id,
+        runtime=case.runtime,
+        passed=not failures,
+        checks=checks,
+        failures=failures,
+        output={"sample_count": samples},
+        judge=None,
+        sample_count=samples,
+        samples=sample_payloads,
+    )
+
+
+def _sample_payload(sample_index: int, result: EvalResult) -> dict[str, Any]:
+    return {
+        "sample": sample_index,
+        "passed": result.passed,
+        "checks": result.checks,
+        "failures": result.failures,
+        "output": result.output,
+        "judge": result.judge,
+    }
 
 
 async def _turn_output(
@@ -739,6 +817,22 @@ def _check_at_least(
         failures.append(f"{label} expected >= {minimum}, got {actual}")
 
 
+def _serialize_result(result: EvalResult) -> dict[str, Any]:
+    payload = {
+        "id": result.id,
+        "runtime": result.runtime,
+        "passed": result.passed,
+        "checks": result.checks,
+        "failures": result.failures,
+        "output": result.output,
+        "judge": result.judge,
+        "sample_count": result.sample_count,
+    }
+    if result.samples is not None:
+        payload["samples"] = result.samples
+    return payload
+
+
 async def _amain() -> int:
     args = _parse_args()
     dataset_paths = _resolve_dataset_paths(dataset=args.dataset, suite=args.suite)
@@ -790,12 +884,13 @@ async def _amain() -> int:
         else None
     )
     results = [
-        await _run_case(
+        await _run_case_samples(
             case,
             live_client=live_client,
             judge_client=judge_client,
             min_judge_score=args.min_judge_score,
             openai_agent_model=str(args.openai_agent_model),
+            samples=args.samples,
         )
         for case in cases
     ]
@@ -807,20 +902,11 @@ async def _amain() -> int:
         "total_count": len(results),
         "provider": args.provider,
         "judge_enabled": args.judge,
+        "samples_per_case": args.samples,
+        "total_sample_count": sum(result.sample_count for result in results),
         "suite": suite_label,
         "datasets": [str(path) for path in dataset_paths],
-        "results": [
-            {
-                "id": result.id,
-                "runtime": result.runtime,
-                "passed": result.passed,
-                "checks": result.checks,
-                "failures": result.failures,
-                "output": result.output,
-                "judge": result.judge,
-            }
-            for result in results
-        ],
+        "results": [_serialize_result(result) for result in results],
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["passed"] else 1

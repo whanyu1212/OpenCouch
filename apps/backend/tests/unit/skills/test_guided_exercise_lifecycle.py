@@ -123,6 +123,28 @@ async def test_lifecycle_advances_completed_step() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_advances_confirmation_step_on_explicit_next_step_request() -> (
+    None
+):
+    llm = _StepClassifierLLM(
+        step_state="hold",
+        response_text="Good. Now hold the breath for four counts.",
+    )
+
+    delta = await _service(llm).run_turn(
+        _state(
+            "Let's finish one more step of the breathing exercise.",
+            EXERCISE_BOX_BREATHING,
+            0,
+        )
+    )
+
+    assert delta["exercise_state"]["exercise_step"] == 1
+    assert delta["exercise_state"]["exercise_step_id"] == "hold_full"
+    assert "hold" in delta["response_text"].lower()
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_exit_clears_active_skill_state() -> None:
     llm = _StepClassifierLLM(
         step_state="exit",

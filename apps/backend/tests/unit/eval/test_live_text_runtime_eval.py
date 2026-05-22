@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 if str(REPO_ROOT) not in sys.path:
@@ -120,6 +123,7 @@ def test_live_trajectory_dataset_defines_openai_multiturn_cases() -> None:
         "openai_agents_sdk_guided_exercise_resume_trajectory_live"
     ]
     assert guided_case.turns[1].expected["state"]["exercise_state.exercise_step"] == 0
+    assert guided_case.turns[2].expected["state"]["exercise_state.exercise_step"] == 1
     for case_id in (
         "openai_response_llm_persistent_memory_trajectory_live",
         "openai_response_llm_incognito_memory_trajectory_live",
@@ -222,3 +226,85 @@ def test_score_expected_supports_live_runtime_quality_guards() -> None:
         "diagnostics.openai_guided_exercise_tool_calls contained" in check
         for check in checks
     )
+
+
+def test_run_case_samples_aggregates_per_sample_judge_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = live_eval.EvalCase(
+        id="sampled-case",
+        runtime="agents_sdk",
+        providers=("openai",),
+        turns=[],
+        memory_mode=live_eval.MemoryMode.LOCAL,
+        user_id="eval-user",
+        session_expected={"quality_focus": "stay coherent"},
+    )
+    calls: list[dict[str, Any]] = []
+
+    async def fake_run_case(case_arg, **kwargs):
+        sample_index = len(calls) + 1
+        calls.append({"case": case_arg, **kwargs})
+        return live_eval.EvalResult(
+            id="sampled-case",
+            runtime="agents_sdk",
+            passed=sample_index == 1,
+            checks=[f"sample {sample_index} deterministic checks passed"],
+            failures=[]
+            if sample_index == 1
+            else ["judge continuity expected >= 4, got 3"],
+            output={"turns": [{"turn": 1, "response_text": f"sample {sample_index}"}]},
+            judge={"continuity": 5 if sample_index == 1 else 3},
+        )
+
+    monkeypatch.setattr(live_eval, "_run_case", fake_run_case)
+
+    result = asyncio.run(
+        live_eval._run_case_samples(
+            case,
+            live_client=object(),
+            judge_client=object(),
+            min_judge_score=4,
+            openai_agent_model="gpt-test",
+            samples=2,
+        )
+    )
+
+    assert len(calls) == 2
+    assert result.passed is False
+    assert result.sample_count == 2
+    assert result.failures == ["sample 2: judge continuity expected >= 4, got 3"]
+    assert result.output == {"sample_count": 2}
+    assert result.samples is not None
+    assert result.samples[0]["sample"] == 1
+    assert result.samples[0]["judge"] == {"continuity": 5}
+    assert result.samples[1]["passed"] is False
+    assert result.samples[1]["judge"] == {"continuity": 3}
+
+
+def test_serialize_result_includes_sample_payloads() -> None:
+    result = live_eval.EvalResult(
+        id="sampled-case",
+        runtime="response_llm",
+        passed=True,
+        checks=["sample 1: ok", "sample 2: ok"],
+        failures=[],
+        output={"samples": []},
+        judge=None,
+        sample_count=2,
+        samples=[
+            {
+                "sample": 1,
+                "passed": True,
+                "checks": ["ok"],
+                "failures": [],
+                "output": {"turns": []},
+                "judge": {"continuity": 5},
+            }
+        ],
+    )
+
+    serialized = live_eval._serialize_result(result)
+
+    assert serialized["sample_count"] == 2
+    assert serialized["samples"][0]["judge"] == {"continuity": 5}

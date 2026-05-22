@@ -86,6 +86,38 @@ def _build_step_classifier_prompt(
     )
 
 
+def _message_requests_next_confirmation_step(
+    *,
+    state: AgentState,
+    current_step: ExerciseStep,
+) -> bool:
+    if current_step.completion_mode != "confirmation":
+        return False
+    text = " ".join(str(state.get("message") or "").casefold().split())
+    if not text:
+        return False
+    hold_cues = (
+        "distracted",
+        "where we left off",
+        "where i left off",
+        "same step",
+        "repeat",
+        "restart",
+        "start over",
+    )
+    if any(cue in text for cue in hold_cues):
+        return False
+    advance_cues = (
+        "next step",
+        "one more step",
+        "another step",
+        "move on",
+        "move to the next",
+        "keep going",
+    )
+    return any(cue in text for cue in advance_cues)
+
+
 async def classify_step_state(
     *,
     state: AgentState,
@@ -109,6 +141,12 @@ async def classify_step_state(
 
     if classifier_llm is None:
         raise RuntimeError("Guided exercise step classification requires an LLM.")
+
+    if _message_requests_next_confirmation_step(
+        state=state,
+        current_step=current_step,
+    ):
+        return "complete"
 
     decision: ExerciseStepDecision = await classifier_llm.generate_structured(
         prompt=_build_step_classifier_prompt(
