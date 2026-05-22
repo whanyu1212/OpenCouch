@@ -252,12 +252,20 @@ Run with LLM-as-judge scoring for cases that define `session_expected`:
 
 ```bash
 .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
-  --live --provider openai --suite trajectories --judge
+  --live --provider openai --suite trajectories --judge \
+  --judge-model gpt-5.4 --min-judge-score 4
 ```
 
 The pytest wrappers are additionally gated by explicit flags:
 - `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
 - `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`
+- `RUN_LIVE_OPENAI_TRAJECTORY_JUDGE_EVALS=1`
+
+The trajectory judge pytest wrapper uses OpenAI as judge, defaults to the
+configured OpenAI model, and requires every qualitative judge dimension to score
+at least `4`. Override those defaults with:
+- `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL`
+- `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE`
 
 This is separate from the older classifier/style live-test flags so enabling
 basic live tests does not unexpectedly run tool-using runtime evals.

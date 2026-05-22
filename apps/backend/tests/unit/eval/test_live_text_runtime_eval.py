@@ -120,6 +120,7 @@ def test_live_trajectory_dataset_defines_openai_multiturn_cases() -> None:
         "openai_agents_sdk_guided_exercise_resume_trajectory_live"
     ]
     assert guided_case.turns[1].expected["state"]["exercise_state.exercise_step"] == 0
+    assert guided_case.turns[2].expected["state"]["exercise_state.exercise_step"] == 1
     for case_id in (
         "openai_response_llm_persistent_memory_trajectory_live",
         "openai_response_llm_incognito_memory_trajectory_live",
