@@ -44,7 +44,7 @@
 
 OpenCouch is a chat companion for day-to-day emotional support, self-reflection, and practical coping. It combines modern conversational AI with structured therapeutic patterns, so users can move between open-ended conversation, guided exercises, and longer-term reflection without starting over each time.
 
-Unlike chatting with ChatGPT, Gemini, or Claude on the web, OpenCouch is not a blank general-purpose assistant. It is built around mental-health-adjacent product needs: safety-aware routing, continuity across sessions, structured memory, and concrete coping workflows. General AI chat can be helpful in the moment, but OpenCouch is designed to support ongoing daily use—remembering what has mattered, guiding users through exercises like grounding or thought work, and keeping the experience focused on emotional support rather than generic task completion.
+Unlike chatting with general-purpose AI assistants on the web, OpenCouch is not a blank general-purpose assistant. It is built around mental-health-adjacent product needs: safety-aware routing, continuity across sessions, structured memory, and concrete coping workflows. General AI chat can be helpful in the moment, but OpenCouch is designed to support ongoing daily use—remembering what has mattered, guiding users through exercises like grounding or thought work, and keeping the experience focused on emotional support rather than generic task completion.
 
 Under the hood, the text runtime uses the OpenAI Agents SDK behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing, and backend tests plus Opik traces help catch regressions in core routing behavior.
 
@@ -86,7 +86,7 @@ The project is still pre-beta; a closed beta is planned.
 
 ### Environment
 
-OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need at least one configured provider.
+OpenCouch loads local environment files from the repo root and `apps/backend` (`.env`, then `.env.local`). Deterministic mode does not need external API keys. Real model runs need an OpenAI API key.
 
 <details>
 <summary><b>View Environment Setup Details</b></summary>
@@ -97,11 +97,6 @@ For local persistence, the recommended path is the Dockerized Postgres service f
 # Text model provider. Defaults to openai when unset.
 LLM_PROVIDER=openai
 OPENAI_API_KEY=...
-
-# Alternative text provider.
-# LLM_PROVIDER=gemini
-# GEMINI_API_KEY=...
-# GOOGLE_API_KEY=...
 
 # Local persistence backend for memory, checkpoints, audit, feedback,
 # and active-session state.
@@ -330,7 +325,7 @@ OpenCouch/
 │   │   │   ├── specialists/    # Therapeutic, crisis, and guided-exercise agent roles
 │   │   │   ├── tools/          # Tool implementations exposed to the SDK runner
 │   │   │   ├── memory/         # Memory retrieval, write policy, embeddings, stores
-│   │   ├── llm/                # LLM adapters (Gemini, OpenAI, etc.)
+│   │   ├── llm/                # LLM adapter protocol and OpenAI client
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── channels/           # Telegram gateway and channel adapters
 │   │   ├── api/                # FastAPI REST + WebSocket routes

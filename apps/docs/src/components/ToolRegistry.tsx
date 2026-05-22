@@ -13,7 +13,7 @@ import s from './ToolRegistry.module.css';
    Designed to scale from 1 tool to many without redesign.
    ================================================================ */
 
-type Provider = 'gemini' | 'openai' | 'anthropic' | 'none';
+type Provider = 'openai' | 'anthropic' | 'none';
 
 interface Stage {
   id: string;
@@ -48,9 +48,9 @@ const TOOLS: Tool[] = [
     status: 'active',
     triggerPath: 'lookup_crisis_resources SDK tool',
     triggerCondition: 'crisis specialist is selected for a level 2/3 crisis response and llm_client is available',
-    providers: ['gemini', 'openai'],
+    providers: ['openai'],
     description:
-      'Surfaces verified crisis hotlines local to the user through the crisis specialist tool surface. Uses provider-native web search grounding (Google Search for Gemini, web_search tool for OpenAI). The lookup chains two structured LLM calls: first classify location availability from the conversation, then search for resources with grounding enabled.',
+      'Surfaces verified crisis hotlines local to the user through the crisis specialist tool surface. Uses OpenAI web search grounding. The lookup chains two structured LLM calls: first classify location availability from the conversation, then search for resources with grounding enabled.',
     pipeline: [
       {
         id: 'extract_location',
@@ -90,7 +90,7 @@ const TOOLS: Tool[] = [
     status: 'active',
     triggerPath: 'grounded_lookup runtime branch',
     triggerCondition: 'turn triage routes an explicit factual lookup request AND llm_client is available',
-    providers: ['gemini', 'openai'],
+    providers: ['openai'],
     description:
       'Answers explicit, non-therapeutic factual lookup requests ("look up the eligibility for…", "search for the latest guidelines on…", "verify whether X is true"). Uses provider-native search grounding via use_search=True. Returns ("answer", status) where status reports whether the answer is verified or not verified. The TherapeuticAgent does not generate an ordinary therapeutic reply on these turns — the user gets a single grounded reply with sources.',
     pipeline: [
@@ -135,7 +135,6 @@ const TOOLS: Tool[] = [
 ];
 
 const PROVIDER_META: Record<Provider, { label: string; color: string }> = {
-  gemini: { label: 'Gemini', color: 'providerGemini' },
   openai: { label: 'OpenAI', color: 'providerOpenai' },
   anthropic: { label: 'Anthropic', color: 'providerAnthropic' },
   none: { label: '—', color: 'providerNone' },

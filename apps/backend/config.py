@@ -11,10 +11,9 @@ from dotenv import load_dotenv
 
 from llm.base import BaseLLMClient
 from llm.factory import create_llm_client
-from llm.google_genai import DEFAULT_GEMINI_MODEL
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 
-LLMProvider = Literal["gemini", "openai"]
+LLMProvider = Literal["openai"]
 ResponseModelTier = Literal["fast", "quality"]
 PersistenceBackend = Literal["sqlite", "postgres"]
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
@@ -73,13 +72,10 @@ class Settings:
     """
 
     llm_provider: LLMProvider = DEFAULT_LLM_PROVIDER
-    gemini_model: str = DEFAULT_GEMINI_MODEL
     openai_model: str = DEFAULT_OPENAI_MODEL
     response_fast_provider: LLMProvider = DEFAULT_LLM_PROVIDER
-    response_fast_gemini_model: str = DEFAULT_GEMINI_MODEL
     response_fast_openai_model: str = DEFAULT_OPENAI_MODEL
     response_quality_provider: LLMProvider = DEFAULT_LLM_PROVIDER
-    response_quality_gemini_model: str = DEFAULT_GEMINI_MODEL
     response_quality_openai_model: str = DEFAULT_OPENAI_QUALITY_MODEL
     persistence_backend: PersistenceBackend = DEFAULT_PERSISTENCE_BACKEND
     memory_database_url: str | None = None
@@ -127,22 +123,13 @@ def get_settings() -> Settings:
 
     return Settings(
         llm_provider=provider,
-        gemini_model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
         openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         response_fast_provider=response_fast_provider,
-        response_fast_gemini_model=os.getenv(
-            "RESPONSE_FAST_GEMINI_MODEL",
-            os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
-        ),
         response_fast_openai_model=os.getenv(
             "RESPONSE_FAST_OPENAI_MODEL",
             os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         ),
         response_quality_provider=response_quality_provider,
-        response_quality_gemini_model=os.getenv(
-            "RESPONSE_QUALITY_GEMINI_MODEL",
-            os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
-        ),
         response_quality_openai_model=os.getenv(
             "RESPONSE_QUALITY_OPENAI_MODEL",
             DEFAULT_OPENAI_QUALITY_MODEL,
@@ -225,8 +212,6 @@ def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
     """
 
     raw = os.getenv(name, fallback).strip().lower()
-    if raw == "gemini":
-        return "gemini"
     if raw == "openai":
         return "openai"
     raise ValueError(f"Unsupported {name} value: {raw}")
@@ -268,26 +253,6 @@ def _read_int_env(name: str, fallback: int) -> int:
         raise ValueError(f"Unsupported {name} value: {raw}") from exc
 
 
-def _resolve_model_for_provider(
-    *,
-    provider: LLMProvider,
-    gemini_model: str,
-    openai_model: str,
-) -> str:
-    """Return the provider-specific model string.
-
-    Args:
-        provider: LLM provider selected for the client.
-        gemini_model: Gemini model name to use when provider is Gemini.
-        openai_model: OpenAI model name to use when provider is OpenAI.
-
-    Returns:
-        Model name for the selected provider.
-    """
-
-    return gemini_model if provider == "gemini" else openai_model
-
-
 def create_configured_control_llm_client(
     settings: Settings | None = None,
 ) -> BaseLLMClient:
@@ -303,14 +268,9 @@ def create_configured_control_llm_client(
 
     load_runtime_env()
     settings = settings or get_settings()
-    model = _resolve_model_for_provider(
-        provider=settings.llm_provider,
-        gemini_model=settings.gemini_model,
-        openai_model=settings.openai_model,
-    )
     return create_llm_client(
         provider=settings.llm_provider,
-        model=model,
+        model=settings.openai_model,
     )
 
 
@@ -333,18 +293,10 @@ def create_configured_response_llm_client(
     settings = settings or get_settings()
     if tier == "fast":
         provider = settings.response_fast_provider
-        model = _resolve_model_for_provider(
-            provider=provider,
-            gemini_model=settings.response_fast_gemini_model,
-            openai_model=settings.response_fast_openai_model,
-        )
+        model = settings.response_fast_openai_model
     else:
         provider = settings.response_quality_provider
-        model = _resolve_model_for_provider(
-            provider=provider,
-            gemini_model=settings.response_quality_gemini_model,
-            openai_model=settings.response_quality_openai_model,
-        )
+        model = settings.response_quality_openai_model
 
     return create_llm_client(provider=provider, model=model)
 

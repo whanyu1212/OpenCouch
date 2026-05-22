@@ -1,8 +1,7 @@
 """Live-API tests for OpenAI-backed therapeutic response selection.
 
-Mirror of ``test_gemini_therapeutic_live.py`` — same ambiguous cases,
-same assertions, different provider. Gated behind ``RUN_LIVE_OPENAI_TESTS=1``
-+ an OpenAI API key. In normal pytest runs these tests are skipped.
+Gated behind ``RUN_LIVE_OPENAI_TESTS=1`` + an OpenAI API key. In normal
+pytest runs these tests are skipped.
 """
 
 from __future__ import annotations

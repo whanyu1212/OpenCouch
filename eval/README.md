@@ -172,11 +172,23 @@ Covers:
 - OpenAI Agents SDK guided-exercise tool use
 - OpenAI Agents SDK grounded-lookup tool use
 - OpenAI Agents SDK crisis response with resource lookup and audit logging
-- OpenAI/Gemini response-LLM override for persistent memory
-- OpenAI/Gemini response-LLM override for incognito privacy behavior
+- OpenAI response-LLM override for persistent memory
+- OpenAI response-LLM override for incognito privacy behavior
 
 Use this file with `run_live_text_runtime_eval.py --live` when credentials are
 configured and you want live provider coverage beyond deterministic fakes.
+
+### `datasets/live_text_runtime_trajectories.jsonl`
+Opt-in live LLM trajectory coverage for real OpenAI runtime paths.
+
+Covers:
+- OpenAI Agents SDK guided-exercise start / resume continuity
+- OpenAI Agents SDK grounded lookup followed by ordinary support
+- OpenAI Agents SDK repeated crisis-resource handling
+- OpenAI response-LLM persistent-memory trajectory quality
+- OpenAI response-LLM incognito-memory privacy behavior
+
+Run these cases with `run_live_text_runtime_eval.py --live --suite trajectories`.
 
 ## Runners
 
@@ -213,7 +225,7 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
 ```
 
 ### `runners/run_live_text_runtime_eval.py`
-Opt-in live runtime runner for broader provider-backed smoke coverage.
+Opt-in live runtime runner for broader OpenAI-backed smoke coverage.
 
 Run from `apps/backend` with OpenAI:
 
@@ -222,26 +234,36 @@ Run from `apps/backend` with OpenAI:
   --live --provider openai
 ```
 
-Run only Gemini-compatible response-LLM cases:
+Run the trajectory suite:
 
 ```bash
 .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
-  --live --provider gemini
+  --live --provider openai --suite trajectories
+```
+
+Run smoke and trajectory cases together:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite all
 ```
 
 Run with LLM-as-judge scoring for cases that define `session_expected`:
 
 ```bash
 .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
-  --live --provider openai --judge
+  --live --provider openai --suite trajectories --judge
 ```
 
 The pytest wrappers are additionally gated by explicit flags:
 - `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
-- `RUN_LIVE_GEMINI_RUNTIME_EVALS=1`
+- `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`
 
-These are separate from the older classifier/style live-test flags so enabling
+This is separate from the older classifier/style live-test flags so enabling
 basic live tests does not unexpectedly run tool-using runtime evals.
+
+The runner also accepts `--dataset path/to/custom.jsonl`, which overrides
+`--suite` for ad-hoc live eval files.
 
 ## Coverage matrix
 
@@ -259,7 +281,7 @@ basic live tests does not unexpectedly run tool-using runtime evals.
 | Session quality trajectories | judged full-session coherence / memory / safety quality | `session_quality_trajectories.jsonl` |
 | Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
 | Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
-| Live text runtime | provider-backed Agents SDK / response-LLM smoke paths | `live_text_runtime_smoke.jsonl` |
+| Live text runtime | OpenAI-backed Agents SDK / response-LLM smoke and trajectory paths | `live_text_runtime_smoke.jsonl`, `live_text_runtime_trajectories.jsonl` |
 
 ## Current known gaps
 

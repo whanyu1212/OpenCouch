@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, cast
 
 from openai import APIConnectionError, AuthenticationError, OpenAIError
@@ -23,6 +24,7 @@ from agent.runtime.prompt_utils import (
     final_output_text,
 )
 from agent.runtime.session.history import include_prompt_history
+from agent.runtime.session.history import state_without_prompt_history
 from agent.runtime.services import TextRuntimeServices
 from agent.runtime.types import (
     TextRuntimeChunkEvent,
@@ -47,6 +49,13 @@ class TherapeuticAgentResult:
     sdk_duration_ms: float
 
 
+@dataclass(frozen=True)
+class ResponseLLMText:
+    text: str
+    sanitized: bool
+    raw_text: str
+
+
 async def run_therapeutic_response_llm_turn(
     services: TextRuntimeServices,
     state: AgentState,
@@ -58,22 +67,24 @@ async def run_therapeutic_response_llm_turn(
     from agent.runtime.state_ops import apply_state_delta
 
     run_start = time.monotonic()
-    response_text = await llm_client.generate_text(
-        prompt=services.input_text_for_state(
+    raw_response_text = await llm_client.generate_text(
+        prompt=response_llm_prompt_for_state(
             state,
             include_recent_history=include_prompt_history(session),
         ),
         system_instruction=therapeutic_system_prompt_for_state(state),
     )
+    response_text = sanitize_response_llm_text(raw_response_text)
     diagnostics = {
         **dict(state.get("diagnostics", {}) or {}),
         "openai_response_llm_override": True,
     }
+    diagnostics.update(response_llm_sanitization_diagnostics(response_text))
     if fallback_reason is not None:
         diagnostics["openai_sdk_fallback_reason"] = fallback_reason
     apply_state_delta(state, {"diagnostics": diagnostics})
     return TherapeuticAgentResult(
-        response_text=response_text,
+        response_text=response_text.text,
         runtime_mode="safe_therapeutic",
         response_style=response_style_from_state(state),
         sdk_duration_ms=elapsed_ms(run_start),
@@ -94,26 +105,27 @@ async def run_therapeutic_response_llm_stream(
     run_start = time.monotonic()
     chunks: list[str] = []
     async for chunk in llm_client.generate_text_stream(
-        prompt=services.input_text_for_state(
+        prompt=response_llm_prompt_for_state(
             state,
             include_recent_history=include_prompt_history(session),
         ),
         system_instruction=therapeutic_system_prompt_for_state(state),
     ):
         chunks.append(chunk)
-        if chunk:
-            yield TextRuntimeChunkEvent(text=chunk)
-    response_text = "".join(chunks)
+    response_text = sanitize_response_llm_text("".join(chunks))
+    if response_text.text:
+        yield TextRuntimeChunkEvent(text=response_text.text)
     diagnostics = {
         **dict(state.get("diagnostics", {}) or {}),
         "openai_response_llm_override": True,
     }
+    diagnostics.update(response_llm_sanitization_diagnostics(response_text))
     if fallback_reason is not None:
         diagnostics["openai_sdk_fallback_reason"] = fallback_reason
     apply_state_delta(state, {"diagnostics": diagnostics})
     final_state = await services.finalize_turn(
         state,
-        response_text=response_text,
+        response_text=response_text.text,
         config=config,
         runtime_mode="safe_therapeutic",
         response_style=response_style_from_state(state),
@@ -279,6 +291,30 @@ def therapeutic_system_prompt_for_state(state: AgentState) -> str:
     return build_supportive_system_prompt(state)
 
 
+def response_llm_prompt_for_state(
+    state: AgentState,
+    *,
+    include_recent_history: bool = True,
+) -> str:
+    """Build the plain response-writer prompt for response LLM overrides."""
+
+    prompt_state = (
+        state if include_recent_history else state_without_prompt_history(state)
+    )
+    memory_block = _format_working_memory(prompt_state)
+    return (
+        "Write the next assistant message for a mental health support "
+        "conversation.\n\n"
+        "You are writing final user-facing text only. You do not have access "
+        "to tools in this response-writing path. Do not emit tool calls, "
+        "function names, JSON arguments, XML tags, internal style names, or "
+        "implementation traces. Use any private context silently.\n\n"
+        f"Recent conversation:\n{format_recent_history(prompt_state)}\n"
+        f"{memory_block}\n"
+        f"Current user message:\nuser: {prompt_state['message']}"
+    )
+
+
 def therapeutic_agent_prompt_for_state(state: AgentState) -> str:
     memory_block = _format_working_memory(state)
     return (
@@ -375,6 +411,95 @@ def response_style_from_state(state: Mapping[str, Any]) -> str:
     if style and style != "pending":
         return style
     return "supportive"
+
+
+def sanitize_response_llm_text(raw_text: str) -> ResponseLLMText:
+    """Strip leading pseudo tool-call text from response-LLM output."""
+
+    cleaned = str(raw_text or "").strip()
+    sanitized = False
+    while cleaned:
+        stripped = _strip_leading_pseudo_tool_call(cleaned)
+        if stripped == cleaned:
+            break
+        cleaned = stripped.lstrip()
+        sanitized = True
+    if not cleaned:
+        cleaned = str(raw_text or "").strip()
+    return ResponseLLMText(text=cleaned, sanitized=sanitized, raw_text=raw_text)
+
+
+def response_llm_sanitization_diagnostics(
+    response_text: ResponseLLMText,
+) -> dict[str, Any]:
+    if not response_text.sanitized:
+        return {"openai_response_llm_output_sanitized": False}
+    raw_text = str(response_text.raw_text or "")
+    return {
+        "openai_response_llm_output_sanitized": True,
+        "openai_response_llm_raw_text_length": len(raw_text),
+        "openai_response_llm_raw_text_preview": raw_text[:160],
+        "openai_response_llm_raw_text_sha256": sha256(raw_text.encode()).hexdigest(),
+    }
+
+
+def _strip_leading_pseudo_tool_call(text: str) -> str:
+    stripped = text.lstrip()
+    lower = stripped.lower()
+    if lower.startswith("<tool_call"):
+        close_index = lower.find("</tool_call>")
+        if close_index != -1:
+            return stripped[close_index + len("</tool_call>") :]
+
+    marker = "load_therapeutic_response_skill"
+    marker_index = stripped.find(marker)
+    if marker_index == -1 or marker_index > 40:
+        return text
+
+    prefix = stripped[:marker_index].strip().lower()
+    if prefix and not prefix.startswith("to="):
+        return text
+
+    json_start = stripped.find("{", marker_index)
+    if json_start != -1:
+        json_end = _find_matching_json_object_end(stripped, json_start)
+        if json_end != -1:
+            remainder = stripped[json_end + 1 :]
+            if remainder.startswith(")"):
+                remainder = remainder[1:]
+            return remainder
+
+    paren_end = stripped.find(")", marker_index)
+    if paren_end != -1 and paren_end <= marker_index + 240:
+        return stripped[paren_end + 1 :]
+    return text
+
+
+def _find_matching_json_object_end(text: str, start_index: int) -> int:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start_index, len(text)):
+        char = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = in_string
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
 
 
 def merge_therapeutic_tool_results(

@@ -108,3 +108,27 @@ def test_get_settings_rejects_invalid_persistence_backend(
 
     with pytest.raises(ValueError, match="OPENCOUCH_PERSISTENCE_BACKEND"):
         config.get_settings()
+
+
+def test_get_settings_rejects_unsupported_control_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only OpenAI is supported as a control-plane provider."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("LLM_PROVIDER", "legacy")
+
+    with pytest.raises(ValueError, match="LLM_PROVIDER"):
+        config.get_settings()
+
+
+def test_get_settings_rejects_unsupported_response_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only OpenAI is supported as a response-writer provider."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("RESPONSE_FAST_LLM_PROVIDER", "legacy")
+
+    with pytest.raises(ValueError, match="RESPONSE_FAST_LLM_PROVIDER"):
+        config.get_settings()

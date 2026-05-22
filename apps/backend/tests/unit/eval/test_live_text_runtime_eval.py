@@ -13,6 +13,35 @@ if str(REPO_ROOT) not in sys.path:
 
 from eval.runners import run_live_text_runtime_eval as live_eval  # noqa: E402
 
+TRAJECTORY_DATASET = (
+    REPO_ROOT / "eval" / "datasets" / "live_text_runtime_trajectories.jsonl"
+)
+
+
+def test_dataset_paths_for_first_class_suites(tmp_path: Path) -> None:
+    custom_dataset = tmp_path / "custom.jsonl"
+
+    assert live_eval._dataset_paths_for_suite("smoke") == (live_eval.SMOKE_DATASET,)
+    assert live_eval._dataset_paths_for_suite("trajectories") == (
+        live_eval.TRAJECTORY_DATASET,
+    )
+    assert live_eval._dataset_paths_for_suite("all") == (
+        live_eval.SMOKE_DATASET,
+        live_eval.TRAJECTORY_DATASET,
+    )
+    assert live_eval._resolve_dataset_paths(
+        dataset=custom_dataset,
+        suite="all",
+    ) == (custom_dataset,)
+
+
+def test_load_cases_from_all_suite_combines_smoke_and_trajectories() -> None:
+    cases = live_eval._load_cases_from_paths(live_eval._dataset_paths_for_suite("all"))
+
+    assert len(cases) == 11
+    assert cases[0].id == "openai_agents_sdk_therapeutic_smoke"
+    assert cases[-1].id == "openai_response_llm_incognito_memory_trajectory_live"
+
 
 def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) -> None:
     dataset = tmp_path / "live_cases.jsonl"
@@ -21,7 +50,7 @@ def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) ->
             {
                 "id": "response_memory",
                 "runtime": "response_llm",
-                "providers": ["openai", "gemini"],
+                "providers": ["openai"],
                 "memory_mode": "incognito",
                 "user_id": "eval-user",
                 "turns": [
@@ -51,13 +80,57 @@ def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) ->
     assert len(cases) == 1
     assert cases[0].id == "response_memory"
     assert cases[0].runtime == "response_llm"
-    assert cases[0].providers == ("openai", "gemini")
+    assert cases[0].providers == ("openai",)
     assert cases[0].memory_mode.value == "incognito"
     assert cases[0].turns[0].message == "I am anxious about presentations again."
     assert cases[0].turns[0].memory_seed[0]["key"] == "fact-presentations"
 
 
-def test_select_cases_filters_incompatible_provider_and_agents_sdk() -> None:
+def test_live_trajectory_dataset_defines_openai_multiturn_cases() -> None:
+    cases = live_eval._load_cases(TRAJECTORY_DATASET)
+
+    assert [case.id for case in cases] == [
+        "openai_agents_sdk_guided_exercise_resume_trajectory_live",
+        "openai_agents_sdk_grounded_then_support_trajectory_live",
+        "openai_agents_sdk_crisis_resource_trajectory_live",
+        "openai_response_llm_persistent_memory_trajectory_live",
+        "openai_response_llm_incognito_memory_trajectory_live",
+    ]
+    assert all(case.providers == ("openai",) for case in cases)
+    assert all(len(case.turns) >= 2 for case in cases)
+    assert all(case.session_expected for case in cases)
+
+    cases_by_id = {case.id: case for case in cases}
+    assert (
+        cases_by_id["openai_response_llm_persistent_memory_trajectory_live"].runtime
+        == "response_llm"
+    )
+    assert (
+        cases_by_id[
+            "openai_response_llm_incognito_memory_trajectory_live"
+        ].memory_mode.value
+        == "incognito"
+    )
+    assert all(
+        case.runtime == "agents_sdk"
+        for case_id, case in cases_by_id.items()
+        if case_id.startswith("openai_agents_sdk")
+    )
+    guided_case = cases_by_id[
+        "openai_agents_sdk_guided_exercise_resume_trajectory_live"
+    ]
+    assert guided_case.turns[1].expected["state"]["exercise_state.exercise_step"] == 0
+    for case_id in (
+        "openai_response_llm_persistent_memory_trajectory_live",
+        "openai_response_llm_incognito_memory_trajectory_live",
+    ):
+        for turn in cases_by_id[case_id].turns:
+            forbidden = set(turn.expected["must_not_include"])
+            assert "load_therapeutic_response_skill" in forbidden
+            assert "<tool_call>" in forbidden
+
+
+def test_select_cases_keeps_openai_runtime_cases() -> None:
     cases = [
         live_eval.EvalCase(
             id="openai_sdk",
@@ -69,18 +142,9 @@ def test_select_cases_filters_incompatible_provider_and_agents_sdk() -> None:
             session_expected=None,
         ),
         live_eval.EvalCase(
-            id="gemini_response",
+            id="openai_response",
             runtime="response_llm",
-            providers=("gemini",),
-            turns=[],
-            memory_mode=live_eval.MemoryMode.LOCAL,
-            user_id="eval-user",
-            session_expected=None,
-        ),
-        live_eval.EvalCase(
-            id="bad_gemini_sdk",
-            runtime="agents_sdk",
-            providers=("gemini",),
+            providers=("openai",),
             turns=[],
             memory_mode=live_eval.MemoryMode.LOCAL,
             user_id="eval-user",
@@ -91,10 +155,19 @@ def test_select_cases_filters_incompatible_provider_and_agents_sdk() -> None:
     selected = live_eval._select_cases(
         cases,
         case_ids=None,
-        provider="gemini",
+        provider="openai",
     )
 
-    assert [case.id for case in selected] == ["gemini_response"]
+    assert [case.id for case in selected] == ["openai_sdk", "openai_response"]
+
+
+def test_parse_providers_rejects_non_openai_provider() -> None:
+    try:
+        live_eval._parse_providers(["legacy"])
+    except ValueError as exc:
+        assert "Unsupported provider" in str(exc)
+    else:  # pragma: no cover - defensive assertion clarity
+        raise AssertionError("expected ValueError for unsupported provider")
 
 
 def test_score_expected_supports_live_runtime_quality_guards() -> None:

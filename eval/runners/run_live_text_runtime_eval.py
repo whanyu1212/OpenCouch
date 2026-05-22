@@ -5,11 +5,12 @@ clients for control-plane classification and, depending on the case runtime,
 either:
 
 - ``agents_sdk``: real OpenAI Agents SDK specialist response path.
-- ``response_llm``: real provider response override for OpenAI or Gemini.
+- ``response_llm``: real OpenAI response override.
 
 The runner is intentionally opt-in:
 
     .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py --live --provider openai
+    .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py --live --suite trajectories --provider openai
 """
 
 from __future__ import annotations
@@ -47,8 +48,13 @@ from llm.base import BaseLLMClient  # noqa: E402
 from llm.factory import create_llm_client  # noqa: E402
 from llm.openai_client import DEFAULT_OPENAI_MODEL  # noqa: E402
 
-DEFAULT_DATASET = REPO_ROOT / "eval" / "datasets" / "live_text_runtime_smoke.jsonl"
+SMOKE_DATASET = REPO_ROOT / "eval" / "datasets" / "live_text_runtime_smoke.jsonl"
+TRAJECTORY_DATASET = (
+    REPO_ROOT / "eval" / "datasets" / "live_text_runtime_trajectories.jsonl"
+)
+DEFAULT_DATASET = SMOKE_DATASET
 RuntimeMode = Literal["agents_sdk", "response_llm"]
+SuiteName = Literal["smoke", "trajectories", "all"]
 VALID_RESOURCE_STATUSES = {
     "found",
     "no_location",
@@ -101,8 +107,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset",
         type=Path,
-        default=DEFAULT_DATASET,
-        help="Path to live text-runtime JSONL dataset.",
+        default=None,
+        help="Custom live text-runtime JSONL dataset. Overrides --suite.",
+    )
+    parser.add_argument(
+        "--suite",
+        choices=["smoke", "trajectories", "all"],
+        default="smoke",
+        help="First-party live text-runtime suite to run when --dataset is omitted.",
     )
     parser.add_argument(
         "--live",
@@ -111,7 +123,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["openai", "gemini"],
+        choices=["openai"],
         default="openai",
         help="Provider used for live control and response-override calls.",
     )
@@ -138,7 +150,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--judge-provider",
-        choices=["openai", "gemini"],
+        choices=["openai"],
         default=None,
         help="Judge provider. Defaults to --provider.",
     )
@@ -154,6 +166,33 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum acceptable qualitative judge score.",
     )
     return parser.parse_args()
+
+
+def _dataset_paths_for_suite(suite: str) -> tuple[Path, ...]:
+    if suite == "smoke":
+        return (SMOKE_DATASET,)
+    if suite == "trajectories":
+        return (TRAJECTORY_DATASET,)
+    if suite == "all":
+        return (SMOKE_DATASET, TRAJECTORY_DATASET)
+    raise ValueError(f"Unsupported live eval suite: {suite!r}")
+
+
+def _resolve_dataset_paths(
+    *,
+    dataset: Path | None,
+    suite: str,
+) -> tuple[Path, ...]:
+    if dataset is not None:
+        return (dataset,)
+    return _dataset_paths_for_suite(suite)
+
+
+def _load_cases_from_paths(paths: tuple[Path, ...]) -> list[EvalCase]:
+    cases: list[EvalCase] = []
+    for path in paths:
+        cases.extend(_load_cases(path))
+    return cases
 
 
 def _load_cases(path: Path) -> list[EvalCase]:
@@ -220,7 +259,7 @@ def _parse_providers(raw: Any) -> tuple[ProviderName, ...]:
         raise ValueError(f"providers must be a list, got {raw!r}")
     providers: list[ProviderName] = []
     for provider in raw:
-        if provider not in {"openai", "gemini"}:
+        if provider != "openai":
             raise ValueError(f"Unsupported provider: {provider!r}")
         providers.append(provider)
     return tuple(providers)
@@ -278,9 +317,7 @@ def _select_cases(
 
 
 def _case_supports_provider(case: EvalCase, provider: ProviderName) -> bool:
-    if provider not in case.providers:
-        return False
-    return not (case.runtime == "agents_sdk" and provider != "openai")
+    return provider in case.providers
 
 
 def _initial_state(case_id: str, turn_index: int, turn: EvalTurn) -> dict[str, Any]:
@@ -704,13 +741,16 @@ def _check_at_least(
 
 async def _amain() -> int:
     args = _parse_args()
+    dataset_paths = _resolve_dataset_paths(dataset=args.dataset, suite=args.suite)
+    suite_label = "custom" if args.dataset is not None else args.suite
     if not args.live:
         print(
             json.dumps(
                 {
                     "passed": False,
                     "error": "Live evals require --live.",
-                    "dataset": str(args.dataset),
+                    "datasets": [str(path) for path in dataset_paths],
+                    "suite": suite_label,
                 },
                 indent=2,
                 sort_keys=True,
@@ -720,7 +760,7 @@ async def _amain() -> int:
 
     provider = provider_as_literal(args.provider)
     cases = _select_cases(
-        _load_cases(args.dataset),
+        _load_cases_from_paths(dataset_paths),
         case_ids=args.case_id,
         provider=provider,
     )
@@ -730,8 +770,9 @@ async def _amain() -> int:
                 {
                     "passed": False,
                     "error": "No live eval cases selected for provider.",
-                    "dataset": str(args.dataset),
+                    "datasets": [str(path) for path in dataset_paths],
                     "provider": args.provider,
+                    "suite": suite_label,
                 },
                 indent=2,
                 sort_keys=True,
@@ -766,6 +807,8 @@ async def _amain() -> int:
         "total_count": len(results),
         "provider": args.provider,
         "judge_enabled": args.judge,
+        "suite": suite_label,
+        "datasets": [str(path) for path in dataset_paths],
         "results": [
             {
                 "id": result.id,

@@ -35,8 +35,8 @@ memory retrieval and all operational gates are skipped entirely.
 | Decision | Choice | Why |
 |---|---|---|
 | Execution | OpenAI Agents SDK runner with app-owned runtime state | Explicit branches, deterministic ordering, checkpoint persistence; SDK sessions carry short-term model-visible history while OpenCouch owns product state |
-| LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface; `WorkflowContext` exposes both control LLM and optional response LLM |
-| Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` first, Gemini `gemini-embedding-001` fallback; null provider when no API key |
+| LLM | `BaseLLMClient` protocol | OpenAI client behind a thin protocol; `WorkflowContext` exposes both control LLM and optional response LLM |
+| Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` when an API key is present; null provider when no API key |
 | Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
 | Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres for durable local/runtime paths; SQLite legacy fallback |
 | Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
@@ -90,7 +90,7 @@ composition logic.
 | `agent/feedback/` | Session feedback records and in-memory, Postgres, and SQLite backends |
 | `agent/memory/control/` | User-facing memory-control actions and operations |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
-| `llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
+| `llm/` | `BaseLLMClient` protocol, factory, and OpenAI client |
 | `opencouch_cli/` | Rich-based interactive CLI |
 | `channels/` | Standalone channel adapters, currently Telegram DM polling |
 | `agent/voice/` | LiveKit-Agents voice runtime — worker process, agent handoffs, bounded tasks, room transport, and transcript finalization |
