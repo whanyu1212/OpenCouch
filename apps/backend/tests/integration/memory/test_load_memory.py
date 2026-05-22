@@ -23,6 +23,7 @@ refactor fixed:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -531,6 +532,41 @@ class TestSpeculativeMemoryPrefetch:
     """Tests for the load-memory speculation contract."""
 
     @pytest.mark.asyncio
+    async def test_runtime_scheduler_returns_prefetch_with_turn_metadata(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The runtime schedules a wrapper, not a bare task."""
+
+        import asyncio
+        from contextlib import suppress
+
+        from agent.runtime import PersistentAgentRuntime
+        from agent.runtime_context import PrefetchedTurnMemory
+
+        runtime = PersistentAgentRuntime(
+            sqlite_path=tmp_path / "threads.sqlite3",
+            memory_store=OpenCouchMemoryStore(),
+        )
+
+        pre_fetched = runtime._schedule_memory_prefetch(  # noqa: SLF001
+            thread_id="thread-spec",
+            user_id="user-1",
+            message="hiking",
+            prior_state=None,
+        )
+
+        assert isinstance(pre_fetched, PrefetchedTurnMemory)
+        assert pre_fetched.owner_id == "user-1"
+        assert pre_fetched.query == "hiking"
+        assert pre_fetched.is_first_turn is True
+        assert pre_fetched.task.get_name() == "memory-prefetch:thread-spec"
+
+        pre_fetched.cancel_if_pending()
+        with suppress(asyncio.CancelledError):
+            await pre_fetched.task
+
+    @pytest.mark.asyncio
     async def test_speculation_hit_uses_pre_fetched_result(self) -> None:
         """When the pre-fetched task resolves before memory loading runs, it
         should consume its result and tag the diagnostics as a hit."""
@@ -538,6 +574,7 @@ class TestSpeculativeMemoryPrefetch:
         import asyncio
 
         from agent.memory.recall import load_memory_for_turn
+        from agent.runtime_context import PrefetchedTurnMemory
 
         store = OpenCouchMemoryStore()
         await store.aput(
@@ -562,7 +599,12 @@ class TestSpeculativeMemoryPrefetch:
             {
                 "memory_store": store,
                 "memory_mode": MemoryMode.LOCAL,
-                "pre_fetched_memory": pre_fetched,
+                "pre_fetched_memory": PrefetchedTurnMemory(
+                    task=pre_fetched,
+                    owner_id="thread-spec",
+                    query="hiking",
+                    is_first_turn=False,
+                ),
             }
         )
         state = _make_state(message="hiking", session_id="thread-spec")
@@ -570,6 +612,7 @@ class TestSpeculativeMemoryPrefetch:
         delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["diagnostics"]["load_memory_speculation_used"] is True
+        assert delta["diagnostics"]["load_memory_speculation_status"] == "used"
         # Already resolved → wait time is essentially zero.
         assert delta["diagnostics"]["load_memory_speculation_wait_ms"] >= 0.0
         # And the result still contains the seeded fact.
@@ -581,6 +624,8 @@ class TestSpeculativeMemoryPrefetch:
         to a fresh ``load_memory_for_turn`` call rather than failing the turn."""
 
         import asyncio
+
+        from agent.runtime_context import PrefetchedTurnMemory
 
         async def _boom() -> Any:
             raise RuntimeError("simulated speculation failure")
@@ -598,7 +643,12 @@ class TestSpeculativeMemoryPrefetch:
             {
                 "memory_store": store,
                 "memory_mode": MemoryMode.LOCAL,
-                "pre_fetched_memory": failing_task,
+                "pre_fetched_memory": PrefetchedTurnMemory(
+                    task=failing_task,
+                    owner_id="thread-spec",
+                    query="hiking",
+                    is_first_turn=False,
+                ),
             }
         )
         state = _make_state(message="hiking", session_id="thread-spec")
@@ -607,8 +657,71 @@ class TestSpeculativeMemoryPrefetch:
 
         # Fallback path → speculation_used=False, but the turn still got memory.
         assert delta["diagnostics"]["load_memory_speculation_used"] is False
+        assert (
+            delta["diagnostics"]["load_memory_speculation_status"]
+            == "fallback_after_error"
+        )
         assert delta["diagnostics"]["load_memory_speculation_wait_ms"] == 0.0
         assert len(delta["working_memory"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_speculation_mismatch_is_discarded_without_awaiting_stale_task(
+        self,
+    ) -> None:
+        """A prefetch belongs to one owner/query/first-turn tuple only."""
+
+        import asyncio
+
+        from agent.memory.recall import load_memory_for_turn
+        from agent.runtime_context import PrefetchedTurnMemory
+
+        store = OpenCouchMemoryStore()
+        await store.aput(
+            ("thread-spec", "semantic"),
+            "fact-hiking",
+            {"evidence_quote": "I love hiking on weekends"},
+        )
+        await store.aput(
+            ("other-thread", "semantic"),
+            "fact-painting",
+            {"evidence_quote": "I paint on weekends"},
+        )
+
+        stale_task = asyncio.create_task(
+            load_memory_for_turn(
+                memory_store=store,
+                embedding_provider=None,
+                owner_id="other-thread",
+                query="painting",
+                is_first_turn=False,
+            )
+        )
+        await stale_task
+
+        runtime = _FakeRuntime(
+            {
+                "memory_store": store,
+                "memory_mode": MemoryMode.LOCAL,
+                "pre_fetched_memory": PrefetchedTurnMemory(
+                    task=stale_task,
+                    owner_id="other-thread",
+                    query="painting",
+                    is_first_turn=False,
+                ),
+            }
+        )
+        state = _make_state(message="hiking", session_id="thread-spec")
+
+        delta = await build_turn_memory_delta(state, runtime.context)
+
+        assert delta["diagnostics"]["load_memory_speculation_used"] is False
+        assert (
+            delta["diagnostics"]["load_memory_speculation_status"]
+            == "discarded_mismatch"
+        )
+        assert [entry["evidence_quote"] for entry in delta["working_memory"]] == [
+            "I love hiking on weekends"
+        ]
 
     @pytest.mark.asyncio
     async def test_no_speculation_supplied_behaves_like_pre_speculation_path(
@@ -637,6 +750,7 @@ class TestSpeculativeMemoryPrefetch:
         delta = await build_turn_memory_delta(state, runtime.context)
 
         assert delta["diagnostics"]["load_memory_speculation_used"] is False
+        assert delta["diagnostics"]["load_memory_speculation_status"] == "not_scheduled"
         assert delta["diagnostics"]["load_memory_speculation_wait_ms"] == 0.0
         assert len(delta["working_memory"]) == 1
 
