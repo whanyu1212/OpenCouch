@@ -61,6 +61,7 @@ from agent.runtime.prompt_utils import (
     include_prompt_history,
     state_without_prompt_history,
 )
+from agent.runtime.services import TextRuntimeServices
 from agent.runtime.types import (
     TextRuntimeConfig,
     TextRuntimeShadowResult,
@@ -137,6 +138,19 @@ class OpenAITextRuntime:
         self._runner = runner or _DEFAULT_OPENAI_RUNNER
         self._model = model
         self._roster = build_openai_text_agent_roster(model=model)
+
+    def _services(self) -> TextRuntimeServices:
+        return TextRuntimeServices(
+            runner=self._runner,
+            roster=self._roster,
+            build_run_context=self._run_context_for_state,
+            build_agent=self._build_agent,
+            input_text_for_state=self._input_text_for_state,
+            crisis_input_text_for_state=self._crisis_input_text_for_state,
+            run_openai_agent_with=self._run_openai_agent_with,
+            finalize_turn=self._finalize_openai_turn,
+            load_turn_memory=self._load_turn_memory,
+        )
 
     async def run_turn(
         self,
@@ -305,7 +319,7 @@ class OpenAITextRuntime:
             return
 
         async for event in run_therapeutic_turn_stream_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,
@@ -643,7 +657,7 @@ class OpenAITextRuntime:
         session: Any | None = None,
     ) -> AgentState:
         return await run_guided_exercise_turn_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,
@@ -660,7 +674,7 @@ class OpenAITextRuntime:
         session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         async for event in run_guided_exercise_turn_stream_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,
@@ -679,7 +693,7 @@ class OpenAITextRuntime:
         from agent.flows.guided_exercise import guided_exercise_response_llm
 
         return guided_exercise_response_llm(
-            self,
+            self._services(),
             state,
             config,
             context,
@@ -712,7 +726,7 @@ class OpenAITextRuntime:
         session: Any | None = None,
     ) -> AgentState:
         return await run_crisis_turn_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,
@@ -731,7 +745,7 @@ class OpenAITextRuntime:
         session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         async for event in run_crisis_turn_stream_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,
@@ -751,7 +765,7 @@ class OpenAITextRuntime:
         session: Any | None = None,
     ) -> AgentState:
         return await run_crisis_response_llm_turn_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,
@@ -788,7 +802,7 @@ class OpenAITextRuntime:
         fallback_reason: str | None = None,
     ) -> TherapeuticAgentResultPath:
         return await run_therapeutic_response_llm_turn_path(
-            self,
+            self._services(),
             state,
             llm_client=llm_client,
             session=session,
@@ -805,7 +819,7 @@ class OpenAITextRuntime:
         fallback_reason: str | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         async for event in run_therapeutic_response_llm_stream_path(
-            self,
+            self._services(),
             state,
             config=config,
             llm_client=llm_client,
@@ -823,7 +837,7 @@ class OpenAITextRuntime:
         session: Any | None = None,
     ) -> TherapeuticAgentResultPath:
         return await run_therapeutic_turn_path(
-            self,
+            self._services(),
             state,
             config=config,
             context=context,

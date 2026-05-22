@@ -9,6 +9,7 @@ from typing import Any
 from agent.audit.crisis_log import write_crisis_log
 from agent.observability.timing import elapsed_ms
 from agent.runtime.prompt_utils import chunk_from_sdk_event, final_output_text
+from agent.runtime.services import TextRuntimeServices
 from agent.specialists.crisis import CRISIS_AGENT_NAME, build_runtime_crisis_agent
 from agent.guardrails.prompts import build_crisis_response_system_prompt
 from agent.specialists.therapeutic_prompts import build_clarifying_system_prompt
@@ -27,7 +28,7 @@ from agent.state import AgentState
 
 
 async def run_crisis_turn(
-    runtime: Any,
+    services: TextRuntimeServices,
     state: AgentState,
     *,
     config: Any,
@@ -37,13 +38,13 @@ async def run_crisis_turn(
     session: Any | None = None,
 ) -> AgentState:
     if runtime_mode == "crisis_clarification":
-        state = await runtime._load_turn_memory(state, context)
+        state = await services.load_turn_memory(state, context)
     elif runtime_mode != "crisis_response":
         raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
 
     if context.response_llm is not None:
         return await run_crisis_response_llm_turn(
-            runtime,
+            services,
             state,
             config=config,
             context=context,
@@ -52,20 +53,20 @@ async def run_crisis_turn(
             session=session,
         )
 
-    run_context = runtime._run_context_for_state(state, config, context)
+    run_context = services.build_run_context(state, config, context)
     agent = build_runtime_crisis_agent(
         state=state,
         runtime_mode=runtime_mode,
-        base_agent=runtime._roster.crisis_agent,
+        base_agent=services.roster.crisis_agent,
     )
     tool_call_count = len(run_context.crisis_resource_tool_calls)
-    input_text = runtime._crisis_input_text_for_state(
+    input_text = services.crisis_input_text_for_state(
         state,
         runtime_mode=runtime_mode,
         include_recent_history=session is None,
         require_resource_tool=runtime_mode == "crisis_response",
     )
-    response_text, sdk_duration_ms = await runtime._run_openai_agent_with(
+    response_text, sdk_duration_ms = await services.run_openai_agent_with(
         state,
         agent=agent,
         input_text=input_text,
@@ -82,15 +83,15 @@ async def run_crisis_turn(
             lookup_delta = await build_crisis_resource_lookup_delta(state, context)
             _apply_lookup_delta(state, lookup_delta)
             _apply_crisis_resource_fallback_diagnostics(state, run_context)
-            response_text, sdk_duration_ms = await runtime._run_openai_agent_with(
+            response_text, sdk_duration_ms = await services.run_openai_agent_with(
                 state,
                 agent=build_runtime_crisis_agent(
                     state=state,
                     runtime_mode=runtime_mode,
-                    base_agent=runtime._roster.crisis_agent,
+                    base_agent=services.roster.crisis_agent,
                     enable_resource_tools=False,
                 ),
-                input_text=runtime._crisis_input_text_for_state(
+                input_text=services.crisis_input_text_for_state(
                     state,
                     runtime_mode=runtime_mode,
                     include_recent_history=session is None,
@@ -108,7 +109,7 @@ async def run_crisis_turn(
         state["response_style"] = response_style
         state["response_text"] = response_text
 
-    return await runtime._finalize_openai_turn(
+    return await services.finalize_turn(
         state,
         response_text=response_text,
         config=config,
@@ -121,7 +122,7 @@ async def run_crisis_turn(
 
 
 async def run_crisis_turn_stream(
-    runtime: Any,
+    services: TextRuntimeServices,
     state: AgentState,
     *,
     config: Any,
@@ -130,14 +131,14 @@ async def run_crisis_turn_stream(
     session: Any | None = None,
 ) -> AsyncIterator[TextRuntimeStreamEvent]:
     if runtime_mode == "crisis_clarification":
-        state = await runtime._load_turn_memory(state, context)
+        state = await services.load_turn_memory(state, context)
     elif runtime_mode != "crisis_response":
         raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
 
     if context.response_llm is not None:
         yield TextRuntimeStatusEvent(stage=runtime_mode)
         final_state = await run_crisis_response_llm_turn(
-            runtime,
+            services,
             state,
             config=config,
             context=context,
@@ -154,14 +155,14 @@ async def run_crisis_turn_stream(
         yield TextRuntimeStateEvent(state=final_state)
         return
 
-    run_context = runtime._run_context_for_state(state, config, context)
+    run_context = services.build_run_context(state, config, context)
     agent = build_runtime_crisis_agent(
         state=state,
         runtime_mode=runtime_mode,
-        base_agent=runtime._roster.crisis_agent,
+        base_agent=services.roster.crisis_agent,
     )
     tool_call_count = len(run_context.crisis_resource_tool_calls)
-    input_text = runtime._crisis_input_text_for_state(
+    input_text = services.crisis_input_text_for_state(
         state,
         runtime_mode=runtime_mode,
         include_recent_history=session is None,
@@ -171,7 +172,7 @@ async def run_crisis_turn_stream(
     yield TextRuntimeStatusEvent(stage=runtime_mode)
     run_start = time.monotonic()
 
-    stream = runtime._runner.run_streamed(
+    stream = services.runner.run_streamed(
         agent=agent,
         input_text=input_text,
         context=run_context,
@@ -198,15 +199,15 @@ async def run_crisis_turn_stream(
             lookup_delta = await build_crisis_resource_lookup_delta(state, context)
             _apply_lookup_delta(state, lookup_delta)
             _apply_crisis_resource_fallback_diagnostics(state, run_context)
-            response_text, sdk_duration_ms = await runtime._run_openai_agent_with(
+            response_text, sdk_duration_ms = await services.run_openai_agent_with(
                 state,
                 agent=build_runtime_crisis_agent(
                     state=state,
                     runtime_mode=runtime_mode,
-                    base_agent=runtime._roster.crisis_agent,
+                    base_agent=services.roster.crisis_agent,
                     enable_resource_tools=False,
                 ),
-                input_text=runtime._crisis_input_text_for_state(
+                input_text=services.crisis_input_text_for_state(
                     state,
                     runtime_mode=runtime_mode,
                     include_recent_history=session is None,
@@ -234,7 +235,7 @@ async def run_crisis_turn_stream(
         state["response_style"] = response_style
         state["response_text"] = response_text
 
-    final_state = await runtime._finalize_openai_turn(
+    final_state = await services.finalize_turn(
         state,
         response_text=response_text,
         config=config,
@@ -249,7 +250,7 @@ async def run_crisis_turn_stream(
 
 
 async def run_crisis_response_llm_turn(
-    runtime: Any,
+    services: TextRuntimeServices,
     state: AgentState,
     *,
     config: Any,
@@ -265,7 +266,7 @@ async def run_crisis_response_llm_turn(
     if runtime_mode == "crisis_response":
         lookup_delta = await build_crisis_resource_lookup_delta(state, context)
         _apply_lookup_delta(state, lookup_delta)
-        prompt = runtime._crisis_input_text_for_state(
+        prompt = services.crisis_input_text_for_state(
             state,
             runtime_mode=runtime_mode,
             include_recent_history=session is None,
@@ -273,7 +274,7 @@ async def run_crisis_response_llm_turn(
         )
         system_instruction = build_crisis_response_system_prompt()
     elif runtime_mode == "crisis_clarification":
-        prompt = runtime._crisis_input_text_for_state(
+        prompt = services.crisis_input_text_for_state(
             state,
             runtime_mode=runtime_mode,
             include_recent_history=session is None,
@@ -302,7 +303,7 @@ async def run_crisis_response_llm_turn(
         state["response_style"] = response_style
         state["response_text"] = response_text
     state["diagnostics"] = diagnostics
-    return await runtime._finalize_openai_turn(
+    return await services.finalize_turn(
         state,
         response_text=response_text,
         config=config,

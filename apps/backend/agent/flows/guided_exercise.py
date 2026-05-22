@@ -19,6 +19,7 @@ from agent.runtime.prompt_utils import (
     include_prompt_history,
     strip_recent_history_from_prompt,
 )
+from agent.runtime.services import TextRuntimeServices
 from agent.runtime.state_ops import apply_state_delta
 from agent.specialists.guided_exercise import (
     GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
@@ -418,14 +419,14 @@ class FallbackGuidedExerciseResponseLLM(BaseLLMClient):
 
 
 def guided_exercise_response_llm(
-    runtime: Any,
+    services: TextRuntimeServices,
     state: Any,
     config: Any,
     context: WorkflowContext,
     *,
     session: Any | None = None,
 ) -> BaseLLMClient:
-    run_context = runtime._run_context_for_state(state, config, context)
+    run_context = services.build_run_context(state, config, context)
     if context.response_llm is not None:
         return FallbackGuidedExerciseResponseLLM(
             fallback_llm=context.response_llm,
@@ -433,8 +434,8 @@ def guided_exercise_response_llm(
             strip_recent_history=not include_prompt_history(session),
         )
     return OpenAIGuidedExerciseResponseLLM(
-        runner=runtime._runner,
-        guided_exercise_agent=runtime._roster.guided_exercise_agent,
+        runner=services.runner,
+        guided_exercise_agent=services.roster.guided_exercise_agent,
         run_context=run_context,
         session=session,
     )
@@ -459,7 +460,7 @@ def guided_exercise_skill_service(
 
 
 async def run_guided_exercise_turn(
-    runtime: Any,
+    services: TextRuntimeServices,
     state: Any,
     *,
     config: Any,
@@ -468,7 +469,7 @@ async def run_guided_exercise_turn(
     session: Any | None = None,
 ) -> Any:
     response_llm = guided_exercise_response_llm(
-        runtime,
+        services,
         state,
         config,
         context,
@@ -488,7 +489,7 @@ async def run_guided_exercise_turn(
     response_text = str(state.get("response_text") or "")
     if not response_text:
         raise ValueError("guided_exercise returned an empty response.")
-    return await runtime._finalize_openai_turn(
+    return await services.finalize_turn(
         state,
         response_text=response_text,
         config=config,
@@ -501,7 +502,7 @@ async def run_guided_exercise_turn(
 
 
 async def run_guided_exercise_turn_stream(
-    runtime: Any,
+    services: TextRuntimeServices,
     state: Any,
     *,
     config: Any,
@@ -519,7 +520,7 @@ async def run_guided_exercise_turn_stream(
         return writer
 
     response_llm = guided_exercise_response_llm(
-        runtime,
+        services,
         state,
         config,
         context,
@@ -549,7 +550,7 @@ async def run_guided_exercise_turn_stream(
     response_text = str(state.get("response_text") or "")
     if not response_text:
         raise ValueError("guided_exercise returned an empty response.")
-    final_state = await runtime._finalize_openai_turn(
+    final_state = await services.finalize_turn(
         state,
         response_text=response_text,
         config=config,
