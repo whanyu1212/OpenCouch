@@ -29,16 +29,17 @@ def _has_live_openai_runtime_eval_env() -> bool:
     )
 
 
-@pytest.mark.asyncio
-@pytest.mark.live_api
-@pytest.mark.skipif(
-    not _has_live_openai_runtime_eval_env(),
-    reason="Set OPENAI_API_KEY and RUN_LIVE_OPENAI_RUNTIME_EVALS=1 to run.",
-)
-async def test_live_openai_text_runtime_smoke_eval_cases() -> None:
+def _has_live_openai_trajectory_eval_env() -> bool:
+    return (
+        bool(os.getenv("OPENAI_API_KEY"))
+        and os.getenv("RUN_LIVE_OPENAI_TRAJECTORY_EVALS") == "1"
+    )
+
+
+async def _run_live_suite(suite: str) -> dict[str, list[str]]:
     live_client = create_llm_client(provider="openai")
     cases = live_eval._select_cases(
-        live_eval._load_cases(live_eval.DEFAULT_DATASET),
+        live_eval._load_cases_from_paths(live_eval._dataset_paths_for_suite(suite)),
         case_ids=None,
         provider="openai",
     )
@@ -53,6 +54,28 @@ async def test_live_openai_text_runtime_smoke_eval_cases() -> None:
         )
         for case in cases
     ]
+    return {result.id: result.failures for result in results if not result.passed}
 
-    failures = {result.id: result.failures for result in results if not result.passed}
+
+@pytest.mark.asyncio
+@pytest.mark.live_api
+@pytest.mark.skipif(
+    not _has_live_openai_runtime_eval_env(),
+    reason="Set OPENAI_API_KEY and RUN_LIVE_OPENAI_RUNTIME_EVALS=1 to run.",
+)
+async def test_live_openai_text_runtime_smoke_eval_cases() -> None:
+    failures = await _run_live_suite("smoke")
+
+    assert failures == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_api
+@pytest.mark.skipif(
+    not _has_live_openai_trajectory_eval_env(),
+    reason="Set OPENAI_API_KEY and RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1 to run.",
+)
+async def test_live_openai_text_runtime_trajectory_eval_cases() -> None:
+    failures = await _run_live_suite("trajectories")
+
     assert failures == {}

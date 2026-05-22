@@ -188,8 +188,7 @@ Covers:
 - OpenAI response-LLM persistent-memory trajectory quality
 - OpenAI response-LLM incognito-memory privacy behavior
 
-Use this file directly with `run_live_text_runtime_eval.py --live --dataset`
-until the runner grows first-class suite selection.
+Run these cases with `run_live_text_runtime_eval.py --live --suite trajectories`.
 
 ## Runners
 
@@ -235,27 +234,36 @@ Run from `apps/backend` with OpenAI:
   --live --provider openai
 ```
 
+Run the trajectory suite:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite trajectories
+```
+
+Run smoke and trajectory cases together:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite all
+```
+
 Run with LLM-as-judge scoring for cases that define `session_expected`:
 
 ```bash
 .venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
-  --live --provider openai --judge
+  --live --provider openai --suite trajectories --judge
 ```
 
 The pytest wrappers are additionally gated by explicit flags:
 - `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
+- `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`
 
 This is separate from the older classifier/style live-test flags so enabling
 basic live tests does not unexpectedly run tool-using runtime evals.
 
-### Next live trajectory runner slice
-
-The trajectory cases now live in
-`datasets/live_text_runtime_trajectories.jsonl`. The next live-eval patch should
-expose them through a `--suite smoke|trajectories|all` runner option instead of
-requiring a manual `--dataset` path. Gate pytest wrappers with
-`RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`, and use session-level judge scoring for
-coherence, specificity, safety, and memory handling.
+The runner also accepts `--dataset path/to/custom.jsonl`, which overrides
+`--suite` for ad-hoc live eval files.
 
 ## Coverage matrix
 

@@ -18,6 +18,31 @@ TRAJECTORY_DATASET = (
 )
 
 
+def test_dataset_paths_for_first_class_suites(tmp_path: Path) -> None:
+    custom_dataset = tmp_path / "custom.jsonl"
+
+    assert live_eval._dataset_paths_for_suite("smoke") == (live_eval.SMOKE_DATASET,)
+    assert live_eval._dataset_paths_for_suite("trajectories") == (
+        live_eval.TRAJECTORY_DATASET,
+    )
+    assert live_eval._dataset_paths_for_suite("all") == (
+        live_eval.SMOKE_DATASET,
+        live_eval.TRAJECTORY_DATASET,
+    )
+    assert live_eval._resolve_dataset_paths(
+        dataset=custom_dataset,
+        suite="all",
+    ) == (custom_dataset,)
+
+
+def test_load_cases_from_all_suite_combines_smoke_and_trajectories() -> None:
+    cases = live_eval._load_cases_from_paths(live_eval._dataset_paths_for_suite("all"))
+
+    assert len(cases) == 11
+    assert cases[0].id == "openai_agents_sdk_therapeutic_smoke"
+    assert cases[-1].id == "openai_response_llm_incognito_memory_trajectory_live"
+
+
 def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) -> None:
     dataset = tmp_path / "live_cases.jsonl"
     dataset.write_text(
