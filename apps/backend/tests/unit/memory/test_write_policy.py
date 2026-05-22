@@ -171,6 +171,59 @@ async def test_negative_self_belief_can_be_held_for_repetition_by_llm_policy() -
     )
 
 
+@pytest.mark.asyncio
+async def test_negative_self_belief_policy_is_clamped_to_repetition() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="EXPERIENCED",
+            object_identifier="one mistake triggers incompetence belief",
+            evidence_quote="I always assume one mistake means I am incompetent.",
+        ),
+        message="I always assume one mistake means I am incompetent.",
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_at_session_end",
+            "reason": "model treated it as therapeutic trigger context",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_semantic_candidate_llm_primary(candidate, llm_client=llm)
+
+    assert decision.action == "require_repetition"
+    assert decision.policy_version == "phase1_v1"
+    assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_scoped_semantic_candidate_is_clamped_to_drop() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="coping_strategy",
+            predicate="USES",
+            object_type="CopingStrategy",
+            object_identifier="slowing thoughts down",
+            evidence_quote="Can we slow that thought down for now?",
+        ),
+        message="Can we slow that thought down for now?",
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "model treated it as a reusable coping strategy",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_semantic_candidate_llm_primary(candidate, llm_client=llm)
+
+    assert decision.action == "drop"
+    assert decision.policy_version == "phase1_v1"
+    assert llm.structured_calls == 1
+
+
 def test_provenance_semantic_predicate_drops() -> None:
     candidate = build_semantic_candidate(
         _semantic_write(
@@ -255,6 +308,35 @@ async def test_turn_scoped_procedural_request_uses_llm_policy() -> None:
 
     assert decision.action == "drop"
     assert decision.policy_version == "phase1_llm_v1"
+    assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_turn_scoped_procedural_request_is_clamped_to_drop() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Slow down and stay with the user's thought when they ask.",
+            evidence=["Can we slow that thought down for now?"],
+        ),
+        message="Can we slow that thought down for now?",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "model overgeneralized a turn-scoped request",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_procedural_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
+
+    assert decision.action == "drop"
+    assert decision.policy_version == "phase1_v1"
     assert llm.structured_calls == 1
 
 

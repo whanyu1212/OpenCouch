@@ -7,7 +7,6 @@ during the session for repetition evidence or end-of-session review.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -29,6 +28,8 @@ from agent.memory.semantic_writes import (
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.memory.policy.write import (
+    semantic_candidate_is_turn_scoped,
+    semantic_candidate_needs_repetition_guard,
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
 )
@@ -229,14 +230,14 @@ async def _load_prior_session_support_texts(
     memory_store: MemoryStore,
     *,
     owner_id: str,
-    current_session_id: str | None,
+    current_session_ids: set[str],
 ) -> list[str]:
     """Return support texts from prior episodic arcs for this owner.
 
     Args:
         memory_store: Store containing episodic memory records.
         owner_id: Owner whose prior sessions should be loaded.
-        current_session_id: Session id to exclude from prior support.
+        current_session_ids: Session ids to exclude from prior support.
 
     Returns:
         Prior session support text blobs.
@@ -246,7 +247,7 @@ async def _load_prior_session_support_texts(
     prior_texts: list[str] = []
     for record in records:
         value = record.value
-        if value.get("session_id") == current_session_id:
+        if value.get("session_id") in current_session_ids:
             continue
 
         parts = [value.get("summary", "")]
@@ -272,6 +273,15 @@ def _procedural_signature_tokens(candidate: ProceduralCandidate) -> frozenset[st
     return _candidate_tokens(candidate.payload.rule, *candidate.evidence_quotes)
 
 
+def _semantic_signature_tokens(candidate: SemanticCandidate) -> frozenset[str]:
+    """Return the similarity signature for a semantic candidate."""
+
+    return _candidate_tokens(
+        candidate.payload.evidence_quote,
+        candidate.payload.object.identifier,
+    )
+
+
 def _token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
     """Return token-set similarity for lightweight grouping/dedup.
 
@@ -289,6 +299,36 @@ def _token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
     if not union:
         return 0.0
     return len(left & right) / len(union)
+
+
+def _cluster_semantic_candidates(
+    buffered_candidates: list[BufferedSemanticCandidate],
+) -> list[list[BufferedSemanticCandidate]]:
+    """Cluster semantic candidates that express the same support pattern."""
+
+    groups: list[list[BufferedSemanticCandidate]] = []
+    group_tokens: list[frozenset[str]] = []
+    group_keys: list[set[tuple[str, ...]]] = []
+
+    for record in buffered_candidates:
+        key = _semantic_group_key(record.candidate)
+        tokens = _semantic_signature_tokens(record.candidate)
+        placed = False
+        for index, existing_tokens in enumerate(group_tokens):
+            overlap = len(tokens & existing_tokens)
+            similarity = _token_similarity(tokens, existing_tokens)
+            if key in group_keys[index] or similarity >= 0.5 or overlap >= 3:
+                groups[index].append(record)
+                group_tokens[index] = frozenset(existing_tokens | tokens)
+                group_keys[index].add(key)
+                placed = True
+                break
+        if not placed:
+            groups.append([record])
+            group_tokens.append(tokens)
+            group_keys.append({key})
+
+    return groups
 
 
 def _cluster_procedural_candidates(
@@ -343,13 +383,9 @@ def _select_semantic_candidates_to_commit(
         Selected candidates plus skipped group count.
     """
 
-    grouped: dict[tuple[str, ...], list[BufferedSemanticCandidate]] = defaultdict(list)
-    for record in buffered_candidates:
-        grouped[_semantic_group_key(record.candidate)].append(record)
-
     selected: list[BufferedSemanticCandidate] = []
     skipped = 0
-    for group in grouped.values():
+    for group in _cluster_semantic_candidates(buffered_candidates):
         support_turn_count = len(
             {record.candidate.source_turn_index for record in group}
         )
@@ -363,6 +399,9 @@ def _select_semantic_candidates_to_commit(
         )
         representative = repetition_record or group[-1]
         candidate = representative.candidate
+        if semantic_candidate_is_turn_scoped(candidate):
+            skipped += 1
+            continue
         object_identifier = candidate.payload.object.identifier.lower().strip()
         candidate_tokens = _candidate_tokens(
             candidate.payload.evidence_quote,
@@ -385,10 +424,14 @@ def _select_semantic_candidates_to_commit(
             exact_terms=(object_identifier,),
         )
 
+        requires_repetition = (
+            representative.hold_action == "require_repetition"
+            or semantic_candidate_needs_repetition_guard(candidate)
+        )
         should_commit = False
-        if representative.hold_action == "require_repetition":
+        if requires_repetition:
             should_commit = should_commit_pattern(
-                hold_action=representative.hold_action,
+                hold_action="require_repetition",
                 evidence_count=effective_support,
             ) or (effective_support >= 1 and prior_session_supports >= 1)
         else:
@@ -496,16 +539,20 @@ async def commit_session_memory(
         else _user_turn_texts(state)
     )
     result = SessionMemoryCommitResult()
-    current_session_id = (
-        state.get("session_id")
-        or (stored_arc.session_id if stored_arc is not None else None)
-        or (session_buffer.session_id if session_buffer is not None else None)
-    )
+    current_session_ids = {
+        session_id
+        for session_id in (
+            state.get("session_id"),
+            stored_arc.session_id if stored_arc is not None else None,
+            session_buffer.session_id if session_buffer is not None else None,
+        )
+        if session_id
+    }
     try:
         prior_session_support_texts = await _load_prior_session_support_texts(
             memory_store,
             owner_id=owner_id,
-            current_session_id=current_session_id,
+            current_session_ids=current_session_ids,
         )
     except Exception:
         logger.warning(
@@ -530,6 +577,7 @@ async def commit_session_memory(
             write_timing = (
                 "promotion"
                 if record.hold_action == "require_repetition"
+                or semantic_candidate_needs_repetition_guard(candidate)
                 else "session_end"
             )
             write_reason = (

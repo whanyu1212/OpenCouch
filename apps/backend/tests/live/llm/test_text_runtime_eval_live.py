@@ -45,6 +45,20 @@ def _has_live_openai_trajectory_judge_eval_env() -> bool:
     )
 
 
+def _has_live_openai_memory_write_eval_env() -> bool:
+    return (
+        bool(os.getenv("OPENAI_API_KEY"))
+        and os.getenv("RUN_LIVE_OPENAI_MEMORY_WRITE_EVALS") == "1"
+    )
+
+
+def _has_live_openai_memory_write_judge_eval_env() -> bool:
+    return (
+        bool(os.getenv("OPENAI_API_KEY"))
+        and os.getenv("RUN_LIVE_OPENAI_MEMORY_WRITE_JUDGE_EVALS") == "1"
+    )
+
+
 def _trajectory_judge_model() -> str | None:
     model = os.getenv("OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL")
     if model is None:
@@ -96,6 +110,19 @@ def test_live_openai_trajectory_judge_policy_env_overrides(
     assert _trajectory_judge_model() == "gpt-5.4"
     assert _trajectory_judge_min_score() == 5
     assert _trajectory_judge_samples() == 3
+
+
+def test_live_openai_memory_write_judge_eval_env_requires_dedicated_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("RUN_LIVE_OPENAI_MEMORY_WRITE_EVALS", "1")
+    monkeypatch.delenv("RUN_LIVE_OPENAI_MEMORY_WRITE_JUDGE_EVALS", raising=False)
+
+    assert _has_live_openai_memory_write_judge_eval_env() is False
+
+    monkeypatch.setenv("RUN_LIVE_OPENAI_MEMORY_WRITE_JUDGE_EVALS", "1")
+    assert _has_live_openai_memory_write_judge_eval_env() is True
 
 
 @pytest.mark.asyncio
@@ -210,5 +237,31 @@ async def test_live_openai_text_runtime_trajectory_eval_cases() -> None:
 )
 async def test_live_openai_text_runtime_trajectory_judge_eval_cases() -> None:
     failures = await _run_live_suite("trajectories", judge=True)
+
+    assert failures == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_api
+@pytest.mark.skipif(
+    not _has_live_openai_memory_write_eval_env(),
+    reason="Set OPENAI_API_KEY and RUN_LIVE_OPENAI_MEMORY_WRITE_EVALS=1 to run.",
+)
+async def test_live_openai_text_runtime_memory_write_eval_cases() -> None:
+    failures = await _run_live_suite("memory_writes")
+
+    assert failures == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_api
+@pytest.mark.skipif(
+    not _has_live_openai_memory_write_judge_eval_env(),
+    reason=(
+        "Set OPENAI_API_KEY and RUN_LIVE_OPENAI_MEMORY_WRITE_JUDGE_EVALS=1 to run."
+    ),
+)
+async def test_live_openai_text_runtime_memory_write_judge_eval_cases() -> None:
+    failures = await _run_live_suite("memory_writes", judge=True)
 
     assert failures == {}

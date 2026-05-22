@@ -29,6 +29,46 @@ from llm.base import BaseLLMClient
 logger = logging.getLogger(__name__)
 
 _POLICY_REASON_MAX_LENGTH = 240
+_FRAGILE_SELF_BELIEF_NEGATIVE_MARKERS = (
+    "incompetent",
+    "incompetence",
+    "failure",
+    "worthless",
+    "useless",
+    "unlovable",
+    "broken",
+    "not good enough",
+)
+_FRAGILE_SELF_BELIEF_FRAME_MARKERS = (
+    "i am",
+    "i'm",
+    "im ",
+    "means i",
+    "tell myself",
+    "assume",
+    "belief",
+)
+_TURN_SCOPED_MEMORY_CUES = (
+    "for now",
+    "for this reply",
+    "this reply",
+    "this time",
+    "right now",
+    "just today",
+    "only today",
+    "only this session",
+)
+_DURABLE_MEMORY_CUES = (
+    "from now on",
+    "going forward",
+    "in the future",
+    "next time",
+    "always",
+    "usually",
+    "please keep",
+    "remember",
+    "for me when",
+)
 
 
 def _prefixed_policy_reason(prefix: str, reason: str) -> str:
@@ -46,6 +86,49 @@ def _prefixed_policy_reason(prefix: str, reason: str) -> str:
     if len(value) <= _POLICY_REASON_MAX_LENGTH:
         return value
     return value[: _POLICY_REASON_MAX_LENGTH - 3].rstrip() + "..."
+
+
+def semantic_candidate_needs_repetition_guard(
+    candidate: SemanticCandidate,
+) -> bool:
+    """Return whether a semantic candidate is a fragile negative self-belief.
+
+    Args:
+        candidate (SemanticCandidate): Candidate to inspect.
+
+    Returns:
+        bool: ``True`` when the candidate should require repeated evidence even
+            if the LLM labels it as trigger/context.
+    """
+
+    text = " ".join(
+        (
+            candidate.payload.evidence_quote,
+            candidate.payload.object.identifier,
+        )
+    ).lower()
+    return any(
+        marker in text for marker in _FRAGILE_SELF_BELIEF_NEGATIVE_MARKERS
+    ) and any(marker in text for marker in _FRAGILE_SELF_BELIEF_FRAME_MARKERS)
+
+
+def _turn_scoped_without_durable_cue(text: str) -> bool:
+    return any(cue in text for cue in _TURN_SCOPED_MEMORY_CUES) and not any(
+        cue in text for cue in _DURABLE_MEMORY_CUES
+    )
+
+
+def semantic_candidate_is_turn_scoped(candidate: SemanticCandidate) -> bool:
+    """Return whether semantic evidence is scoped to the current turn only."""
+
+    return _turn_scoped_without_durable_cue(candidate.payload.evidence_quote.lower())
+
+
+def _procedural_request_is_turn_scoped(candidate: ProceduralCandidate) -> bool:
+    """Return whether procedural evidence is scoped to the current turn only."""
+
+    evidence_text = " ".join(candidate.evidence_quotes).lower()
+    return _turn_scoped_without_durable_cue(evidence_text)
 
 
 class SemanticWritePolicyDecision(BaseModel):
@@ -235,6 +318,12 @@ def _clamp_semantic_policy_decision(
         PolicyDecision: Final policy decision.
     """
 
+    if decision.action != "drop" and semantic_candidate_is_turn_scoped(candidate):
+        return PolicyDecision(
+            action="drop",
+            reason="turn-scoped semantic candidate cannot become durable memory",
+        )
+
     if (
         decision.action == "commit_now"
         and candidate.payload.category in SEMANTIC_SESSION_ONLY_CATEGORIES
@@ -242,6 +331,15 @@ def _clamp_semantic_policy_decision(
         return PolicyDecision(
             action="commit_at_session_end",
             reason="high-sensitivity semantic candidate should not commit immediately",
+        )
+
+    if decision.action in (
+        "commit_now",
+        "commit_at_session_end",
+    ) and semantic_candidate_needs_repetition_guard(candidate):
+        return PolicyDecision(
+            action="require_repetition",
+            reason="fragile negative self-belief requires repeated evidence",
         )
 
     return PolicyDecision(
@@ -252,6 +350,7 @@ def _clamp_semantic_policy_decision(
 
 
 def _clamp_procedural_policy_decision(
+    candidate: ProceduralCandidate,
     decision: ProceduralWritePolicyDecision,
 ) -> PolicyDecision:
     """Convert and safety-clamp an LLM procedural policy decision.
@@ -267,6 +366,12 @@ def _clamp_procedural_policy_decision(
         return PolicyDecision(
             action="drop",
             reason="safety-conflicting procedural candidate cannot be persisted",
+        )
+
+    if decision.action != "drop" and _procedural_request_is_turn_scoped(candidate):
+        return PolicyDecision(
+            action="drop",
+            reason="turn-scoped procedural request cannot become durable memory",
         )
 
     return PolicyDecision(
@@ -344,4 +449,4 @@ async def decide_procedural_candidate_llm_primary(
         )
         raise
 
-    return _clamp_procedural_policy_decision(decision)
+    return _clamp_procedural_policy_decision(candidate, decision)
