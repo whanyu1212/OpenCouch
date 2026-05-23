@@ -69,6 +69,38 @@ _DURABLE_MEMORY_CUES = (
     "remember",
     "for me when",
 )
+_ASSISTANT_FACING_PROCEDURAL_CUES = (
+    "ask",
+    "avoid",
+    "be ",
+    "check",
+    "explain",
+    "give",
+    "guide",
+    "help",
+    "keep",
+    "offer",
+    "respond",
+    "say",
+    "support",
+    "use ",
+)
+_FACT_SHAPED_PROCEDURAL_CUES = (
+    "remember that ",
+    "remember the user ",
+)
+_MEMORY_CONTROL_IMMEDIATE_CUES = (
+    "don't save",
+    "do not save",
+    "dont save",
+    "forget this",
+    "forget that",
+    "incognito",
+    "private mode",
+    "privacy mode",
+    "do not remember",
+    "don't remember",
+)
 
 
 def _prefixed_policy_reason(prefix: str, reason: str) -> str:
@@ -129,6 +161,17 @@ def _procedural_request_is_turn_scoped(candidate: ProceduralCandidate) -> bool:
 
     evidence_text = " ".join(candidate.evidence_quotes).lower()
     return _turn_scoped_without_durable_cue(evidence_text)
+
+
+def _procedural_candidate_is_fact_shaped_memory_request(
+    candidate: ProceduralCandidate,
+) -> bool:
+    """Return whether a procedural candidate is just a semantic fact to remember."""
+
+    rule_text = " ".join(candidate.payload.rule.lower().split())
+    if not any(cue in rule_text for cue in _FACT_SHAPED_PROCEDURAL_CUES):
+        return False
+    return not any(cue in rule_text for cue in _ASSISTANT_FACING_PROCEDURAL_CUES)
 
 
 class SemanticWritePolicyDecision(BaseModel):
@@ -216,6 +259,25 @@ def semantic_hard_policy_guard(
     return None
 
 
+def _semantic_candidate_can_commit_immediately(
+    candidate: SemanticCandidate,
+) -> bool:
+    """Return whether a semantic candidate is eligible for immediate commit."""
+
+    return False
+
+
+def _procedural_candidate_can_commit_immediately(
+    candidate: ProceduralCandidate,
+) -> bool:
+    """Return whether a procedural candidate is eligible for immediate commit."""
+
+    text = " ".join(
+        [candidate.payload.rule, *candidate.evidence_quotes],
+    ).lower()
+    return any(cue in text for cue in _MEMORY_CONTROL_IMMEDIATE_CUES)
+
+
 def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:
     """Build the LLM prompt for semantic write-timing policy.
 
@@ -231,22 +293,21 @@ def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:
         "Decide the write timing for this candidate semantic memory. "
         "Use the most conservative safe action when uncertain.\n\n"
         "Actions:\n"
-        "- commit_now: durable, low-sensitivity cross-session fact.\n"
-        "- commit_at_session_end: plausible but sensitive or better reviewed "
-        "with full-session context.\n"
+        "- commit_now: reserve for exceptional immediate-write cases only.\n"
+        "- commit_at_session_end: default for durable facts or preferences that "
+        "may be useful after full-session review.\n"
         "- require_repetition: negative self-belief, fragile interpretation, "
         "or emerging pattern that should need repeated evidence.\n"
         "- drop: transient, turn-scoped, provenance-only, or not useful memory.\n\n"
+        "Prefer commit_at_session_end by default. Use it, not commit_now, for "
+        "ordinary durable facts, coping context, support plans, triggers, and "
+        "other memories that can wait for session-end review.\n"
         "Use commit_at_session_end, not drop, for clearly stated sensitive "
         "therapeutic context such as triggers or losses that may be useful "
         "after full-session review.\n"
-        "Use commit_now for explicit, low-risk coping strategies or support "
-        "plans the user frames as ongoing or going forward, such as who they "
-        "plan to text during panic. Do not delay these when they are direct "
-        "corrections to stale memory and contain no self-harm, suicide, "
-        "imminent danger, or emergency safety material.\n"
         "Never commit_now for negative self-beliefs, fresh therapeutic "
-        "interpretations, crisis/safety material, or high-sensitivity triggers.\n\n"
+        "interpretations, crisis/safety material, high-sensitivity triggers, "
+        "or ordinary semantic facts.\n\n"
         f"Category: {payload.category}\n"
         f"Predicate: {payload.predicate}\n"
         f"Object: {payload.object.type}:{payload.object.identifier}\n"
@@ -270,17 +331,22 @@ def _procedural_policy_prompt(candidate: ProceduralCandidate) -> str:
         "Procedural memory stores durable preferences about how the assistant "
         "should respond or use memory.\n\n"
         "Actions:\n"
-        "- commit_now: explicit durable assistant-facing preference.\n"
-        "- commit_at_session_end: implicit preference that needs stronger "
-        "evidence before becoming durable.\n"
+        "- commit_now: reserve for exceptional immediate-write cases only.\n"
+        "- commit_at_session_end: default for durable assistant-facing "
+        "preferences that should wait for session-end review.\n"
         "- drop: only applies to this turn/session, is not assistant-facing, "
         "or conflicts with safety behavior.\n\n"
+        "Prefer commit_at_session_end by default, even for direct future-facing "
+        "assistant preferences. Only use commit_now for exceptional immediate "
+        "control cases.\n\n"
         "Set safety_conflict=true when the candidate asks the assistant to "
         "weaken, suppress, skip, hide, or bypass crisis checks, safety "
         "questions, emergency guidance, or crisis resources. Safety-conflict "
         "candidates must use action=drop.\n\n"
-        "Treat direct future-facing requests as explicit durable preferences "
-        "when they are assistant-facing and do not conflict with safety.\n\n"
+        "Do not use procedural memory for fact-shaped requests like "
+        "'remember that the user has X' or 'remember that X happened'; those "
+        "belong in semantic memory unless they also specify how the assistant "
+        "should respond.\n\n"
         "Use commit_at_session_end for inferred preferences from statements "
         "about what is hard, helpful, or unpleasant unless the user directly "
         "asks for an ongoing assistant behavior change.\n\n"
@@ -342,6 +408,16 @@ def _clamp_semantic_policy_decision(
             reason="fragile negative self-belief requires repeated evidence",
         )
 
+    if (
+        decision.action == "commit_now"
+        and not _semantic_candidate_can_commit_immediately(candidate)
+    ):
+        return PolicyDecision(
+            action="commit_at_session_end",
+            reason="semantic candidate should wait for session-end review",
+            policy_version="phase1_v1",
+        )
+
     return PolicyDecision(
         action=decision.action,
         reason=_prefixed_policy_reason("llm_policy", decision.reason),
@@ -372,6 +448,25 @@ def _clamp_procedural_policy_decision(
         return PolicyDecision(
             action="drop",
             reason="turn-scoped procedural request cannot become durable memory",
+        )
+
+    if (
+        decision.action != "drop"
+        and _procedural_candidate_is_fact_shaped_memory_request(candidate)
+    ):
+        return PolicyDecision(
+            action="drop",
+            reason="fact-shaped memory request belongs in semantic memory",
+        )
+
+    if (
+        decision.action == "commit_now"
+        and not _procedural_candidate_can_commit_immediately(candidate)
+    ):
+        return PolicyDecision(
+            action="commit_at_session_end",
+            reason="procedural candidate should wait for session-end review",
+            policy_version="phase1_v1",
         )
 
     return PolicyDecision(

@@ -457,11 +457,21 @@ class OpenAITextRuntime:
             response_schema=TurnDispatchDecision,
             system_instruction=self._roster.triage_agent.instructions,
         )
-        tentative_route = decision.route if decision.confidence == "low" else None
-        if decision.confidence == "low":
+        clarification_kind = decision.clarification_kind
+        needs_blocking_clarification = (
+            decision.clarification_needed and clarification_kind == "blocking"
+        )
+        legacy_low_confidence_clarification = (
+            decision.confidence == "low" and not decision.clarification_needed
+        )
+        should_route_to_clarification = (
+            needs_blocking_clarification or legacy_low_confidence_clarification
+        )
+        tentative_route = decision.route if should_route_to_clarification else None
+        if should_route_to_clarification:
             decision.route = "therapeutic"
         apply_state_delta(state, _state_delta_for_turn_dispatch(state, decision))
-        if decision.confidence == "low":
+        if should_route_to_clarification:
             apply_state_delta(
                 state,
                 {
@@ -471,6 +481,12 @@ class OpenAITextRuntime:
                         "action": decision.active_flow_action,
                         "tentative_route": tentative_route,
                         "triage_confidence": decision.confidence,
+                        "clarification_needed": True,
+                        "clarification_kind": clarification_kind,
+                        "secondary_route": decision.secondary_route,
+                        "intent_summary": decision.intent_summary,
+                        "clarification_question": decision.clarification_question,
+                        "no_clarification_reason": decision.no_clarification_reason,
                     },
                     "diagnostics": {
                         "openai_triage_tentative_route": tentative_route,
@@ -508,9 +524,23 @@ class OpenAITextRuntime:
         )
         lifecycle_metadata = {}
         if isinstance(turn_lifecycle, Mapping):
-            for key in ("tentative_route", "triage_confidence"):
+            for key in (
+                "tentative_route",
+                "triage_confidence",
+                "clarification_needed",
+                "clarification_kind",
+                "secondary_route",
+                "intent_summary",
+                "clarification_question",
+                "no_clarification_reason",
+            ):
                 if turn_lifecycle.get(key) is not None:
                     lifecycle_metadata[key] = turn_lifecycle[key]
+            if (
+                turn_lifecycle.get("clarification_needed") is True
+                and turn_lifecycle.get("clarification_kind") == "blocking"
+            ):
+                return state, False
         if has_active_exercise and lifecycle_action == "clear":
             apply_state_delta(state, clear_exercise_delta(state))
             if state.get("route") != "guided_exercise":
@@ -551,6 +581,7 @@ class OpenAITextRuntime:
                         "turn_lifecycle": {
                             "active_flow": "guided_exercise",
                             "action": "preserve",
+                            **lifecycle_metadata,
                         },
                     },
                 )
@@ -1253,6 +1284,10 @@ def _state_delta_for_turn_dispatch(
         "openai_triage_route": decision.route,
         "openai_triage_active_flow_action": decision.active_flow_action,
         "openai_triage_confidence": decision.confidence,
+        "openai_triage_clarification_needed": decision.clarification_needed,
+        "openai_triage_clarification_kind": decision.clarification_kind,
+        "openai_triage_secondary_route": decision.secondary_route,
+        "openai_triage_no_clarification_reason": decision.no_clarification_reason,
     }
     existing_memory_reference = state.get("memory_reference", {}) or {}
     existing_memory_reference_mode = (
@@ -1266,15 +1301,28 @@ def _state_delta_for_turn_dispatch(
         and decision.memory_reference_mode == "none"
         else decision.memory_reference_mode
     )
+    turn_lifecycle: dict[str, Any] = {
+        "active_flow": (
+            "guided_exercise" if decision.route == "guided_exercise" else "none"
+        ),
+        "action": decision.active_flow_action,
+    }
+    if decision.clarification_needed or decision.no_clarification_reason != "none":
+        turn_lifecycle.update(
+            {
+                "triage_confidence": decision.confidence,
+                "clarification_needed": decision.clarification_needed,
+                "clarification_kind": decision.clarification_kind,
+                "secondary_route": decision.secondary_route,
+                "intent_summary": decision.intent_summary,
+                "clarification_question": decision.clarification_question,
+                "no_clarification_reason": decision.no_clarification_reason,
+            }
+        )
     delta: dict[str, Any] = {
         "route": decision.route,
         "memory_reference": {"mode": memory_reference_mode},
-        "turn_lifecycle": {
-            "active_flow": (
-                "guided_exercise" if decision.route == "guided_exercise" else "none"
-            ),
-            "action": decision.active_flow_action,
-        },
+        "turn_lifecycle": turn_lifecycle,
         "diagnostics": diagnostics,
     }
     if decision.route == "grounded_lookup":

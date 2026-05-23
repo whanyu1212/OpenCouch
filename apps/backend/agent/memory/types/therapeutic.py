@@ -37,6 +37,14 @@ TurnRoute = Literal[
     "guided_exercise",
 ]
 ActiveFlowAction = Literal["none", "continue", "preserve", "clear"]
+ClarificationKind = Literal["none", "blocking", "soft"]
+NoClarificationReason = Literal[
+    "none",
+    "safety_precedence",
+    "explicit_privacy_control",
+    "explicit_action_request",
+    "clear_single_intent",
+]
 
 
 class TurnDispatchDecision(BaseModel):
@@ -44,6 +52,26 @@ class TurnDispatchDecision(BaseModel):
 
     route: TurnRoute
     active_flow_action: ActiveFlowAction = "none"
+    clarification_needed: bool = False
+    clarification_kind: ClarificationKind = "none"
+    secondary_route: TurnRoute | None = None
+    intent_summary: str = Field(
+        default="",
+        max_length=300,
+        description=(
+            "Compact private summary of mixed or ambiguous user intent for "
+            "clarification-aware response planning. Do not script user-visible text."
+        ),
+    )
+    clarification_question: str = Field(
+        default="",
+        max_length=240,
+        description=(
+            "Optional concise user-facing clarification question when "
+            "clarification_kind is blocking."
+        ),
+    )
+    no_clarification_reason: NoClarificationReason = "none"
     memory_reference_mode: Literal["none", "explicit"] = "none"
     query: str = Field(
         default="",
@@ -115,6 +143,8 @@ __all__ = [
     "ExerciseStartBasis",
     "TurnRoute",
     "ActiveFlowAction",
+    "ClarificationKind",
+    "NoClarificationReason",
     "TurnDispatchDecision",
     "DispatchDecision",
 ]

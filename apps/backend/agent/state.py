@@ -175,6 +175,15 @@ class TurnLifecycleState(TypedDict):
         | None
     ]
     triage_confidence: NotRequired[Literal["low", "medium", "high"] | None]
+    clarification_needed: NotRequired[bool]
+    clarification_kind: NotRequired[Literal["none", "blocking", "soft"]]
+    secondary_route: NotRequired[
+        Literal["therapeutic", "memory_control", "grounded_lookup", "guided_exercise"]
+        | None
+    ]
+    intent_summary: NotRequired[str]
+    clarification_question: NotRequired[str]
+    no_clarification_reason: NotRequired[str]
 
 
 class MemoryReferenceState(TypedDict):

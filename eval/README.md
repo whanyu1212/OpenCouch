@@ -39,6 +39,20 @@ Covers:
 
 Use this file to catch false positives and route-priority regressions.
 
+### `datasets/ambiguous_intents.jsonl`
+Mixed-intent clarification coverage for non-voice text routing.
+
+Covers:
+- blocking clarification when multiple safe actions are plausible
+- soft clarification that preserves the selected primary route
+- explicit privacy / saved-memory controls that should not be clarified before being respected
+- explicit safe action requests that should not be blocked by generic support clarification
+- legacy low-confidence ambiguity fallback behavior
+
+Use this file to verify the clarification policy and its routing metadata:
+`clarification_needed`, `clarification_kind`, `secondary_route`,
+`tentative_route`, `triage_confidence`, and `no_clarification_reason`.
+
 ### `datasets/multiturn_routing.jsonl`
 Multiturn routing and state-preservation coverage.
 
@@ -181,6 +195,22 @@ Covers:
 
 Use this file with `run_live_text_runtime_eval.py --live` when credentials are
 configured and you want live provider coverage beyond deterministic fakes.
+
+### `datasets/live_mixed_intent_clarification.jsonl`
+Opt-in live LLM coverage for mixed-intent clarification routing.
+
+Covers:
+- blocking clarification for competing safe actions
+- soft clarification that preserves grounded lookup while acknowledging support needs
+- explicit privacy control plus support without unnecessary clarification
+
+Run this file with:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai \
+  --dataset ../../eval/datasets/live_mixed_intent_clarification.jsonl
+```
 
 ### `datasets/live_text_runtime_trajectories.jsonl`
 Opt-in live LLM trajectory coverage for real OpenAI runtime paths.
@@ -341,9 +371,10 @@ The runner also accepts `--dataset path/to/custom.jsonl`, which overrides
 | Area | Route / Mode focus | Main datasets |
 | --- | --- | --- |
 | Safe therapeutic | `therapeutic` / `safe_therapeutic` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl` |
+| Mixed-intent clarification | `therapeutic` / `safe_therapeutic` with `clarifying` style, or primary route with soft clarification metadata | `ambiguous_intents.jsonl`, `routing_boundaries.jsonl` |
 | Memory control | `memory_control` / `memory_control` | `routing_matrix.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
-| Grounded lookup | `grounded_lookup` / `grounded_lookup` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
-| Guided exercise | `therapeutic` / `guided_exercise` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `trajectory_interruptions.jsonl` |
+| Grounded lookup | `grounded_lookup` / `grounded_lookup` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `ambiguous_intents.jsonl` |
+| Guided exercise | `therapeutic` / `guided_exercise` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `trajectory_interruptions.jsonl`, `ambiguous_intents.jsonl` |
 | Crisis clarification | `therapeutic` / `crisis_clarification` | `routing_matrix.jsonl`, `behavior_matrix.jsonl`, `multiturn_routing.jsonl` |
 | Crisis response | `crisis` / `crisis_response` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `crisis_response_events.jsonl`, `trajectory_interruptions.jsonl`, `trajectory_endurance.jsonl` |
 | Trajectory memory modes | persistent vs incognito durable recall behavior | `trajectory_memory_modes.jsonl` |
@@ -428,7 +459,7 @@ Still light:
 - live LLM samples for ambiguous or conflicting safety signals
 - broader 10+ turn mixed recovery / relapse sequences
 
-### 6. Mixed-intent precedence has stronger deterministic coverage
+### 6. Mixed-intent precedence and clarification have stronger deterministic coverage
 Additional deterministic coverage now includes:
 - crisis + memory control in the same turn
 - crisis + pending memory confirmation in the same turn
@@ -436,6 +467,16 @@ Additional deterministic coverage now includes:
 - crisis + grounded lookup in the same turn
 - grounded lookup + memory action in the same turn
 - grounded lookup preserving pending memory deletion
+- blocking clarification for competing safe action routes
+- soft clarification that proceeds with the selected primary route
+- explicit privacy / memory-control requests that should not be clarified before being respected
+- explicit safe action requests that should not be blocked by generic clarification
+
+Clarification policy:
+- crisis remains application-owned and preempts generic mixed-intent clarification
+- blocking clarification asks before taking route-specific action
+- soft clarification records metadata but does not force the clarifying response style
+- explicit privacy and safe action requests record why clarification was not needed
 
 Still light:
 - live LLM samples for naturally worded mixed-intent turns
@@ -457,7 +498,6 @@ saved-memory write quality.
 Remaining gaps:
 - no automated live CI budget or scheduled cadence
 - repeated live judged sampling is supported, but the curated case set is still small
-- no live voice-runtime eval equivalent
 
 ## Conventions for adding cases
 
@@ -466,6 +506,7 @@ When adding a new eval case:
 1. Put it in the dataset that matches its primary purpose:
    - route selection → `routing_matrix.jsonl`
    - boundary/precedence → `routing_boundaries.jsonl`
+   - mixed-intent clarification metadata → `ambiguous_intents.jsonl`
    - multiturn switching/resume → `multiturn_routing.jsonl`
    - side effects / diagnostics / state mutation → `behavior_matrix.jsonl`
    - crisis-specific subsystems → crisis datasets

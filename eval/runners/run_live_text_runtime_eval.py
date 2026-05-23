@@ -1068,6 +1068,7 @@ async def _run_case(
                 min_score=min_judge_score,
                 checks=checks,
                 failures=failures,
+                expected=case.memory_write_expected,
             )
             if judge_payload is None:
                 judge_payload = {"memory_write": memory_judge_payload}
@@ -1446,7 +1447,7 @@ def _matches_any_semantic_record(
 def _semantic_record_matches(record: dict[str, Any], expected: dict[str, Any]) -> bool:
     for key, expected_value in expected.items():
         if key == "object_identifier_contains":
-            actual = str(_dotted_get(record, "object.identifier") or "")
+            actual = _semantic_record_search_text(record)
             if str(expected_value).lower() not in actual.lower():
                 return False
             continue
@@ -1458,6 +1459,18 @@ def _semantic_record_matches(record: dict[str, Any], expected: dict[str, Any]) -
         if _dotted_get(record, str(key)) != expected_value:
             return False
     return True
+
+
+def _semantic_record_search_text(record: dict[str, Any]) -> str:
+    return " ".join(
+        str(value or "")
+        for value in (
+            _dotted_get(record, "object.identifier"),
+            record.get("evidence_quote"),
+            record.get("category"),
+            record.get("predicate"),
+        )
+    )
 
 
 def _matches_any_procedural_record(
@@ -1633,6 +1646,7 @@ def _score_memory_write_judge(
     min_score: int,
     checks: list[str],
     failures: list[str],
+    expected: dict[str, Any] | None = None,
 ) -> None:
     if judge.passes_quality_bar:
         checks.append("memory_write judge quality bar passed")
@@ -1649,6 +1663,12 @@ def _score_memory_write_judge(
     else:
         failures.append("memory_write judge found transient or creepy memory")
 
+    if _expects_no_saved_memory(expected):
+        checks.append(
+            "memory_write judge skipped saved-memory scalar thresholds for no-write contract"
+        )
+        return
+
     for field in (
         "saved_memory_grounded",
         "saved_memory_usefulness",
@@ -1662,6 +1682,22 @@ def _score_memory_write_judge(
             failures.append(
                 f"memory_write judge {field} expected >= {min_score}, got {score}"
             )
+
+
+def _expects_no_saved_memory(expected: dict[str, Any] | None) -> bool:
+    if not isinstance(expected, dict):
+        return False
+    no_count_fields = (
+        "saved_memory_count",
+        "saved_semantic_count",
+        "saved_procedural_count",
+    )
+    present_fields = [
+        field for field in no_count_fields if expected.get(field) is not None
+    ]
+    if not present_fields:
+        return False
+    return all(expected.get(field) == 0 for field in present_fields)
 
 
 def _dotted_get(value: Any, path: str) -> Any:

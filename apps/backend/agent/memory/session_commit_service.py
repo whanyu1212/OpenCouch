@@ -42,6 +42,65 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SEMANTIC_PROCEDURAL_OVERLAP_CUES = (
+    "prefer",
+    "help",
+    "helps",
+    "keep",
+    "brief",
+    "short",
+    "direct",
+    "respond",
+    "response",
+    "plan",
+    "plans",
+)
+_SEMANTIC_BEHAVIOR_GUIDANCE_CATEGORIES = {
+    "coping_strategy",
+    "support_preference",
+    "communication_preference",
+}
+_SEMANTIC_BEHAVIOR_GUIDANCE_OBJECT_TYPES = {
+    "copingstrategy",
+    "supportpreference",
+    "communicationstyle",
+}
+_NORMALIZATION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "be",
+    "been",
+    "being",
+    "feels",
+    "for",
+    "i",
+    "im",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "please",
+    "remember",
+    "said",
+    "that",
+    "the",
+    "to",
+    "user",
+    "very",
+    "when",
+}
+_SEMANTIC_GENERIC_OBJECT_TOKENS = {
+    "anxiety",
+    "concern",
+    "panic",
+    "stress",
+    "trigger",
+    "worry",
+}
+
 
 @dataclass(slots=True)
 class SessionMemoryCommitResult:
@@ -86,6 +145,85 @@ def _candidate_tokens(*parts: str) -> frozenset[str]:
     """
 
     return tokenize_meaningful(" ".join(part for part in parts if part))
+
+
+def _normalize_token(token: str) -> str:
+    """Return a lightweight normalized token for paraphrase clustering."""
+
+    normalized = token.lower().strip()
+    if len(normalized) > 5 and normalized.endswith("able"):
+        normalized = normalized[:-4]
+    elif len(normalized) > 5 and normalized.endswith("ing"):
+        normalized = normalized[:-3]
+    elif len(normalized) > 4 and normalized.endswith("ed"):
+        normalized = normalized[:-2]
+    elif len(normalized) > 4 and normalized.endswith("ly"):
+        normalized = normalized[:-2]
+    elif len(normalized) > 4 and normalized.endswith("es"):
+        normalized = normalized[:-2]
+    elif len(normalized) > 3 and normalized.endswith("s"):
+        normalized = normalized[:-1]
+
+    synonym_map = {
+        "bite": "small",
+        "bitesize": "small",
+        "chunks": "small",
+        "chunk": "small",
+        "concise": "direct",
+        "manageable": "manage",
+        "panicked": "panic",
+        "panicky": "panic",
+        "presentations": "presentation",
+        "prep": "preparation",
+        "supportive": "support",
+        "talks": "presentation",
+        "tiny": "small",
+        "overwhelmed": "overwhelm",
+    }
+    return synonym_map.get(normalized, normalized)
+
+
+def _normalized_signature_tokens(*parts: str) -> frozenset[str]:
+    """Return normalized signature tokens for paraphrase-aware clustering."""
+
+    normalized_tokens = {
+        _normalize_token(token)
+        for token in _candidate_tokens(*parts)
+        if token not in _NORMALIZATION_STOPWORDS
+    }
+    return frozenset(token for token in normalized_tokens if token)
+
+
+def _semantic_normalization_signature(
+    candidate: SemanticCandidate,
+) -> frozenset[str]:
+    """Return normalized semantic signature tokens for clustering."""
+
+    return _normalized_signature_tokens(
+        candidate.payload.evidence_quote,
+        candidate.payload.object.identifier,
+    )
+
+
+def _procedural_normalization_signature(
+    candidate: ProceduralCandidate,
+) -> frozenset[str]:
+    """Return normalized procedural signature tokens for clustering."""
+
+    return _normalized_signature_tokens(
+        candidate.payload.rule,
+        *candidate.evidence_quotes,
+    )
+
+
+def _semantic_object_anchor_tokens(candidate: SemanticCandidate) -> frozenset[str]:
+    """Return normalized object-identifier tokens minus generic affect labels."""
+
+    return frozenset(
+        token
+        for token in _normalized_signature_tokens(candidate.payload.object.identifier)
+        if token not in _SEMANTIC_GENERIC_OBJECT_TOKENS
+    )
 
 
 def _user_turn_texts(state: AgentState) -> list[str]:
@@ -308,24 +446,58 @@ def _cluster_semantic_candidates(
 
     groups: list[list[BufferedSemanticCandidate]] = []
     group_tokens: list[frozenset[str]] = []
+    group_normalized_tokens: list[frozenset[str]] = []
+    group_object_anchors: list[frozenset[str]] = []
     group_keys: list[set[tuple[str, ...]]] = []
 
     for record in buffered_candidates:
         key = _semantic_group_key(record.candidate)
         tokens = _semantic_signature_tokens(record.candidate)
+        normalized_tokens = _semantic_normalization_signature(record.candidate)
+        object_anchor_tokens = _semantic_object_anchor_tokens(record.candidate)
         placed = False
         for index, existing_tokens in enumerate(group_tokens):
             overlap = len(tokens & existing_tokens)
             similarity = _token_similarity(tokens, existing_tokens)
-            if key in group_keys[index] or similarity >= 0.5 or overlap >= 3:
+            normalized_overlap = len(normalized_tokens & group_normalized_tokens[index])
+            normalized_similarity = _token_similarity(
+                normalized_tokens,
+                group_normalized_tokens[index],
+            )
+            anchor_overlap = len(object_anchor_tokens & group_object_anchors[index])
+            anchor_similarity = _token_similarity(
+                object_anchor_tokens,
+                group_object_anchors[index],
+            )
+            same_group_key = key in group_keys[index]
+            semantically_aligned_object = (
+                anchor_overlap >= 1 or anchor_similarity >= 0.5
+            )
+            if same_group_key or (
+                semantically_aligned_object
+                and (
+                    similarity >= 0.5
+                    or overlap >= 3
+                    or normalized_similarity >= 0.5
+                    or normalized_overlap >= 3
+                )
+            ):
                 groups[index].append(record)
                 group_tokens[index] = frozenset(existing_tokens | tokens)
+                group_normalized_tokens[index] = frozenset(
+                    group_normalized_tokens[index] | normalized_tokens
+                )
+                group_object_anchors[index] = frozenset(
+                    group_object_anchors[index] | object_anchor_tokens
+                )
                 group_keys[index].add(key)
                 placed = True
                 break
         if not placed:
             groups.append([record])
             group_tokens.append(tokens)
+            group_normalized_tokens.append(normalized_tokens)
+            group_object_anchors.append(object_anchor_tokens)
             group_keys.append({key})
 
     return groups
@@ -345,21 +517,37 @@ def _cluster_procedural_candidates(
 
     groups: list[list[BufferedProceduralCandidate]] = []
     group_tokens: list[frozenset[str]] = []
+    group_normalized_tokens: list[frozenset[str]] = []
 
     for record in buffered_candidates:
         tokens = _procedural_signature_tokens(record.candidate)
+        normalized_tokens = _procedural_normalization_signature(record.candidate)
         placed = False
         for index, existing_tokens in enumerate(group_tokens):
             overlap = len(tokens & existing_tokens)
             similarity = _token_similarity(tokens, existing_tokens)
-            if similarity >= 0.5 or overlap >= 3:
+            normalized_overlap = len(normalized_tokens & group_normalized_tokens[index])
+            normalized_similarity = _token_similarity(
+                normalized_tokens,
+                group_normalized_tokens[index],
+            )
+            if (
+                similarity >= 0.5
+                or overlap >= 3
+                or normalized_similarity >= 0.5
+                or normalized_overlap >= 3
+            ):
                 groups[index].append(record)
                 group_tokens[index] = frozenset(existing_tokens | tokens)
+                group_normalized_tokens[index] = frozenset(
+                    group_normalized_tokens[index] | normalized_tokens
+                )
                 placed = True
                 break
         if not placed:
             groups.append([record])
             group_tokens.append(tokens)
+            group_normalized_tokens.append(normalized_tokens)
 
     return groups
 
@@ -498,6 +686,68 @@ def _select_procedural_candidates_to_commit(
     return selected, skipped
 
 
+def _semantic_candidate_prefers_assistant_behavior(
+    candidate: SemanticCandidate,
+) -> bool:
+    """Return whether a semantic candidate mainly encodes response guidance."""
+
+    payload = candidate.payload
+    if payload.category.lower() in _SEMANTIC_BEHAVIOR_GUIDANCE_CATEGORIES:
+        return True
+    if payload.object.type.lower() in _SEMANTIC_BEHAVIOR_GUIDANCE_OBJECT_TYPES:
+        return True
+
+    text = " ".join(
+        (
+            payload.evidence_quote,
+            payload.object.identifier,
+        )
+    ).lower()
+    return any(cue in text for cue in _SEMANTIC_PROCEDURAL_OVERLAP_CUES)
+
+
+def _semantic_procedural_overlap_resolution(
+    candidate: SemanticCandidate,
+    procedural_candidates: list[tuple[BufferedProceduralCandidate, list[str], int]],
+) -> str:
+    """Resolve whether a semantic candidate should yield to promoted procedural memory."""
+
+    if not _semantic_candidate_prefers_assistant_behavior(candidate):
+        return "semantic"
+
+    semantic_tokens = _semantic_signature_tokens(candidate)
+    semantic_text = " ".join(
+        (
+            candidate.payload.evidence_quote,
+            candidate.payload.object.identifier,
+        )
+    ).lower()
+
+    for procedural_record, evidence, _effective_support in procedural_candidates:
+        procedural_tokens = _candidate_tokens(
+            procedural_record.candidate.payload.rule,
+            *evidence,
+        )
+        overlap = len(semantic_tokens & procedural_tokens)
+        similarity = _token_similarity(semantic_tokens, procedural_tokens)
+
+        if similarity >= 0.5 or overlap >= 3:
+            return "procedural"
+
+        procedural_text = " ".join(
+            [procedural_record.candidate.payload.rule, *evidence]
+        ).lower()
+        shared_cues = {
+            cue
+            for cue in _SEMANTIC_PROCEDURAL_OVERLAP_CUES
+            if cue in semantic_text and cue in procedural_text
+        }
+        if shared_cues and overlap >= 2:
+            return "procedural"
+
+    return "semantic"
+
+
 async def commit_session_memory(
     state: AgentState,
     *,
@@ -562,6 +812,13 @@ async def commit_session_memory(
         )
         prior_session_support_texts = []
 
+    procedural_candidates_to_commit, result.procedural_skips = (
+        _select_procedural_candidates_to_commit(
+            session_buffer.held_procedural_candidates,
+            user_turn_texts=user_turn_texts,
+        )
+    )
+
     semantic_candidates_to_commit, result.semantic_skips = (
         _select_semantic_candidates_to_commit(
             session_buffer.held_semantic_candidates,
@@ -572,8 +829,18 @@ async def commit_session_memory(
     )
     if semantic_candidates_to_commit:
         batch_items: list[BatchWriteItem] = []
+        overlap_skips = 0
         for record in semantic_candidates_to_commit:
             candidate = record.candidate
+            if (
+                _semantic_procedural_overlap_resolution(
+                    candidate,
+                    procedural_candidates_to_commit,
+                )
+                == "procedural"
+            ):
+                overlap_skips += 1
+                continue
             write_timing = (
                 "promotion"
                 if record.hold_action == "require_repetition"
@@ -594,24 +861,19 @@ async def commit_session_memory(
                 )
             )
 
-        batch_outcome = await apply_semantic_writes_batch(
-            memory_store,
-            owner_id=owner_id,
-            items=batch_items,
-            llm_client=llm_client,
-            embedding_provider=embedding_provider,
-            log_context="commit_session_memory",
-        )
-        result.semantic_writes += batch_outcome.written
-        result.semantic_bumps += batch_outcome.bumped
-        result.semantic_skips += batch_outcome.skipped
-
-    procedural_candidates_to_commit, result.procedural_skips = (
-        _select_procedural_candidates_to_commit(
-            session_buffer.held_procedural_candidates,
-            user_turn_texts=user_turn_texts,
-        )
-    )
+        result.semantic_skips += overlap_skips
+        if batch_items:
+            batch_outcome = await apply_semantic_writes_batch(
+                memory_store,
+                owner_id=owner_id,
+                items=batch_items,
+                llm_client=llm_client,
+                embedding_provider=embedding_provider,
+                log_context="commit_session_memory",
+            )
+            result.semantic_writes += batch_outcome.written
+            result.semantic_bumps += batch_outcome.bumped
+            result.semantic_skips += batch_outcome.skipped
     if procedural_candidates_to_commit:
         for (
             procedural_record,

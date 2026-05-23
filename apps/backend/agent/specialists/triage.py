@@ -36,12 +36,37 @@ the user explicitly asks to inspect or change saved memory state. Use
 guided_exercise only when the user explicitly asks to start an exercise or when
 the current active exercise should continue.
 
-Set confidence to low when the user's intent is ambiguous across multiple route
-contracts or when you would otherwise be guessing. In those cases, prefer the
-most conservative interpretation in your reasoning rather than overcommitting.
+Clarification policy:
+- Return clarification_needed=true with clarification_kind="blocking" only when
+  multiple safe route contracts are plausible and choosing the wrong one would
+  materially change the next action. Keep route as the strongest tentative route,
+  set secondary_route when another route is plausible, summarize the ambiguity in
+  intent_summary, and include one concise clarification_question.
+- Return clarification_needed=true with clarification_kind="soft" when one route
+  is appropriate but the assistant should acknowledge uncertainty or invite
+  correction while proceeding. Soft clarification must not force the runtime into
+  the clarifying response style.
+- Return clarification_needed=false when the user gives a clear single intent, an
+  explicit safe action request, or an explicit privacy/memory-control request.
+  Set no_clarification_reason to clear_single_intent, explicit_action_request, or
+  explicit_privacy_control when that reason is useful for downstream evaluation.
+- Do not ask whether to obey explicit privacy or memory-control commands. Route
+  them to memory_control when saved-memory state should be inspected or changed;
+  otherwise choose the best conversational route and record
+  no_clarification_reason="explicit_privacy_control".
+- Do not classify crisis risk yourself. Crisis routing remains application-owned
+  and happens before triage. If crisis content appears to be present, do not
+  downgrade it into generic mixed-intent clarification; choose the best non-crisis
+  route only for the structured contract and note the uncertainty in reasoning.
 
-Do not classify crisis risk yourself. Crisis routing remains application-owned
-and happens before triage.
+Confidence policy:
+- Use high confidence when the route and clarification policy are clear.
+- Use medium confidence when there is mixed intent but the clarification policy is
+  clear.
+- Use low confidence when the user's intent remains ambiguous after applying the
+  clarification policy or when you would otherwise be guessing. In those cases,
+  prefer the most conservative interpretation in reasoning rather than
+  overcommitting.
 """
 
 _TRIAGE_DEFINITION = AgentDefinition(

@@ -208,6 +208,12 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         crisis_location: str = "Singapore",
         crisis_resource_status: str = "found",
         triage_confidence: str = "high",
+        clarification_needed: bool = False,
+        clarification_kind: str = "none",
+        secondary_route: str | None = None,
+        intent_summary: str = "",
+        clarification_question: str = "",
+        no_clarification_reason: str = "none",
     ) -> None:
         super().__init__()
         self.route = route
@@ -226,6 +232,12 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
         self.crisis_location = crisis_location
         self.crisis_resource_status = crisis_resource_status
         self.triage_confidence = triage_confidence
+        self.clarification_needed = clarification_needed
+        self.clarification_kind = clarification_kind
+        self.secondary_route = secondary_route
+        self.intent_summary = intent_summary
+        self.clarification_question = clarification_question
+        self.no_clarification_reason = no_clarification_reason
         self.structured_prompts: list[tuple[str, str]] = []
 
     async def generate_structured(
@@ -252,6 +264,12 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 "active_flow_action": self.active_flow_action,
                 "reasoning": f"scripted {self.route} route",
                 "confidence": self.triage_confidence,
+                "clarification_needed": self.clarification_needed,
+                "clarification_kind": self.clarification_kind,
+                "secondary_route": self.secondary_route,
+                "intent_summary": self.intent_summary,
+                "clarification_question": self.clarification_question,
+                "no_clarification_reason": self.no_clarification_reason,
                 "memory_reference_mode": self.memory_reference_mode,
             }
             if self.route == "grounded_lookup":
