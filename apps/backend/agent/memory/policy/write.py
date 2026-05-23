@@ -156,6 +156,24 @@ def semantic_candidate_is_turn_scoped(candidate: SemanticCandidate) -> bool:
     return _turn_scoped_without_durable_cue(candidate.payload.evidence_quote.lower())
 
 
+def text_contains_memory_control_request(text: str) -> bool:
+    """Return whether text contains an explicit memory-control request."""
+
+    return any(cue in text.lower() for cue in _MEMORY_CONTROL_IMMEDIATE_CUES)
+
+
+def semantic_candidate_is_memory_control_request(candidate: SemanticCandidate) -> bool:
+    """Return whether semantic evidence is an explicit memory-control request."""
+
+    text = " ".join(
+        (
+            candidate.payload.evidence_quote,
+            candidate.payload.object.identifier,
+        )
+    )
+    return text_contains_memory_control_request(text)
+
+
 def _procedural_request_is_turn_scoped(candidate: ProceduralCandidate) -> bool:
     """Return whether procedural evidence is scoped to the current turn only."""
 
@@ -254,6 +272,12 @@ def semantic_hard_policy_guard(
         return PolicyDecision(
             action="drop",
             reason="provenance predicates should not become durable semantic memory",
+        )
+
+    if semantic_candidate_is_memory_control_request(candidate):
+        return PolicyDecision(
+            action="drop",
+            reason="memory-control requests should not become semantic memory",
         )
 
     return None

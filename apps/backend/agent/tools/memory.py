@@ -31,6 +31,10 @@ class MemoryToolResult(BaseModel):
         default=None,
         description="Procedural profile delta when a memory preference changed.",
     )
+    clear_session_buffer: bool = Field(
+        default=False,
+        description="Whether to clear held candidates for the current session.",
+    )
     side_effect: MemoryToolSideEffect = Field(
         default="none",
         description="Side-effect category for this memory tool call.",
@@ -95,6 +99,7 @@ async def execute_memory_tool_action(
         response_text=result.response_text,
         memory_control=result.memory_control,
         procedural_profile=result.procedural_profile,
+        clear_session_buffer=result.clear_session_buffer,
         side_effect=side_effect,
         retry_safe=retry_safe,
     )
@@ -103,6 +108,7 @@ async def execute_memory_tool_action(
         response_text=tool_result.response_text,
         memory_control=tool_result.memory_control,
         procedural_profile=tool_result.procedural_profile,
+        clear_session_buffer=tool_result.clear_session_buffer,
         side_effect=tool_result.side_effect,
         retry_safe=tool_result.retry_safe,
     )

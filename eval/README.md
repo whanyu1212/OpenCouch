@@ -44,6 +44,7 @@ Mixed-intent clarification coverage for non-voice text routing.
 
 Covers:
 - blocking clarification when multiple safe actions are plausible
+- competing specialist actions such as grounded lookup vs guided exercise
 - soft clarification that preserves the selected primary route
 - explicit privacy / saved-memory controls that should not be clarified before being respected
 - explicit safe action requests that should not be blocked by generic support clarification
@@ -201,8 +202,9 @@ Opt-in live LLM coverage for mixed-intent clarification routing.
 
 Covers:
 - blocking clarification for competing safe actions
-- soft clarification that preserves grounded lookup while acknowledging support needs
-- explicit privacy control plus support without unnecessary clarification
+- soft clarification that preserves grounded lookup or guided exercise while acknowledging support needs
+- explicit safe action requests that should not be blocked by possible follow-up actions
+- explicit privacy control plus support or memory-status requests without unnecessary clarification
 
 Run this file with:
 
@@ -230,10 +232,12 @@ Opt-in live LLM coverage for saved-memory quality.
 Covers:
 - semantic memory candidate extraction from real support transcripts
 - procedural preference extraction from repeated user preferences
+- paraphrased semantic/procedural repetition under live extraction
+- semantic/procedural overlap authority at session end
 - write-policy timing decisions for save, hold, drop, and promotion paths
 - session-end memory commit behavior
 - transient mood not becoming durable memory
-- incognito no-write behavior
+- privacy override and incognito no-write behavior
 - Postgres-backed saved-memory readback when `--persistence-backend postgres` is used
 
 Run these cases with `run_live_text_runtime_eval.py --live --suite memory_writes`.

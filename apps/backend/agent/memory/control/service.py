@@ -52,6 +52,7 @@ class MemoryControlServiceResult:
     response_text: str
     memory_control: dict[str, Any]
     procedural_profile: dict[str, Any] | None = None
+    clear_session_buffer: bool = False
 
 
 @dataclass(frozen=True)
@@ -358,24 +359,62 @@ async def _handle_forget_by_index(
     )
 
 
+def _is_session_wide_forget_query(query: str) -> bool:
+    """Return whether a forget request should clear current-session candidates."""
+
+    normalized = query.casefold()
+    if any(
+        marker in normalized
+        for marker in (
+            "this session",
+            "current session",
+            "today",
+            "just said",
+            "said earlier",
+            "everything",
+            "all of this",
+            "this conversation",
+            "our conversation",
+        )
+    ):
+        return True
+    return any(
+        marker in normalized
+        for marker in (
+            "don't save",
+            "do not save",
+            "dont save",
+            "don't remember",
+            "do not remember",
+            "dont remember",
+            "forget this",
+            "forget that",
+        )
+    )
+
+
 async def _handle_forget_by_query(
     *, action: ForgetByQueryAction, store: Any, owner_id: str
 ) -> MemoryControlServiceResult:
+    clear_session_buffer = _is_session_wide_forget_query(action.query)
     targets = await find_memory_targets(store, owner_id=owner_id, query=action.query)
     if not targets:
         return MemoryControlServiceResult(
             response_text="I couldn't find a saved memory matching that.",
             memory_control={"pending_action": None},
+            clear_session_buffer=clear_session_buffer,
         )
     if len(targets) > 1:
         return MemoryControlServiceResult(
             response_text=_multiple_matches_reply(targets),
             memory_control={"pending_action": None},
+            clear_session_buffer=clear_session_buffer,
         )
     target = targets[0]
     return MemoryControlServiceResult(
         response_text=_pending_delete_reply(target),
         memory_control={"pending_action": {"type": "delete", "target": target}},
+        clear_session_buffer=clear_session_buffer,
     )
 
 

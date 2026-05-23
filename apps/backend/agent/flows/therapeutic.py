@@ -521,6 +521,11 @@ def merge_therapeutic_tool_results(
         delta: dict[str, Any] = {"memory_control": call.memory_control}
         if call.procedural_profile is not None:
             delta["procedural_profile"] = call.procedural_profile
+        if call.clear_session_buffer:
+            delta["session_memory"] = {
+                "held_semantic_candidates": [],
+                "held_procedural_candidates": [],
+            }
         apply_state_delta(state, delta)
 
     if memory_calls:

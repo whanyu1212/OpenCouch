@@ -32,6 +32,7 @@ from agent.memory.policy.write import (
     semantic_candidate_needs_repetition_guard,
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
+    text_contains_memory_control_request,
 )
 from agent.state import AgentState, resolve_owner_id
 
@@ -789,6 +790,17 @@ async def commit_session_memory(
         else _user_turn_texts(state)
     )
     result = SessionMemoryCommitResult()
+    if any(text_contains_memory_control_request(text) for text in user_turn_texts):
+        result.semantic_skips = len(session_buffer.held_semantic_candidates)
+        result.procedural_skips = len(session_buffer.held_procedural_candidates)
+        logger.info(
+            "commit_session_memory: explicit memory-control request in transcript; "
+            "dropping %d semantic and %d procedural held candidate(s).",
+            result.semantic_skips,
+            result.procedural_skips,
+        )
+        return result
+
     current_session_ids = {
         session_id
         for session_id in (

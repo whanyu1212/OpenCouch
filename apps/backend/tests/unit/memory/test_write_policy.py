@@ -242,6 +242,27 @@ def test_provenance_semantic_predicate_drops() -> None:
     assert decision.action == "drop"
 
 
+def test_memory_control_semantic_candidate_drops() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="preference",
+            predicate="WANTS",
+            object_type="Concern",
+            object_identifier="do-not-save-or-remember-that-after-this-conversation",
+            evidence_quote="do not save or remember any of that after this conversation",
+        ),
+        message="Actually, do not save or remember any of that after this conversation.",
+    )
+
+    decision = semantic_hard_policy_guard(candidate)
+
+    assert decision is not None
+    assert decision.action == "drop"
+    assert (
+        decision.reason == "memory-control requests should not become semantic memory"
+    )
+
+
 @pytest.mark.asyncio
 async def test_implicit_procedural_preference_can_be_held_by_llm_policy() -> None:
     candidate = build_procedural_candidate(

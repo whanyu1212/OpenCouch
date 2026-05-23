@@ -73,6 +73,7 @@ class MemoryToolCallRecord:
     response_text: str
     memory_control: dict[str, Any]
     procedural_profile: dict[str, Any] | None = None
+    clear_session_buffer: bool = False
     side_effect: MemoryToolSideEffect = "none"
     retry_safe: bool = True
 
@@ -188,6 +189,7 @@ class OpenAITextRunContext:
         response_text: str,
         memory_control: Mapping[str, Any],
         procedural_profile: Mapping[str, Any] | None = None,
+        clear_session_buffer: bool = False,
         side_effect: MemoryToolSideEffect = "none",
         retry_safe: bool = True,
     ) -> None:
@@ -202,6 +204,7 @@ class OpenAITextRunContext:
                 procedural_profile=(
                     dict(procedural_profile) if procedural_profile is not None else None
                 ),
+                clear_session_buffer=clear_session_buffer,
                 side_effect=side_effect,
                 retry_safe=retry_safe,
             )
