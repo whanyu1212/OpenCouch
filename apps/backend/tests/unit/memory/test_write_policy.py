@@ -464,7 +464,62 @@ async def test_llm_semantic_policy_failure_surfaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_procedural_policy_can_commit_durable_natural_request() -> None:
+async def test_fact_shaped_procedural_memory_request_is_clamped_to_drop() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Remember that presentations are a recurring anxiety trigger for the user.",
+            evidence=[
+                "I want to remember that presentations are a recurring anxiety trigger for me."
+            ],
+        ),
+        message="I want to remember that presentations are a recurring anxiety trigger for me.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "model incorrectly treated a fact as procedural memory",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_procedural_candidate_llm_primary(candidate, llm_client=llm)
+
+    assert decision.action == "drop"
+    assert decision.reason == "fact-shaped memory request belongs in semantic memory"
+    assert decision.policy_version == "phase1_v1"
+    assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_remember_to_keep_style_preference_defers_to_session_end() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Remember to keep plans very short when the user is anxious.",
+            evidence=["Please remember to keep plans very short when I am anxious."],
+        ),
+        message="Please remember to keep plans very short when I am anxious.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "durable assistant-facing response preference",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_procedural_candidate_llm_primary(candidate, llm_client=llm)
+
+    assert decision.action == "commit_at_session_end"
+    assert decision.policy_version == "phase1_v1"
+    assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_policy_defers_durable_natural_request() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
             rule="You prefer direct responses.",
@@ -488,12 +543,12 @@ async def test_llm_procedural_policy_can_commit_durable_natural_request() -> Non
     )
 
     assert llm.structured_calls == 1
-    assert decision.action == "commit_now"
-    assert decision.policy_version == "phase1_llm_v1"
+    assert decision.action == "commit_at_session_end"
+    assert decision.policy_version == "phase1_v1"
 
 
 @pytest.mark.asyncio
-async def test_llm_procedural_policy_reason_is_capped_after_prefix() -> None:
+async def test_llm_procedural_policy_clamps_commit_now_to_session_end() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(
             rule="You prefer direct responses.",
@@ -516,9 +571,9 @@ async def test_llm_procedural_policy_reason_is_capped_after_prefix() -> None:
         llm_client=llm,
     )
 
-    assert len(decision.reason) <= 240
-    assert decision.reason.startswith("llm_policy: ")
-    assert decision.reason.endswith("...")
+    assert decision.action == "commit_at_session_end"
+    assert decision.reason == "procedural candidate should wait for session-end review"
+    assert decision.policy_version == "phase1_v1"
 
 
 @pytest.mark.asyncio

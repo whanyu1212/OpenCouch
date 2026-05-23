@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from agent.runtime.session.state import current_turn_lifecycle
 from agent.prompts import (
     compose_sources as _compose,
@@ -97,11 +99,73 @@ def _compose_system_prompt_with_state(
     recall_block = _format_recall_toggle_constraint(state)
     session_arc_block = _format_session_arc_response_block(state)
     active_flow_block = _format_active_flow_response_block(state)
+    clarification_block = _format_clarification_response_block(state)
     return (
         f"{knowledge}\n\n{instructions}{safety_block}"
         f"{continuity_block}{rules_block}{recall_block}"
-        f"{session_arc_block}{active_flow_block}"
+        f"{session_arc_block}{active_flow_block}{clarification_block}"
     )
+
+
+def _format_clarification_response_block(state: AgentState) -> str:
+    """Return private guidance for mixed-intent clarification turns."""
+
+    turn_lifecycle = state.get("turn_lifecycle", {}) or {}
+    if not isinstance(turn_lifecycle, Mapping):
+        return ""
+
+    clarification_needed = turn_lifecycle.get("clarification_needed") is True
+    clarification_kind = str(turn_lifecycle.get("clarification_kind") or "none")
+    no_clarification_reason = str(
+        turn_lifecycle.get("no_clarification_reason") or "none"
+    )
+    if not clarification_needed and no_clarification_reason == "none":
+        return ""
+
+    lines = [
+        "\n\nMixed-intent clarification guidance:",
+        "- Treat this as private routing guidance, not text to recite.",
+    ]
+    intent_summary = str(turn_lifecycle.get("intent_summary") or "").strip()
+    if intent_summary:
+        lines.append(f"- Intent summary: {intent_summary}")
+    clarification_question = str(
+        turn_lifecycle.get("clarification_question") or ""
+    ).strip()
+
+    if clarification_needed and clarification_kind == "blocking":
+        lines.extend(
+            [
+                "- Ask exactly one concise clarification question before taking route-specific action.",
+                "- Acknowledge the plausible user needs in natural language without mentioning internal route names.",
+                "- Do not start a guided exercise, perform grounded lookup, or mutate saved memory on this turn.",
+            ]
+        )
+        if clarification_question:
+            lines.append(
+                f"- Suggested clarification question: {clarification_question}"
+            )
+    elif clarification_needed and clarification_kind == "soft":
+        lines.extend(
+            [
+                "- Proceed with the selected action while briefly acknowledging the secondary need if it fits.",
+                "- Invite correction in one light phrase; do not block the response with a question.",
+            ]
+        )
+    elif no_clarification_reason == "explicit_privacy_control":
+        lines.append(
+            "- Respect the user's privacy or saved-memory control without asking whether to comply."
+        )
+    elif no_clarification_reason == "explicit_action_request":
+        lines.append(
+            "- Follow the explicit safe action request; do not ask the user to choose between support and that action."
+        )
+    elif no_clarification_reason == "clear_single_intent":
+        lines.append(
+            "- Continue with the clear primary intent; no clarification is needed."
+        )
+
+    return "\n".join(lines)
 
 
 def _format_session_arc_response_block(state: AgentState) -> str:
@@ -363,11 +427,12 @@ def build_therapeutic_response_prompt(
     memory_block = _format_working_memory(state)
     directive_block = f"\n\nStep directive:\n{step_directive}" if step_directive else ""
 
+    clarification_block = _format_clarification_response_block(state)
     return (
         f"Write the next assistant message for a mental health support "
         f"conversation in the {response_style} response style.\n\n"
         f"Recent conversation:\n{_format_recent_history(state)}\n"
         f"{memory_block}\n"
         f"Current user message:\nuser: {state['message']}"
-        f"{directive_block}"
+        f"{directive_block}{clarification_block}"
     )

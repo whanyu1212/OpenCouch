@@ -366,6 +366,7 @@ def _turn_output(
         "response_style": result.get("response_style"),
         "response_text": result.get("response_text", ""),
         "diagnostics": diagnostics,
+        "turn_lifecycle": dict(result.get("turn_lifecycle", {}) or {}),
         "working_memory_count": len(working_memory),
         "session_memory_summary": _dotted_get(result, "session_memory.summary"),
         "run_call_count": len(runner.run_calls),
@@ -382,12 +383,26 @@ def _score_expected(
     failures: list[str],
     label_prefix: str,
 ) -> None:
-    for label in ("selected_agent", "route", "runtime_mode"):
+    for label in (
+        "selected_agent",
+        "route",
+        "runtime_mode",
+        "response_style",
+        "clarification_needed",
+        "clarification_kind",
+        "secondary_route",
+        "no_clarification_reason",
+        "triage_confidence",
+        "tentative_route",
+    ):
         if label not in expected:
             continue
+        actual = output.get(label)
+        if actual is None:
+            actual = _dotted_get(output.get("turn_lifecycle", {}), label)
         _check_equal(
             f"{label_prefix} {label}",
-            actual=output.get(label),
+            actual=actual,
             expected=expected[label],
             checks=checks,
             failures=failures,

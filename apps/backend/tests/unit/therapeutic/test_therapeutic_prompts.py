@@ -510,6 +510,82 @@ def test_supportive_prompt_injects_repair_response_guidance() -> None:
     assert "Do not defend" in prompt
     assert "Own the miss and reset to listening." in prompt
 
+
+def test_clarifying_prompt_injects_blocking_mixed_intent_guidance() -> None:
+    """Blocking clarification should tell the model to ask before acting."""
+
+    state = _make_state()
+    state["turn_lifecycle"] = {
+        "active_flow": "none",
+        "action": "none",
+        "tentative_route": "grounded_lookup",
+        "triage_confidence": "medium",
+        "clarification_needed": True,
+        "clarification_kind": "blocking",
+        "secondary_route": "guided_exercise",
+        "intent_summary": "User is choosing between lookup and guided practice.",
+        "clarification_question": "Would you prefer lookup or guided practice?",
+    }
+
+    prompt = build_clarifying_system_prompt(state)
+
+    assert "Mixed-intent clarification guidance" in prompt
+    assert "Ask exactly one concise clarification question" in prompt
+    assert "before taking route-specific action" in prompt
+    assert "without mentioning internal route names" in prompt
+    assert "Do not start a guided exercise" in prompt
+    assert "perform grounded lookup" in prompt
+    assert "mutate saved memory" in prompt
+    assert "User is choosing between lookup and guided practice." in prompt
+    assert "Would you prefer lookup or guided practice?" in prompt
+
+
+def test_therapeutic_response_prompt_injects_soft_clarification_guidance() -> None:
+    """Soft clarification should guide the response writer without blocking action."""
+
+    state = _make_state()
+    state["turn_lifecycle"] = {
+        "active_flow": "none",
+        "action": "none",
+        "triage_confidence": "medium",
+        "clarification_needed": True,
+        "clarification_kind": "soft",
+        "secondary_route": "therapeutic",
+        "intent_summary": "User asks for lookup while also seeking reassurance.",
+    }
+
+    prompt = build_therapeutic_response_prompt(
+        state,
+        response_style="grounded_lookup",
+    )
+
+    assert "Mixed-intent clarification guidance" in prompt
+    assert "Proceed with the selected action" in prompt
+    assert "briefly acknowledging the secondary need" in prompt
+    assert "Invite correction in one light phrase" in prompt
+    assert "do not block the response with a question" in prompt
+    assert "User asks for lookup while also seeking reassurance." in prompt
+
+
+def test_prompt_injects_no_clarification_privacy_guidance() -> None:
+    """Explicit privacy control should not ask whether to comply."""
+
+    state = _make_state()
+    state["turn_lifecycle"] = {
+        "active_flow": "none",
+        "action": "none",
+        "triage_confidence": "high",
+        "clarification_needed": False,
+        "clarification_kind": "none",
+        "no_clarification_reason": "explicit_privacy_control",
+    }
+
+    prompt = build_supportive_system_prompt(state)
+
+    assert "Mixed-intent clarification guidance" in prompt
+    assert "Respect the user's privacy or saved-memory control" in prompt
+    assert "without asking whether to comply" in prompt
+
     def test_recall_on_switches_constraint_variant(self) -> None:
         """With ``proactive_recall_enabled=True``, the prompt contains
         the ON variant of the constraint instead of the OFF variant."""

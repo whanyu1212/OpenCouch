@@ -42,6 +42,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SEMANTIC_PROCEDURAL_OVERLAP_CUES = (
+    "prefer",
+    "help",
+    "helps",
+    "keep",
+    "brief",
+    "short",
+    "direct",
+    "respond",
+    "response",
+    "plan",
+    "plans",
+)
+
 
 @dataclass(slots=True)
 class SessionMemoryCommitResult:
@@ -498,6 +512,42 @@ def _select_procedural_candidates_to_commit(
     return selected, skipped
 
 
+def _semantic_candidate_prefers_assistant_behavior(
+    candidate: SemanticCandidate,
+) -> bool:
+    """Return whether a semantic candidate mainly encodes response guidance."""
+
+    text = " ".join(
+        (
+            candidate.payload.evidence_quote,
+            candidate.payload.object.identifier,
+        )
+    ).lower()
+    return any(cue in text for cue in _SEMANTIC_PROCEDURAL_OVERLAP_CUES)
+
+
+def _semantic_candidate_overlaps_procedural_selection(
+    candidate: SemanticCandidate,
+    procedural_candidates: list[tuple[BufferedProceduralCandidate, list[str], int]],
+) -> bool:
+    """Return whether a semantic candidate is redundant with promoted procedural memory."""
+
+    if not _semantic_candidate_prefers_assistant_behavior(candidate):
+        return False
+
+    semantic_tokens = _semantic_signature_tokens(candidate)
+    for procedural_record, evidence, _effective_support in procedural_candidates:
+        procedural_tokens = _candidate_tokens(
+            procedural_record.candidate.payload.rule,
+            *evidence,
+        )
+        overlap = len(semantic_tokens & procedural_tokens)
+        similarity = _token_similarity(semantic_tokens, procedural_tokens)
+        if similarity >= 0.5 or overlap >= 3:
+            return True
+    return False
+
+
 async def commit_session_memory(
     state: AgentState,
     *,
@@ -562,6 +612,13 @@ async def commit_session_memory(
         )
         prior_session_support_texts = []
 
+    procedural_candidates_to_commit, result.procedural_skips = (
+        _select_procedural_candidates_to_commit(
+            session_buffer.held_procedural_candidates,
+            user_turn_texts=user_turn_texts,
+        )
+    )
+
     semantic_candidates_to_commit, result.semantic_skips = (
         _select_semantic_candidates_to_commit(
             session_buffer.held_semantic_candidates,
@@ -572,8 +629,15 @@ async def commit_session_memory(
     )
     if semantic_candidates_to_commit:
         batch_items: list[BatchWriteItem] = []
+        overlap_skips = 0
         for record in semantic_candidates_to_commit:
             candidate = record.candidate
+            if _semantic_candidate_overlaps_procedural_selection(
+                candidate,
+                procedural_candidates_to_commit,
+            ):
+                overlap_skips += 1
+                continue
             write_timing = (
                 "promotion"
                 if record.hold_action == "require_repetition"
@@ -594,24 +658,19 @@ async def commit_session_memory(
                 )
             )
 
-        batch_outcome = await apply_semantic_writes_batch(
-            memory_store,
-            owner_id=owner_id,
-            items=batch_items,
-            llm_client=llm_client,
-            embedding_provider=embedding_provider,
-            log_context="commit_session_memory",
-        )
-        result.semantic_writes += batch_outcome.written
-        result.semantic_bumps += batch_outcome.bumped
-        result.semantic_skips += batch_outcome.skipped
-
-    procedural_candidates_to_commit, result.procedural_skips = (
-        _select_procedural_candidates_to_commit(
-            session_buffer.held_procedural_candidates,
-            user_turn_texts=user_turn_texts,
-        )
-    )
+        result.semantic_skips += overlap_skips
+        if batch_items:
+            batch_outcome = await apply_semantic_writes_batch(
+                memory_store,
+                owner_id=owner_id,
+                items=batch_items,
+                llm_client=llm_client,
+                embedding_provider=embedding_provider,
+                log_context="commit_session_memory",
+            )
+            result.semantic_writes += batch_outcome.written
+            result.semantic_bumps += batch_outcome.bumped
+            result.semantic_skips += batch_outcome.skipped
     if procedural_candidates_to_commit:
         for (
             procedural_record,

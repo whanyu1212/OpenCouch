@@ -730,6 +730,177 @@ async def test_cross_session_repetition_promotes_negative_self_belief() -> None:
 
 
 @pytest.mark.asyncio
+async def test_semantic_candidate_yields_to_overlapping_procedural_preference() -> None:
+    store = OpenCouchMemoryStore()
+    semantic_candidate = build_semantic_candidate(
+        _semantic_write(
+            category="coping_strategy",
+            predicate="USES",
+            object_type="CopingStrategy",
+            object_identifier="short step-by-step plans",
+            evidence_quote="Short step-by-step plans help when I am anxious about presentations.",
+            source_turn_index=0,
+        ),
+        message="Short step-by-step plans help when I am anxious about presentations.",
+    )
+    procedural_candidate_a = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Remember to keep plans very short when the user is anxious about presentations.",
+            evidence=[
+                "Please keep plans very short when I am anxious about presentations."
+            ],
+        ),
+        message="Please keep plans very short when I am anxious about presentations.",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    procedural_candidate_b = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Remember to keep plans very short when the user is anxious about presentations.",
+            evidence=[
+                "Short step-by-step plans help when I am anxious about presentations."
+            ],
+        ),
+        message="Short step-by-step plans help when I am anxious about presentations.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    buffer = _held_semantic_buffer(semantic_candidate)
+    buffer.hold_procedural(
+        procedural_candidate_a,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test policy held overlapping procedural preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+    buffer.hold_procedural(
+        procedural_candidate_b,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test policy held repeated overlapping procedural preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "Please keep plans very short when I am anxious about presentations.",
+                },
+                {
+                    "role": "user",
+                    "content": "Short step-by-step plans help when I am anxious about presentations.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(
+            summary="User said short step-by-step plans help with presentation anxiety.",
+            primary_themes=["presentation anxiety", "short plans"],
+            open_loops=["wants brief planning support"],
+        ),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 0
+    assert result.semantic_skips == 1
+    assert result.procedural_writes == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+    profile_record = await store.aget(("user-1", "procedural"), "user_response_style")
+    assert profile_record is not None
+    assert len(profile_record.value["rules"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_distinct_semantic_and_procedural_memories_both_survive() -> None:
+    store = OpenCouchMemoryStore()
+    semantic_candidate = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="WORRIES_ABOUT",
+            object_type="Concern",
+            object_identifier="family conflict panic",
+            evidence_quote="Family conflict is a big trigger for panic.",
+            source_turn_index=0,
+        ),
+        message="Family conflict is a big trigger for panic.",
+    )
+    procedural_candidate_a = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses when panic spikes.",
+            evidence=["From now on, be direct with me when panic spikes."],
+        ),
+        message="From now on, be direct with me when panic spikes.",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    procedural_candidate_b = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You prefer direct responses when panic spikes.",
+            evidence=["Please be direct with me when panic spikes."],
+        ),
+        message="Please be direct with me when panic spikes.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    buffer = _held_semantic_buffer(semantic_candidate)
+    buffer.hold_procedural(
+        procedural_candidate_a,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test policy held direct-response preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+    buffer.hold_procedural(
+        procedural_candidate_b,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test policy held repeated direct-response preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "Family conflict is a big trigger for panic.",
+                },
+                {
+                    "role": "user",
+                    "content": "From now on, be direct with me when panic spikes.",
+                },
+                {
+                    "role": "user",
+                    "content": "Please be direct with me when panic spikes.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(
+            summary="User discussed panic triggered by family conflict and asked for direct responses when panic spikes.",
+            primary_themes=["family conflict", "panic"],
+            open_loops=["wants direct support during panic"],
+        ),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 1
+    assert result.procedural_writes == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 1
+    profile_record = await store.aget(("user-1", "procedural"), "user_response_style")
+    assert profile_record is not None
+    assert len(profile_record.value["rules"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_repeated_implicit_procedural_preference_promotes_at_session_end() -> (
     None
 ):
