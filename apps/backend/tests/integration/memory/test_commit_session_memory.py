@@ -816,6 +816,89 @@ async def test_semantic_candidate_yields_to_overlapping_procedural_preference() 
 
 
 @pytest.mark.asyncio
+async def test_low_lexical_overlap_semantic_guidance_still_yields_to_procedural() -> (
+    None
+):
+    store = OpenCouchMemoryStore()
+    semantic_candidate = build_semantic_candidate(
+        _semantic_write(
+            category="coping_strategy",
+            predicate="USES",
+            object_type="CopingStrategy",
+            object_identifier="tiny chunks for presentation prep",
+            evidence_quote="Tiny chunks make presentation prep feel manageable for me.",
+            source_turn_index=0,
+        ),
+        message="Tiny chunks make presentation prep feel manageable for me.",
+    )
+    procedural_candidate_a = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Keep presentation prep bite-sized when the user feels overwhelmed.",
+            evidence=[
+                "Please keep presentation prep bite-sized when I feel overwhelmed."
+            ],
+        ),
+        message="Please keep presentation prep bite-sized when I feel overwhelmed.",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    procedural_candidate_b = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Keep presentation prep bite-sized when the user feels overwhelmed.",
+            evidence=["Tiny chunks make presentation prep feel manageable for me."],
+        ),
+        message="Tiny chunks make presentation prep feel manageable for me.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    buffer = _held_semantic_buffer(semantic_candidate)
+    buffer.hold_procedural(
+        procedural_candidate_a,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test policy held overlapping bite-sized preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+    buffer.hold_procedural(
+        procedural_candidate_b,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test policy held repeated overlapping bite-sized preference",
+            policy_version="test_policy_v1",
+        ),
+    )
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "Please keep presentation prep bite-sized when I feel overwhelmed.",
+                },
+                {
+                    "role": "user",
+                    "content": "Tiny chunks make presentation prep feel manageable for me.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(
+            summary="User said bite-sized presentation prep feels more manageable.",
+            primary_themes=["presentation prep", "manageable planning"],
+            open_loops=["wants small-step prep support"],
+        ),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 0
+    assert result.semantic_skips == 1
+    assert result.procedural_writes == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+
+
+@pytest.mark.asyncio
 async def test_distinct_semantic_and_procedural_memories_both_survive() -> None:
     store = OpenCouchMemoryStore()
     semantic_candidate = build_semantic_candidate(

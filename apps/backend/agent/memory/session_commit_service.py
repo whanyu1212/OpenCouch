@@ -55,6 +55,16 @@ _SEMANTIC_PROCEDURAL_OVERLAP_CUES = (
     "plan",
     "plans",
 )
+_SEMANTIC_BEHAVIOR_GUIDANCE_CATEGORIES = {
+    "coping_strategy",
+    "support_preference",
+    "communication_preference",
+}
+_SEMANTIC_BEHAVIOR_GUIDANCE_OBJECT_TYPES = {
+    "copingstrategy",
+    "supportpreference",
+    "communicationstyle",
+}
 
 
 @dataclass(slots=True)
@@ -517,25 +527,38 @@ def _semantic_candidate_prefers_assistant_behavior(
 ) -> bool:
     """Return whether a semantic candidate mainly encodes response guidance."""
 
+    payload = candidate.payload
+    if payload.category.lower() in _SEMANTIC_BEHAVIOR_GUIDANCE_CATEGORIES:
+        return True
+    if payload.object.type.lower() in _SEMANTIC_BEHAVIOR_GUIDANCE_OBJECT_TYPES:
+        return True
+
     text = " ".join(
         (
-            candidate.payload.evidence_quote,
-            candidate.payload.object.identifier,
+            payload.evidence_quote,
+            payload.object.identifier,
         )
     ).lower()
     return any(cue in text for cue in _SEMANTIC_PROCEDURAL_OVERLAP_CUES)
 
 
-def _semantic_candidate_overlaps_procedural_selection(
+def _semantic_procedural_overlap_resolution(
     candidate: SemanticCandidate,
     procedural_candidates: list[tuple[BufferedProceduralCandidate, list[str], int]],
-) -> bool:
-    """Return whether a semantic candidate is redundant with promoted procedural memory."""
+) -> str:
+    """Resolve whether a semantic candidate should yield to promoted procedural memory."""
 
     if not _semantic_candidate_prefers_assistant_behavior(candidate):
-        return False
+        return "semantic"
 
     semantic_tokens = _semantic_signature_tokens(candidate)
+    semantic_text = " ".join(
+        (
+            candidate.payload.evidence_quote,
+            candidate.payload.object.identifier,
+        )
+    ).lower()
+
     for procedural_record, evidence, _effective_support in procedural_candidates:
         procedural_tokens = _candidate_tokens(
             procedural_record.candidate.payload.rule,
@@ -543,9 +566,22 @@ def _semantic_candidate_overlaps_procedural_selection(
         )
         overlap = len(semantic_tokens & procedural_tokens)
         similarity = _token_similarity(semantic_tokens, procedural_tokens)
+
         if similarity >= 0.5 or overlap >= 3:
-            return True
-    return False
+            return "procedural"
+
+        procedural_text = " ".join(
+            [procedural_record.candidate.payload.rule, *evidence]
+        ).lower()
+        shared_cues = {
+            cue
+            for cue in _SEMANTIC_PROCEDURAL_OVERLAP_CUES
+            if cue in semantic_text and cue in procedural_text
+        }
+        if shared_cues and overlap >= 2:
+            return "procedural"
+
+    return "semantic"
 
 
 async def commit_session_memory(
@@ -632,9 +668,12 @@ async def commit_session_memory(
         overlap_skips = 0
         for record in semantic_candidates_to_commit:
             candidate = record.candidate
-            if _semantic_candidate_overlaps_procedural_selection(
-                candidate,
-                procedural_candidates_to_commit,
+            if (
+                _semantic_procedural_overlap_resolution(
+                    candidate,
+                    procedural_candidates_to_commit,
+                )
+                == "procedural"
             ):
                 overlap_skips += 1
                 continue
