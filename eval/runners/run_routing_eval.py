@@ -415,6 +415,16 @@ def _score_expected(
                 failures=failures,
             )
 
+    expected_working_memory = expected.get("working_memory")
+    if isinstance(expected_working_memory, dict):
+        _score_working_memory_expected(
+            expected_working_memory,
+            result=result,
+            checks=checks,
+            failures=failures,
+            label_prefix=label_prefix,
+        )
+
     response_text = str(output.get("response_text", ""))
     for needle in expected.get("must_include", []):
         if str(needle) in response_text:
@@ -427,6 +437,83 @@ def _score_expected(
             failures.append(f"{label_prefix} contained forbidden text {needle!r}")
         else:
             checks.append(f"{label_prefix} did not include forbidden text {needle!r}")
+
+
+def _score_working_memory_expected(
+    expected: dict[str, Any],
+    *,
+    result: dict[str, Any],
+    checks: list[str],
+    failures: list[str],
+    label_prefix: str,
+) -> None:
+    records = list(result.get("working_memory", []) or [])
+
+    if "min_count" in expected:
+        minimum = int(expected["min_count"])
+        if len(records) >= minimum:
+            checks.append(
+                f"{label_prefix} working_memory count {len(records)} >= {minimum}"
+            )
+        else:
+            failures.append(
+                f"{label_prefix} working_memory count expected >= {minimum}, "
+                f"got {len(records)}"
+            )
+
+    if "max_count" in expected:
+        maximum = int(expected["max_count"])
+        if len(records) <= maximum:
+            checks.append(
+                f"{label_prefix} working_memory count {len(records)} <= {maximum}"
+            )
+        else:
+            failures.append(
+                f"{label_prefix} working_memory count expected <= {maximum}, "
+                f"got {len(records)}"
+            )
+
+    for expected_record in expected.get("must_include", []):
+        if _has_working_memory_record(records, expected_record):
+            checks.append(
+                f"{label_prefix} working_memory included record {expected_record!r}"
+            )
+        else:
+            failures.append(
+                f"{label_prefix} working_memory missing required record "
+                f"{expected_record!r}"
+            )
+
+    for expected_record in expected.get("must_not_include", []):
+        if _has_working_memory_record(records, expected_record):
+            failures.append(
+                f"{label_prefix} working_memory contained forbidden record "
+                f"{expected_record!r}"
+            )
+        else:
+            checks.append(
+                f"{label_prefix} working_memory did not include forbidden record "
+                f"{expected_record!r}"
+            )
+
+
+def _has_working_memory_record(records: list[Any], expected_record: Any) -> bool:
+    return any(
+        _working_memory_record_matches(record, expected_record) for record in records
+    )
+
+
+def _working_memory_record_matches(record: Any, expected_record: Any) -> bool:
+    if not isinstance(expected_record, dict):
+        return record == expected_record
+
+    if not isinstance(record, dict):
+        return False
+
+    return all(
+        _dotted_get(record, str(path)) == expected_value
+        for path, expected_value in expected_record.items()
+    )
 
 
 async def _judge_session(
