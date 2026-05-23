@@ -304,6 +304,66 @@ class TestTherapeuticBuilderInjection:
                 f"{name}: silent-follow guidance missing"
             )
 
+    def test_recall_on_switches_constraint_variant(self) -> None:
+        """With ``proactive_recall_enabled=True``, the prompt contains
+        the ON variant of the constraint instead of the OFF variant."""
+
+        state = _make_state(recall_enabled=True)
+        for name, builder in self.BUILDERS:
+            prompt = builder(state)
+            assert "proactive recall: ON" in prompt, (
+                f"{name}: recall-on constraint missing"
+            )
+            assert "proactive recall: OFF" not in prompt, (
+                f"{name}: stale recall-off constraint present"
+            )
+
+    def test_rules_appear_after_instructions(self) -> None:
+        """The rules block is appended after response-style instructions."""
+
+        state = _make_state(
+            rules=["You prefer shorter responses."],
+        )
+
+        signatures = {
+            "supportive": "SUPPORTIVE response style",
+            "reflective": "REFLECTIVE response style",
+            "clarifying": "CLARIFYING response style",
+            "psychoeducation": "PSYCHOEDUCATION response style",
+            "closing": "CLOSING response style",
+            "guided_exercise": "GUIDED_EXERCISE response style",
+        }
+
+        for name, builder in self.BUILDERS:
+            prompt = builder(state)
+            mode_sig = signatures[name]
+            sig_index = prompt.find(mode_sig)
+            rules_index = prompt.find("Style rules from past conversations")
+            assert sig_index >= 0, f"{name}: response-style signature not found"
+            assert rules_index >= 0, f"{name}: rules block not found"
+            assert rules_index > sig_index, (
+                f"{name}: rules block ({rules_index}) appears BEFORE "
+                f"instructions block ({sig_index})"
+            )
+
+    def test_recall_toggle_appears_after_rules(self) -> None:
+        """The recall-toggle constraint remains after the rules block."""
+
+        state = _make_state(
+            rules=["You prefer shorter responses."],
+            recall_enabled=False,
+        )
+        for name, builder in self.BUILDERS:
+            prompt = builder(state)
+            rules_index = prompt.find("Style rules from past conversations")
+            recall_index = prompt.find("proactive recall: OFF")
+            assert rules_index >= 0, f"{name}: rules block missing"
+            assert recall_index >= 0, f"{name}: recall block missing"
+            assert recall_index > rules_index, (
+                f"{name}: recall block ({recall_index}) appears BEFORE "
+                f"rules block ({rules_index})"
+            )
+
 
 def test_clarifying_prompt_adds_safety_check_for_level_one_crisis() -> None:
     """Level-1 crisis ambiguity should use safety-check clarification guidance."""
@@ -585,84 +645,6 @@ def test_prompt_injects_no_clarification_privacy_guidance() -> None:
     assert "Mixed-intent clarification guidance" in prompt
     assert "Respect the user's privacy or saved-memory control" in prompt
     assert "without asking whether to comply" in prompt
-
-    def test_recall_on_switches_constraint_variant(self) -> None:
-        """With ``proactive_recall_enabled=True``, the prompt contains
-        the ON variant of the constraint instead of the OFF variant."""
-
-        state = _make_state(recall_enabled=True)
-        for name, builder in self.BUILDERS:
-            prompt = builder(state)
-            assert "proactive recall: ON" in prompt, (
-                f"{name}: recall-on constraint missing"
-            )
-            assert "proactive recall: OFF" not in prompt, (
-                f"{name}: stale recall-off constraint present"
-            )
-
-    def test_rules_appear_AFTER_instructions(self) -> None:
-        """The rules block is a suffix: it appears AFTER the response style's
-        instructions block, not before or in the middle.
-
-        This matches the schema's ``injection_point: system_prompt_suffix``
-        spec. Using a signature string from each response style's instructions
-        block, we verify the rules block's position.
-        """
-
-        state = _make_state(
-            rules=["You prefer shorter responses."],
-        )
-
-        # Each response style has a unique signature string in its instructions.
-        # We verify the rules block appears AFTER it.
-        signatures = {
-            "supportive": "SUPPORTIVE response style",
-            "reflective": "REFLECTIVE response style",
-            "clarifying": "CLARIFYING response style",
-            "psychoeducation": "PSYCHOEDUCATION response style",
-            "closing": "CLOSING response style",
-            "guided_exercise": "GUIDED_EXERCISE response style",
-        }
-
-        for name, builder in self.BUILDERS:
-            prompt = builder(state)
-            mode_sig = signatures[name]
-            sig_index = prompt.find(mode_sig)
-            rules_index = prompt.find("Style rules from past conversations")
-            assert sig_index >= 0, f"{name}: response-style signature not found"
-            assert rules_index >= 0, f"{name}: rules block not found"
-            assert rules_index > sig_index, (
-                f"{name}: rules block ({rules_index}) appears BEFORE "
-                f"instructions block ({sig_index})"
-            )
-
-    def test_recall_toggle_appears_AFTER_rules(self) -> None:
-        """The recall-toggle constraint is the final block in the prompt.
-
-        Order (top to bottom):
-          1. Knowledge files
-          2. Mode instructions
-          3. Rules block (if rules exist)
-          4. Recall-toggle constraint (always present)
-
-        This test pins that order for the builders that have all three
-        dynamic sections present.
-        """
-
-        state = _make_state(
-            rules=["You prefer shorter responses."],
-            recall_enabled=False,
-        )
-        for name, builder in self.BUILDERS:
-            prompt = builder(state)
-            rules_index = prompt.find("Style rules from past conversations")
-            recall_index = prompt.find("proactive recall: OFF")
-            assert rules_index >= 0, f"{name}: rules block missing"
-            assert recall_index >= 0, f"{name}: recall block missing"
-            assert recall_index > rules_index, (
-                f"{name}: recall block ({recall_index}) appears BEFORE "
-                f"rules block ({rules_index})"
-            )
 
 
 # ─── Crisis response builder: deliberate exception ────────────────────────

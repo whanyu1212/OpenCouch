@@ -1692,7 +1692,12 @@ def _expects_no_saved_memory(expected: dict[str, Any] | None) -> bool:
         "saved_semantic_count",
         "saved_procedural_count",
     )
-    return any(expected.get(field) == 0 for field in no_count_fields)
+    present_fields = [
+        field for field in no_count_fields if expected.get(field) is not None
+    ]
+    if not present_fields:
+        return False
+    return all(expected.get(field) == 0 for field in present_fields)
 
 
 def _dotted_get(value: Any, path: str) -> Any:
