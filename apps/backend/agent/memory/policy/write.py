@@ -10,6 +10,7 @@ product-judgment fallback writes when the policy LLM is unavailable.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -89,17 +90,20 @@ _FACT_SHAPED_PROCEDURAL_CUES = (
     "remember that ",
     "remember the user ",
 )
-_MEMORY_CONTROL_IMMEDIATE_CUES = (
-    "don't save",
-    "do not save",
-    "dont save",
-    "forget this",
-    "forget that",
-    "incognito",
-    "private mode",
-    "privacy mode",
-    "do not remember",
-    "don't remember",
+_MEMORY_CONTROL_REQUEST_PATTERNS = (
+    re.compile(
+        r"^(?:actually,?\s+)?(?:please\s+)?(?:do\s+not|don't|dont)\s+"
+        r"(?:save|remember|retain|keep)\b"
+    ),
+    re.compile(
+        r"^(?:actually,?\s+)?(?:please\s+)?forget\s+"
+        r"(?:this|that|it|everything|all\b)"
+    ),
+    re.compile(
+        r"^(?:actually,?\s+)?(?:please\s+)?"
+        r"(?:use|switch(?:\s+me)?\s+to|turn\s+on)\s+"
+        r"(?:incognito|privacy|private)\s+mode\b"
+    ),
 )
 
 
@@ -157,9 +161,12 @@ def semantic_candidate_is_turn_scoped(candidate: SemanticCandidate) -> bool:
 
 
 def text_contains_memory_control_request(text: str) -> bool:
-    """Return whether text contains an explicit memory-control request."""
+    """Return whether text contains an explicit assistant-directed memory request."""
 
-    return any(cue in text.lower() for cue in _MEMORY_CONTROL_IMMEDIATE_CUES)
+    normalized = " ".join(text.casefold().split())
+    return any(
+        pattern.search(normalized) for pattern in _MEMORY_CONTROL_REQUEST_PATTERNS
+    )
 
 
 def semantic_candidate_is_memory_control_request(candidate: SemanticCandidate) -> bool:
@@ -298,8 +305,8 @@ def _procedural_candidate_can_commit_immediately(
 
     text = " ".join(
         [candidate.payload.rule, *candidate.evidence_quotes],
-    ).lower()
-    return any(cue in text for cue in _MEMORY_CONTROL_IMMEDIATE_CUES)
+    )
+    return text_contains_memory_control_request(text)
 
 
 def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:

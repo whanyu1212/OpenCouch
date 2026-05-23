@@ -360,6 +360,39 @@ async def test_privacy_override_drops_held_candidates_at_session_end() -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_command_memory_language_does_not_drop_held_candidates() -> None:
+    store = OpenCouchMemoryStore()
+    candidate = build_semantic_candidate(
+        _semantic_write(),
+        message="Family conflict is a big trigger for panic.",
+    )
+    buffer = _held_semantic_buffer(candidate)
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "Family conflict is a big trigger for panic.",
+                },
+                {
+                    "role": "user",
+                    "content": "I don't remember the details of that argument.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 1
+    assert result.semantic_skips == 0
+    assert await store.arecord_count(("user-1", "semantic")) == 1
+
+
+@pytest.mark.asyncio
 async def test_supported_held_candidate_writes_at_session_end() -> None:
     store = OpenCouchMemoryStore()
     candidate = build_semantic_candidate(
