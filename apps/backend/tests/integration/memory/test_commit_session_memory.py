@@ -29,11 +29,15 @@ from agent.memory.models import (
 from agent.memory.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
+from agent.flows.therapeutic import merge_therapeutic_tool_results
 from agent.memory.store import OpenCouchMemoryStore
+from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import run_commit_session_memory
 from agent.runtime.session.history import session_conversation_from_transcript
 from agent.runtime import PersistentAgentRuntime
+from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -300,6 +304,92 @@ async def test_commit_scoring_uses_explicit_session_conversation() -> None:
     assert result is not None
     assert result.semantic_writes == 1
     assert result.semantic_skips == 0
+
+
+@pytest.mark.asyncio
+async def test_privacy_override_drops_held_candidates_at_session_end() -> None:
+    store = OpenCouchMemoryStore()
+    semantic = build_semantic_candidate(
+        _semantic_write(),
+        message="Family conflict is a big trigger for panic.",
+    )
+    procedural = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You've said step-by-step plans help most.",
+            evidence=["short step-by-step plans help me most"],
+        ),
+        message="short step-by-step plans help me most",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    buffer = _held_semantic_buffer(semantic)
+    buffer.hold_procedural(
+        procedural,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test buffers procedural candidate before privacy override",
+            policy_version="test_policy_v1",
+        ),
+    )
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "Family conflict is a big trigger for panic.",
+                },
+                {
+                    "role": "user",
+                    "content": "Actually, do not save or remember any of that.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 0
+    assert result.procedural_writes == 0
+    assert result.semantic_skips == 1
+    assert result.procedural_skips == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+    assert await store.arecord_count(("user-1", "procedural")) == 0
+
+
+@pytest.mark.asyncio
+async def test_non_command_memory_language_does_not_drop_held_candidates() -> None:
+    store = OpenCouchMemoryStore()
+    candidate = build_semantic_candidate(
+        _semantic_write(),
+        message="Family conflict is a big trigger for panic.",
+    )
+    buffer = _held_semantic_buffer(candidate)
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "Family conflict is a big trigger for panic.",
+                },
+                {
+                    "role": "user",
+                    "content": "I don't remember the details of that argument.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 1
+    assert result.semantic_skips == 0
+    assert await store.arecord_count(("user-1", "semantic")) == 1
 
 
 @pytest.mark.asyncio
@@ -1260,6 +1350,72 @@ async def test_repeated_implicit_procedural_preference_promotes_at_session_end()
     assert stored_rule["write_timing"] == "promotion"
     assert stored_rule["policy_version"] == "phase3_v1"
     assert stored_rule["source"] == "consolidation"
+
+
+def test_privacy_request_clears_session_buffer() -> None:
+    semantic = build_semantic_candidate(
+        _semantic_write(),
+        message="My sister is visiting next week.",
+    )
+    procedural = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="You've said meditation makes you more anxious.",
+            evidence=["Meditation makes me more anxious."],
+        ),
+        message="Meditation makes me more anxious.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    session_memory = SessionMemoryBuffer(session_id="thread-test")
+    session_memory.hold_semantic(
+        semantic,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test buffers semantic candidate before privacy override",
+            policy_version="test_policy_v1",
+        ),
+    )
+    session_memory.hold_procedural(
+        procedural,
+        PolicyDecision(
+            action="commit_at_session_end",
+            reason="test buffers procedural candidate before privacy override",
+            policy_version="test_policy_v1",
+        ),
+    )
+    state = _partial_state()
+    state["session_memory"] = session_memory.model_dump(mode="json")
+
+    context = OpenAITextRunContext(
+        thread_id="thread-test",
+        workflow_context=WorkflowContext(
+            llm_client=None,
+            memory_store=OpenCouchMemoryStore(),
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            memory_mode=MemoryMode.LOCAL,
+        ),
+        current_user_message="Actually, don't save this.",
+        user_id="user-1",
+        session_id="thread-test",
+    )
+    context.record_memory_tool_result(
+        action_type="forget_by_query",
+        response_text="I won't save that.",
+        memory_control={"pending_action": None},
+        clear_session_buffer=True,
+        side_effect="delete_memory",
+        retry_safe=True,
+    )
+
+    merge_therapeutic_tool_results(
+        state,
+        run_context=context,
+        response_text="I won't save that.",
+    )
+
+    cleared = SessionMemoryBuffer.model_validate(state["session_memory"])
+    assert cleared.held_semantic_candidates == []
+    assert cleared.held_procedural_candidates == []
 
 
 @pytest.mark.asyncio

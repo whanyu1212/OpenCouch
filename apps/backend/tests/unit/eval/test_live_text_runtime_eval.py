@@ -47,9 +47,11 @@ def test_dataset_paths_for_first_class_suites(tmp_path: Path) -> None:
 def test_load_cases_from_all_suite_combines_smoke_and_trajectories() -> None:
     cases = live_eval._load_cases_from_paths(live_eval._dataset_paths_for_suite("all"))
 
-    assert len(cases) == 17
+    assert len(cases) == 22
     assert cases[0].id == "openai_agents_sdk_therapeutic_smoke"
-    assert cases[-1].id == "memory_write_incognito_no_durable_write_live"
+    assert (
+        cases[-1].id == "memory_write_privacy_override_after_memory_like_statement_live"
+    )
 
 
 def test_load_cases_preserves_runtime_provider_and_turn_shape(tmp_path: Path) -> None:
@@ -150,12 +152,20 @@ def test_live_memory_write_dataset_defines_saved_memory_quality_cases() -> None:
         "memory_write_single_self_belief_not_promoted_live",
         "memory_write_repeated_self_belief_promotes_live",
         "memory_write_incognito_no_durable_write_live",
+        "memory_write_paraphrased_presentation_panic_semantic_live",
+        "memory_write_paraphrased_procedural_preference_live",
+        "memory_write_overlap_prefers_procedural_live",
+        "memory_write_repeated_transient_exhaustion_not_saved_live",
+        "memory_write_privacy_override_after_memory_like_statement_live",
     ]
     assert all(case.runtime == "response_llm" for case in cases)
     assert all(case.memory_write_expected for case in cases)
+    incognito_case = {case.id: case for case in cases}[
+        "memory_write_incognito_no_durable_write_live"
+    ]
     assert (
-        cases[-1].memory_mode.value == "incognito"
-        and cases[-1].memory_write_expected["saved_memory_count"] == 0
+        incognito_case.memory_mode.value == "incognito"
+        and incognito_case.memory_write_expected["saved_memory_count"] == 0
     )
 
 

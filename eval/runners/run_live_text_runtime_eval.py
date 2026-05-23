@@ -63,6 +63,7 @@ from agent.memory.store import MemoryStore, OpenCouchMemoryStore  # noqa: E402
 from agent.memory.store.postgres import PostgresMemoryStore  # noqa: E402
 from agent.models import AgentInput  # noqa: E402
 from agent.runtime import OpenAITextRuntime, build_initial_state  # noqa: E402
+from agent.memory.policy.write import text_contains_memory_control_request  # noqa: E402
 from agent.runtime.session import run_commit_session_memory  # noqa: E402
 from agent.runtime.session.history import (  # noqa: E402
     session_conversation_from_transcript,
@@ -517,9 +518,21 @@ async def _run_memory_write_quality(
     buffer = SessionMemoryBuffer(session_id=session_id)
     policy_decisions: list[dict[str, Any]] = []
     commit_result = _empty_memory_commit_result()
+    has_memory_control_request = any(
+        text_contains_memory_control_request(text) for text in user_turns
+    )
 
     immediate_items: list[BatchWriteItem] = []
     for fact in semantic_result.facts:
+        if has_memory_control_request:
+            policy_decisions.append(
+                _dropped_policy_decision_payload(
+                    layer="semantic",
+                    payload=fact.model_dump(mode="json"),
+                    reason="explicit memory-control request in session transcript",
+                )
+            )
+            continue
         if not _evidence_quote_is_user_grounded(user_turns, fact.evidence_quote):
             policy_decisions.append(
                 _dropped_policy_decision_payload(
@@ -575,6 +588,15 @@ async def _run_memory_write_quality(
         commit_result["immediate_semantic_skips"] = outcome.skipped
 
     for turn_index, draft in enumerate(procedural_result.rules):
+        if has_memory_control_request:
+            policy_decisions.append(
+                _dropped_policy_decision_payload(
+                    layer="procedural",
+                    payload=draft.model_dump(mode="json"),
+                    reason="explicit memory-control request in session transcript",
+                )
+            )
+            continue
         grounded_evidence = _filter_user_grounded_evidence(user_turns, draft.evidence)
         if not grounded_evidence:
             policy_decisions.append(
@@ -625,6 +647,10 @@ async def _run_memory_write_quality(
                 commit_result["immediate_procedural_writes"] += 1
         elif decision.action == "commit_at_session_end":
             buffer.hold_procedural(candidate, decision)
+
+    if has_memory_control_request:
+        buffer.held_semantic_candidates.clear()
+        buffer.held_procedural_candidates.clear()
 
     held_semantic_count = len(buffer.held_semantic_candidates)
     held_procedural_count = len(buffer.held_procedural_candidates)

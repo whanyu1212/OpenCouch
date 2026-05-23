@@ -22,6 +22,7 @@ from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.policy.write import text_contains_memory_control_request
 from agent.memory.recall import load_memory_for_turn
 from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.types import StoredSessionArc
@@ -708,7 +709,23 @@ class PersistentAgentRuntime:
         self._session_tracker.record_crisis_level(thread_id, turn_level)
 
         turn_approach = final_state.get("therapeutic_approach")
-        self._session_memory_buffer_for_thread(thread_id).record_approach(turn_approach)
+        session_buffer = self._session_memory_buffer_for_thread(thread_id)
+        session_buffer.record_approach(turn_approach)
+        diagnostics = final_state.get("diagnostics", {}) or {}
+        transcript = final_state.get("transcript", []) or []
+        latest_user_text = next(
+            (
+                str(message.get("content") or "")
+                for message in reversed(transcript)
+                if isinstance(message, Mapping) and message.get("role") == "user"
+            ),
+            "",
+        )
+        if diagnostics.get("openai_triage_no_clarification_reason") == (
+            "explicit_privacy_control"
+        ) or text_contains_memory_control_request(latest_user_text):
+            session_buffer.held_semantic_candidates.clear()
+            session_buffer.held_procedural_candidates.clear()
 
         await self._persist_runtime_session_tracking(thread_id)
 

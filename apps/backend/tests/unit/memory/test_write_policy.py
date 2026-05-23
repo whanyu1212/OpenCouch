@@ -20,6 +20,7 @@ from agent.memory.policy.write import (
     semantic_hard_policy_guard,
     should_commit_implicit_procedural_preference,
     should_commit_pattern,
+    text_contains_memory_control_request,
 )
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -240,6 +241,41 @@ def test_provenance_semantic_predicate_drops() -> None:
 
     assert decision is not None
     assert decision.action == "drop"
+
+
+def test_memory_control_text_requires_assistant_directed_intent() -> None:
+    assert text_contains_memory_control_request("Please don't save this.")
+    assert text_contains_memory_control_request(
+        "Actually, do not save or remember any of that after this conversation."
+    )
+    assert text_contains_memory_control_request("Forget this after today.")
+    assert text_contains_memory_control_request("Use incognito mode for this.")
+
+    assert not text_contains_memory_control_request("I can't forget that argument.")
+    assert not text_contains_memory_control_request("I don't remember details.")
+    assert not text_contains_memory_control_request("I forgot this happened before.")
+    assert not text_contains_memory_control_request("I want to remember this feeling.")
+
+
+def test_memory_control_semantic_candidate_drops() -> None:
+    candidate = build_semantic_candidate(
+        _semantic_write(
+            category="preference",
+            predicate="WANTS",
+            object_type="Concern",
+            object_identifier="do-not-save-or-remember-that-after-this-conversation",
+            evidence_quote="do not save or remember any of that after this conversation",
+        ),
+        message="Actually, do not save or remember any of that after this conversation.",
+    )
+
+    decision = semantic_hard_policy_guard(candidate)
+
+    assert decision is not None
+    assert decision.action == "drop"
+    assert (
+        decision.reason == "memory-control requests should not become semantic memory"
+    )
 
 
 @pytest.mark.asyncio
