@@ -101,7 +101,7 @@ Covers:
 Use this file to verify that active-flow continuity and crisis precedence remain correct while memory mode still controls durable recall.
 
 ### `datasets/trajectory_endurance.jsonl`
-Longer 5-turn endurance trajectories across memory modes.
+Longer 5-7 turn endurance trajectories across memory modes.
 
 Covers:
 - incognito no-leak endurance across repeated named-entity turns
@@ -109,6 +109,8 @@ Covers:
 - persistent memory-light control sessions without relevant recall
 - longer guided-exercise arcs with multiple continue / preserve / clear transitions
 - ambiguous recovery / relapse arcs that move through safe therapeutic, crisis clarification, and crisis response
+- extended recovery / relapse arcs with persistent-vs-incognito recall contrast
+- multi-seed retrieval specificity with required and forbidden working-memory matches
 
 Use this file to catch drift that only appears after several turns rather than in shorter trajectory checks.
 
@@ -124,6 +126,8 @@ Covers:
 - exercise interruption/resume and exercise restart quality
 - crisis clarification → de-escalation quality
 - recovery / relapse and repeated high-risk follow-up qualitative safety handling
+- extended recovery / relapse quality across seven turns
+- retrieval-specificity quality when several durable memories compete
 
 Use this file with `run_routing_eval.py --judge` to score whole-session coherence, memory appropriateness, workflow smoothness, and safety handling after deterministic checks pass.
 
@@ -237,6 +241,14 @@ apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
   --dataset eval/datasets/session_quality_trajectories.jsonl \
   --judge --provider openai
 ```
+
+Deterministic cases can also assert order-independent working-memory retrieval with:
+- `expected.working_memory.min_count`
+- `expected.working_memory.max_count`
+- `expected.working_memory.must_include`
+- `expected.working_memory.must_not_include`
+
+Use these when a case should prove that one specific memory was retrieved while unrelated memories were kept out.
 
 ### `runners/run_live_text_runtime_eval.py`
 Opt-in live runtime runner for broader OpenAI-backed smoke coverage.
@@ -358,10 +370,16 @@ Current evals now cover:
 - forget-by-query memory-tool execution
 - preservation of pending memory actions across safe, grounded, and crisis side turns
 
+Additional coverage now includes:
+- conflicting memory save / forget precedence
+- forget-by-query followed by cancel
+- forget-by-query followed by confirm
+- repeated confirm with no pending memory action
+- grounded and crisis side turns preserving pending memory actions without running memory tools
+
 Still weak or missing:
-- conflicting memory intents
-- deeper multi-turn save/forget combinations
-- more ambiguous memory-control phrasing
+- broader ambiguous natural-language memory-control phrasing under live LLM classification
+- qualitative judgment of whether memory-control replies feel clear enough in long sessions
 
 ### 3. Guided-exercise lifecycle coverage is broad, but some edge cases remain
 Covered:
@@ -375,9 +393,16 @@ Covered:
 - crisis interruption during an active exercise
 - explicit post-crisis resume
 
+Additional coverage now includes:
+- soft abandon wording
+- explicit pause / preserve wording
+- conflicting stop / continue cue where stop wins
+- restart wording variants that switch exercise type
+- negated confirmation cue unit tests for "not ready to move on" and "can't keep going"
+
 Still light:
-- additional abandon / restart wording variants
-- more conflicting continue / clear cue combinations
+- live LLM wording diversity for abandon, pause, restart, and continue decisions
+- judged quality of how natural the transitions feel, beyond deterministic state correctness
 
 ### 4. Grounded missing-tool fallback behavior is documented but semantically odd
 The current contract for `grounded_lookup_missing_tool_falls_back` is:
@@ -396,26 +421,34 @@ Current evals now cover:
 - crisis interruption while another workflow is active
 - repeated high-risk follow-up turns
 - clarification with location still avoiding lookup
+- extended recovery / relapse paths across seven turns
+- persistent-vs-incognito recall contrast on safe and clarification turns inside crisis trajectories
 
 Still light:
-- more ambiguous or conflicting safety signals
-- mixed recovery / relapse patterns across longer crisis sequences
+- live LLM samples for ambiguous or conflicting safety signals
+- broader 10+ turn mixed recovery / relapse sequences
 
-### 6. Mixed-intent precedence is still the highest-risk gap
-Examples worth adding:
+### 6. Mixed-intent precedence has stronger deterministic coverage
+Additional deterministic coverage now includes:
 - crisis + memory control in the same turn
-- crisis + guided exercise in the same turn
+- crisis + pending memory confirmation in the same turn
+- crisis + guided exercise start / continue in the same turn
+- crisis + grounded lookup in the same turn
 - grounded lookup + memory action in the same turn
-- preserve / continue conflicts with multiple active cues
+- grounded lookup preserving pending memory deletion
+
+Still light:
+- live LLM samples for naturally worded mixed-intent turns
+- longer sessions with multiple active cues before the mixed-intent turn
 
 ### 7. Full session trajectories are still only partially covered
 The trajectory memory-mode, interruption, endurance, and judged session-quality datasets
 now improve persistent-vs-incognito coverage for durable recall behavior plus longer
-exercise/crisis/recovery switching and whole-session quality scoring, but the eval suite
+exercise/crisis/recovery switching, retrieval-specificity assertions, and whole-session quality scoring, but the eval suite
 is still lighter on:
-- even longer 7-10+ turn conversational endurance checks
-- richer retrieval-quality assertions beyond presence/absence of recalled state
-- judged coverage for additional nuanced scenarios beyond the current curated fourteen full-session cases
+- 10+ turn conversational endurance checks across broader topics
+- live judged retrieval-specificity samples beyond deterministic memory assertions
+- judged coverage for additional nuanced scenarios beyond the current curated sixteen full-session cases
 
 ### 8. Live LLM coverage is opt-in smoke coverage, not a full benchmark
 The live runtime eval runner now covers real provider paths for SDK response
@@ -453,10 +486,7 @@ When adding a new eval case:
 ## Suggested next additions
 
 Priority candidates:
-- guided exercise interrupted by crisis
-- memory control interrupted by crisis
-- proactive recall enable/disable coverage in eval datasets
-- mixed-intent precedence cases
-- explicit guided-exercise exit / restart cases
-- deeper memory save / retrieval behavior coverage
+- live LLM samples for naturally worded mixed-intent and crisis-ambiguity turns
+- 10+ turn endurance trajectories across broader support topics
+- live judged retrieval-specificity samples with competing durable memories
 - scheduled or manually approved live runtime eval runs with saved artifacts
