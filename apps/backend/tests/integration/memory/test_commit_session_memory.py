@@ -984,6 +984,231 @@ async def test_distinct_semantic_and_procedural_memories_both_survive() -> None:
 
 
 @pytest.mark.asyncio
+async def test_semantic_clustering_merges_near_paraphrases() -> None:
+    store = OpenCouchMemoryStore()
+    candidate_a = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="WORRIES_ABOUT",
+            object_type="Concern",
+            object_identifier="presentation panic",
+            evidence_quote="I feel panic when I have to do presentations.",
+            source_turn_index=0,
+        ),
+        message="I feel panic when I have to do presentations.",
+    )
+    candidate_b = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="WORRIES_ABOUT",
+            object_type="Concern",
+            object_identifier="presentation panic",
+            evidence_quote="Doing a presentation makes me feel very panicked.",
+            source_turn_index=1,
+        ),
+        message="Doing a presentation makes me feel very panicked.",
+    )
+    buffer = _held_semantic_buffer(candidate_a, candidate_b)
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {
+                    "role": "user",
+                    "content": "I feel panic when I have to do presentations.",
+                },
+                {
+                    "role": "user",
+                    "content": "Doing a presentation makes me feel very panicked.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(
+            summary="Presentations repeatedly trigger panic for the user.",
+            primary_themes=["presentations", "panic"],
+            open_loops=["wants presentation support"],
+        ),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 1
+    assert await store.arecord_count(("user-1", "semantic")) == 1
+
+
+@pytest.mark.asyncio
+async def test_semantic_clustering_preserves_distinct_entities() -> None:
+    store = OpenCouchMemoryStore()
+    candidate_a = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="WORRIES_ABOUT",
+            object_type="Concern",
+            object_identifier="boss anxiety",
+            evidence_quote="My boss makes me anxious.",
+            source_turn_index=0,
+        ),
+        message="My boss makes me anxious.",
+    )
+    candidate_b = build_semantic_candidate(
+        _semantic_write(
+            category="trigger",
+            predicate="WORRIES_ABOUT",
+            object_type="Concern",
+            object_identifier="sister anxiety",
+            evidence_quote="My sister makes me anxious.",
+            source_turn_index=1,
+        ),
+        message="My sister makes me anxious.",
+    )
+    buffer = _held_semantic_buffer(candidate_a, candidate_b)
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {"role": "user", "content": "My boss makes me anxious."},
+                {"role": "user", "content": "My sister makes me anxious."},
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=_stored_arc(
+            summary="The user feels anxious around both their boss and their sister.",
+            primary_themes=["boss anxiety", "family anxiety"],
+            open_loops=[],
+        ),
+        llm_client=_FakeSessionCommitLLM(
+            extraction_result=ExtractionResult(facts=[], reason="unused"),
+            summarization_result=SummarizationResult(arc=None, reason="unused"),
+            semantic_reconciliation_decision={
+                "action": "coexist",
+                "record_indexes": [],
+                "reason": "boss and sister anxiety are distinct semantic memories",
+                "confidence": "high",
+            },
+        ),
+    )
+
+    assert result is not None
+    assert result.semantic_writes == 2
+    assert await store.arecord_count(("user-1", "semantic")) == 2
+
+
+@pytest.mark.asyncio
+async def test_procedural_clustering_merges_paraphrased_preferences() -> None:
+    store = OpenCouchMemoryStore()
+    candidate_a = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Be more supportive during talks.",
+            evidence=["Be more supportive during talks."],
+        ),
+        message="Be more supportive during talks.",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    candidate_b = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Support me more when I am talking in front of people.",
+            evidence=["Support me more when I am talking in front of people."],
+        ),
+        message="Support me more when I am talking in front of people.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    buffer = _held_procedural_buffer(candidate_a, candidate_b)
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {"role": "user", "content": "Be more supportive during talks."},
+                {
+                    "role": "user",
+                    "content": "Support me more when I am talking in front of people.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=None,
+    )
+
+    assert result is not None
+    assert result.procedural_writes == 1
+    profile_record = await store.aget(("user-1", "procedural"), "user_response_style")
+    assert profile_record is not None
+    assert len(profile_record.value["rules"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_procedural_clustering_preserves_distinct_preferences() -> None:
+    store = OpenCouchMemoryStore()
+    candidate_a = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Be direct when panic spikes.",
+            evidence=["Be direct when panic spikes."],
+        ),
+        message="Be direct when panic spikes.",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    candidate_b = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Keep plans bite-sized when I am overwhelmed.",
+            evidence=["Keep plans bite-sized when I am overwhelmed."],
+        ),
+        message="Keep plans bite-sized when I am overwhelmed.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    candidate_c = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Be direct when panic spikes.",
+            evidence=["Please be direct when panic spikes."],
+        ),
+        message="Please be direct when panic spikes.",
+        session_id="thread-test",
+        turn_index=2,
+    )
+    candidate_d = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Keep plans bite-sized when I am overwhelmed.",
+            evidence=["Please keep plans bite-sized when I am overwhelmed."],
+        ),
+        message="Please keep plans bite-sized when I am overwhelmed.",
+        session_id="thread-test",
+        turn_index=3,
+    )
+    buffer = _held_procedural_buffer(candidate_a, candidate_b, candidate_c, candidate_d)
+
+    result = await run_commit_session_memory(
+        _partial_state(
+            transcript=[
+                {"role": "user", "content": "Be direct when panic spikes."},
+                {
+                    "role": "user",
+                    "content": "Keep plans bite-sized when I am overwhelmed.",
+                },
+                {"role": "user", "content": "Please be direct when panic spikes."},
+                {
+                    "role": "user",
+                    "content": "Please keep plans bite-sized when I am overwhelmed.",
+                },
+            ]
+        ),
+        memory_store=store,
+        session_buffer=buffer,
+        stored_arc=None,
+    )
+
+    assert result is not None
+    assert result.procedural_writes == 2
+    profile_record = await store.aget(("user-1", "procedural"), "user_response_style")
+    assert profile_record is not None
+    assert len(profile_record.value["rules"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_repeated_implicit_procedural_preference_promotes_at_session_end() -> (
     None
 ):
