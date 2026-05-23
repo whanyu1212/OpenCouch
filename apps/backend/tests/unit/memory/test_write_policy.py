@@ -548,6 +548,35 @@ async def test_llm_procedural_policy_defers_durable_natural_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_control_procedural_request_can_commit_immediately() -> None:
+    candidate = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Do not save this conversation detail or remember it later.",
+            evidence=["Please don't save this or remember it later."],
+        ),
+        message="Please don't save this or remember it later.",
+        session_id="session-1",
+        turn_index=2,
+    )
+    llm = _FakePolicyLLM(
+        {
+            "action": "commit_now",
+            "reason": "explicit memory-control request should apply immediately",
+            "confidence": "high",
+        }
+    )
+
+    decision = await decide_procedural_candidate_llm_primary(
+        candidate,
+        llm_client=llm,
+    )
+
+    assert llm.structured_calls == 1
+    assert decision.action == "commit_now"
+    assert decision.policy_version == "phase1_llm_v1"
+
+
+@pytest.mark.asyncio
 async def test_llm_procedural_policy_clamps_commit_now_to_session_end() -> None:
     candidate = build_procedural_candidate(
         ProceduralRuleDraft(

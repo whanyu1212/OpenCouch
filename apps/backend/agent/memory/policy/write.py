@@ -89,6 +89,18 @@ _FACT_SHAPED_PROCEDURAL_CUES = (
     "remember that ",
     "remember the user ",
 )
+_MEMORY_CONTROL_IMMEDIATE_CUES = (
+    "don't save",
+    "do not save",
+    "dont save",
+    "forget this",
+    "forget that",
+    "incognito",
+    "private mode",
+    "privacy mode",
+    "do not remember",
+    "don't remember",
+)
 
 
 def _prefixed_policy_reason(prefix: str, reason: str) -> str:
@@ -260,7 +272,10 @@ def _procedural_candidate_can_commit_immediately(
 ) -> bool:
     """Return whether a procedural candidate is eligible for immediate commit."""
 
-    return False
+    text = " ".join(
+        [candidate.payload.rule, *candidate.evidence_quotes],
+    ).lower()
+    return any(cue in text for cue in _MEMORY_CONTROL_IMMEDIATE_CUES)
 
 
 def _semantic_policy_prompt(candidate: SemanticCandidate) -> str:
