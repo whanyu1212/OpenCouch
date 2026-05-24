@@ -6,15 +6,15 @@ hybrid LLM runs, persistent local memory, and thread switching.
 
 Common invocations:
 
-``uv run python -m opencouch_cli --mode deterministic --memory-mode guest``
+``uv run python -m opencouch_tui.cli_app --mode deterministic --memory-mode guest``
     Zero LLM calls, in-memory only. Useful for checking rendering and
     deterministic runtime paths.
 
-``uv run python -m opencouch_cli --mode auto --memory-mode persistent``
+``uv run python -m opencouch_tui.cli_app --mode auto --memory-mode persistent``
     Real model when configured, durable local persistence, and memory
     writes enabled. Postgres is recommended; SQLite remains a legacy fallback.
 
-``uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice``
+``uv run python -m opencouch_tui.cli_app --mode auto --memory-mode persistent --user-id alice``
     Stable owner namespace for semantic, episodic, and procedural memory
     across multiple threads.
 
@@ -48,7 +48,6 @@ import difflib
 import json
 import logging
 import os
-import warnings
 from contextlib import AsyncExitStack
 
 from datetime import UTC, datetime
@@ -75,7 +74,6 @@ from agent.memory.reconciliation import filter_active_semantic_records
 from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
-    DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
     ThreadSummary,
 )
@@ -109,6 +107,7 @@ from config import (
     create_configured_response_llm_client,
     get_settings,
 )
+from opencouch_tui.cli_compat import build_cli_parser, resolve_cli_memory_mode
 from opencouch_tui.command_helpers import (
     first_matching_text,
     format_entity_identifier,
@@ -484,89 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
         Configured argument parser for the CLI entrypoint.
     """
 
-    parser = argparse.ArgumentParser(
-        description="Run the interactive OpenCouch CLI.",
-        epilog=(
-            "Example: uv run python -m opencouch_cli --mode auto "
-            "--thread-id local-demo --sqlite-path .opencouch_threads.sqlite3"
-        ),
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["deterministic", "hybrid", "auto"],
-        default="auto",
-        help="How to resolve the LLM client for crisis classification.",
-    )
-    parser.add_argument(
-        "--thread-id",
-        default=None,
-        help="Stable thread identifier to resume a prior local conversation.",
-    )
-    parser.add_argument(
-        "--user-id",
-        default=None,
-        help=(
-            "Stable owner identifier for long-term memory (semantic facts, "
-            "episodic arcs, procedural rules). When set, memory writes are "
-            "namespaced by this user_id rather than the thread_id, so "
-            "switching threads preserves memory across sessions. Only "
-            "meaningful in persistent memory mode — guest mode has no "
-            "long-term storage to namespace. When omitted, falls back to "
-            "the thread_id for backward compatibility."
-        ),
-    )
-    parser.add_argument(
-        "--sqlite-path",
-        default=str(DEFAULT_THREAD_DB_PATH),
-        help=(
-            "Legacy SQLite path for persisted session state. Deprecated "
-            "for normal local development; prefer "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
-        ),
-    )
-    parser.add_argument(
-        "--memory-sqlite-path",
-        default=str(DEFAULT_MEMORY_DB_PATH),
-        help=(
-            "Legacy SQLite path for the memory store (semantic facts + "
-            "episodic arcs). Deprecated for normal local development; prefer "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
-        ),
-    )
-    parser.add_argument(
-        "--crisis-log-sqlite-path",
-        default=str(DEFAULT_CRISIS_LOG_DB_PATH),
-        help=(
-            "Legacy SQLite path for the crisis log (safety audit trail). "
-            "Deprecated for normal local development; prefer "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
-        ),
-    )
-    parser.add_argument(
-        "--memory-mode",
-        choices=["guest", "persistent", "ask"],
-        default="ask",
-        help="Local memory behavior: guest (ephemeral), persistent (configured backend), or ask at startup.",
-    )
-    parser.add_argument(
-        "--response-model-tier",
-        choices=["fast", "quality"],
-        default="fast",
-        help=(
-            "Text response tier for therapeutic prose generation. "
-            "'fast' favors lower latency; 'quality' favors richer replies."
-        ),
-    )
-    parser.add_argument(
-        "--disable-tracing",
-        action="store_true",
-        default=False,
-        help=(
-            "Disable optional tracing integrations for this CLI run. "
-            "Equivalent to setting OPENCOUCH_DISABLE_TRACING=1."
-        ),
-    )
-    return parser
+    return build_cli_parser()
 
 
 def resolve_llm_client(mode: str) -> tuple[BaseLLMClient | None, str]:
@@ -615,21 +532,6 @@ def resolve_response_llm_client(
         return None
 
 
-def _persistent_mode_hint(persistence_backend: PersistenceBackend) -> str:
-    """Return backend-aware copy for the persistent memory choice.
-
-    Args:
-        persistence_backend (PersistenceBackend): Configured persistence backend.
-
-    Returns:
-        str: Short user-facing persistent-mode description.
-    """
-
-    if persistence_backend == "postgres":
-        return "save memory using Postgres"
-    return "save memory using SQLite"
-
-
 def resolve_memory_mode(
     memory_mode: str,
     *,
@@ -645,30 +547,13 @@ def resolve_memory_mode(
         Resolved memory mode, either ``"guest"`` or ``"persistent"``.
     """
 
-    if memory_mode in {"guest", "persistent"}:
-        return memory_mode
-
-    backend = persistence_backend or get_settings().persistence_backend
-    persistent_hint = _persistent_mode_hint(backend)
-    console.print()
-    console.print(Rule(style="panel", characters="─"))
-    console.print("  [primary]Choose Memory Mode[/primary]", highlight=False)
-    console.print()
-    console.print(
-        "  [accent]1[/accent]  [info]Guest Mode[/info]  [hint]— private, in-memory only[/hint]"
+    return resolve_cli_memory_mode(
+        memory_mode,
+        console=console,
+        prompt_ask=Prompt.ask,
+        persistence_backend=persistence_backend,
+        render_warning=lambda message: render_info(message, style="warning"),
     )
-    console.print(
-        f"  [accent]2[/accent]  [info]Persistent Mode[/info]  [hint]— {persistent_hint}[/hint]"
-    )
-    console.print()
-    console.print(Rule(style="panel", characters="─"))
-    while True:
-        choice = Prompt.ask("  [muted]select[/muted]", default="1").strip()
-        if choice == "1":
-            return "guest"
-        if choice == "2":
-            return "persistent"
-        render_info("Please choose 1 (guest) or 2 (persistent).", style="warning")
 
 
 def render_header(
@@ -3860,27 +3745,11 @@ async def chat_loop(
 
 
 def main() -> int:
-    """Run the OpenCouch CLI.
-
-    Runs the interactive text CLI.
+    """Run the OpenCouch terminal chat runtime.
 
     Returns:
-        Process exit code for the CLI session.
+        Process exit code for the terminal chat session.
     """
-
-    warnings.warn(
-        "opencouch_cli is deprecated; prefer the Textual TUI via `uv run python -m opencouch_tui`.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    console.print(
-        Panel(
-            "Legacy CLI is deprecated. Prefer the Textual TUI via "
-            "[bold]uv run python -m opencouch_tui[/bold].",
-            title="Deprecation Notice",
-            border_style="warning",
-        )
-    )
 
     args = build_parser().parse_args()
 
@@ -3904,3 +3773,7 @@ def main() -> int:
             crisis_log_sqlite_path=crisis_log_sqlite_path,
         )
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
