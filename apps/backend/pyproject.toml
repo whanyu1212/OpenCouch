@@ -7,6 +7,7 @@ dependencies = [
   "aiosqlite>=0.22,<1.0",
   "fastapi>=0.115,<1.0",
   "graphiti-core>=0.28.2",
+  "greenlet>=3.0,<4.0",
   "openai>=2.0",
   "openai-agents[sqlalchemy]>=0.17.2",
   "opik>=2.0.15",

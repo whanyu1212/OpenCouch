@@ -67,6 +67,79 @@ class EndSessionRequest(BaseModel):
     )
 
 
+class VoiceRealtimeSessionRequest(BaseModel):
+    """POST /api/voice/realtime/session request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    assistant_voice: (
+        Literal[
+            "alloy",
+            "ash",
+            "ballad",
+            "cedar",
+            "coral",
+            "echo",
+            "marin",
+            "sage",
+            "shimmer",
+            "verse",
+        ]
+        | None
+    ) = None
+
+
+class VoiceToolCallRequest(BaseModel):
+    """POST /api/voice/realtime/tools request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    current_user_message: str = ""
+    transcript: list[dict[str, object]] = Field(default_factory=list)
+    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
+class VoiceRecordedToolCall(BaseModel):
+    """One Realtime tool call observed during a voice turn."""
+
+    tool_name: str = Field(min_length=1)
+    status: Literal["started", "completed", "failed"]
+    output: dict[str, object] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class VoiceTurnRecordRequest(BaseModel):
+    """POST /api/voice/realtime/turn request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    user_text: str = ""
+    assistant_text: str = ""
+    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    route: str | None = None
+    response_style: str | None = None
+    tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
+
+
+class VoiceTurnPolicyRequest(BaseModel):
+    """POST /api/voice/realtime/turn-policy request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    user_text: str = Field(min_length=1)
+    memory_mode: Literal["incognito", "persistent"] = "incognito"
+
+
+class VoiceEndSessionRequest(BaseModel):
+    """POST /api/voice/realtime/end request body."""
+
+    thread_id: str = Field(min_length=1)
+    memory_mode: Literal["incognito", "persistent"] = "incognito"
+
+
 # Response models
 
 
@@ -146,6 +219,48 @@ class SessionArcResponse(BaseModel):
     turn_count: int
     open_loops: list[str]
     resolved_threads: list[str]
+
+
+class VoiceRealtimeSessionResponse(BaseModel):
+    """POST /api/voice/realtime/session response body."""
+
+    client_secret: str
+    thread_id: str
+    user_id: str | None = None
+    memory_mode: Literal["incognito", "persistent"]
+    session_config: dict[str, object]
+
+
+class VoiceToolCallResponse(BaseModel):
+    """POST /api/voice/realtime/tools response body."""
+
+    output: dict[str, object]
+
+
+class VoiceTurnRecordResponse(BaseModel):
+    """POST /api/voice/realtime/turn response body."""
+
+    recorded: bool
+    thread_id: str
+    message_count: int
+
+
+class VoiceTurnPolicyResponse(BaseModel):
+    """POST /api/voice/realtime/turn-policy response body."""
+
+    route: str
+    response_style: str
+    required_tool_name: str | None = None
+    required_tool_arguments: dict[str, object] = Field(default_factory=dict)
+    instructions: str
+
+
+class VoiceEndSessionResponse(BaseModel):
+    """POST /api/voice/realtime/end response body."""
+
+    finalized: bool
+    summary: str | None = None
+    detail: str
 
 
 class MemoryStatusResponse(BaseModel):

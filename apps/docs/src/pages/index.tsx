@@ -108,7 +108,7 @@ const flowSteps = [
   {
     label: 'Where you already are',
     n: '04',
-    body: 'Web chat, LiveKit voice, and Telegram DMs are already dogfood surfaces. WhatsApp and Discord are planned next.'
+    body: 'Web chat, OpenAI Realtime voice, and Telegram DMs are already dogfood surfaces. WhatsApp and Discord are planned next.'
   },
   {
     label: 'AGPL-3.0 licensed',

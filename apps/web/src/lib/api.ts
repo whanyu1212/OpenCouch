@@ -9,22 +9,6 @@ const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api"
 ).replace(/\/$/, "");
 
-export const TRANSCRIPTION_LANGUAGE_OPTIONS = [
-  { value: "en", label: "english" },
-  { value: "", label: "auto detect" },
-  { value: "es", label: "spanish" },
-  { value: "fr", label: "french" },
-  { value: "de", label: "german" },
-  { value: "it", label: "italian" },
-  { value: "pt", label: "portuguese" },
-  { value: "ja", label: "japanese" },
-  { value: "ko", label: "korean" },
-  { value: "zh", label: "chinese" },
-] as const;
-
-export type TranscriptionLanguageOption =
-  (typeof TRANSCRIPTION_LANGUAGE_OPTIONS)[number]["value"];
-
 export const ASSISTANT_VOICE_OPTIONS = [
   { value: "marin", label: "marin" },
   { value: "cedar", label: "cedar" },
@@ -146,19 +130,43 @@ export interface RuntimeInfo {
   version: string;
 }
 
-export interface LiveKitVoiceTokenResponse {
-  server_url: string;
-  participant_token: string;
-  room_name: string;
-  identity: string;
-  memory_mode: string;
-  assistant_voice: string;
+export interface RealtimeVoiceSessionResponse {
+  client_secret: string;
+  thread_id: string;
+  user_id: string | null;
+  memory_mode: VoiceMemoryMode;
+  session_config: Record<string, unknown>;
 }
 
-export interface LiveKitVoiceFinalizationStatusResponse {
-  status: "in_progress" | "completed" | "failed";
-  detail: string | null;
-  updated_at: string;
+export interface RealtimeVoiceToolCallResponse {
+  output: Record<string, unknown>;
+}
+
+export interface RealtimeVoiceTurnRecordResponse {
+  recorded: boolean;
+  thread_id: string;
+  message_count: number;
+}
+
+export interface RealtimeVoiceRecordedToolCall {
+  tool_name: string;
+  status: "started" | "completed" | "failed";
+  output?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface RealtimeVoiceTurnPolicyResponse {
+  route: string;
+  response_style: string;
+  required_tool_name: string | null;
+  required_tool_arguments: Record<string, unknown>;
+  instructions: string;
+}
+
+export interface RealtimeVoiceEndSessionResponse {
+  finalized: boolean;
+  summary: string | null;
+  detail: string;
 }
 
 // ── Stream event types ───────────────────────────────────────────────
@@ -454,45 +462,148 @@ export function createChatStream({
   return ws;
 }
 
-// ── LiveKit voice session helpers ───────────────────────────────────
+// ── OpenAI Realtime voice session helpers ───────────────────────────
 
-export async function createLiveKitVoiceToken(
-  userId: string,
-  threadId: string,
-  transcriptionLanguage: TranscriptionLanguageOption,
-  memoryMode: VoiceMemoryMode,
-  assistantVoice: AssistantVoiceOption
-): Promise<LiveKitVoiceTokenResponse> {
-  const res = await fetch(`${API_BASE}/voice/livekit/token`, {
+export async function createRealtimeVoiceSession({
+  threadId,
+  userId,
+  memoryMode,
+  assistantVoice,
+}: {
+  threadId: string;
+  userId?: string;
+  memoryMode: VoiceMemoryMode;
+  assistantVoice?: AssistantVoiceOption;
+}): Promise<RealtimeVoiceSessionResponse> {
+  const res = await fetch(`${API_BASE}/voice/realtime/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      user_id: userId,
       thread_id: threadId,
-      transcription_language: transcriptionLanguage,
+      user_id: userId || undefined,
       memory_mode: memoryMode,
-      assistant_voice: assistantVoice,
-      dispatch_agent: true,
+      assistant_voice: assistantVoice || undefined,
     }),
   });
   if (!res.ok) {
-    throw new Error(`LiveKit token failed: ${res.status}`);
+    throw new Error(`Realtime voice session failed: ${res.status}`);
   }
   return res.json();
 }
 
-export async function getLiveKitVoiceFinalizationStatus(
-  threadId: string
-): Promise<LiveKitVoiceFinalizationStatusResponse | null> {
-  const res = await fetch(
-    `${API_BASE}/voice/livekit/finalization-status/${threadId}`,
-    { cache: "no-store" }
-  );
-  if (res.status === 404) {
-    return null;
-  }
+export async function executeRealtimeVoiceTool({
+  threadId,
+  userId,
+  currentUserMessage,
+  transcript,
+  memoryMode,
+  toolName,
+  arguments: args,
+}: {
+  threadId: string;
+  userId?: string;
+  currentUserMessage?: string;
+  transcript?: Record<string, unknown>[];
+  memoryMode: VoiceMemoryMode;
+  toolName: string;
+  arguments?: Record<string, unknown>;
+}): Promise<RealtimeVoiceToolCallResponse> {
+  const res = await fetch(`${API_BASE}/voice/realtime/tools`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      thread_id: threadId,
+      user_id: userId || undefined,
+      current_user_message: currentUserMessage || "",
+      transcript: transcript || [],
+      memory_mode: memoryMode,
+      tool_name: toolName,
+      arguments: args || {},
+    }),
+  });
   if (!res.ok) {
-    throw new Error(`LiveKit finalization status failed: ${res.status}`);
+    throw new Error(`Realtime voice tool failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function prepareRealtimeVoiceTurnPolicy({
+  threadId,
+  userId,
+  userText,
+  memoryMode,
+}: {
+  threadId: string;
+  userId?: string;
+  userText: string;
+  memoryMode: VoiceMemoryMode;
+}): Promise<RealtimeVoiceTurnPolicyResponse> {
+  const res = await fetch(`${API_BASE}/voice/realtime/turn-policy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      thread_id: threadId,
+      user_id: userId || undefined,
+      user_text: userText,
+      memory_mode: memoryMode,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Realtime voice turn policy failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function recordRealtimeVoiceTurn({
+  threadId,
+  userId,
+  userText,
+  assistantText,
+  memoryMode,
+  route,
+  responseStyle,
+  toolCalls,
+}: {
+  threadId: string;
+  userId?: string;
+  userText: string;
+  assistantText: string;
+  memoryMode: VoiceMemoryMode;
+  route?: string | null;
+  responseStyle?: string | null;
+  toolCalls?: RealtimeVoiceRecordedToolCall[];
+}): Promise<RealtimeVoiceTurnRecordResponse> {
+  const res = await fetch(`${API_BASE}/voice/realtime/turn`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      thread_id: threadId,
+      user_id: userId || undefined,
+      user_text: userText,
+      assistant_text: assistantText,
+      memory_mode: memoryMode,
+      route: route || undefined,
+      response_style: responseStyle || undefined,
+      tool_calls: toolCalls || [],
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Realtime voice turn record failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function endRealtimeVoiceSession(
+  threadId: string,
+  memoryMode: VoiceMemoryMode
+): Promise<RealtimeVoiceEndSessionResponse> {
+  const res = await fetch(`${API_BASE}/voice/realtime/end`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, memory_mode: memoryMode }),
+  });
+  if (!res.ok) {
+    throw new Error(`Realtime voice end failed: ${res.status}`);
   }
   return res.json();
 }

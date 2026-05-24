@@ -3,38 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  useAgent,
-  useAudioPlayback,
-  useSessionContext,
-} from "@livekit/components-react";
-import { ConnectionState } from "livekit-client";
-import {
   ASSISTANT_VOICE_OPTIONS,
-  TRANSCRIPTION_LANGUAGE_OPTIONS,
   type AssistantVoiceOption,
-  type TranscriptionLanguageOption,
 } from "@/lib/api";
 import { useCommandActions } from "@/lib/command-actions";
 import { useSessionStore, type EndedSessionResult } from "@/lib/session";
+import { useRealtimeVoiceSession } from "@/components/realtime-voice-session-provider";
 import { CouchLogo } from "@/components/logo";
 import { SessionPill } from "@/components/conversation-shell";
 
-// Keep the mic closed until the agent and voice output path are ready. This
-// avoids collecting speech during worker cold starts, when the user would not
-// yet hear confirmation that the session is listening.
-const VOICE_SESSION_START_OPTIONS = {
-  tracks: {
-    microphone: {
-      enabled: false,
-    },
-  },
-} as const;
-
 const ENABLE_VOICE_DEBUG = process.env.NEXT_PUBLIC_ENABLE_VOICE_DEBUG === "true";
-const VOICE_OUTPUT_WARMUP_TOPIC = "opencouch.voice_output_warmup";
-const VOICE_OUTPUT_WARMUP_TIMEOUT_MS = 6_000;
 
-type VoiceOutputWarmupStatus = "idle" | "requested" | "speaking" | "done";
 type VoiceEndOptionsStatus = "idle" | "in_progress" | "completed" | "failed";
 
 function formatVoiceTimestamp(value: string | null | undefined): string {
@@ -71,13 +50,6 @@ function safeServerHost(value: string | null | undefined): string {
   } catch {
     return "configured";
   }
-}
-
-function languageLabel(value: string): string {
-  const match = TRANSCRIPTION_LANGUAGE_OPTIONS.find(
-    (option) => option.value === value
-  );
-  return match?.label ?? "auto detect";
 }
 
 function assistantVoiceLabel(value: string): string {
@@ -318,9 +290,6 @@ export default function VoicePage() {
   const voiceConnected = useSessionStore((s) => s.voiceConnected);
   const voiceAgentSpeaking = useSessionStore((s) => s.voiceAgentSpeaking);
   const voiceReadyToSpeak = useSessionStore((s) => s.voiceReadyToSpeak);
-  const transcriptionLanguageSelected = useSessionStore(
-    (s) => s.transcriptionLanguageSelected
-  );
   const assistantVoiceSelected = useSessionStore(
     (s) => s.assistantVoiceSelected
   );
@@ -333,27 +302,16 @@ export default function VoicePage() {
   const voiceError = useSessionStore((s) => s.voiceError);
   const setVoiceError = useSessionStore((s) => s.setVoiceError);
   const setChatNotice = useSessionStore((s) => s.setChatNotice);
-  const setTranscriptionLanguageSelected = useSessionStore(
-    (s) => s.setTranscriptionLanguageSelected
-  );
   const setAssistantVoiceSelected = useSessionStore(
     (s) => s.setAssistantVoiceSelected
   );
   const clearVoiceTranscripts = useSessionStore((s) => s.clearVoiceTranscripts);
   const clearVoiceActivities = useSessionStore((s) => s.clearVoiceActivities);
-  const voiceDisconnect = useSessionStore((s) => s.voiceDisconnect);
-  const session = useSessionContext();
-  const agent = useAgent();
-  const { canPlayAudio, startAudio } = useAudioPlayback(session.room);
+  const realtimeVoice = useRealtimeVoiceSession();
   const { startNewSession } = useCommandActions();
   const router = useRouter();
-  const [voiceOutputWarmupStatus, setVoiceOutputWarmupStatus] =
-    useState<VoiceOutputWarmupStatus>("idle");
   const [voiceEndOptionsOpen, setVoiceEndOptionsOpen] = useState(false);
   const [endedVoiceThreadId, setEndedVoiceThreadId] = useState<string | null>(null);
-  const voiceOutputWarmupRequestedRef = useRef(false);
-  const voiceOutputWarmupTimeoutRef = useRef<number | null>(null);
-  const microphoneDesiredEnabledRef = useRef<boolean | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
 
   // Live call timer — derived from `connectedAt` so we don't need an effect
@@ -376,25 +334,6 @@ export default function VoicePage() {
       ? Math.max(0, now - connectedAtMs)
       : 0;
 
-  const clearVoiceOutputWarmupTimeout = useCallback(() => {
-    if (voiceOutputWarmupTimeoutRef.current !== null) {
-      window.clearTimeout(voiceOutputWarmupTimeoutRef.current);
-      voiceOutputWarmupTimeoutRef.current = null;
-    }
-  }, []);
-
-  const resetVoiceOutputWarmup = useCallback(() => {
-    voiceOutputWarmupRequestedRef.current = false;
-    clearVoiceOutputWarmupTimeout();
-    setVoiceOutputWarmupStatus("idle");
-  }, [clearVoiceOutputWarmupTimeout]);
-
-  useEffect(() => {
-    return () => {
-      clearVoiceOutputWarmupTimeout();
-    };
-  }, [clearVoiceOutputWarmupTimeout]);
-
   useEffect(() => {
     transcriptScrollRef.current?.scrollTo({
       top: transcriptScrollRef.current.scrollHeight,
@@ -403,10 +342,7 @@ export default function VoicePage() {
   }, [voiceTranscripts]);
 
   const connect = useCallback(async () => {
-    if (
-      session.connectionState === ConnectionState.Connecting ||
-      session.isConnected
-    ) {
+    if (voiceConnected || realtimeVoice.busy) {
       return;
     }
 
@@ -415,153 +351,46 @@ export default function VoicePage() {
       return;
     }
 
-    if (sessionMode !== "incognito" && !userId.trim()) {
-      setVoiceError(
-        "LiveKit voice currently requires a persistent session with a user id."
-      );
-      return;
-    }
-
     setVoiceError(null);
     setVoiceEndOptionsOpen(false);
     clearVoiceTranscripts();
     clearVoiceActivities();
-    resetVoiceOutputWarmup();
 
     try {
-      await session.start(VOICE_SESSION_START_OPTIONS);
+      await realtimeVoice.connect();
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : "Unable to start LiveKit voice session.";
+          : "Unable to start Realtime voice session.";
       setVoiceError(message);
     }
   }, [
     clearVoiceActivities,
     clearVoiceTranscripts,
     chatLoading,
-    resetVoiceOutputWarmup,
-    session,
-    sessionMode,
+    realtimeVoice,
     setVoiceError,
-    userId,
+    voiceConnected,
   ]);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
     const disconnectedThreadId = threadId;
-    voiceDisconnect();
-    resetVoiceOutputWarmup();
     setVoiceError(null);
     setEndedVoiceThreadId(disconnectedThreadId);
     setVoiceEndOptionsOpen(true);
-    void session.end();
-  }, [
-    resetVoiceOutputWarmup,
-    session,
-    setVoiceError,
-    threadId,
-    voiceDisconnect,
-  ]);
+    await realtimeVoice.disconnect({ finalize: true });
+  }, [realtimeVoice, setVoiceError, threadId]);
 
-  const allowAudioPlayback = useCallback(async () => {
-    try {
-      await startAudio();
-      setVoiceError(null);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to start audio playback.";
-      setVoiceError(message);
-    }
-  }, [setVoiceError, startAudio]);
+  const realtimeConnecting =
+    realtimeVoice.status === "requesting_session" ||
+    realtimeVoice.status === "requesting_microphone" ||
+    realtimeVoice.status === "connecting";
 
-  useEffect(() => {
-    if (
-      !voiceConnected ||
-      !canPlayAudio ||
-      !voiceReadyToSpeak ||
-      agent.isPending ||
-      voiceOutputWarmupRequestedRef.current
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    const requestTimeout = window.setTimeout(() => {
-      if (cancelled) {
-        return;
-      }
-
-      voiceOutputWarmupRequestedRef.current = true;
-      setVoiceOutputWarmupStatus("requested");
-      clearVoiceOutputWarmupTimeout();
-      voiceOutputWarmupTimeoutRef.current = window.setTimeout(() => {
-        if (cancelled) {
-          return;
-        }
-        setVoiceOutputWarmupStatus("done");
-        voiceOutputWarmupTimeoutRef.current = null;
-      }, VOICE_OUTPUT_WARMUP_TIMEOUT_MS);
-
-      void session.room.localParticipant
-        .sendText("warmup", { topic: VOICE_OUTPUT_WARMUP_TOPIC })
-        .catch((error) => {
-          if (cancelled) {
-            return;
-          }
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Unable to warm up voice output.";
-          setVoiceError(message);
-          clearVoiceOutputWarmupTimeout();
-          setVoiceOutputWarmupStatus("done");
-        });
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(requestTimeout);
-    };
-  }, [
-    agent.isPending,
-    canPlayAudio,
-    clearVoiceOutputWarmupTimeout,
-    session.room,
-    setVoiceError,
-    voiceConnected,
-    voiceReadyToSpeak,
-  ]);
-
-  useEffect(() => {
-    if (voiceOutputWarmupStatus === "requested" && voiceAgentSpeaking) {
-      const transition = window.setTimeout(() => {
-        setVoiceOutputWarmupStatus("speaking");
-      }, 0);
-      return () => {
-        window.clearTimeout(transition);
-      };
-    }
-
-    if (voiceOutputWarmupStatus === "speaking" && !voiceAgentSpeaking) {
-      const transition = window.setTimeout(() => {
-        clearVoiceOutputWarmupTimeout();
-        setVoiceOutputWarmupStatus("done");
-      }, 0);
-      return () => {
-        window.clearTimeout(transition);
-      };
-    }
-  }, [
-    clearVoiceOutputWarmupTimeout,
-    voiceAgentSpeaking,
-    voiceOutputWarmupStatus,
-  ]);
+  const realtimeFinalizing = realtimeVoice.status === "finalizing";
 
   const isSavingDisconnectedSession =
-    !voiceConnected &&
+    (!voiceConnected || realtimeFinalizing) &&
     voiceFinalization.threadId === threadId &&
     voiceFinalization.status === "in_progress";
   const finalizationFailedForCurrentThread =
@@ -573,13 +402,10 @@ export default function VoicePage() {
     voiceFinalization.threadId === threadId &&
     voiceFinalization.status === "completed";
   const connectDisabled =
-    chatLoading ||
-    session.connectionState === ConnectionState.Connecting ||
-    isSavingDisconnectedSession;
+    chatLoading || realtimeConnecting || realtimeFinalizing || isSavingDisconnectedSession;
   const latestTranscript = voiceTranscripts[voiceTranscripts.length - 1] ?? null;
   const latestActivity = voiceActivities[voiceActivities.length - 1] ?? null;
-  const effectiveVoiceMemoryMode =
-    voiceSessionInfo?.memoryMode || sessionMode;
+  const effectiveVoiceMemoryMode = voiceSessionInfo?.memoryMode || sessionMode;
   const isPersistent = effectiveVoiceMemoryMode === "persistent";
   const endOptionsFinalizationStatus: VoiceEndOptionsStatus =
     endedVoiceThreadId && voiceFinalization.threadId === endedVoiceThreadId
@@ -595,11 +421,62 @@ export default function VoicePage() {
       : null;
   const voiceCanAcceptSpeech =
     voiceConnected &&
-    canPlayAudio &&
+    realtimeVoice.status === "connected" &&
     voiceReadyToSpeak &&
-    !agent.isPending &&
-    voiceOutputWarmupStatus === "done";
+    !voiceAgentSpeaking;
   const voiceIsWarming = voiceConnected && !voiceCanAcceptSpeech;
+
+  const statusText = (() => {
+    if (realtimeVoice.status === "requesting_session") {
+      return "creating a realtime session...";
+    }
+    if (realtimeVoice.status === "requesting_microphone") {
+      return "waiting for microphone access...";
+    }
+    if (realtimeVoice.status === "connecting") {
+      return "connecting to openai realtime...";
+    }
+    if (realtimeVoice.status === "finalizing") {
+      return "ending voice session...";
+    }
+    if (!voiceConnected) {
+      return "connect when you're ready";
+    }
+    if (!voiceReadyToSpeak) {
+      return "please wait - the agent is warming up";
+    }
+    if (voiceAgentSpeaking) {
+      return "agent speaking...";
+    }
+    return "ready - speak when you want";
+  })();
+
+  const readinessNotice = (() => {
+    if (!voiceConnected || voiceCanAcceptSpeech) {
+      return null;
+    }
+    if (realtimeVoice.status === "requesting_microphone") {
+      return {
+        title: "Allow microphone access",
+        detail:
+          "The browser needs microphone permission before the voice session can start.",
+      };
+    }
+    if (realtimeVoice.status === "connecting") {
+      return {
+        title: "Connecting voice",
+        detail: "Realtime audio is setting up. The mic opens once the session is ready.",
+      };
+    }
+    if (!voiceReadyToSpeak) {
+      return {
+        title: "Hold on before speaking",
+        detail:
+          "The session is still warming up. Your mic is connected, but the agent is not ready yet.",
+      };
+    }
+    return null;
+  })();
 
   const continueInChat = useCallback(() => {
     setVoiceEndOptionsOpen(false);
@@ -635,36 +512,6 @@ export default function VoicePage() {
     void startNewSession();
   }, [clearLastEndedSession, startNewSession]);
 
-  useEffect(() => {
-    if (!session.isConnected) {
-      microphoneDesiredEnabledRef.current = null;
-      return;
-    }
-
-    if (microphoneDesiredEnabledRef.current === voiceCanAcceptSpeech) {
-      return;
-    }
-
-    microphoneDesiredEnabledRef.current = voiceCanAcceptSpeech;
-    void session.room.localParticipant
-      .setMicrophoneEnabled(voiceCanAcceptSpeech)
-      .catch((error) => {
-        microphoneDesiredEnabledRef.current = null;
-        if (voiceCanAcceptSpeech) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Unable to enable the microphone.";
-          setVoiceError(message);
-        }
-      });
-  }, [
-    session.isConnected,
-    session.room.localParticipant,
-    setVoiceError,
-    voiceCanAcceptSpeech,
-  ]);
-
   const eyebrowState: "idle" | "warming" | "listening" | "speaking" = (() => {
     if (!voiceConnected) return "idle";
     if (voiceAgentSpeaking) return "speaking";
@@ -677,56 +524,6 @@ export default function VoicePage() {
     if (eyebrowState === "speaking") return "agent · speaking";
     if (eyebrowState === "listening") return "agent · listening";
     return "agent · wait";
-  })();
-
-  const statusText = (() => {
-    if (session.connectionState === ConnectionState.Connecting) {
-      return "connecting to the livekit session…";
-    }
-    if (!voiceConnected) {
-      return "connect when you’re ready";
-    }
-    if (!canPlayAudio) {
-      return "allow audio before speaking";
-    }
-    if (!voiceReadyToSpeak || agent.isPending) {
-      return "please wait — the agent is warming up";
-    }
-    if (voiceOutputWarmupStatus !== "done") {
-      return "please wait — checking voice output";
-    }
-    if (voiceAgentSpeaking) {
-      return "agent speaking…";
-    }
-    if (agent.state === "thinking") {
-      return "agent thinking…";
-    }
-    return "ready — speak when you want";
-  })();
-
-  const readinessNotice = (() => {
-    if (!voiceConnected || voiceCanAcceptSpeech) {
-      return null;
-    }
-    if (!canPlayAudio) {
-      return {
-        title: "Allow audio before speaking",
-        detail: "The mic is muted until playback is enabled, so you can hear the agent first.",
-      };
-    }
-    if (!voiceReadyToSpeak || agent.isPending) {
-      return {
-        title: "Hold on before speaking",
-        detail: "The agent is still warming up. Your mic will open automatically when it can listen.",
-      };
-    }
-    if (voiceOutputWarmupStatus !== "done") {
-      return {
-        title: "Checking voice output",
-        detail: "The mic is still muted while the assistant verifies the audio path.",
-      };
-    }
-    return null;
   })();
 
   const mobileVoiceTitle = (() => {
@@ -784,7 +581,7 @@ export default function VoicePage() {
         </div>
         <div className="flex items-center gap-2.5">
           <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-oc-text-dim">
-            livekit
+            openai realtime
           </span>
           <SessionPill />
         </div>
@@ -817,7 +614,7 @@ export default function VoicePage() {
           </span>
         ) : (
           <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-oc-text-dim">
-            livekit
+            openai realtime
           </span>
         )}
       </header>
@@ -843,10 +640,9 @@ export default function VoicePage() {
               Take a breath. <em>Begin when ready.</em>
             </h1>
             <p className="oc-voice-sub">
-              Voice runs with persistent memory.{" "}
               {sessionMode === "incognito"
-                ? "Incognito · nothing is saved this call."
-                : "We won’t speak until you do."}
+                ? "Incognito voice: nothing is saved this call."
+                : "Persistent voice shares the same memory as text. We won’t speak until you do."}
             </p>
             {finalizationCompletedForCurrentThread && (
               <p className="text-[12px] font-mono text-oc-green mb-3 -mt-3">
@@ -881,7 +677,7 @@ export default function VoicePage() {
                 ? "Saving memory…"
                 : chatLoading
                   ? "Replying…"
-                  : session.connectionState === ConnectionState.Connecting
+                  : realtimeConnecting
                   ? "Connecting…"
                   : "Connect voice"}
             </button>
@@ -925,25 +721,6 @@ export default function VoicePage() {
                   ))}
                 </select>
               </label>
-              <label className="flex items-center gap-2">
-                <span>transcript</span>
-                <select
-                  value={transcriptionLanguageSelected}
-                  onChange={(event) =>
-                    setTranscriptionLanguageSelected(
-                      event.target.value as TranscriptionLanguageOption
-                    )
-                  }
-                  disabled={voiceConnected}
-                  className="rounded-lg border border-oc-border bg-white px-2.5 py-1.5 text-[12px] font-mono normal-case tracking-normal text-oc-text-secondary disabled:opacity-60"
-                >
-                  {TRANSCRIPTION_LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.label} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
 
             {/* Single meta line — replaces the four debug cards. */}
@@ -953,17 +730,13 @@ export default function VoicePage() {
               </span>
               <span className="sep">·</span>
               <span>
-                language <b>{languageLabel(transcriptionLanguageSelected)}</b>
-              </span>
-              <span className="sep">·</span>
-              <span>
                 memory <b>{isPersistent ? "persistent" : "off"}</b>
               </span>
               {voiceSessionInfo?.roomName && (
                 <>
                   <span className="sep">·</span>
                   <span>
-                    room <b>{voiceSessionInfo.roomName}</b>
+                    thread <b>{voiceSessionInfo.roomName}</b>
                   </span>
                 </>
               )}
@@ -1030,21 +803,10 @@ export default function VoicePage() {
               </div>
             )}
             <div className="mt-6 flex items-center gap-3">
-              {!canPlayAudio && (
-                <button
-                  type="button"
-                  className="oc-voice-cta oc-voice-cta--secondary"
-                  onClick={() => {
-                    void allowAudioPlayback();
-                  }}
-                >
-                  Allow audio
-                </button>
-              )}
               <button
                 type="button"
                 className="oc-voice-cta oc-voice-cta--danger"
-                onClick={disconnect}
+                onClick={() => void disconnect()}
               >
                 End session
               </button>
@@ -1117,7 +879,7 @@ export default function VoicePage() {
               Transcript
             </span>
             <span className="text-[10px] font-mono uppercase tracking-widest text-oc-text-dim/80">
-              {languageLabel(transcriptionLanguageSelected)}
+              realtime
             </span>
           </div>
           <div
@@ -1154,21 +916,27 @@ export default function VoicePage() {
             Voice debug
           </summary>
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <VoiceDebugRow label="connection" value={session.connectionState} />
-            <VoiceDebugRow label="session connected" value={session.isConnected} />
-            <VoiceDebugRow label="store connected" value={voiceConnected} />
-            <VoiceDebugRow label="agent state" value={agent.state} />
-            <VoiceDebugRow label="agent pending" value={agent.isPending} />
-            <VoiceDebugRow label="ready to speak" value={voiceReadyToSpeak} />
-            <VoiceDebugRow label="can play audio" value={canPlayAudio} />
+            <VoiceDebugRow label="connection" value={realtimeVoice.status} />
             <VoiceDebugRow
-              label="output warmup"
-              value={voiceOutputWarmupStatus}
+              label="provider connected"
+              value={realtimeVoice.connected}
             />
+            <VoiceDebugRow label="store connected" value={voiceConnected} />
+            <VoiceDebugRow
+              label="agent state"
+              value={
+                voiceAgentSpeaking
+                  ? "speaking"
+                  : voiceCanAcceptSpeech
+                    ? "listening"
+                    : "idle"
+              }
+            />
+            <VoiceDebugRow label="ready to speak" value={voiceReadyToSpeak} />
             <VoiceDebugRow label="mic enabled" value={voiceCanAcceptSpeech} />
             <VoiceDebugRow label="agent speaking" value={voiceAgentSpeaking} />
             <VoiceDebugRow label="memory mode" value={effectiveVoiceMemoryMode} />
-            <VoiceDebugRow label="room" value={voiceSessionInfo?.roomName} />
+            <VoiceDebugRow label="thread" value={voiceSessionInfo?.roomName} />
             <VoiceDebugRow
               label="participant"
               value={voiceSessionInfo?.identity}
@@ -1184,8 +952,12 @@ export default function VoicePage() {
             <VoiceDebugRow label="user id" value={userId || "none"} />
             <VoiceDebugRow label="thread id" value={threadId} />
             <VoiceDebugRow
-              label="transcript language"
-              value={transcriptionLanguageSelected || "auto detect"}
+              label="selected voice"
+              value={assistantVoiceSelected}
+            />
+            <VoiceDebugRow
+              label="policy route"
+              value={realtimeVoice.latestPolicy?.route}
             />
             <VoiceDebugRow
               label="finalization"

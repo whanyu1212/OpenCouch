@@ -130,10 +130,10 @@ most reliable local path.
 
 ## Voice Mode
 
-Voice mode is temporarily removed while the text runtime cleanup
-finishes. It will be rebuilt from scratch, so the old LiveKit worker,
-`scripts/voice_agent.sh`, and `/api/voice/livekit/*` routes are not
-available in the current backend.
+Voice mode runs from the web app at `/voice` using OpenAI Realtime
+WebRTC. Start the backend and web app, complete setup, then open the
+Voice tab. Persistent sessions reuse the same memory owner as text;
+incognito voice sessions do not write durable memory.
 
 ## Telegram Gateway
 

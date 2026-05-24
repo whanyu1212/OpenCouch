@@ -6,11 +6,14 @@ slug: /voice
 
 # Voice
 
-Voice support is temporarily removed while the text agent migration and
-runtime cleanup settle.
+Voice support uses OpenAI Realtime speech-to-speech sessions from the
+web app.
 
-The previous LiveKit worker under `apps/backend/agent/voice/`, the
-`scripts/voice_agent.sh` wrapper, and the `/api/voice/livekit/*` routes
-have been removed. The next voice implementation should be designed
-from scratch against the post-migration text runtime instead of preserving
-compatibility with the legacy LiveKit path.
+The browser connects to OpenAI Realtime over WebRTC. The FastAPI backend
+creates the client secret, injects OpenCouch instructions and memory
+context, exposes the same app-owned tools as the text runtime, records
+finalized turns, and runs session finalization for persistent mode.
+
+The production web route is `/voice`. The lower-level dogfood route
+`/voice/realtime-dev` remains available for inspecting raw Realtime
+events without the full product shell.

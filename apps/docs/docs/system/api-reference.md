@@ -55,13 +55,15 @@ long-term memory.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/voice/livekit/token` | `POST` | Create a LiveKit participant token and optional agent dispatch config |
-| `/api/voice/livekit/finalization-status/{thread_id}` | `GET` | Poll disconnect-time memory finalization status |
-| `/api/voice/livekit/test` | `GET` | Serve the standalone LiveKit browser test page |
+| `/api/voice/realtime/session` | `POST` | Create an OpenAI Realtime client secret for browser WebRTC voice |
+| `/api/voice/realtime/tools` | `POST` | Execute one app-owned Realtime function tool call |
+| `/api/voice/realtime/turn-policy` | `POST` | Return observe-only app policy for a finalized voice transcript |
+| `/api/voice/realtime/turn` | `POST` | Persist a finalized voice user/assistant turn in app-owned history |
+| `/api/voice/realtime/end` | `POST` | Finalize a persistent voice session through the runtime session finalizer |
 
-Voice is LiveKit-native. The worker lives under `agent/voice/`; the
-FastAPI routes only mint room tokens, expose a standalone LiveKit test
-page, and report transcript-finalization status after disconnect.
+Voice is OpenAI Realtime-native. The browser owns WebRTC audio, while
+the backend owns session configuration, memory bootstrap, function-tool
+execution, turn persistence, and end-session memory finalization.
 
 ## Client contracts
 

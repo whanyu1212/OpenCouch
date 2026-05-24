@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from agent.memory.modes import MemoryMode
+from agent.models import MessageRole
+from agent.runtime import PersistentAgentRuntime
+from api.dependencies import get_llm_client, get_runtime
+from api.router import api_router
+from tests.support.persistence import FakeCrossRestartLLM
+
+
+@pytest.mark.asyncio
+async def test_record_voice_turn_persists_thread_history() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-thread",
+            user_id=None,
+            user_text="I feel overwhelmed.",
+            assistant_text="That sounds like a lot to carry.",
+            response_style="supportive",
+            llm_client=None,
+        )
+        history = await runtime.get_history("voice-thread")
+
+    assert [message.role for message in history] == [
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+    ]
+    assert history[0].content == "I feel overwhelmed."
+    assert history[1].content == "That sounds like a lot to carry."
+    assert history[1].response_style == "supportive"
+
+
+@pytest.mark.asyncio
+async def test_voice_turn_endpoint_records_transcript() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/turn",
+                json={
+                    "thread_id": "voice-thread",
+                    "memory_mode": "persistent",
+                    "user_text": "I feel overwhelmed.",
+                    "assistant_text": "That sounds like a lot to carry.",
+                    "response_style": "supportive",
+                },
+            )
+
+        history = await runtime.get_history("voice-thread")
+
+    assert response.status_code == 200
+    assert response.json()["recorded"] is True
+    assert response.json()["message_count"] == 2
+    assert [message.content for message in history] == [
+        "I feel overwhelmed.",
+        "That sounds like a lot to carry.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_voice_turn_endpoint_records_route_and_tool_metadata() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/turn",
+                json={
+                    "thread_id": "voice-thread",
+                    "user_id": "user-1",
+                    "memory_mode": "persistent",
+                    "user_text": "What is the latest guidance?",
+                    "assistant_text": "I found a verified answer.",
+                    "route": "grounded_lookup",
+                    "response_style": "grounded_lookup",
+                    "tool_calls": [
+                        {
+                            "tool_name": "answer_grounded_lookup",
+                            "status": "completed",
+                            "output": {
+                                "grounded_lookup": {
+                                    "query": "latest guidance",
+                                    "status": "answered",
+                                }
+                            },
+                        }
+                    ],
+                },
+            )
+
+        state = await runtime.get_state("voice-thread")
+
+    assert response.status_code == 200
+    assert state is not None
+    assert state["route"] == "grounded_lookup"
+    assert state["response_style"] == "grounded_lookup"
+    assert state["grounded_lookup"] == {
+        "query": "latest guidance",
+        "status": "answered",
+    }
+    assert state["diagnostics"]["voice_tool_calls"] == ["answer_grounded_lookup"]
+
+
+@pytest.mark.asyncio
+async def test_voice_end_endpoint_uses_runtime_session_finalization() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-thread",
+            user_id=None,
+            user_text="I feel overwhelmed.",
+            assistant_text="That sounds like a lot to carry.",
+            response_style="supportive",
+            llm_client=None,
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/end",
+                json={"thread_id": "voice-thread", "memory_mode": "persistent"},
+            )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "finalized": False,
+        "summary": None,
+        "detail": "No summary produced (session too short, no LLM, or incognito mode).",
+    }
+
+
+@pytest.mark.asyncio
+async def test_voice_end_endpoint_summarizes_persistent_voice_session() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    fake_llm = FakeCrossRestartLLM()
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            for user_text, assistant_text in [
+                (
+                    "I argued with Sarah and feel tense.",
+                    "That sounds painful. Let's slow it down together.",
+                ),
+                (
+                    "I want to remember that family conflict is a big trigger.",
+                    "That is useful context to carry forward.",
+                ),
+            ]:
+                turn_response = await client.post(
+                    "/api/voice/realtime/turn",
+                    json={
+                        "thread_id": "voice-thread",
+                        "user_id": "user-1",
+                        "memory_mode": "persistent",
+                        "user_text": user_text,
+                        "assistant_text": assistant_text,
+                        "response_style": "supportive",
+                    },
+                )
+                assert turn_response.status_code == 200
+
+            response = await client.post(
+                "/api/voice/realtime/end",
+                json={"thread_id": "voice-thread", "memory_mode": "persistent"},
+            )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "finalized": True,
+        "summary": "User mentioned their sister Sarah in passing.",
+        "detail": "Session summary produced.",
+    }
+    assert fake_llm.summarization_calls == 1

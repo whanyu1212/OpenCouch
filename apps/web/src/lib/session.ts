@@ -13,7 +13,6 @@ import {
   type ResponseModelTier,
   type SessionAction,
   type StreamEvent,
-  type TranscriptionLanguageOption,
 } from "./api";
 
 /**
@@ -61,7 +60,8 @@ export type VoiceActivityName =
   | "memory_deleted"
   | "factual_lookup"
   | "crisis_resources_lookup"
-  | "exercise";
+  | "exercise"
+  | "therapeutic_skill";
 
 export type VoiceActivityStatus =
   | "started"
@@ -99,8 +99,8 @@ export interface EndedSessionResult extends EndSessionResponse {
   threadId: string;
 }
 
-type VoiceRoomHandle = {
-  disconnect: (stopTracks?: boolean) => Promise<void> | void;
+type VoiceConnectionHandle = {
+  disconnect: (options?: { finalize?: boolean }) => Promise<void> | void;
 };
 
 const IDLE_VOICE_FINALIZATION_STATE: VoiceFinalizationState = {
@@ -110,9 +110,9 @@ const IDLE_VOICE_FINALIZATION_STATE: VoiceFinalizationState = {
   updatedAt: null,
 };
 
-// LiveKit Room is non-reactive and kept outside Zustand state to avoid
-// re-rendering subscribers on SDK object mutation.
-let _voiceRoom: VoiceRoomHandle | null = null;
+// Voice transport handles are non-reactive and kept outside Zustand state to
+// avoid re-rendering subscribers on SDK or WebRTC object mutation.
+let _voiceConnection: VoiceConnectionHandle | null = null;
 let _chatSocket: WebSocket | null = null;
 let _chatStreamId = 0;
 
@@ -152,7 +152,6 @@ interface SessionState {
   voiceAgentSpeaking: boolean;
   voiceReadyToSpeak: boolean;
   assistantVoiceSelected: AssistantVoiceOption;
-  transcriptionLanguageSelected: TranscriptionLanguageOption;
   voiceTranscripts: VoiceTranscript[];
   voiceActivities: VoiceActivityEvent[];
   voiceFinalization: VoiceFinalizationState;
@@ -190,7 +189,6 @@ interface SessionState {
   setVoiceAgentSpeaking: (speaking: boolean) => void;
   setVoiceReadyToSpeak: (ready: boolean) => void;
   setAssistantVoiceSelected: (voice: AssistantVoiceOption) => void;
-  setTranscriptionLanguageSelected: (language: TranscriptionLanguageOption) => void;
   addVoiceTranscript: (t: VoiceTranscript) => void;
   addVoiceActivity: (event: VoiceActivityEvent) => void;
   clearVoiceActivities: () => void;
@@ -198,12 +196,37 @@ interface SessionState {
   clearVoiceFinalization: () => void;
   setVoiceSessionInfo: (info: VoiceSessionInfo | null) => void;
   setVoiceError: (error: string | null) => void;
-  /** Store the LiveKit room handle outside reactive Zustand state. */
-  voiceSetRefs: (refs: { room?: VoiceRoomHandle | null }) => void;
+  /** Store the voice connection handle outside reactive Zustand state. */
+  voiceSetRefs: (refs: { connection?: VoiceConnectionHandle | null }) => void;
   /** Disconnect active voice resources and mark memory finalization pending. */
   voiceDisconnect: () => void;
   /** Clear transcripts (e.g. on fresh connect) */
   clearVoiceTranscripts: () => void;
+}
+
+type ClearedVoiceSessionUiState = Pick<
+  SessionState,
+  | "voiceConnected"
+  | "voiceAgentSpeaking"
+  | "voiceReadyToSpeak"
+  | "voiceTranscripts"
+  | "voiceActivities"
+  | "voiceFinalization"
+  | "voiceSessionInfo"
+  | "voiceError"
+>;
+
+function clearedVoiceSessionUiState(): ClearedVoiceSessionUiState {
+  return {
+    voiceConnected: false,
+    voiceAgentSpeaking: false,
+    voiceReadyToSpeak: false,
+    voiceTranscripts: [],
+    voiceActivities: [],
+    voiceFinalization: IDLE_VOICE_FINALIZATION_STATE,
+    voiceSessionInfo: null,
+    voiceError: null,
+  };
 }
 
 function generateThreadId(): string {
@@ -225,7 +248,6 @@ type PersistedSessionState = Pick<
   | "userId"
   | "responseModelTier"
   | "assistantVoiceSelected"
-  | "transcriptionLanguageSelected"
 >;
 
 type SessionStorePersistApi = {
@@ -260,7 +282,6 @@ export const useSessionStore = create<SessionState>()(
   voiceAgentSpeaking: false,
   voiceReadyToSpeak: false,
   assistantVoiceSelected: "marin",
-  transcriptionLanguageSelected: "en",
   voiceTranscripts: [],
   voiceActivities: [],
   voiceFinalization: IDLE_VOICE_FINALIZATION_STATE,
@@ -279,6 +300,7 @@ export const useSessionStore = create<SessionState>()(
       memoryFacts: [],
       memoryUnseenCount: 0,
       lastEndedSession: null,
+      ...clearedVoiceSessionUiState(),
     });
   },
   setMessages: (msgs: ChatMessage[]) => set({ messages: msgs }),
@@ -344,8 +366,7 @@ export const useSessionStore = create<SessionState>()(
       memoryFacts: [],
       memoryUnseenCount: 0,
       lastEndedSession: null,
-      voiceSessionInfo: null,
-      voiceActivities: [],
+      ...clearedVoiceSessionUiState(),
     });
   },
   newSession: () => {
@@ -366,8 +387,7 @@ export const useSessionStore = create<SessionState>()(
       memoryFacts: [],
       memoryUnseenCount: 0,
       lastEndedSession: null,
-      voiceSessionInfo: null,
-      voiceActivities: [],
+      ...clearedVoiceSessionUiState(),
     });
   },
 
@@ -376,8 +396,6 @@ export const useSessionStore = create<SessionState>()(
   setVoiceAgentSpeaking: (speaking) => set({ voiceAgentSpeaking: speaking }),
   setVoiceReadyToSpeak: (ready) => set({ voiceReadyToSpeak: ready }),
   setAssistantVoiceSelected: (voice) => set({ assistantVoiceSelected: voice }),
-  setTranscriptionLanguageSelected: (language) =>
-    set({ transcriptionLanguageSelected: language }),
   addVoiceTranscript: (t) =>
     set((state) => {
       if (t.itemId) {
@@ -405,15 +423,16 @@ export const useSessionStore = create<SessionState>()(
   clearVoiceTranscripts: () => set({ voiceTranscripts: [] }),
 
   voiceSetRefs: (refs) => {
-    if (refs.room !== undefined) _voiceRoom = refs.room;
+    if (refs.connection !== undefined) _voiceConnection = refs.connection;
   },
 
   voiceDisconnect: () => {
-    const shouldTrackFinalization = get().voiceConnected || _voiceRoom !== null;
+    const shouldTrackFinalization =
+      get().voiceConnected || _voiceConnection !== null;
     const threadId = get().threadId;
 
-    _voiceRoom?.disconnect();
-    _voiceRoom = null;
+    void _voiceConnection?.disconnect({ finalize: true });
+    _voiceConnection = null;
     set({
       voiceConnected: false,
       voiceAgentSpeaking: false,
@@ -438,7 +457,6 @@ export const useSessionStore = create<SessionState>()(
         userId: state.userId,
         responseModelTier: state.responseModelTier,
         assistantVoiceSelected: state.assistantVoiceSelected,
-        transcriptionLanguageSelected: state.transcriptionLanguageSelected,
       }),
       merge: (persisted, current): SessionState => {
         const saved = persisted as Partial<PersistedSessionState> | undefined;

@@ -9,11 +9,12 @@ import { CommandPalette } from "@/components/command-palette";
 import { ThreadDrawer } from "@/components/thread-drawer";
 import { CommandActionsProvider } from "@/lib/command-actions";
 import { ConversationShell } from "@/components/conversation-shell";
+import { shouldUseRealtimeVoiceProvider } from "@/lib/voice-provider-routing";
 
-const DynamicVoiceSessionProvider = dynamic(
+const DynamicRealtimeVoiceSessionProvider = dynamic(
   () =>
-    import("@/components/voice-session-provider").then(
-      (mod) => mod.VoiceSessionProvider
+    import("@/components/realtime-voice-session-provider").then(
+      (mod) => mod.RealtimeVoiceSessionProvider
     ),
   { ssr: false }
 );
@@ -24,7 +25,7 @@ const DynamicVoiceSessionProvider = dynamic(
  *
  * AppShell owns the persistent conversation chrome so tab navigation only
  * swaps page content instead of remounting the rail/tab bar. It also wires
- * up the providers (command palette, thread drawer, optional LiveKit
+ * up the providers (command palette, thread drawer, optional Realtime voice
  * provider) and the hydration loader.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -43,7 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // and kills an active chat WebSocket.
   useEffect(() => {
     if (isSetup) {
-      import("@/components/voice-session-provider");
+      import("@/components/realtime-voice-session-provider");
     }
   }, [isSetup]);
 
@@ -78,11 +79,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   if (
-    pathname === "/voice" ||
-    voiceConnected ||
-    voiceFinalizationStatus === "in_progress"
+    shouldUseRealtimeVoiceProvider({
+      pathname,
+      voiceConnected,
+      voiceFinalizationStatus,
+    })
   ) {
-    return <DynamicVoiceSessionProvider>{content}</DynamicVoiceSessionProvider>;
+    return (
+      <DynamicRealtimeVoiceSessionProvider>
+        {content}
+      </DynamicRealtimeVoiceSessionProvider>
+    );
   }
 
   return content;
