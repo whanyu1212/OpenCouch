@@ -3140,8 +3140,8 @@ def render_status(session: RunnerSession) -> None:
     console.print()
 
 
-def render_doctor(session: RunnerSession) -> None:
-    """Render lightweight runtime readiness checks for the active CLI session."""
+def render_doctor(session: RunnerSession, *, verbose: bool = False) -> None:
+    """Render runtime readiness checks for the active CLI session."""
 
     table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
     table.add_column("check", style="hint", no_wrap=True)
@@ -3208,10 +3208,25 @@ def render_doctor(session: RunnerSession) -> None:
         "Turn and response-tail failures are reported without closing the CLI.",
     )
 
+    if verbose:
+        table.add_row("requested mode", "info", session.requested_mode)
+        table.add_row("resolved mode", "info", session.resolved_mode)
+        table.add_row("response tier", "info", session.response_model_tier)
+        table.add_row("trace mode", "info", session.trace_mode)
+        table.add_row("ui mode", "info", session.ui_mode)
+        table.add_row("prompt theme", "info", session.prompt_theme)
+        table.add_row("verbosity", "info", session.observability_mode)
+        table.add_row(
+            "context snapshot",
+            "info",
+            "available" if session.last_context is not None else "none",
+        )
+
     console.print(
         Panel(
             table,
             title="[muted]runtime doctor[/muted]",
+            subtitle="[hint]verbose diagnostics[/hint]" if verbose else None,
             border_style="panel",
             box=box.ROUNDED,
         )
@@ -4186,6 +4201,17 @@ async def handle_command(
             await render_memory_list(runtime, session)
             return True
         if args[0] == "recall":
+            if len(args) == 1:
+                profile = await aget_procedural_profile(
+                    runtime.memory_store,
+                    user_id=session.owner_id(),
+                )
+                state = "on" if profile.proactive_recall_enabled else "off"
+                render_info(
+                    f"Proactive recall is {state}. Use /memory recall on or /memory recall off to change it.",
+                    style="info",
+                )
+                return True
             if len(args) < 2 or args[1] not in ("on", "off"):
                 render_info(
                     "Usage: /memory recall on  |  /memory recall off",
@@ -4279,6 +4305,11 @@ async def handle_command(
         return True
 
     if command == "/ui":
+        if len(args) == 0:
+            next_mode: UIMode = "compact" if session.ui_mode == "full" else "full"
+            set_ui_mode(session, next_mode)
+            render_info(f"UI mode updated. ui={session.ui_mode}", style="success")
+            return True
         if len(args) != 1 or args[0] not in {"compact", "full"}:
             render_info("Usage: /ui <compact|full>", style="warning")
             return True
@@ -4288,6 +4319,12 @@ async def handle_command(
 
     if command == "/theme":
         theme_options = "|".join(available_prompt_themes())
+        if len(args) == 0:
+            render_info(
+                f"Current theme: {session.prompt_theme}. Available themes: {theme_options}.",
+                style="info",
+            )
+            return True
         if len(args) != 1:
             render_info(f"Usage: /theme <{theme_options}>", style="warning")
             return True
@@ -4313,7 +4350,10 @@ async def handle_command(
         return True
 
     if command == "/doctor":
-        render_doctor(session)
+        if len(args) > 1 or (len(args) == 1 and args[0] != "verbose"):
+            render_info("Usage: /doctor [verbose]", style="warning")
+            return True
+        render_doctor(session, verbose=(len(args) == 1 and args[0] == "verbose"))
         return True
 
     if command == "/history":

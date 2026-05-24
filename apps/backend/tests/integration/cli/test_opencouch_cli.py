@@ -391,6 +391,24 @@ def test_render_doctor_shows_runtime_readiness(capsys) -> None:
     assert "turn recovery" in out
 
 
+def test_render_doctor_verbose_shows_expanded_diagnostics(capsys) -> None:
+    """Verbose doctor output should include more session diagnostics."""
+
+    from opencouch_cli.app import render_doctor
+
+    session = _session()
+
+    render_doctor(session, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "runtime doctor" in out
+    assert "verbose diagnostics" in out
+    assert "requested mode" in out
+    assert "resolved mode" in out
+    assert "response tier" in out
+    assert "prompt theme" in out
+
+
 def test_help_command_registry_contains_current_public_commands() -> None:
     """The help registry should cover all public slash commands."""
 
@@ -399,15 +417,15 @@ def test_help_command_registry_contains_current_public_commands() -> None:
     displays = [command.display for command in help_commands()]
 
     assert "/help" in displays
-    assert "/doctor" in displays
+    assert "/doctor [verbose]" in displays
     assert "/search <history|memory|all> <query>" in displays
     assert "/summary [short|full]" in displays
     assert "/export <md|json|txt> [filename]" in displays
     assert "/memory list [facts|sessions|rules]" in displays
-    assert "/memory recall on|off" in displays
+    assert "/memory recall [on|off]" in displays
     assert "/keys" in displays
-    assert "/ui <compact|full>" in displays
-    assert "/theme <mono|contrast|calm>" in displays
+    assert "/ui [compact|full]" in displays
+    assert "/theme [mono|contrast|calm]" in displays
     assert "/mode <deterministic|hybrid|auto>" in displays
     assert "/response-tier <fast|quality>" in displays
     assert "/verbosity <compact|verbose>" in displays
@@ -1734,6 +1752,76 @@ async def test_trace_command_updates_session_mode(capsys) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ui_command_toggles_without_args(monkeypatch) -> None:
+    """Bare /ui should toggle compact/full mode."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert session.ui_mode == "full"
+    assert await handle_command("/ui", session, runtime) is True
+    assert session.ui_mode == "compact"
+    assert messages == [("success", "UI mode updated. ui=compact")]
+
+
+@pytest.mark.asyncio
+async def test_theme_command_without_args_shows_current_and_options(capsys) -> None:
+    """Bare /theme should report the current theme and available options."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/theme", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "Current theme: calm." in out
+    assert "Available themes:" in out
+    assert "mono|contrast|calm" in out
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_without_args_reports_current_state(monkeypatch) -> None:
+    """Bare /memory recall should report the current recall setting."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    assert await handle_command("/memory recall", session, runtime) is True
+    assert messages == [
+        (
+            "info",
+            "Proactive recall is off. Use /memory recall on or /memory recall off to change it.",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_doctor_verbose_command_dispatches(capsys) -> None:
+    """`/doctor verbose` should render the expanded diagnostics view."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/doctor verbose", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "verbose diagnostics" in out
+    assert "requested mode" in out
+
+
+@pytest.mark.asyncio
 async def test_end_command_renders_summary_when_arc_returned(
     monkeypatch,
 ) -> None:
@@ -2752,7 +2840,7 @@ async def test_memory_recall_already_on_is_noop(capsys) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
-    """``/memory recall`` with no arg or a bad arg should show usage."""
+    """``/memory recall maybe`` should still show usage, while bare recall shows state."""
 
     from opencouch_cli.app import handle_command
 
@@ -2761,7 +2849,7 @@ async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
 
     await handle_command("/memory recall", session, runtime)
     captured = capsys.readouterr()
-    assert "Usage: /memory recall on" in captured.out
+    assert "Proactive recall is off." in captured.out
 
     await handle_command("/memory recall maybe", session, runtime)
     captured = capsys.readouterr()

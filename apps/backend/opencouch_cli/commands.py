@@ -39,7 +39,14 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         ("/doctor",),
         "Check runtime readiness for the current CLI session.",
         "session",
+        usage="/doctor [verbose]",
         example="/doctor",
+    ),
+    SlashCommand(
+        ("/doctor", "verbose"),
+        "Show expanded runtime readiness details.",
+        "session",
+        show_in_help=False,
     ),
     SlashCommand(
         ("/history",),
@@ -125,9 +132,9 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand(("/keys",), "Show keyboard shortcuts and prompt tips.", "display"),
     SlashCommand(
         ("/ui",),
-        "Switch prompt toolbar density.",
+        "Switch prompt toolbar density. No argument toggles compact/full.",
         "display",
-        usage="/ui <compact|full>",
+        usage="/ui [compact|full]",
         example="/ui compact",
     ),
     SlashCommand(
@@ -144,9 +151,9 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         ("/theme",),
-        "Switch prompt theme preset.",
+        "Switch prompt theme preset. No argument shows the current theme.",
         "display",
-        usage="/theme <mono|contrast|calm>",
+        usage="/theme [mono|contrast|calm]",
         example="/theme calm",
     ),
     SlashCommand(
@@ -206,9 +213,9 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         ("/memory", "recall"),
-        "Toggle whether the agent proactively references past memory content.",
+        "Show or change whether the agent proactively references past memory content.",
         "memory",
-        usage="/memory recall on|off",
+        usage="/memory recall [on|off]",
     ),
     SlashCommand(
         ("/memory", "recall", "on"),
