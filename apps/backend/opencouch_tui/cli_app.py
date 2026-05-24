@@ -3773,3 +3773,7 @@ def main() -> int:
             crisis_log_sqlite_path=crisis_log_sqlite_path,
         )
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
