@@ -20,13 +20,13 @@ Planned implementation order:
 Local CLI:
 
 ```bash
-uv run python -m opencouch_cli --mode auto
+uv run python -m opencouch_tui.cli_app --mode auto
 ```
 
 Resume a persisted local thread:
 
 ```bash
-uv run python -m opencouch_cli --mode auto --thread-id local-demo
+uv run python -m opencouch_tui.cli_app --mode auto --thread-id local-demo
 ```
 
 Run the CLI against the Dockerized Postgres memory backend:
@@ -34,7 +34,7 @@ Run the CLI against the Dockerized Postgres memory backend:
 ```bash
 OPENCOUCH_PERSISTENCE_BACKEND=postgres \
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch \
-uv run python -m opencouch_cli --mode auto --thread-id local-demo
+uv run python -m opencouch_tui.cli_app --mode auto --thread-id local-demo
 ```
 
 Run backend tests:

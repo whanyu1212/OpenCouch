@@ -6,7 +6,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from rich.console import Group
+from rich.console import Console, Group
 from rich.spinner import Spinner
 
 from agent.models import (
@@ -17,8 +17,22 @@ from agent.models import (
     ResponseReadyEvent,
     StatusEvent,
 )
-from opencouch_cli.app import chat_loop, handle_command
+from opencouch_tui.cli_app import build_parser, chat_loop, handle_command
+from opencouch_tui.command_helpers import format_entity_identifier
 from opencouch_tui.models import RunnerSession
+from opencouch_tui.presenters import (
+    render_doctor,
+    render_header,
+    render_help,
+    render_meta,
+    render_onboarding,
+    render_response,
+    render_stage_timings,
+    render_status,
+    render_turn_activity,
+    render_turn_route,
+    render_turn_trace,
+)
 from tests.integration.helpers.runtime import (
     FakeRuntime,
     FakeSummaryLLM as _FakeSummaryLLM,
@@ -114,19 +128,34 @@ def _make_agent_output(
     )
 
 
-def test_render_header_uses_compact_product_shell_and_session_metadata(capsys) -> None:
+def _render_output(render: callable) -> str:
+    """Render via a dedicated Rich console and return the plain text output."""
+
+    from opencouch_tui.cli_app import CLI_THEME
+
+    console = Console(
+        record=True,
+        force_terminal=True,
+        width=100,
+        theme=CLI_THEME,
+    )
+    render(console)
+    return console.export_text()
+
+
+def test_render_header_uses_compact_product_shell_and_session_metadata() -> None:
     """The startup header should stay compact and keep key session metadata."""
 
-    from opencouch_cli.app import render_header
-
-    render_header(
-        "deterministic",
-        "thread-a",
-        "persistent",
-        user_id="alice",
-        response_model_tier="quality",
+    out = _render_output(
+        lambda console: render_header(
+            "deterministic",
+            "thread-a",
+            "persistent",
+            console=console,
+            user_id="alice",
+            response_model_tier="quality",
+        )
     )
-    out = capsys.readouterr().out
 
     assert "OpenCouch" in out
     assert "text agent" in out
@@ -153,19 +182,19 @@ def test_render_header_uses_compact_product_shell_and_session_metadata(capsys) -
     assert "[/bold primary]" not in out
 
 
-def test_render_header_shows_thread_scoped_owner_for_persistent_mode(capsys) -> None:
+def test_render_header_shows_thread_scoped_owner_for_persistent_mode() -> None:
     """Persistent sessions without --user-id should make owner scope visible."""
 
-    from opencouch_cli.app import render_header
-
-    render_header(
-        "hybrid",
-        "thread-a",
-        "persistent",
-        user_id=None,
-        response_model_tier="fast",
+    out = _render_output(
+        lambda console: render_header(
+            "hybrid",
+            "thread-a",
+            "persistent",
+            console=console,
+            user_id=None,
+            response_model_tier="fast",
+        )
     )
-    out = capsys.readouterr().out
 
     assert "owner" in out
     assert "thread-scoped" in out
@@ -186,9 +215,9 @@ def test_memory_mode_prompt_uses_configured_backend_copy(
 ) -> None:
     """The startup prompt should not hardcode a SQLite persistence backend."""
 
-    from opencouch_cli.app import resolve_memory_mode
+    from opencouch_tui.cli_app import resolve_memory_mode
 
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "1")
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "1")
 
     assert resolve_memory_mode("ask", persistence_backend=backend) == "guest"
     out = capsys.readouterr().out
@@ -198,17 +227,14 @@ def test_memory_mode_prompt_uses_configured_backend_copy(
         assert "save local memory in SQLite" not in out
 
 
-def test_render_status_guest_mode_hides_sqlite_path(capsys) -> None:
+def test_render_status_guest_mode_hides_sqlite_path() -> None:
     """Guest-mode status should not imply an active SQLite persistence path."""
-
-    from opencouch_cli.app import render_status
 
     session = _session()
     session.memory_mode = "guest"
     session.sqlite_path = ":memory:"
 
-    render_status(session)
-    out = capsys.readouterr().out
+    out = _render_output(lambda console: render_status(session, console=console))
 
     assert "memory mode" in out
     assert "guest" in out
@@ -220,17 +246,14 @@ def test_render_status_guest_mode_hides_sqlite_path(capsys) -> None:
     assert "sqlite path" not in out
 
 
-def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
+def test_render_status_persistent_sqlite_shows_sqlite_path() -> None:
     """SQLite path remains visible when SQLite is the active persistent backend."""
-
-    from opencouch_cli.app import render_status
 
     session = _session()
     session.memory_mode = "persistent"
     session.persistence_backend = "sqlite"
 
-    render_status(session)
-    out = capsys.readouterr().out
+    out = _render_output(lambda console: render_status(session, console=console))
 
     assert "persistence" in out
     assert "sqlite" in out
@@ -241,15 +264,12 @@ def test_render_status_persistent_sqlite_shows_sqlite_path(capsys) -> None:
     assert "sqlite path" in out
 
 
-def test_render_doctor_shows_runtime_readiness(capsys) -> None:
+def test_render_doctor_shows_runtime_readiness() -> None:
     """Doctor output should make deterministic smoke mode and owner scope explicit."""
-
-    from opencouch_cli.app import render_doctor
 
     session = _session()
 
-    render_doctor(session)
-    out = capsys.readouterr().out
+    out = _render_output(lambda console: render_doctor(session, console=console))
 
     assert "runtime doctor" in out
     assert "llm" in out
@@ -260,15 +280,14 @@ def test_render_doctor_shows_runtime_readiness(capsys) -> None:
     assert "turn recovery" in out
 
 
-def test_render_doctor_verbose_shows_expanded_diagnostics(capsys) -> None:
+def test_render_doctor_verbose_shows_expanded_diagnostics() -> None:
     """Verbose doctor output should include more session diagnostics."""
-
-    from opencouch_cli.app import render_doctor
 
     session = _session()
 
-    render_doctor(session, verbose=True)
-    out = capsys.readouterr().out
+    out = _render_output(
+        lambda console: render_doctor(session, console=console, verbose=True)
+    )
 
     assert "runtime doctor" in out
     assert "verbose diagnostics" in out
@@ -466,7 +485,7 @@ def test_runner_session_defaults_to_calm_prompt_theme() -> None:
 def test_guest_pending_tail_status_avoids_memory_copy() -> None:
     """Guest mode pending state should not claim memory is being saved."""
 
-    from opencouch_cli.app import (
+    from opencouch_tui.cli_app import (
         _pending_tail_message,
         _pending_tail_status,
         _prompt_toolbar_state,
@@ -494,7 +513,7 @@ def test_guest_pending_tail_status_avoids_memory_copy() -> None:
 def test_split_stream_preview_text_hides_therapeutic_skill_loading_blob() -> None:
     """Live preview should hide leaked skill-loading chatter from the reply panel."""
 
-    from opencouch_cli.app import _split_stream_preview_text
+    from opencouch_tui.cli_app import _split_stream_preview_text
 
     status, visible = _split_stream_preview_text(
         'load_therapeutic_response_skill(response_style="supportive_guidance") '
@@ -509,7 +528,7 @@ def test_split_stream_preview_text_hides_therapeutic_skill_loading_blob() -> Non
 def test_split_stream_preview_text_leaves_normal_reply_text_unchanged() -> None:
     """Ordinary streamed prose should render unchanged."""
 
-    from opencouch_cli.app import _split_stream_preview_text
+    from opencouch_tui.cli_app import _split_stream_preview_text
 
     status, visible = _split_stream_preview_text("That sounds really heavy.")
 
@@ -517,23 +536,23 @@ def test_split_stream_preview_text_leaves_normal_reply_text_unchanged() -> None:
     assert visible == "That sounds really heavy."
 
 
-def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
+def test_render_turn_route_uses_output_routing_fields() -> None:
     """Route display should stay compact and source from AgentOutput metadata."""
 
-    from opencouch_cli.app import render_turn_route
-
-    render_turn_route(
-        AgentOutput(
-            response_text="done",
-            response_type=ResponseCategory.THERAPEUTIC,
-            crisis=CrisisAssessment(),
-            response_style="supportive",
-            therapeutic_approach="cbt",
-            diagnostics={"turn_total_ms": 42.0},
-        ),
-        pending_status="saving memory",
+    out = _render_output(
+        lambda console: render_turn_route(
+            AgentOutput(
+                response_text="done",
+                response_type=ResponseCategory.THERAPEUTIC,
+                crisis=CrisisAssessment(),
+                response_style="supportive",
+                therapeutic_approach="cbt",
+                diagnostics={"turn_total_ms": 42.0},
+            ),
+            console=console,
+            pending_status="saving memory",
+        )
     )
-    out = capsys.readouterr().out
 
     assert "route" in out
     assert "supportive / cbt" in out
@@ -542,58 +561,58 @@ def test_render_turn_route_uses_output_routing_fields(capsys) -> None:
     assert "saving memory" in out
 
 
-def test_render_turn_activity_compact_shows_tool_badges(capsys) -> None:
+def test_render_turn_activity_compact_shows_tool_badges() -> None:
     """Compact observability should show a terse tool badge row."""
 
-    from opencouch_cli.app import render_turn_activity
-
-    render_turn_activity(
-        AgentOutput(
-            response_text="done",
-            response_type=ResponseCategory.THERAPEUTIC,
-            crisis=CrisisAssessment(),
-            response_style="supportive",
-            diagnostics={
-                "openai_therapeutic_skill_tool_calls": [
-                    "load_therapeutic_response_skill"
-                ],
-                "openai_memory_tool_calls": ["show_saved_memory"],
-            },
-        ),
-        observability_mode="compact",
+    out = _render_output(
+        lambda console: render_turn_activity(
+            AgentOutput(
+                response_text="done",
+                response_type=ResponseCategory.THERAPEUTIC,
+                crisis=CrisisAssessment(),
+                response_style="supportive",
+                diagnostics={
+                    "openai_therapeutic_skill_tool_calls": [
+                        "load_therapeutic_response_skill"
+                    ],
+                    "openai_memory_tool_calls": ["show_saved_memory"],
+                },
+            ),
+            console=console,
+            observability_mode="compact",
+        )
     )
-    out = capsys.readouterr().out
 
     assert "tools" in out
     assert "response-style" in out
     assert "memory" in out
 
 
-def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
+def test_render_turn_activity_verbose_shows_full_activity() -> None:
     """Verbose observability should expand into a richer activity block."""
 
-    from opencouch_cli.app import render_turn_activity
-
-    render_turn_activity(
-        AgentOutput(
-            response_text="done",
-            response_type=ResponseCategory.THERAPEUTIC,
-            crisis=CrisisAssessment(needs_clarification=True),
-            response_style="supportive",
-            therapeutic_approach="cbt",
-            diagnostics={
-                "openai_therapeutic_skill_tool_calls": [
-                    "load_therapeutic_response_skill"
-                ],
-                "openai_therapeutic_skill_response_style": "supportive",
-                "openai_grounded_tool_calls": ["answer_grounded_lookup"],
-                "openai_triage_confidence": "low",
-                "openai_triage_tentative_route": "grounded_lookup",
-            },
-        ),
-        observability_mode="verbose",
+    out = _render_output(
+        lambda console: render_turn_activity(
+            AgentOutput(
+                response_text="done",
+                response_type=ResponseCategory.THERAPEUTIC,
+                crisis=CrisisAssessment(needs_clarification=True),
+                response_style="supportive",
+                therapeutic_approach="cbt",
+                diagnostics={
+                    "openai_therapeutic_skill_tool_calls": [
+                        "load_therapeutic_response_skill"
+                    ],
+                    "openai_therapeutic_skill_response_style": "supportive",
+                    "openai_grounded_tool_calls": ["answer_grounded_lookup"],
+                    "openai_triage_confidence": "low",
+                    "openai_triage_tentative_route": "grounded_lookup",
+                },
+            ),
+            console=console,
+            observability_mode="verbose",
+        )
     )
-    out = capsys.readouterr().out
 
     assert "turn activity" in out
     assert "route" in out
@@ -606,41 +625,41 @@ def test_render_turn_activity_verbose_shows_full_activity(capsys) -> None:
     assert "awaiting safety clarification" in out
 
 
-def test_render_turn_trace_shows_table_like_flow_and_reasons(capsys) -> None:
+def test_render_turn_trace_shows_table_like_flow_and_reasons() -> None:
     """Trace overlay should show routing decisions as a compact table."""
 
-    from opencouch_cli.app import render_turn_trace
-
-    render_turn_trace(
-        AgentOutput(
-            response_text="done",
-            response_type=ResponseCategory.THERAPEUTIC,
-            crisis=CrisisAssessment(),
-            response_style="supportive",
-            therapeutic_approach="cbt",
-            diagnostics={
-                "routing_trace": [
-                    {
-                        "stage": "safety",
-                        "decision": "normal",
-                        "source": "deterministic",
-                        "reason": "No crisis signal detected.",
-                        "confidence": "low",
-                    },
-                    {
-                        "stage": "dispatch",
-                        "decision": "supportive/cbt",
-                        "source": "llm_primary",
-                        "reason": "fake dispatch decision",
-                        "confidence": "high",
-                    },
-                ]
-            },
-        ),
-        status_stages=["load_memory", "therapeutic"],
-        pending_status="finishing turn",
+    out = _render_output(
+        lambda console: render_turn_trace(
+            AgentOutput(
+                response_text="done",
+                response_type=ResponseCategory.THERAPEUTIC,
+                crisis=CrisisAssessment(),
+                response_style="supportive",
+                therapeutic_approach="cbt",
+                diagnostics={
+                    "routing_trace": [
+                        {
+                            "stage": "safety",
+                            "decision": "normal",
+                            "source": "deterministic",
+                            "reason": "No crisis signal detected.",
+                            "confidence": "low",
+                        },
+                        {
+                            "stage": "dispatch",
+                            "decision": "supportive/cbt",
+                            "source": "llm_primary",
+                            "reason": "fake dispatch decision",
+                            "confidence": "high",
+                        },
+                    ]
+                },
+            ),
+            console=console,
+            status_stages=["load_memory", "therapeutic"],
+            pending_status="finishing turn",
+        )
     )
-    out = capsys.readouterr().out
 
     assert "routing trace" in out
     assert "stage" in out
@@ -698,17 +717,21 @@ async def test_chat_loop_shows_spinner_loading_state_before_stage_updates(
         return value
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
-    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
-    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
-    monkeypatch.setattr("opencouch_cli.app.Live", _FakeLive)
+    monkeypatch.setattr("opencouch_tui.cli_app.read_user_input", _read_user_input)
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_header", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr("opencouch_tui.cli_app.Live", _FakeLive)
 
     await chat_loop(
         "deterministic",
@@ -749,17 +772,19 @@ async def test_chat_loop_reports_turn_stream_failures_without_exiting(
         raise EOFError
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
-    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_tui.cli_app.read_user_input", _read_user_input)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_header", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -796,24 +821,26 @@ async def test_chat_loop_reports_response_tail_failures_without_exiting(
         return value
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
-    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_tui.cli_app.read_user_input", _read_user_input)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_header", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_turn_route", lambda *args, **kwargs: None
+        "opencouch_tui.cli_app.render_turn_route", lambda *args, **kwargs: None
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_turn_activity", lambda *args, **kwargs: None
+        "opencouch_tui.cli_app.render_turn_activity", lambda *args, **kwargs: None
     )
 
     exit_code = await chat_loop(
@@ -837,23 +864,23 @@ async def test_resume_command_switches_active_thread(monkeypatch) -> None:
     events: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_header",
+        "opencouch_tui.cli_app.render_header",
         lambda mode, thread_id, memory_mode, **kwargs: events.append(
             ("header", f"{mode}:{thread_id}")
         ),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": events.append(("info", f"{style}:{message}")),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_context",
+        "opencouch_tui.cli_app.render_context",
         lambda state: events.append(
             ("context", str(state.get("session_progress", {}).get("turn_count", 0)))
         ),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_history",
+        "opencouch_tui.cli_app.render_history",
         lambda session, limit=6: events.append(
             ("history", f"{session.thread_id}:{limit}:{len(session.history)}")
         ),
@@ -881,15 +908,15 @@ async def test_new_command_generates_fresh_thread_state(monkeypatch) -> None:
 
     events: list[tuple[str, str]] = []
 
-    monkeypatch.setattr("opencouch_cli.app.generate_thread_id", lambda: "thread-c")
+    monkeypatch.setattr("opencouch_tui.cli_app.generate_thread_id", lambda: "thread-c")
     monkeypatch.setattr(
-        "opencouch_cli.app.render_header",
+        "opencouch_tui.cli_app.render_header",
         lambda mode, thread_id, memory_mode, **kwargs: events.append(
             ("header", f"{mode}:{thread_id}")
         ),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": events.append(("info", f"{style}:{message}")),
     )
 
@@ -912,7 +939,7 @@ async def test_threads_command_uses_runtime_listing(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_threads",
+        "opencouch_tui.cli_app.render_threads",
         lambda threads, active_thread_id: captured.update(
             {"threads": threads, "active_thread_id": active_thread_id}
         ),
@@ -961,7 +988,7 @@ async def test_memory_list_command_dispatches_render(monkeypatch) -> None:
         captured["session"] = session_arg
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_memory_list",
+        "opencouch_tui.cli_app.render_memory_list",
         _fake_render_memory_list,
     )
 
@@ -993,10 +1020,10 @@ async def test_memory_status_still_dispatches_render_status(monkeypatch) -> None
         render_status_calls.append((runtime_arg, session_arg))
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_memory_list", _fake_render_memory_list
+        "opencouch_tui.cli_app.render_memory_list", _fake_render_memory_list
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_memory_status", _fake_render_memory_status
+        "opencouch_tui.cli_app.render_memory_status", _fake_render_memory_status
     )
 
     session = _session()
@@ -1022,13 +1049,13 @@ async def test_memory_unknown_subcommand_warns(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": info_messages.append((style, message)),
     )
     # Stub the known async handlers so a misdispatch is visible as an
     # unexpected call rather than blowing up on Rich output.
-    monkeypatch.setattr("opencouch_cli.app.render_memory_list", _noop_async)
-    monkeypatch.setattr("opencouch_cli.app.render_memory_status", _noop_async)
+    monkeypatch.setattr("opencouch_tui.cli_app.render_memory_list", _noop_async)
+    monkeypatch.setattr("opencouch_tui.cli_app.render_memory_status", _noop_async)
 
     session = _session()
     runtime = FakeRuntime()
@@ -1064,7 +1091,9 @@ def _patch_feedback_prompt_skip(monkeypatch) -> None:
     tests. Every test that exercises ``/end`` or ``/exit`` save=y
     needs this.
     """
-    monkeypatch.setattr("opencouch_cli.app._prompt_for_session_feedback", lambda: None)
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app._prompt_for_session_feedback", lambda: None
+    )
 
 
 # ─── v0.10 feedback-prompt helper (direct unit tests) ────────────────
@@ -1102,10 +1131,10 @@ def test_prompt_for_session_feedback_maps_responses(
     tests below.
     """
 
-    from opencouch_cli.app import _prompt_for_session_feedback
+    from opencouch_tui.cli_app import _prompt_for_session_feedback
 
     monkeypatch.setattr(
-        "opencouch_cli.app.Prompt.ask",
+        "opencouch_tui.cli_app.Prompt.ask",
         staticmethod(lambda *args, **kwargs: response),
     )
     assert _prompt_for_session_feedback() == expected
@@ -1119,12 +1148,12 @@ def test_prompt_for_session_feedback_handles_keyboard_interrupt(
     still fires. Prevents a user's accidental Ctrl-C from crashing
     the session-end flow."""
 
-    from opencouch_cli.app import _prompt_for_session_feedback
+    from opencouch_tui.cli_app import _prompt_for_session_feedback
 
     def _raise_kbi(*args, **kwargs):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_raise_kbi))
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", staticmethod(_raise_kbi))
     # Must return None, NOT propagate.
     assert _prompt_for_session_feedback() is None
 
@@ -1138,19 +1167,19 @@ def test_prompt_for_session_feedback_handles_eof(monkeypatch) -> None:
     never saw the prompt.
     """
 
-    from opencouch_cli.app import _prompt_for_session_feedback
+    from opencouch_tui.cli_app import _prompt_for_session_feedback
 
     def _raise_eof(*args, **kwargs):
         raise EOFError
 
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_raise_eof))
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", staticmethod(_raise_eof))
     assert _prompt_for_session_feedback() is None
 
 
 def test_prompt_for_session_feedback_accepts_uppercase_shortcuts(monkeypatch) -> None:
     """The feedback prompt should allow uppercase single-letter inputs."""
 
-    from opencouch_cli.app import _prompt_for_session_feedback
+    from opencouch_tui.cli_app import _prompt_for_session_feedback
 
     captured_kwargs: dict[str, object] = {}
 
@@ -1158,7 +1187,7 @@ def test_prompt_for_session_feedback_accepts_uppercase_shortcuts(monkeypatch) ->
         captured_kwargs.update(kwargs)
         return "S"
 
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_ask))
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", staticmethod(_ask))
 
     assert _prompt_for_session_feedback() == "skip"
     assert captured_kwargs["choices"] == ["y", "Y", "n", "N", "s", "S", ""]
@@ -1196,24 +1225,24 @@ async def test_chat_loop_waits_for_runtime_entry_before_first_prompt(
         raise EOFError
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
+    monkeypatch.setattr("opencouch_tui.cli_app.read_user_input", _read_user_input)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_header",
+        "opencouch_tui.cli_app.render_header",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.console.status",
+        "opencouch_tui.cli_app.console.status",
         lambda *args, **kwargs: _FakeStatus(),
     )
 
@@ -1247,7 +1276,7 @@ async def test_chat_loop_guest_mode_uses_ephemeral_sqlite_runtime(monkeypatch) -
         return runtime
 
     monkeypatch.setattr(
-        "opencouch_cli.app.get_settings",
+        "opencouch_tui.cli_app.get_settings",
         lambda: SimpleNamespace(
             persistence_backend="postgres",
             memory_database_url="postgresql://opencouch:opencouch@localhost/opencouch",
@@ -1256,16 +1285,22 @@ async def test_chat_loop_guest_mode_uses_ephemeral_sqlite_runtime(monkeypatch) -
         ),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
-    monkeypatch.setattr("opencouch_cli.app.PersistentAgentRuntime", _runtime_factory)
     monkeypatch.setattr(
-        "opencouch_cli.app.read_user_input",
+        "opencouch_tui.cli_app.PersistentAgentRuntime", _runtime_factory
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.read_user_input",
         lambda state: (_ for _ in ()).throw(EOFError),
     )
-    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
-    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_header", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda *args, **kwargs: None
+    )
 
     exit_code = await chat_loop(
         "deterministic",
@@ -1305,7 +1340,7 @@ async def test_chat_loop_renders_postgres_startup_hint(monkeypatch) -> None:
     messages: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        "opencouch_cli.app.get_settings",
+        "opencouch_tui.cli_app.get_settings",
         lambda: SimpleNamespace(
             persistence_backend="postgres",
             memory_database_url="postgresql://opencouch:opencouch@localhost/opencouch",
@@ -1314,15 +1349,15 @@ async def test_chat_loop_renders_postgres_startup_hint(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: _FailingRuntime(),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -1349,23 +1384,23 @@ async def test_chat_loop_does_not_sweep_active_sessions_on_eof(monkeypatch) -> N
     runtime = _FakeChatLoopRuntime()
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.read_user_input",
+        "opencouch_tui.cli_app.read_user_input",
         lambda state: (_ for _ in ()).throw(EOFError),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_header",
+        "opencouch_tui.cli_app.render_header",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda *args, **kwargs: None,
     )
 
@@ -1399,18 +1434,22 @@ async def test_chat_loop_prompts_again_before_turn_tail_finishes(monkeypatch) ->
         raise EOFError
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (None, "deterministic"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
-    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
-    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_tui.cli_app.read_user_input", _read_user_input)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_context", lambda *args, **kwargs: None
+        "opencouch_tui.cli_app.render_header", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_context", lambda *args, **kwargs: None
     )
 
     await chat_loop(
@@ -1442,20 +1481,24 @@ async def test_chat_loop_passes_response_tier_client_to_runtime(monkeypatch) -> 
         return value
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_llm_client",
+        "opencouch_tui.cli_app.resolve_llm_client",
         lambda mode: (control_client, "hybrid"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_response_llm_client",
+        "opencouch_tui.cli_app.resolve_response_llm_client",
         lambda mode, tier: response_client,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.PersistentAgentRuntime",
+        "opencouch_tui.cli_app.PersistentAgentRuntime",
         lambda *args, **kwargs: runtime,
     )
-    monkeypatch.setattr("opencouch_cli.app.read_user_input", _read_user_input)
-    monkeypatch.setattr("opencouch_cli.app.render_header", lambda *args, **kwargs: None)
-    monkeypatch.setattr("opencouch_cli.app.render_info", lambda *args, **kwargs: None)
+    monkeypatch.setattr("opencouch_tui.cli_app.read_user_input", _read_user_input)
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_header", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda *args, **kwargs: None
+    )
 
     await chat_loop(
         "hybrid",
@@ -1475,9 +1518,11 @@ async def test_end_command_calls_end_session_on_runtime(monkeypatch) -> None:
     terminate the session by returning False from handle_command."""
 
     _patch_feedback_prompt_skip(monkeypatch)
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info", lambda message, style="panel": None
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda message, style="panel": None
     )
 
     session = _session()
@@ -1501,15 +1546,17 @@ async def test_end_new_saves_current_session_and_continues_on_fresh_thread(
     _patch_feedback_prompt_skip(monkeypatch)
     events: list[tuple[str, str]] = []
 
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_header",
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_header",
         lambda mode, thread_id, memory_mode, **kwargs: events.append(
             ("header", f"{mode}:{thread_id}:{memory_mode}")
         ),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": events.append(("info", f"{style}:{message}")),
     )
 
@@ -1534,9 +1581,11 @@ async def test_end_new_rejects_existing_thread_before_summarizing(monkeypatch) -
 
     _patch_feedback_prompt_skip(monkeypatch)
     messages: list[str] = []
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append(message),
     )
 
@@ -1559,11 +1608,11 @@ async def test_response_tier_command_updates_session(monkeypatch) -> None:
     response_client = object()
 
     monkeypatch.setattr(
-        "opencouch_cli.app.resolve_response_llm_client",
+        "opencouch_tui.cli_app.resolve_response_llm_client",
         lambda mode, tier: response_client,
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -1626,7 +1675,7 @@ async def test_ui_command_toggles_without_args(monkeypatch) -> None:
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -1660,7 +1709,7 @@ async def test_memory_recall_without_args_reports_current_state(monkeypatch) -> 
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -1702,11 +1751,11 @@ async def test_end_command_renders_summary_when_arc_returned(
     farewell_calls: list[str] = []
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_session_summary",
+        "opencouch_tui.cli_app.render_session_summary",
         lambda arc: rendered_arcs.append(arc),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": farewell_calls.append(message),
     )
 
@@ -1739,11 +1788,11 @@ async def test_end_command_skips_summary_render_when_none_returned(
     farewell_calls: list[str] = []
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_session_summary",
+        "opencouch_tui.cli_app.render_session_summary",
         lambda arc: rendered_arcs.append(arc),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": farewell_calls.append(message),
     )
 
@@ -1772,10 +1821,12 @@ async def test_end_command_degrades_on_runtime_exception(monkeypatch) -> None:
     info_messages: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": info_messages.append((style, message)),
     )
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
 
     session = _session()
     runtime = FakeRuntime()
@@ -1812,11 +1863,13 @@ async def test_end_command_records_feedback_before_summary(monkeypatch) -> None:
 
     # User says "positive" — feedback prompt returns "positive".
     monkeypatch.setattr(
-        "opencouch_cli.app._prompt_for_session_feedback", lambda: "positive"
+        "opencouch_tui.cli_app._prompt_for_session_feedback", lambda: "positive"
     )
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info", lambda message, style="panel": None
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda message, style="panel": None
     )
 
     session = _session()
@@ -1847,10 +1900,14 @@ async def test_end_command_skips_feedback_when_prompt_returns_none(
     ``_prompt_for_session_feedback`` returns None and no feedback
     record is written. Summarization still runs."""
 
-    monkeypatch.setattr("opencouch_cli.app._prompt_for_session_feedback", lambda: None)
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info", lambda message, style="panel": None
+        "opencouch_tui.cli_app._prompt_for_session_feedback", lambda: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda message, style="panel": None
     )
 
     session = _session()
@@ -1877,15 +1934,17 @@ async def test_exit_save_yes_records_feedback_with_cli_exit_source(
     # helper is patched directly (not through Prompt.ask) so this
     # test doesn't depend on the prompt-to-label mapping.
     monkeypatch.setattr(
-        "opencouch_cli.app.Prompt.ask",
+        "opencouch_tui.cli_app.Prompt.ask",
         staticmethod(lambda *args, **kwargs: "y"),
     )
     monkeypatch.setattr(
-        "opencouch_cli.app._prompt_for_session_feedback", lambda: "negative"
+        "opencouch_tui.cli_app._prompt_for_session_feedback", lambda: "negative"
     )
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info", lambda message, style="panel": None
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda message, style="panel": None
     )
 
     session = _session()
@@ -1914,13 +1973,15 @@ async def test_exit_save_uppercase_yes_is_accepted(monkeypatch) -> None:
         captured_kwargs.update(kwargs)
         return "Y"
 
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", staticmethod(_ask))
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", staticmethod(_ask))
     monkeypatch.setattr(
-        "opencouch_cli.app._prompt_for_session_feedback", lambda: "positive"
+        "opencouch_tui.cli_app._prompt_for_session_feedback", lambda: "positive"
     )
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info", lambda message, style="panel": None
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda message, style="panel": None
     )
 
     session = _session()
@@ -1944,7 +2005,7 @@ async def test_exit_save_no_skips_both_feedback_and_summary(monkeypatch) -> None
 
     # Prompt.ask returns "n" for the save confirmation.
     monkeypatch.setattr(
-        "opencouch_cli.app.Prompt.ask",
+        "opencouch_tui.cli_app.Prompt.ask",
         staticmethod(lambda *args, **kwargs: "n"),
     )
 
@@ -1954,11 +2015,13 @@ async def test_exit_save_no_skips_both_feedback_and_summary(monkeypatch) -> None
         raise AssertionError("feedback prompt should not fire on /exit save=n")
 
     monkeypatch.setattr(
-        "opencouch_cli.app._prompt_for_session_feedback", _fail_if_called
+        "opencouch_tui.cli_app._prompt_for_session_feedback", _fail_if_called
     )
-    monkeypatch.setattr("opencouch_cli.app.render_session_summary", lambda arc: None)
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info", lambda message, style="panel": None
+        "opencouch_tui.cli_app.render_session_summary", lambda arc: None
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.cli_app.render_info", lambda message, style="panel": None
     )
 
     session = _session()
@@ -1988,32 +2051,26 @@ def test_format_entity_identifier_extracts_identifier_field() -> None:
     """The helper should return the ``identifier`` field from a
     serialized EntityRef dict."""
 
-    from opencouch_cli.app import _format_entity_identifier
-
     entity = {"type": "Person", "identifier": "Sarah"}
-    assert _format_entity_identifier(entity) == "Sarah"
+    assert format_entity_identifier(entity) == "Sarah"
 
 
 def test_format_entity_identifier_returns_placeholder_for_missing_field() -> None:
     """When the identifier is missing, the helper should return ``'?'``
     rather than raising. Defensive against schema drift."""
 
-    from opencouch_cli.app import _format_entity_identifier
-
-    assert _format_entity_identifier({"type": "Person"}) == "?"
-    assert _format_entity_identifier({"identifier": ""}) == "?"
-    assert _format_entity_identifier({}) == "?"
+    assert format_entity_identifier({"type": "Person"}) == "?"
+    assert format_entity_identifier({"identifier": ""}) == "?"
+    assert format_entity_identifier({}) == "?"
 
 
 def test_format_entity_identifier_returns_placeholder_for_wrong_shape() -> None:
     """When the value isn't a dict at all, the helper should return
     ``'?'`` rather than crashing. Also defensive."""
 
-    from opencouch_cli.app import _format_entity_identifier
-
-    assert _format_entity_identifier(None) == "?"
-    assert _format_entity_identifier("not-a-dict") == "?"
-    assert _format_entity_identifier(42) == "?"
+    assert format_entity_identifier(None) == "?"
+    assert format_entity_identifier("not-a-dict") == "?"
+    assert format_entity_identifier(42) == "?"
 
 
 def test_render_semantic_records_table_shows_object_column(capsys) -> None:
@@ -2023,7 +2080,7 @@ def test_render_semantic_records_table_shows_object_column(capsys) -> None:
     future refactor drops the column or the per-row lookup, this
     test catches it."""
 
-    from opencouch_cli.app import _render_semantic_records_table
+    from opencouch_tui.cli_app import _render_semantic_records_table
 
     records = [
         (
@@ -2074,7 +2131,7 @@ def test_render_semantic_records_table_shows_placeholder_for_missing_object(
     the table should render ``'?'`` rather than crashing or
     leaving a blank column."""
 
-    from opencouch_cli.app import _render_semantic_records_table
+    from opencouch_tui.cli_app import _render_semantic_records_table
 
     records = [
         (
@@ -2103,7 +2160,7 @@ async def test_export_command_writes_markdown_transcript(tmp_path, monkeypatch) 
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2138,7 +2195,7 @@ async def test_export_command_writes_json_transcript(tmp_path, monkeypatch) -> N
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2171,7 +2228,7 @@ async def test_export_command_requires_transcript(monkeypatch) -> None:
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2242,7 +2299,7 @@ async def test_summary_command_validates_args(monkeypatch) -> None:
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2258,7 +2315,7 @@ async def test_search_command_requires_mode_and_query(monkeypatch) -> None:
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2282,7 +2339,7 @@ async def test_search_command_rejects_unknown_subcommand(monkeypatch) -> None:
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2330,7 +2387,7 @@ async def test_search_history_command_reports_empty_state(monkeypatch) -> None:
 
     messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "opencouch_cli.app.render_info",
+        "opencouch_tui.cli_app.render_info",
         lambda message, style="panel": messages.append((style, message)),
     )
 
@@ -2502,7 +2559,7 @@ async def test_memory_list_rules_empty_state(capsys) -> None:
     """With no rules written yet, the empty-state panel renders."""
 
     from agent.memory.modes import MemoryMode
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     runtime.memory_mode = MemoryMode.LOCAL
@@ -2525,7 +2582,7 @@ async def test_memory_list_rules_renders_populated_rules(capsys) -> None:
         aadd_procedural_rule,
         build_procedural_rule,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     runtime.memory_mode = MemoryMode.LOCAL
@@ -2582,7 +2639,7 @@ async def test_memory_list_rules_isolates_threads(capsys) -> None:
         aadd_procedural_rule,
         build_procedural_rule,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
 
@@ -2619,7 +2676,7 @@ async def test_memory_recall_on_from_off_writes_and_explains(capsys) -> None:
     """Flipping OFF → ON writes the toggle and shows the first-run explanation."""
 
     from agent.memory.procedural_profile import aget_procedural_profile
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2655,7 +2712,7 @@ async def test_memory_recall_off_from_on_writes_confirmation(capsys) -> None:
         aget_procedural_profile,
         aset_proactive_recall,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2686,7 +2743,7 @@ async def test_memory_recall_already_on_is_noop(capsys) -> None:
         aget_procedural_profile,
         aset_proactive_recall,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2711,7 +2768,7 @@ async def test_memory_recall_already_on_is_noop(capsys) -> None:
 async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
     """``/memory recall maybe`` should still show usage, while bare recall shows state."""
 
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2734,7 +2791,7 @@ async def test_memory_forget_rule_y_confirms_and_deletes(capsys, monkeypatch) ->
         aget_procedural_profile,
         build_procedural_rule,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2758,7 +2815,7 @@ async def test_memory_forget_rule_y_confirms_and_deletes(capsys, monkeypatch) ->
     )
 
     # Monkeypatch Prompt.ask to return 'y' without interactive input
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "y")
 
     await handle_command("/memory forget rule 1", session, runtime)
     captured = capsys.readouterr()
@@ -2782,7 +2839,7 @@ async def test_memory_forget_rule_n_cancels(capsys, monkeypatch) -> None:
         aget_procedural_profile,
         build_procedural_rule,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2797,7 +2854,7 @@ async def test_memory_forget_rule_n_cancels(capsys, monkeypatch) -> None:
     )
 
     # Monkeypatch Prompt.ask to return '' (the default 'n')
-    monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "")
+    monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "")
 
     await handle_command("/memory forget rule 1", session, runtime)
     captured = capsys.readouterr()
@@ -2818,7 +2875,7 @@ async def test_memory_forget_rule_out_of_range_warns(capsys) -> None:
         aadd_procedural_rule,
         build_procedural_rule,
     )
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2843,7 +2900,7 @@ async def test_memory_forget_rule_out_of_range_warns(capsys) -> None:
 async def test_memory_forget_rule_no_rules_warns(capsys) -> None:
     """Forgetting a rule when the profile has none should produce a warning."""
 
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2858,7 +2915,7 @@ async def test_memory_forget_rule_no_rules_warns(capsys) -> None:
 async def test_memory_forget_rule_bad_index_warns(capsys) -> None:
     """A non-integer index should produce a usage warning, not crash."""
 
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -2881,7 +2938,7 @@ async def test_memory_status_shows_recall_toggle_state(capsys) -> None:
     (on or off) rather than a phase-2+ placeholder."""
 
     from agent.memory.procedural_profile import aset_proactive_recall
-    from opencouch_cli.app import handle_command
+    from opencouch_tui.cli_app import handle_command
 
     runtime = FakeProceduralRuntime()
     session = _session()
@@ -3001,7 +3058,7 @@ class TestUserIdCommandIntegration:
             aadd_procedural_rule,
             build_procedural_rule,
         )
-        from opencouch_cli.app import handle_command
+        from opencouch_tui.cli_app import handle_command
 
         runtime = FakeProceduralRuntime()
 
@@ -3060,7 +3117,7 @@ class TestUserIdCommandIntegration:
             aadd_procedural_rule,
             build_procedural_rule,
         )
-        from opencouch_cli.app import handle_command
+        from opencouch_tui.cli_app import handle_command
 
         runtime = FakeProceduralRuntime()
 
@@ -3103,7 +3160,7 @@ class TestUserIdCommandIntegration:
         back to the thread_id. This is the dogfood observability
         hook for confirming the flag took effect."""
 
-        from opencouch_cli.app import handle_command
+        from opencouch_tui.cli_app import handle_command
 
         runtime = FakeProceduralRuntime()
 
@@ -3130,7 +3187,7 @@ class TestUserIdCommandIntegration:
         """When --user-id is not set, /memory status labels the
         owner_id row as coming from the thread_id fallback."""
 
-        from opencouch_cli.app import handle_command
+        from opencouch_tui.cli_app import handle_command
 
         runtime = FakeProceduralRuntime()
 
@@ -3149,7 +3206,7 @@ class TestUserIdCommandIntegration:
             aadd_procedural_rule,
             build_procedural_rule,
         )
-        from opencouch_cli.app import handle_command
+        from opencouch_tui.cli_app import handle_command
 
         runtime = FakeProceduralRuntime()
 
@@ -3231,15 +3288,11 @@ class TestParserUserIdFlag:
     def test_user_id_flag_defaults_to_none(self) -> None:
         """Without --user-id, the parsed value is None."""
 
-        from opencouch_cli.app import build_parser
-
         args = build_parser().parse_args([])
         assert args.user_id is None
 
     def test_user_id_flag_captures_explicit_value(self) -> None:
         """With --user-id, the parsed value is the provided string."""
-
-        from opencouch_cli.app import build_parser
 
         args = build_parser().parse_args(["--user-id", "alice"])
         assert args.user_id == "alice"
@@ -3251,15 +3304,11 @@ class TestParserDisableTracingFlag:
     def test_disable_tracing_flag_defaults_to_false(self) -> None:
         """Without --disable-tracing, tracing remains enabled by configuration."""
 
-        from opencouch_cli.app import build_parser
-
         args = build_parser().parse_args([])
         assert args.disable_tracing is False
 
     def test_disable_tracing_flag_sets_true(self) -> None:
         """With --disable-tracing, the parsed value is true."""
-
-        from opencouch_cli.app import build_parser
 
         args = build_parser().parse_args(["--disable-tracing"])
         assert args.disable_tracing is True
@@ -3277,7 +3326,7 @@ class TestRenderContext:
     def test_shows_procedural_rules_when_present(self, capsys) -> None:
         """Procedural rules from procedural_profile render as bullets."""
 
-        from opencouch_cli.app import render_context
+        from opencouch_tui.cli_app import render_context
 
         state = {
             "session_progress": {"turn_count": 3},
@@ -3304,7 +3353,7 @@ class TestRenderContext:
     def test_shows_proactive_recall_toggle(self, capsys) -> None:
         """The recall row shows on/off based on the procedural profile."""
 
-        from opencouch_cli.app import render_context
+        from opencouch_tui.cli_app import render_context
 
         state = {
             "session_progress": {"turn_count": 1},
@@ -3327,7 +3376,7 @@ class TestRenderContext:
     def test_shows_exercise_state_when_active(self, capsys) -> None:
         """Guided exercise type + step render when exercise_state carries them."""
 
-        from opencouch_cli.app import render_context
+        from opencouch_tui.cli_app import render_context
 
         state = {
             "session_progress": {"turn_count": 1},
@@ -3351,7 +3400,7 @@ class TestRenderContext:
     ) -> None:
         """Context view should expose current routing/debug state."""
 
-        from opencouch_cli.app import render_context
+        from opencouch_tui.cli_app import render_context
 
         state = {
             "session_progress": {"turn_count": 4},
@@ -3385,7 +3434,7 @@ class TestRenderContext:
         and showing an empty row on every turn would crowd the panel.
         """
 
-        from opencouch_cli.app import render_context
+        from opencouch_tui.cli_app import render_context
 
         state = {
             "session_progress": {"turn_count": 1},
@@ -3412,7 +3461,7 @@ class TestRenderContext:
         ``• b``, ``• c`` on separate lines so long entries wrap.
         """
 
-        from opencouch_cli.app import render_context
+        from opencouch_tui.cli_app import render_context
 
         state = {
             "session_progress": {"turn_count": 1},
@@ -3440,18 +3489,18 @@ class TestRenderContext:
         assert "• Last session (grief): talked about my dog passing" in out
 
 
-def test_render_response_uses_lightweight_normal_message_chrome(capsys) -> None:
+def test_render_response_uses_lightweight_normal_message_chrome() -> None:
     """Normal replies should read as conversation, not a heavy panel."""
 
-    from opencouch_cli.app import render_response
-
-    render_response(
-        "hello there",
-        is_crisis=False,
-        thread_id="thread-a",
-        turn_count=3,
+    out = _render_output(
+        lambda console: render_response(
+            "hello there",
+            console=console,
+            is_crisis=False,
+            thread_id="thread-a",
+            turn_count=3,
+        )
     )
-    out = capsys.readouterr().out
 
     assert "assistant" in out
     assert "thread" in out
@@ -3465,13 +3514,10 @@ def test_render_response_uses_lightweight_normal_message_chrome(capsys) -> None:
     assert "╰" not in out
 
 
-def test_render_onboarding_uses_single_quiet_hint(capsys) -> None:
+def test_render_onboarding_uses_single_quiet_hint() -> None:
     """First-run onboarding should not consume a full panel."""
 
-    from opencouch_cli.app import render_onboarding
-
-    render_onboarding()
-    out = capsys.readouterr().out
+    out = _render_output(lambda console: render_onboarding(console=console))
 
     assert "Type / for commands" in out
     assert "quick start" not in out
@@ -3480,13 +3526,10 @@ def test_render_onboarding_uses_single_quiet_hint(capsys) -> None:
     assert "╰" not in out
 
 
-def test_render_help_uses_single_command_reference_panel(capsys) -> None:
+def test_render_help_uses_single_command_reference_panel() -> None:
     """/help should be one scannable reference instead of stacked panels."""
 
-    from opencouch_cli.app import render_help
-
-    render_help()
-    out = capsys.readouterr().out
+    out = _render_output(lambda console: render_help(console=console))
 
     assert "command reference" in out
     assert "category" in out
@@ -3498,22 +3541,22 @@ def test_render_help_uses_single_command_reference_panel(capsys) -> None:
     assert "commands · session" not in out
 
 
-def test_render_meta_defaults_to_compact_summary(capsys) -> None:
+def test_render_meta_defaults_to_compact_summary() -> None:
     """Default diagnostics rendering should prefer the compact summary panel."""
 
-    from opencouch_cli.app import render_meta
-
-    render_meta(
-        response_style="support",
-        response_type="support",
-        level=0,
-        needs_clarification=False,
-        needs_crisis_response=False,
-        reason="steady and calm",
-        diagnostics={"turn_total_ms": 142.0},
-        memory_deltas={"semantic": 1, "procedural": 0},
+    out = _render_output(
+        lambda console: render_meta(
+            console=console,
+            response_style="support",
+            response_type="support",
+            level=0,
+            needs_clarification=False,
+            needs_crisis_response=False,
+            reason="steady and calm",
+            diagnostics={"turn_total_ms": 142.0},
+            memory_deltas={"semantic": 1, "procedural": 0},
+        )
     )
-    out = capsys.readouterr().out
 
     assert "diagnostics" in out
     assert "support" in out
@@ -3524,31 +3567,30 @@ def test_render_meta_defaults_to_compact_summary(capsys) -> None:
 
 
 class TestRenderStageTimings:
-    """Tests for the v0.8 ``_render_stage_timings`` helper."""
+    """Tests for the v0.8 ``render_stage_timings`` helper."""
 
-    def test_empty_inputs_skip_panel_entirely(self, capsys) -> None:
+    def test_empty_inputs_skip_panel_entirely(self) -> None:
         """With no diagnostics and no deltas, the helper prints nothing."""
 
-        from opencouch_cli.app import _render_stage_timings
-
-        _render_stage_timings({}, {})
-        out = capsys.readouterr().out
+        out = _render_output(
+            lambda console: render_stage_timings({}, {}, console=console)
+        )
         assert out == ""
 
-    def test_stage_timings_table_shows_all_stages(self, capsys) -> None:
+    def test_stage_timings_table_shows_all_stages(self) -> None:
         """A populated diagnostics dict renders a full timings row per stage."""
 
-        from opencouch_cli.app import _render_stage_timings
-
-        _render_stage_timings(
-            diagnostics={
-                "load_memory_ms": 1.23,
-                "crisis_gate_ms": 2.34,
-                "turn_total_ms": 99.99,
-            },
-            memory_deltas={"semantic": 1, "episodic": 0, "procedural": 0},
+        out = _render_output(
+            lambda console: render_stage_timings(
+                diagnostics={
+                    "load_memory_ms": 1.23,
+                    "crisis_gate_ms": 2.34,
+                    "turn_total_ms": 99.99,
+                },
+                memory_deltas={"semantic": 1, "episodic": 0, "procedural": 0},
+                console=console,
+            )
         )
-        out = capsys.readouterr().out
 
         assert "load_memory" in out
         assert "crisis_gate" in out
@@ -3559,32 +3601,32 @@ class TestRenderStageTimings:
         assert "2.34" in out
         assert "99.99" in out
 
-    def test_missing_keys_render_as_dashes(self, capsys) -> None:
+    def test_missing_keys_render_as_dashes(self) -> None:
         """A diagnostics dict missing a key shows ``-`` instead of crashing."""
 
-        from opencouch_cli.app import _render_stage_timings
-
-        _render_stage_timings(
-            diagnostics={"load_memory_ms": 5.0},
-            memory_deltas={},
+        out = _render_output(
+            lambda console: render_stage_timings(
+                diagnostics={"load_memory_ms": 5.0},
+                memory_deltas={},
+                console=console,
+            )
         )
-        out = capsys.readouterr().out
 
         assert "5.00" in out
         # Rows for missing stages still appear with "-" in the time column
         assert "crisis_gate" in out
         assert "semantic_memory" in out
 
-    def test_memory_deltas_render_in_store_delta_column(self, capsys) -> None:
+    def test_memory_deltas_render_in_store_delta_column(self) -> None:
         """Store deltas should surface without extraction diagnostics."""
 
-        from opencouch_cli.app import _render_stage_timings
-
-        _render_stage_timings(
-            diagnostics={},
-            memory_deltas={"semantic": 1, "procedural": 0},
+        out = _render_output(
+            lambda console: render_stage_timings(
+                diagnostics={},
+                memory_deltas={"semantic": 1, "procedural": 0},
+                console=console,
+            )
         )
-        out = capsys.readouterr().out
 
         assert "semantic_memory" in out
         assert "procedural_memory" in out
@@ -3774,7 +3816,9 @@ class TestMemoryForgetFact:
             object_identifier="fluoxetine",
         )
 
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "y"
+        )
 
         await handle_command("/memory forget fact 1", session, runtime)
         captured = capsys.readouterr().out
@@ -3801,7 +3845,9 @@ class TestMemoryForgetFact:
         )
 
         # Empty string is the default (declined) — matches the rule-forget pattern
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: ""
+        )
 
         await handle_command("/memory forget fact 1", session, runtime)
         captured = capsys.readouterr().out
@@ -3870,7 +3916,9 @@ class TestMemoryForgetFact:
             object_identifier="Visible",
         )
 
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "y"
+        )
 
         await handle_command("/memory forget fact 1", session, runtime)
         captured = capsys.readouterr().out
@@ -3935,7 +3983,9 @@ class TestMemoryForgetSession:
             themes=["sleep"],
         )
 
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "y"
+        )
 
         await handle_command("/memory forget session 1", session, runtime)
         captured = capsys.readouterr().out
@@ -3974,7 +4024,9 @@ class TestMemoryForgetSession:
             summary="Talked about sister Sarah's visit this weekend",
             themes=["family"],
         )
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "n")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "n"
+        )
 
         await handle_command("/memory forget session 1", session, runtime)
         captured = capsys.readouterr().out
@@ -4004,7 +4056,9 @@ class TestMemoryClear:
         )
 
         # User types 'y' — should NOT delete anything
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "y"
+        )
 
         await handle_command("/memory clear facts", session, runtime)
         captured = capsys.readouterr().out
@@ -4037,7 +4091,7 @@ class TestMemoryClear:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "clear"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "clear"
         )
 
         await handle_command("/memory clear facts", session, runtime)
@@ -4069,7 +4123,7 @@ class TestMemoryClear:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "CLEAR"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "CLEAR"
         )
 
         await handle_command("/memory clear facts", session, runtime)
@@ -4115,7 +4169,7 @@ class TestMemoryClear:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "clear"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "clear"
         )
 
         await handle_command("/memory clear all", session, runtime)
@@ -4174,7 +4228,7 @@ class TestMemoryClear:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "clear"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "clear"
         )
 
         await handle_command("/memory clear rules", session, runtime)
@@ -4208,7 +4262,7 @@ class TestMemoryClear:
             prompt_calls.append((args, kwargs))
             return ""
 
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", _track_prompt)
+        monkeypatch.setattr("opencouch_tui.cli_app.Prompt.ask", _track_prompt)
 
         await handle_command("/memory clear facts", session, runtime)
         captured = capsys.readouterr().out
@@ -4458,7 +4512,9 @@ class TestMemoryPurgeCrisis:
             )
         )
 
-        monkeypatch.setattr("opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "y")
+        monkeypatch.setattr(
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "y"
+        )
 
         await handle_command("/memory purge-crisis 30", session, runtime)
         captured = capsys.readouterr().out
@@ -4484,7 +4540,7 @@ class TestMemoryPurgeCrisis:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "PURGE"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "PURGE"
         )
 
         await handle_command("/memory purge-crisis 30", session, runtime)
@@ -4514,7 +4570,7 @@ class TestMemoryPurgeCrisis:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "purge"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "purge"
         )
 
         await handle_command("/memory purge-crisis 30", session, runtime)
@@ -4542,7 +4598,7 @@ class TestMemoryPurgeCrisis:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "purge"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "purge"
         )
 
         await handle_command("/memory purge-crisis 10000", session, runtime)
@@ -4585,7 +4641,7 @@ class TestMemoryPurgeCrisis:
     async def test_purge_default_window_is_90_days(self, capsys, monkeypatch) -> None:
         """Without an explicit days argument, the default is 90."""
 
-        from opencouch_cli.app import DEFAULT_CRISIS_RETENTION_DAYS
+        from opencouch_tui.cli_app import DEFAULT_CRISIS_RETENTION_DAYS
 
         assert DEFAULT_CRISIS_RETENTION_DAYS == 90
 
@@ -4598,7 +4654,7 @@ class TestMemoryPurgeCrisis:
         )
 
         monkeypatch.setattr(
-            "opencouch_cli.app.Prompt.ask", lambda *args, **kwargs: "purge"
+            "opencouch_tui.cli_app.Prompt.ask", lambda *args, **kwargs: "purge"
         )
 
         await handle_command("/memory purge-crisis", session, runtime)
