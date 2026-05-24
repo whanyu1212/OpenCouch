@@ -9,10 +9,11 @@ import PromptLayersVisual from '@site/src/components/PromptLayers';
 # Architecture
 
 Single Python backend. OpenAI Agents SDK text runtime with app-owned state and
-deterministic routing stages. Three memory
+deterministic routing stages. OpenAI Realtime powers browser voice through the
+same app-owned memory, policy, and tool boundaries. Three memory
 layers backed by Postgres-first durable persistence with a legacy SQLite
-fallback. Shared runtime for CLI, API, web text, and Telegram; separate
-LiveKit runtime for voice.
+fallback. Shared runtime for CLI, API, web text, Telegram, and voice
+persistence.
 
 ---
 
@@ -93,8 +94,8 @@ composition logic.
 | `llm/` | `BaseLLMClient` protocol, factory, and OpenAI client |
 | `opencouch_cli/` | Rich-based interactive CLI |
 | `channels/` | Standalone channel adapters, currently Telegram DM polling |
-| `agent/voice/` | LiveKit-Agents voice runtime — worker process, agent handoffs, bounded tasks, room transport, and transcript finalization |
-| `api/` | FastAPI routes (chat, threads, memory, voice token/finalization) |
+| `agent/voice/` | OpenAI Realtime voice policy, session config, tool schemas, tool execution, turn policy, and transcript finalization helpers |
+| `api/` | FastAPI routes (chat, threads, memory, Realtime voice session/tools/turns/finalization) |
 | `tests/` | Pytest suites for runtime stages, memory, retrieval, dispatcher, persistence |
 
 ---

@@ -13,9 +13,9 @@ What's shipped, what's in progress, and what's planned.
 
 | Feature | What landed |
 |---|---|
-| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and LiveKit voice entrypoint. Lives in `apps/web/`, but is temporarily behind the backend refactor and is not the primary dogfood path right now. |
+| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and OpenAI Realtime voice entrypoint. Lives in `apps/web/`. |
 | **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
-| **Voice Chat (LiveKit)** | LiveKit-native worker with WebRTC room transport, `TherapeuticAgent` ↔ `CrisisAgent` handoffs, bounded `VoiceExerciseTask` (10 voice-allowlisted exercises), `@function_tool` declarations, and three-phase memory (startup load / mid-session retrieval / shutdown transcript replay). Lives in `apps/backend/agent/voice/`. |
+| **Voice Chat (OpenAI Realtime)** | Browser speech-to-speech over OpenAI Realtime WebRTC with app-owned tools, turn policy, incognito/persistent modes, turn recording, and shared end-session finalization. Lives across `apps/web/src/components/realtime-voice-session-provider.tsx` and `apps/backend/agent/voice/`. |
 | **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /api/threads/{id}/end`. Postgres-first durable backend with incognito-safe in-memory mode and legacy SQLite fallback. |
 | **Telegram DM Gateway** | Standalone local dogfood gateway for Telegram DMs. Uses `Channel.TELEGRAM`, persistent text runtime, allowlisted numeric sender IDs, canonical owner ID memory, `/start`, `/help`, `/end`, safe Telegram HTML rendering, optional thread rotation, startup recovery, per-chat locking, lease retry, and closed-thread reclaim. |
 | **Crisis Gate — LLM-only** | Crisis classification is a structured LLM call with strict truth-table enforcement. Provider failures surface through retries/errors instead of silently degrading to regex rules. |
@@ -32,7 +32,7 @@ What's shipped, what's in progress, and what's planned.
 | **Response quality review** | Manual dogfood path | Needs broader review of ordinary support turns and longer dogfood transcripts. |
 | **Memory integration regression coverage** | Pytest-first | Runtime and recall tests cover semantic, episodic, procedural, correction, deletion, and cross-feature behavior. Remaining work is wider live dogfood coverage and voice parity. |
 | **Session feedback — closing mode** | Closing signal wired, feedback UX pending | Closing detection is LLM-primary and emits `session_action=suggest_end_session`; feedback prompt still needs to fire from natural closings, not just CLI/API end commands. |
-| **Session feedback — voice** | Designed, not wired | Voice disconnect bypasses `end_session()` — needs to either route through the runtime or gain its own feedback hook. |
+| **Session feedback — voice** | Designed, not wired | Voice disconnect now routes through `end_session()` in persistent mode; the remaining work is collecting an explicit feedback value from the voice end-state UI. |
 
 ---
 

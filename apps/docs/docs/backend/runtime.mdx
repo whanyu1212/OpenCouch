@@ -25,18 +25,15 @@ persistent layer saves app-owned state through the configured backend
 after each turn and restores reducer-backed fields on the next.
 :::
 
-:::note Voice has its own finalization path
-The LiveKit voice runtime (`agent/voice/agent.py`) lazy-creates
-**one shared `PersistentAgentRuntime` per worker process**, so it
-shares the configured memory store, crisis log, and embedding provider
-with text mode. But voice does **not** drive turns
-through `run_turn` / `run_turn_stream`. On disconnect it
-serializes the room transcript and hands it to
-`runtime.end_transcript_session(...)` — a separate path from
-text-mode `/end`. The 20-min inactivity sweeper and session-end
-candidate buffering described below are therefore text-only;
-voice has its own shutdown persistence path.
-See [Voice (LiveKit)](/docs/voice) for the full picture.
+:::note Voice uses Realtime transport with app-owned persistence
+The browser owns OpenAI Realtime WebRTC audio, while the backend owns
+session configuration, memory bootstrap, tool execution, turn recording,
+and session finalization. Voice does **not** drive full text turns
+through `run_turn` / `run_turn_stream`; finalized Realtime transcripts
+are recorded through `record_voice_turn(...)`, and persistent voice
+sessions end through the same `end_session(...)` summarization path as
+text. The 20-min inactivity sweeper remains text-session oriented.
+See [Voice](/docs/voice) for the full picture.
 :::
 
 :::note Telegram adds an optional session registry
@@ -130,8 +127,7 @@ caller boundary:
 | HTTP / WebSocket text API | Request validation fails | Accepted as `None` | `user_id` if set, otherwise `thread_id` |
 | CLI text | Generates `local-<12 uuid hex>` | Persistent mode falls back to the active thread id; guest mode ignores `--user-id` | `user_id` if set, otherwise active `thread_id` |
 | Web UI | Blank setup field generates `web-<8 random base36>` | Blank persistent setup uses `web-user`; incognito clears `user_id` | `user_id` if set, otherwise `thread_id` |
-| LiveKit browser voice | Token route generates `voice-<12 uuid hex>` | Token route uses `voice-user` | Voice memory writes are under `user_id`; records keep `thread_id` provenance |
-| LiveKit worker direct session | Env / metadata may supply one; otherwise generates `voice-<12 uuid hex>` | Env / metadata may supply one; otherwise uses `voice-user` | Voice memory writes are under `user_id`; records keep `thread_id` provenance |
+| Web voice | Reuses the active web `thread_id` from setup | Persistent mode uses the active web user id; incognito clears `user_id` | `user_id` if set, otherwise active `thread_id` |
 | Telegram, rotation off | Uses `telegram:dm:<chat_id>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
 | Telegram, rotation on | Uses `telegram:dm:<chat_id>:session:<ulid>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
 

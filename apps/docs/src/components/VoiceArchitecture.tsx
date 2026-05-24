@@ -4,12 +4,12 @@ import s from './VoiceArchitecture.module.css';
 /* ================================================================
    VoiceArchitecture
    -----------------
-   Static reference diagram of the LiveKit voice runtime.
+   Static reference diagram of the OpenAI Realtime voice runtime.
 
    Three labeled sections stacked vertically:
-     1. Room transport — Browser → LiveKit room → Worker
-     2. Session core   — TherapeuticAgent ⇄ CrisisAgent (+ VoiceExerciseTask)
-     3. Shared state   — SessionData · PersistentAgentRuntime
+     1. Realtime transport — Browser → OpenAI Realtime → Backend tools
+     2. Session core       — Realtime model + app-owned policy/tools
+     3. Shared state       — PersistentAgentRuntime + memory backends
 
    No animation. Site-native white card aesthetic.
    ================================================================ */
@@ -19,24 +19,24 @@ export default function VoiceArchitecture(): React.JSX.Element {
     <div className={s.root}>
       {/* ── Section 1: transport ──────────────────────────────── */}
       <Section
-        kicker="Room transport"
-        title="Browser ⇢ LiveKit room ⇢ Worker"
+        kicker="Realtime transport"
+        title="Browser ⇢ OpenAI Realtime ⇢ Backend tools"
       >
         <div className={s.transportRow}>
           <Box title="Browser" sub="mic + speaker" />
-          <Arrow label="participant token" />
-          <Box title="LiveKit room" sub="audio I/O · agent dispatch" emphasis />
-          <Arrow label="dispatch agent" />
-          <Box title="Worker" sub="agent/voice/agent.py" />
+          <Arrow label="client secret" />
+          <Box title="OpenAI Realtime" sub="speech-to-speech · tools" emphasis />
+          <Arrow label="function calls" />
+          <Box title="FastAPI" sub="/api/voice/realtime/*" />
         </div>
       </Section>
 
-      <Connector label="WebRTC audio · agent dispatch starts AgentSession" />
+      <Connector label="WebRTC audio · data-channel events call app-owned tools" />
 
       {/* ── Section 2: session core ───────────────────────────── */}
       <Section
         kicker="Session core"
-        title="AgentSession[SessionData] · per LiveKit job"
+        title="Realtime session · app-owned policy/tools"
       >
         <div className={s.sessionRow}>
           {/* TherapeuticAgent */}

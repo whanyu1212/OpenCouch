@@ -40,10 +40,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 | Area | Current implementation |
 |---|---|
 | Text chat | WebSocket streaming through `/api/chat/stream`, with REST `/api/chat` available for synchronous turns |
-| Session state | Zustand store persisted to local storage for setup choices such as user id, thread id, memory mode, model tier, and voice language |
+| Session state | Zustand store persisted to local storage for setup choices such as user id, thread id, memory mode, model tier, and assistant voice |
 | Thread history | REST calls to `/api/threads`, `/api/threads/{thread_id}/history`, and `/api/threads/{thread_id}/state` |
 | Memory controls | REST calls under `/api/memory/*` for status, recall toggle, list, and deletes |
-| Voice | LiveKit browser room via `/api/voice/livekit/token`, with finalization polling after disconnect |
+| Voice | OpenAI Realtime WebRTC through `/api/voice/realtime/*`, with app-owned tool calls, turn recording, and session finalization |
 | Error handling | Route `error.tsx`, `global-error.tsx`, loading fallback, not-found fallback, and visible REST error notices |
 
 ## Streaming lifecycle
@@ -67,11 +67,13 @@ surface a retryable failure instead of crashing the page.
 
 ## Voice boundary
 
-LiveKit React hooks need a client-side provider. The app lazy-loads
-the voice provider and mounts it when the user is on `/voice`, while
-a voice session is connected, or while voice finalization is still in
-progress. That keeps LiveKit out of the normal text-chat bundle while
-still supporting direct refreshes of the voice route.
+The Realtime voice connection needs a client-side provider because the
+browser owns WebRTC audio and data-channel events. The app lazy-loads
+the provider and mounts it when the user is on `/voice`, while a voice
+session is connected, or while voice finalization is still in progress.
+The provider keeps OpenAI audio transport out of the normal text-chat
+bundle while keeping transcripts, tool activity, and memory finalization
+in the shared Zustand session store.
 
 ## Verification
 

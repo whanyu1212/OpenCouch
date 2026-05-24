@@ -133,9 +133,9 @@ which is what makes cross-session personalization possible.
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-      <strong>Voice chat (LiveKit)</strong>
+      <strong>Voice chat (OpenAI Realtime)</strong>
     </div>
-    <p>LiveKit-native worker under <code>agent/voice/</code>. Browser joins a LiveKit room over WebRTC; the worker dispatches into the room, runs <code>TherapeuticAgent</code> with handoffs to <code>CrisisAgent</code> and bounded <code>VoiceExerciseTask</code>s. Three-phase memory (startup load → mid-session retrieval → shutdown transcript replay).</p>
+    <p>Browser speech-to-speech runs through OpenAI Realtime WebRTC. The backend creates the session, injects memory context, executes app-owned function tools, records finalized turns, and finalizes persistent sessions through the shared runtime.</p>
   </div>
 
   <div className="doc-card">

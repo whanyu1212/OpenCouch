@@ -99,12 +99,10 @@ unaffected by the feedback write (no status surfaced).
   termination. If we later want in-conversation feedback hints, the
   same `record_session_feedback()` method works — the closing node
   would call the runtime directly.
-- **Voice disconnect** — the LiveKit voice runtime
-  (`agent/voice/`) bypasses `PersistentAgentRuntime.end_session()`
-  and uses its own `runtime.end_transcript_session(...)` path to
-  replay the room transcript. Voice feedback would need to be
-  collected through that path (or a dedicated voice-side prompt)
-  rather than the text-mode `record_session_feedback()` flow.
+- **Voice disconnect** — persistent OpenAI Realtime voice sessions
+  now finalize through `PersistentAgentRuntime.end_session()`. Voice
+  feedback still needs product UI to collect a rating before the
+  `/api/voice/realtime/end` path runs.
 
 ## Inspection
 

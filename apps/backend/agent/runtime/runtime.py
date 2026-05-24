@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -50,6 +51,10 @@ from agent.runtime.session_store import (
     create_text_session_store,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
+from agent.runtime.context import OpenAITextRunContext
+from agent.runtime.memory_context import build_turn_memory_delta
+from agent.voice.transcript import voice_turn_to_transcript_entries
+from agent.voice.turn_policy import VoiceTurnPolicy, build_voice_turn_policy
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
@@ -1026,6 +1031,255 @@ class PersistentAgentRuntime:
 
         return await self._state_store.load_state(thread_id)
 
+    async def build_voice_tool_context(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        current_user_message: str,
+        transcript: list[dict[str, object]],
+        llm_client: BaseLLMClient | None = None,
+    ) -> OpenAITextRunContext:
+        """Build the app-owned context used by voice function tools."""
+
+        effective_user_message = current_user_message.strip() or _latest_user_text(
+            transcript
+        )
+        if not effective_user_message:
+            effective_user_message = "voice tool call"
+        prior_state = await self.get_state(thread_id)
+        prior_turn_count = turn_count_from_state(prior_state)
+        initial_state = self._build_turn_initial_state(
+            thread_id=thread_id,
+            message=effective_user_message,
+            channel=Channel.VOICE,
+            user_id=user_id,
+            installed_skills=None,
+            prior_turn_count=prior_turn_count,
+        )
+        state = cast(AgentState, {**dict(prior_state or {}), **dict(initial_state)})
+        if transcript:
+            state["transcript"] = cast(Any, [dict(turn) for turn in transcript])
+        elif prior_state is not None:
+            state["transcript"] = list(prior_state.get("transcript", []) or [])
+
+        memory_control = state.get("memory_control", {}) or {}
+        pending_memory_action = (
+            memory_control.get("pending_action")
+            if isinstance(memory_control, Mapping)
+            else None
+        )
+        workflow_context = self._context_for_turn(
+            thread_id=thread_id,
+            message=effective_user_message,
+            prior_state=prior_state,
+            user_id=user_id,
+            llm_client=llm_client,
+            response_llm_client=llm_client,
+            track_session=False,
+        )
+        return OpenAITextRunContext(
+            thread_id=thread_id,
+            workflow_context=workflow_context,
+            current_user_message=effective_user_message,
+            user_id=user_id,
+            session_id=thread_id,
+            channel=Channel.VOICE,
+            pending_memory_action=(
+                dict(pending_memory_action)
+                if isinstance(pending_memory_action, Mapping)
+                else None
+            ),
+            agent_state=state,
+            installed_skills=list(state.get("installed_skills", []) or []),
+            transcript=cast(list[dict[str, Any]], list(state.get("transcript", []))),
+            turn_count=turn_count_from_state(state),
+        )
+
+    async def voice_session_memory_context(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        memory_mode: str | None = None,
+    ) -> str:
+        """Return compact saved-memory context for a Realtime voice session."""
+
+        if memory_mode == "incognito" or self.memory_mode == MemoryMode.INCOGNITO:
+            return ""
+        initial_state = self._build_turn_initial_state(
+            thread_id=thread_id,
+            message="voice session start",
+            channel=Channel.VOICE,
+            user_id=user_id,
+            installed_skills=None,
+            prior_turn_count=0,
+        )
+        context = WorkflowContext(
+            llm_client=None,
+            response_llm=None,
+            memory_store=self._memory_store,
+            crisis_log_backend=self._crisis_log_backend,
+            memory_mode=self.memory_mode,
+            embedding_provider=self._embedding_provider,
+            session_memory_buffer=None,
+            pre_fetched_memory=None,
+        )
+        delta = await build_turn_memory_delta(cast(AgentState, initial_state), context)
+        return _compact_voice_memory_context(delta)
+
+    async def record_voice_turn(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        user_text: str,
+        assistant_text: str,
+        route: str | None = None,
+        response_style: str | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+        llm_client: BaseLLMClient | None = None,
+    ) -> AgentState:
+        """Persist a finalized voice turn without running the text agent."""
+
+        entries = voice_turn_to_transcript_entries(
+            user_text=user_text,
+            assistant_text=assistant_text,
+            response_style=response_style,
+        )
+        if not entries:
+            raise ValueError("record_voice_turn requires user_text or assistant_text.")
+
+        async with self._thread_lock(thread_id):
+            self._remember_llm_client(thread_id, llm_client)
+            prior_state = await self.get_state(thread_id)
+            await self._prepare_session_for_turn(
+                thread_id=thread_id,
+                prior_state=prior_state,
+                llm_client=llm_client,
+            )
+            prior_state = await self.get_state(thread_id)
+            prior_turn_count = turn_count_from_state(prior_state)
+            seed_message = user_text.strip() or assistant_text.strip()
+            initial_state = self._build_turn_initial_state(
+                thread_id=thread_id,
+                message=seed_message,
+                channel=Channel.VOICE,
+                user_id=user_id,
+                installed_skills=None,
+                prior_turn_count=prior_turn_count,
+            )
+
+            state = cast(
+                AgentState,
+                {**dict(initial_state), **dict(prior_state or {})},
+            )
+            prior_transcript = (
+                list(prior_state.get("transcript", []) or [])
+                if prior_state is not None
+                else []
+            )
+            voice_tool_calls = list(tool_calls or [])
+            grounded_lookup: dict[str, Any] = {}
+            for call in voice_tool_calls:
+                if not isinstance(call, Mapping):
+                    continue
+                output = call.get("output")
+                if not isinstance(output, Mapping):
+                    continue
+                grounded_output = output.get("grounded_lookup")
+                if isinstance(grounded_output, Mapping):
+                    grounded_lookup = dict(grounded_output)
+
+            state.update(
+                {
+                    "message": user_text.strip(),
+                    "channel": Channel.VOICE,
+                    "user_id": user_id,
+                    "session_id": thread_id,
+                    "response_text": assistant_text.strip(),
+                    "response_style": response_style
+                    or ("grounded_lookup" if grounded_lookup else "voice"),
+                    "route": route or "therapeutic",
+                    "session_action": "none",
+                    "should_persist_memory": False,
+                    "transcript": [*prior_transcript, *entries],
+                    "grounded_lookup": {
+                        **dict(state.get("grounded_lookup", {}) or {}),
+                        **grounded_lookup,
+                    },
+                    "diagnostics": {
+                        **dict(state.get("diagnostics", {}) or {}),
+                        "voice_runtime": "openai_realtime",
+                        "voice_tool_calls": [
+                            str(call.get("tool_name"))
+                            for call in voice_tool_calls
+                            if isinstance(call, Mapping) and call.get("tool_name")
+                        ],
+                    },
+                    "session_progress": {
+                        **dict(state.get("session_progress", {}) or {}),
+                        "turn_count": prior_turn_count + 1,
+                        "is_guest": user_id is None,
+                    },
+                }
+            )
+
+            async with self._active_session_manager.active_session_mutation(
+                thread_id,
+                mutation_kind="voice_turn",
+            ) as mutation_token:
+                await self._record_successful_turn_tracking(
+                    thread_id,
+                    state,
+                    session_transcript_soft_limit=None,
+                )
+                await self._state_store.save_state(thread_id, state)
+                await self._ensure_openai_sdk_turn_recorded(
+                    thread_id,
+                    user_message=user_text,
+                    final_state=state,
+                )
+                await self._active_session_manager.clear_active_session_mutation(
+                    thread_id,
+                    mutation_token,
+                )
+                return state
+
+    async def prepare_voice_turn_policy(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        user_text: str,
+        memory_mode: str,
+    ) -> VoiceTurnPolicy:
+        """Return observe-only voice turn policy for one finalized transcript."""
+
+        del user_id
+        prior_state = await self.get_state(thread_id)
+        exercise_state = (
+            prior_state.get("exercise_state", {}) if prior_state is not None else {}
+        )
+        memory_control = (
+            prior_state.get("memory_control", {}) if prior_state is not None else {}
+        )
+        has_active_guided_exercise = bool(
+            isinstance(exercise_state, Mapping)
+            and exercise_state.get("exercise_type") is not None
+            and exercise_state.get("exercise_step") is not None
+        )
+        pending_memory_action = bool(
+            isinstance(memory_control, Mapping)
+            and memory_control.get("pending_action") is not None
+        )
+        return build_voice_turn_policy(
+            user_text=user_text,
+            memory_mode=memory_mode,
+            has_active_guided_exercise=has_active_guided_exercise,
+            pending_memory_action=pending_memory_action,
+        )
+
     async def get_history(self, thread_id: str) -> list[Message]:
         """Load the full persisted transcript for a thread.
 
@@ -1814,3 +2068,60 @@ def _merge_history_response_styles(
             )
         )
     return enriched
+
+
+def _latest_user_text(transcript: list[dict[str, object]]) -> str:
+    for turn in reversed(transcript):
+        if turn.get("role") == "user":
+            return str(turn.get("content") or "").strip()
+    return ""
+
+
+def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
+    blocks: list[str] = []
+    working_memory = delta.get("working_memory") or []
+    if working_memory:
+        rendered = [_compact_memory_value(item) for item in list(working_memory)[:5]]
+        rendered = [item for item in rendered if item]
+        if rendered:
+            blocks.append(
+                "Relevant saved facts:\n" + "\n".join(f"- {item}" for item in rendered)
+            )
+
+    session_memory = delta.get("session_memory") or {}
+    if isinstance(session_memory, Mapping):
+        summary = str(session_memory.get("summary") or "").strip()
+        if summary and summary != "Guest session without long-term memory.":
+            blocks.append(f"Recent session summary: {summary}")
+
+    procedural_profile = delta.get("procedural_profile") or {}
+    if isinstance(procedural_profile, Mapping):
+        rules = procedural_profile.get("procedural_rules") or []
+        rendered_rules = [_compact_memory_value(rule) for rule in list(rules)[:5]]
+        rendered_rules = [rule for rule in rendered_rules if rule]
+        if rendered_rules:
+            blocks.append(
+                "Saved response preferences:\n"
+                + "\n".join(f"- {rule}" for rule in rendered_rules)
+            )
+        if procedural_profile.get("proactive_recall_enabled") is True:
+            blocks.append("Proactive memory recall is enabled.")
+
+    return "\n\n".join(blocks)[:2000]
+
+
+def _compact_memory_value(value: object) -> str:
+    if isinstance(value, Mapping):
+        for key in (
+            "evidence_quote",
+            "rule",
+            "summary",
+            "preference",
+            "text",
+            "content",
+        ):
+            text = str(value.get(key) or "").strip()
+            if text:
+                return text
+        return json.dumps(dict(value), sort_keys=True, default=str)[:300]
+    return str(value).strip()[:300]
