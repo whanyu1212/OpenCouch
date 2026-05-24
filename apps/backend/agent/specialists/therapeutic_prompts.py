@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from agent.runtime.session.state import current_turn_lifecycle
+from opencouch_tui.commands import format_commands_for_llm
 from agent.prompts import (
     compose_sources as _compose,
     format_recent_history as _format_recent_history,
@@ -95,13 +96,21 @@ def _compose_system_prompt_with_state(
     if _crisis_needs_safety_clarification(state):
         safety_block = "\n\n" + _SAFETY_CHECK_OVERRIDE
 
+    cli_commands_block = (
+        "\n\nCLI slash commands available in this TUI:\n"
+        f"{format_commands_for_llm()}\n"
+        "- Suggest slash commands only when clearly useful.\n"
+        "- Use the exact command syntax listed above.\n"
+        "- Never invent slash commands.\n"
+        "- Do not imply a slash command has executed unless the user typed it."
+    )
     rules_block = _format_procedural_rules_block(state)
     recall_block = _format_recall_toggle_constraint(state)
     session_arc_block = _format_session_arc_response_block(state)
     active_flow_block = _format_active_flow_response_block(state)
     clarification_block = _format_clarification_response_block(state)
     return (
-        f"{knowledge}\n\n{instructions}{safety_block}"
+        f"{knowledge}\n\n{instructions}{cli_commands_block}{safety_block}"
         f"{continuity_block}{rules_block}{recall_block}"
         f"{session_arc_block}{active_flow_block}{clarification_block}"
     )

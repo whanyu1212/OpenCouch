@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent.memory.modes import MemoryMode
 from agent.models import Message, StreamEvent
@@ -13,6 +13,7 @@ from agent.runtime import (
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
+    ThreadSummary,
 )
 from agent.state import AgentState
 from config import (
@@ -196,6 +197,58 @@ class ConsoleRuntime:
         session = self._require_session()
         session.history = await runtime.get_history(session.thread_id)
         session.last_context = await runtime.get_state(session.thread_id)
+
+    async def thread_exists(self, thread_id: str) -> bool:
+        """Return whether a persisted thread already exists."""
+
+        runtime = self._require_runtime()
+        state = await runtime.get_state(thread_id)
+        history = await runtime.get_history(thread_id)
+        return state is not None or bool(history)
+
+    async def switch_thread(
+        self,
+        thread_id: str,
+        *,
+        require_existing: bool = False,
+    ) -> bool:
+        """Switch the active session thread and refresh persisted state."""
+
+        session = self._require_session()
+        if require_existing and not await self.thread_exists(thread_id):
+            return False
+        session.thread_id = thread_id
+        await self.refresh()
+        return True
+
+    async def list_threads(self, *, limit: int = 12) -> list[ThreadSummary]:
+        """Return recent persisted thread summaries."""
+
+        runtime = self._require_runtime()
+        return await runtime.list_threads(limit=limit)
+
+    async def load_memory_snapshot(self) -> dict[str, Any]:
+        """Return semantic, episodic, and procedural memory for the active owner."""
+
+        runtime = self._require_runtime()
+        session = self._require_session()
+        owner_id = session.owner_id
+        semantic = await runtime.memory_store.asearch(
+            (owner_id, "semantic"), query=None
+        )
+        episodic = await runtime.memory_store.asearch(
+            (owner_id, "episodic"), query=None
+        )
+        procedural = await runtime.memory_store.aget(
+            (owner_id, "procedural"),
+            "user_response_style",
+        )
+        return {
+            "owner_id": owner_id,
+            "semantic": [record.value for record in semantic],
+            "episodic": [record.value for record in episodic],
+            "procedural": procedural.value if procedural is not None else None,
+        }
 
     def _require_runtime(self) -> PersistentAgentRuntime:
         if self._runtime is None:

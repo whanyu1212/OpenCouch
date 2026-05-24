@@ -1,6 +1,7 @@
 """Tests for interactive CLI thread-management commands."""
 
 import asyncio
+import json
 import re
 from types import SimpleNamespace
 
@@ -8,95 +9,21 @@ import pytest
 from rich.console import Group
 from rich.spinner import Spinner
 
-from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.models import (
     AgentOutput,
     CrisisAssessment,
     DoneEvent,
-    Message,
-    MessageRole,
     ResponseCategory,
     ResponseReadyEvent,
     StatusEvent,
 )
-from opencouch_cli.app import RunnerSession, chat_loop, handle_command
-
-
-class FakeRuntime:
-    """Minimal runtime stub for CLI command tests."""
-
-    def __init__(self) -> None:
-        self.states = {
-            "thread-a": {"session_progress": {"turn_count": 2}, "transcript": []},
-            "thread-b": {"session_progress": {"turn_count": 1}, "transcript": []},
-        }
-        self.histories = {
-            "thread-a": [
-                Message(role=MessageRole.USER, content="first"),
-                Message(role=MessageRole.ASSISTANT, content="reply"),
-            ],
-            "thread-b": [
-                Message(role=MessageRole.USER, content="other"),
-                Message(role=MessageRole.ASSISTANT, content="reply"),
-            ],
-        }
-        self.thread_summaries = []
-        # v0.4: end_session tracking. Tests can set
-        # ``end_session_returns`` to control what the fake returns, and
-        # ``end_session_calls`` records invocations for assertions.
-        self.end_session_returns: object | None = None
-        self.end_session_calls: list[str] = []
-
-        # v0.10: session-feedback tracking. Same split pattern as
-        # end_session. ``record_feedback_returns`` controls what the
-        # stub returns; ``record_feedback_calls`` captures the args.
-        self.record_feedback_returns: SessionFeedbackRecord | None = None
-        self.record_feedback_calls: list[tuple[str, FeedbackLabel, FeedbackSource]] = []
-
-        # v0.10: unified cross-method call log so tests can assert
-        # cross-method ordering (e.g., "feedback must be recorded
-        # before end_session"). Every stubbed method appends to this
-        # shared log. Per-method lists are kept for backward compat
-        # with existing assertions.
-        self.call_log: list[tuple[str, ...]] = []
-
-    async def get_state(self, thread_id: str):
-        return self.states.get(thread_id)
-
-    async def get_history(self, thread_id: str):
-        return list(self.histories.get(thread_id, []))
-
-    async def list_threads(self, *, limit: int = 20):
-        return self.thread_summaries[:limit]
-
-    async def reset_thread(self, thread_id: str) -> None:
-        self.states.pop(thread_id, None)
-        self.histories.pop(thread_id, None)
-
-    async def end_session(
-        self,
-        thread_id: str,
-        *,
-        llm_client=None,
-    ):
-        """v0.4 stub: record the call and return the canned result."""
-
-        self.end_session_calls.append(thread_id)
-        self.call_log.append(("end_session", thread_id))
-        return self.end_session_returns
-
-    async def record_session_feedback(
-        self,
-        thread_id: str,
-        *,
-        label: FeedbackLabel,
-        source: FeedbackSource,
-    ) -> SessionFeedbackRecord | None:
-        """v0.10 stub: record the call and return the canned result."""
-
-        self.record_feedback_calls.append((thread_id, label, source))
-        self.call_log.append(("record_feedback", thread_id, label, source))
-        return self.record_feedback_returns
+from opencouch_cli.app import chat_loop, handle_command
+from opencouch_tui.models import RunnerSession
+from tests.integration.helpers.runtime import (
+    FakeRuntime,
+    FakeSummaryLLM as _FakeSummaryLLM,
+)
+from tests.integration.helpers.sessions import make_session as _session
 
 
 class _FakeChatLoopRuntime:
@@ -184,24 +111,6 @@ def _make_agent_output(
         response_style="support",
         mode_source="test",
         diagnostics=diagnostics,
-    )
-
-
-def _session() -> RunnerSession:
-    """Return a baseline CLI session for command tests."""
-
-    return RunnerSession(
-        requested_mode="deterministic",
-        resolved_mode="deterministic",
-        llm_client=None,
-        thread_id="thread-a",
-        sqlite_path="/tmp/test.sqlite3",
-        memory_mode="persistent",
-        history=[
-            Message(role=MessageRole.USER, content="first"),
-            Message(role=MessageRole.ASSISTANT, content="reply"),
-        ],
-        last_context={"session_progress": {"turn_count": 2}, "transcript": []},
     )
 
 
@@ -351,20 +260,41 @@ def test_render_doctor_shows_runtime_readiness(capsys) -> None:
     assert "turn recovery" in out
 
 
+def test_render_doctor_verbose_shows_expanded_diagnostics(capsys) -> None:
+    """Verbose doctor output should include more session diagnostics."""
+
+    from opencouch_cli.app import render_doctor
+
+    session = _session()
+
+    render_doctor(session, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "runtime doctor" in out
+    assert "verbose diagnostics" in out
+    assert "requested mode" in out
+    assert "resolved mode" in out
+    assert "response tier" in out
+    assert "prompt theme" in out
+
+
 def test_help_command_registry_contains_current_public_commands() -> None:
     """The help registry should cover all public slash commands."""
 
-    from opencouch_cli.commands import help_commands
+    from opencouch_tui.commands import help_commands
 
     displays = [command.display for command in help_commands()]
 
     assert "/help" in displays
-    assert "/doctor" in displays
+    assert "/doctor [verbose]" in displays
+    assert "/search <history|memory|all> <query>" in displays
+    assert "/summary [short|full]" in displays
+    assert "/export <md|json|txt> [filename]" in displays
     assert "/memory list [facts|sessions|rules]" in displays
-    assert "/memory recall on|off" in displays
+    assert "/memory recall [on|off]" in displays
     assert "/keys" in displays
-    assert "/ui <compact|full>" in displays
-    assert "/theme <mono|contrast|calm>" in displays
+    assert "/ui [compact|full]" in displays
+    assert "/theme [mono|contrast|calm]" in displays
     assert "/mode <deterministic|hybrid|auto>" in displays
     assert "/response-tier <fast|quality>" in displays
     assert "/verbosity <compact|verbose>" in displays
@@ -380,7 +310,7 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
 
     from prompt_toolkit.document import Document
 
-    from opencouch_cli.input import SlashCommandCompleter
+    from opencouch_tui.input import SlashCommandCompleter
 
     completer = SlashCommandCompleter()
 
@@ -404,6 +334,9 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
     assert "list" in completions("/memory l")
     assert {"facts", "sessions", "rules"}.issubset(completions("/memory list "))
     assert {"on", "off"}.issubset(completions("/memory recall "))
+    assert {"history", "memory", "all"}.issubset(completions("/search "))
+    assert {"short", "full"}.issubset(completions("/summary "))
+    assert {"md", "json", "txt"}.issubset(completions("/export "))
     assert {"compact", "full"}.issubset(completions("/ui "))
     assert {"mono", "contrast", "calm"}.issubset(completions("/theme "))
     assert {"fast", "quality"}.issubset(completions("/response-tier "))
@@ -416,7 +349,7 @@ def test_slash_key_opens_command_completion_menu() -> None:
 
     from prompt_toolkit.document import Document
 
-    from opencouch_cli.input import _insert_slash_and_maybe_complete
+    from opencouch_tui.input import _insert_slash_and_maybe_complete
 
     class _FakeBuffer:
         def __init__(self, text: str) -> None:
@@ -454,7 +387,7 @@ def test_slash_key_opens_command_completion_menu() -> None:
 def test_prompt_toolbar_shows_session_state_and_pending_memory() -> None:
     """The input toolbar should expose compact session state."""
 
-    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+    from opencouch_tui.input import PromptToolbarState, prompt_toolbar
 
     toolbar = prompt_toolbar(
         PromptToolbarState(
@@ -486,7 +419,7 @@ def test_prompt_toolbar_shows_session_state_and_pending_memory() -> None:
 def test_prompt_toolbar_keeps_trace_toggle_out_of_status_bar() -> None:
     """Trace mode should not occupy bottom-toolbar status space."""
 
-    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+    from opencouch_tui.input import PromptToolbarState, prompt_toolbar
 
     toolbar = prompt_toolbar(
         PromptToolbarState(
@@ -505,7 +438,7 @@ def test_prompt_toolbar_keeps_trace_toggle_out_of_status_bar() -> None:
 def test_prompt_toolbar_clips_long_thread_identity() -> None:
     """Long thread ids should not dominate the prompt toolbar."""
 
-    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+    from opencouch_tui.input import PromptToolbarState, prompt_toolbar
 
     toolbar = prompt_toolbar(
         PromptToolbarState(
@@ -538,7 +471,7 @@ def test_guest_pending_tail_status_avoids_memory_copy() -> None:
         _pending_tail_status,
         _prompt_toolbar_state,
     )
-    from opencouch_cli.input import prompt_toolbar
+    from opencouch_tui.input import prompt_toolbar
 
     session = _session()
     session.memory_mode = "guest"
@@ -1688,6 +1621,76 @@ async def test_trace_command_updates_session_mode(capsys) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ui_command_toggles_without_args(monkeypatch) -> None:
+    """Bare /ui should toggle compact/full mode."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert session.ui_mode == "full"
+    assert await handle_command("/ui", session, runtime) is True
+    assert session.ui_mode == "compact"
+    assert messages == [("success", "UI mode updated. ui=compact")]
+
+
+@pytest.mark.asyncio
+async def test_theme_command_without_args_shows_current_and_options(capsys) -> None:
+    """Bare /theme should report the current theme and available options."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/theme", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "Current theme: calm." in out
+    assert "Available themes:" in out
+    assert "mono|contrast|calm" in out
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_without_args_reports_current_state(monkeypatch) -> None:
+    """Bare /memory recall should report the current recall setting."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    assert await handle_command("/memory recall", session, runtime) is True
+    assert messages == [
+        (
+            "info",
+            "Proactive recall is off. Use /memory recall on or /memory recall off to change it.",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_doctor_verbose_command_dispatches(capsys) -> None:
+    """`/doctor verbose` should render the expanded diagnostics view."""
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/doctor verbose", session, runtime) is True
+    out = capsys.readouterr().out
+
+    assert "verbose diagnostics" in out
+    assert "requested mode" in out
+
+
+@pytest.mark.asyncio
 async def test_end_command_renders_summary_when_arc_returned(
     monkeypatch,
 ) -> None:
@@ -2094,6 +2097,369 @@ def test_render_semantic_records_table_shows_placeholder_for_missing_object(
     assert "?" in captured.out
 
 
+@pytest.mark.asyncio
+async def test_export_command_writes_markdown_transcript(tmp_path, monkeypatch) -> None:
+    """`/export md` should write the active thread transcript to a file."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    output_path = tmp_path / "transcript.md"
+
+    should_continue = await handle_command(
+        f"/export md {output_path}",
+        session,
+        runtime,
+    )
+
+    assert should_continue is True
+    assert output_path.exists()
+    exported = output_path.read_text(encoding="utf-8")
+    assert "# OpenCouch session transcript" in exported
+    assert "## User" in exported
+    assert "hello" in exported
+    assert "## Assistant" in exported
+    assert "hi there" in exported
+    assert messages == [("success", f"Exported transcript to {output_path}.")]
+
+
+@pytest.mark.asyncio
+async def test_export_command_writes_json_transcript(tmp_path, monkeypatch) -> None:
+    """`/export json` should emit a structured transcript payload."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there", "response_style": "support"},
+    ]
+    output_path = tmp_path / "transcript.json"
+
+    should_continue = await handle_command(
+        f"/export json {output_path}",
+        session,
+        runtime,
+    )
+
+    assert should_continue is True
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["thread_id"] == "thread-a"
+    assert payload["message_count"] == 2
+    assert payload["messages"][0]["role"] == "user"
+    assert payload["messages"][1]["response_style"] == "support"
+    assert messages == [("success", f"Exported transcript to {output_path}.")]
+
+
+@pytest.mark.asyncio
+async def test_export_command_requires_transcript(monkeypatch) -> None:
+    """`/export` should warn instead of crashing when no transcript exists."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = []
+
+    should_continue = await handle_command("/export md", session, runtime)
+
+    assert should_continue is True
+    assert messages == [("warning", "No transcript is available for this thread yet.")]
+
+
+@pytest.mark.asyncio
+async def test_summary_command_uses_llm_when_available(monkeypatch, capsys) -> None:
+    """`/summary full` should call the configured text LLM and render the result."""
+
+    session = _session()
+    session.llm_client = _FakeSummaryLLM(
+        "Summary\nKey decisions\n- keep going\nOpen questions\n- none\nNext steps\n- continue"
+    )
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "I need help organizing my week."},
+        {"role": "assistant", "content": "Let's break it into three priorities."},
+    ]
+
+    should_continue = await handle_command("/summary full", session, runtime)
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "session summary (full)" in captured.out
+    assert "Key decisions" in captured.out
+    assert "need the full conversation record? use /export md" in captured.out
+    assert len(session.llm_client.calls) == 1
+    prompt, system_instruction = session.llm_client.calls[0]
+    assert "Detail level: full." in prompt
+    assert "USER: I need help organizing my week." in prompt
+    assert (
+        "You summarize OpenCouch chat transcripts for the local CLI."
+        in system_instruction
+    )
+
+
+@pytest.mark.asyncio
+async def test_summary_command_falls_back_without_llm(capsys) -> None:
+    """`/summary` should render a deterministic fallback when no LLM is configured."""
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+
+    should_continue = await handle_command("/summary", session, runtime)
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "session summary (short)" in captured.out
+    assert "Transcript messages: 2" in captured.out
+    assert "No summary LLM is configured in this session." in captured.out
+
+
+@pytest.mark.asyncio
+async def test_summary_command_validates_args(monkeypatch) -> None:
+    """`/summary` should reject unsupported detail arguments."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    should_continue = await handle_command("/summary nope", _session(), FakeRuntime())
+
+    assert should_continue is True
+    assert messages == [("warning", "Usage: /summary [short|full]")]
+
+
+@pytest.mark.asyncio
+async def test_search_command_requires_mode_and_query(monkeypatch) -> None:
+    """`/search` should validate both subcommand and query presence."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/search", session, runtime) is True
+    assert await handle_command("/search history", session, runtime) is True
+    assert await handle_command("/search memory", session, runtime) is True
+
+    assert messages == [
+        ("warning", "Usage: /search <history|memory|all> <query>"),
+        ("warning", "Usage: /search history <query>"),
+        ("warning", "Usage: /search memory <query>"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_command_rejects_unknown_subcommand(monkeypatch) -> None:
+    """Unknown `/search` subcommands should warn with available options."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    should_continue = await handle_command(
+        "/search foo hello", _session(), FakeRuntime()
+    )
+
+    assert should_continue is True
+    assert messages == [
+        ("warning", "Unknown /search subcommand. Available: history, memory, all")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_history_command_finds_transcript_matches(capsys) -> None:
+    """`/search history` should search the active transcript only."""
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "Sleep after travel has been rough this week."},
+        {"role": "assistant", "content": "Try anchoring your wake time first."},
+        {"role": "user", "content": "The travel part really throws me off."},
+    ]
+
+    should_continue = await handle_command(
+        "/search history travel",
+        session,
+        runtime,
+    )
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "search · history" in captured.out
+    assert 'query: "travel"' in captured.out
+    assert "history" in captured.out
+    assert "user: Sleep after travel has been rough this week." in captured.out
+    assert "user: The travel part really throws me off." in captured.out
+    assert "memory/fact" not in captured.out
+
+
+@pytest.mark.asyncio
+async def test_search_history_command_reports_empty_state(monkeypatch) -> None:
+    """`/search history` should show a targeted empty-state message."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+
+    should_continue = await handle_command("/search history travel", session, runtime)
+
+    assert should_continue is True
+    assert messages == [("warning", 'No history matches for "travel".')]
+
+
+@pytest.mark.asyncio
+async def test_search_memory_command_finds_procedural_rule(capsys) -> None:
+    """`/search memory` should search procedural rules via the profile helper."""
+
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="Don't suggest meditation again.",
+            evidence=["Meditation makes me more anxious."],
+        ),
+    )
+
+    should_continue = await handle_command(
+        "/search memory meditation", session, runtime
+    )
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "search · memory" in captured.out
+    assert "memory/rule" in captured.out
+    assert "#1: Don't suggest meditation again." in captured.out
+
+
+@pytest.mark.asyncio
+async def test_search_memory_command_finds_semantic_fact(capsys) -> None:
+    """`/search memory` should search semantic memory through existing collectors."""
+
+    from types import SimpleNamespace
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.memory_store = SimpleNamespace(
+        anamespaces=lambda: _async_return([("thread-a", "semantic")]),
+        asearch=lambda namespace, query=None, limit=1000: _async_return(
+            [
+                SimpleNamespace(
+                    key="fact-1",
+                    value={
+                        "category": "context",
+                        "predicate": "USES",
+                        "object": {"identifier": "fluoxetine"},
+                        "evidence_quote": "I take fluoxetine every day.",
+                        "confidence": "high",
+                    },
+                )
+            ]
+        ),
+    )
+
+    should_continue = await handle_command(
+        "/search memory fluoxetine", session, runtime
+    )
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "memory/fact" in captured.out
+    assert "#1: I take fluoxetine every day." in captured.out
+
+
+@pytest.mark.asyncio
+async def test_search_all_command_combines_history_and_memory(capsys) -> None:
+    """`/search all` should merge history and memory results with labels."""
+
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+    runtime.get_state = lambda thread_id: _async_return(  # type: ignore[method-assign]
+        {
+            "session_progress": {"turn_count": 2},
+            "transcript": [
+                {"role": "user", "content": "Travel has been rough on my sleep."},
+                {"role": "assistant", "content": "Let's make a travel sleep plan."},
+            ],
+        }
+    )
+
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="Keep travel-related advice practical.",
+            evidence=["Travel throws off my routine."],
+        ),
+    )
+
+    should_continue = await handle_command("/search all travel", session, runtime)
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "search · all" in captured.out
+    assert "history" in captured.out
+    assert "memory/rule" in captured.out
+    assert "Travel has been rough on my sleep." in captured.out
+    assert "Keep travel-related advice practical." in captured.out
+
+
+async def _async_return(value):
+    return value
+
+
 # ─── v0.7 Stage E: procedural CLI commands ─────────────────────────────────
 #
 # These tests cover the /memory list rules, /memory recall on|off, and
@@ -2343,7 +2709,7 @@ async def test_memory_recall_already_on_is_noop(capsys) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
-    """``/memory recall`` with no arg or a bad arg should show usage."""
+    """``/memory recall maybe`` should still show usage, while bare recall shows state."""
 
     from opencouch_cli.app import handle_command
 
@@ -2352,7 +2718,7 @@ async def test_memory_recall_invalid_arg_shows_usage(capsys) -> None:
 
     await handle_command("/memory recall", session, runtime)
     captured = capsys.readouterr()
-    assert "Usage: /memory recall on" in captured.out
+    assert "Proactive recall is off." in captured.out
 
     await handle_command("/memory recall maybe", session, runtime)
     captured = capsys.readouterr()

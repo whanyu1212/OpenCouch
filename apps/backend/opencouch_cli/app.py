@@ -48,12 +48,12 @@ import difflib
 import json
 import logging
 import os
-import textwrap
+import warnings
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+
 from uuid import uuid4
 
 from psycopg import OperationalError as PostgresOperationalError
@@ -80,8 +80,6 @@ from agent.runtime import (
     ThreadSummary,
 )
 from agent.memory.procedural_profile import (
-    aclear_procedural_rules,
-    adelete_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,
 )
@@ -89,18 +87,21 @@ from agent.models import (
     AgentOutput,
     Channel,
     ChunkEvent,
-    CrisisAssessment,
     DoneEvent,
-    Message,
     MessageRole,
-    ResponseCategory,
     ResponseReadyEvent,
     StatusEvent,
     friendly_stage,
 )
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entries
-from agent.observability.routing_trace import routing_trace_from_diagnostics
+from agent.runtime.session.history import session_conversation_from_transcript
+from agent.runtime.session.state import (
+    get_transcript,
+    render_session_conversation_json,
+    render_session_conversation_markdown,
+    render_session_conversation_text,
+)
 from config import (
     PersistenceBackend,
     ResponseModelTier,
@@ -108,18 +109,72 @@ from config import (
     create_configured_response_llm_client,
     get_settings,
 )
-from opencouch_cli.commands import (
+from opencouch_tui.command_helpers import (
+    first_matching_text,
+    format_entity_identifier,
+    format_transcript_entries_plain,
+    search_history_messages,
+    snippet_around_match,
+)
+from opencouch_tui.dispatch.shared import (
+    build_fact_forget_preview,
+    build_session_forget_preview,
+    confirmation_prompt_accepts,
+    execute_memory_clear,
+    execute_memory_forget,
+    get_crisis_purge_plan,
+    get_exit_save_confirmation_prompt,
+    get_history_command_limit,
+    get_memory_clear_plan,
+    get_memory_forget_index,
+    get_memory_forget_target,
+    get_threads_command_summaries,
+    get_typed_confirmation_prompt,
+    get_yes_no_confirmation_prompt,
+    parse_memory_clear_command,
+    parse_memory_forget_command,
+    parse_memory_overview_command,
+    parse_memory_recall_command,
+    parse_search_command,
+    should_save_summary_on_exit,
+)
+from opencouch_tui.presenters import (
+    left_rail_text as shared_left_rail_text,
+    normal_reply_renderable as shared_normal_reply_renderable,
+    owner_scope_display,
+    render_doctor as shared_render_doctor,
+    render_header as shared_render_header,
+    render_help as shared_render_help,
+    render_history as shared_render_history,
+    render_keys as shared_render_keys,
+    render_meta as shared_render_meta,
+    render_onboarding as shared_render_onboarding,
+    render_response as shared_render_response,
+    render_stage_timings as shared_render_stage_timings,
+    render_status as shared_render_status,
+    render_threads as shared_render_threads,
+    render_turn_activity as shared_render_turn_activity,
+    render_turn_route as shared_render_turn_route,
+    render_turn_trace as shared_render_turn_trace,
+    response_panel_renderable as shared_response_panel_renderable,
+)
+from opencouch_tui.commands import (
     ALIASES,
     all_command_names,
-    help_commands,
     resolve_alias,
 )
-from opencouch_cli.input import (
+from opencouch_tui.input import (
     PromptToolbarState,
     available_prompt_themes,
     read_user_input,
     record_recent_command,
     set_prompt_theme,
+)
+from opencouch_tui.models import (
+    ObservabilityMode,
+    RunnerSession,
+    TraceMode,
+    UIMode,
 )
 from llm.base import BaseLLMClient
 
@@ -141,11 +196,6 @@ CLI_THEME = Theme(
 )
 
 console = Console(theme=CLI_THEME)
-
-TraceMode = Literal["off", "on", "once"]
-UIMode = Literal["full", "compact"]
-ObservabilityMode = Literal["compact", "verbose"]
-PromptThemeName = Literal["mono", "contrast", "calm"]
 
 # Prompt-toolbar "last action" line (best-effort, display-only).
 _LAST_INFO_MESSAGE: str | None = None
@@ -232,49 +282,13 @@ def _response_panel(
     thread_id: str | None = None,
     turn_count: int | None = None,
 ) -> Panel | Group:
-    """Build the terminal assistant-response panel for one turn.
+    """Build the terminal assistant-response panel for one turn."""
 
-    Args:
-        output: Agent output to display.
-        thread_id: Optional thread id shown in the subtitle.
-        turn_count: Optional turn count shown in the subtitle.
-
-    Returns:
-        Rich panel for the assistant response.
-    """
-
-    is_crisis = output.response_type.value == "crisis"
-    if not is_crisis:
-        return _normal_reply_renderable(
-            output.response_text,
-            thread_id=thread_id,
-            turn_count=turn_count,
-            response_style=output.response_style,
-            therapeutic_approach=output.therapeutic_approach,
-        )
-
-    title = "[danger]  crisis  [/danger]"
-    border = "danger"
-    subtitle_parts: list[str] = []
-    if thread_id:
-        subtitle_parts.append(f"[muted]thread[/muted] [info]{thread_id}[/info]")
-    if turn_count is not None:
-        subtitle_parts.append(f"[muted]turn[/muted] [accent]{turn_count}[/accent]")
-    if output.response_style:
-        style_label = output.response_style
-        if output.therapeutic_approach and output.therapeutic_approach != "none":
-            style_label += f" [muted]/[/muted] {output.therapeutic_approach}"
-        subtitle_parts.append(f"[muted]style[/muted] [primary]{style_label}[/primary]")
-
-    return Panel(
-        output.response_text,
-        title=title,
-        subtitle=Text.from_markup("  [panel]·[/panel]  ".join(subtitle_parts))
-        if subtitle_parts
-        else None,
-        border_style=border,
-        box=box.HEAVY if is_crisis else box.ROUNDED,
-        padding=(1, 2),
+    return shared_response_panel_renderable(
+        output,
+        console=console,
+        thread_id=thread_id,
+        turn_count=turn_count,
     )
 
 
@@ -288,48 +302,20 @@ def _normal_reply_renderable(
 ) -> Group:
     """Build lightweight chrome for a normal assistant reply."""
 
-    meta = Text("  assistant", style="success")
-    meta_parts: list[tuple[str, str]] = []
-    if thread_id:
-        meta_parts.append(("thread", thread_id))
-    if turn_count is not None:
-        meta_parts.append(("turn", str(turn_count)))
-    if response_style:
-        style_label = response_style
-        if therapeutic_approach and therapeutic_approach != "none":
-            style_label += f" / {therapeutic_approach}"
-        meta_parts.append(("style", style_label))
-
-    for label, value in meta_parts:
-        meta.append("  ·  ", style="panel")
-        meta.append(label, style="muted")
-        meta.append(" ", style="panel")
-        meta.append(value, style="info")
-
-    body = _left_rail_text(response_text, style="info")
-    return Group(meta, body)
+    return shared_normal_reply_renderable(
+        response_text,
+        thread_id=thread_id,
+        turn_count=turn_count,
+        response_style=response_style,
+        therapeutic_approach=therapeutic_approach,
+        console=console,
+    )
 
 
 def _left_rail_text(value: str, *, style: str) -> Text:
     """Render multiline text against a subtle terminal left rail."""
 
-    body = Text()
-    wrote_line = False
-    max_width = max(24, min(console.width - 6, 88))
-    paragraphs = value.splitlines() or [""]
-    for paragraph_index, paragraph in enumerate(paragraphs):
-        wrapped = textwrap.wrap(paragraph, width=max_width) if paragraph else [""]
-        for line in wrapped:
-            if wrote_line:
-                body.append("\n")
-            body.append("  │ ", style="panel")
-            body.append(line, style=style)
-            wrote_line = True
-        if paragraph_index < len(paragraphs) - 1:
-            body.append("\n")
-            body.append("  │", style="panel")
-            wrote_line = True
-    return body
+    return shared_left_rail_text(value, style=style, console=console)
 
 
 async def _drain_turn_stream_tail(
@@ -369,54 +355,10 @@ def _recoverable_error_message(prefix: str, exc: Exception) -> str:
     )
 
 
-@dataclass(slots=True)
-class RunnerSession:
-    """Mutable local session state for the interactive CLI."""
-
-    requested_mode: str
-    resolved_mode: str
-    llm_client: BaseLLMClient | None
-    thread_id: str
-    sqlite_path: str
-    memory_mode: str
-    persistence_backend: PersistenceBackend = "postgres"
-    # Optional stable owner for long-term memory. Falls back to thread_id.
-    user_id: str | None = None
-    history: list[Message] = field(default_factory=list)
-    last_context: AgentState | None = None
-    response_model_tier: ResponseModelTier = "fast"
-    response_llm_client: BaseLLMClient | None = None
-    trace_mode: TraceMode = "off"
-    ui_mode: UIMode = "full"
-    observability_mode: ObservabilityMode = "compact"
-    prompt_theme: PromptThemeName = "calm"
-    show_onboarding: bool = True
-
-    def owner_id(self) -> str:
-        """Return the effective owner identifier for memory operations.
-
-        Returns:
-            Explicit ``user_id`` when set, otherwise the active thread id.
-        """
-
-        return self.user_id or self.thread_id
-
-
 def _owner_scope_display(session: RunnerSession) -> str:
-    """Return a compact owner-scope label for status surfaces.
+    """Return a compact owner-scope label for status surfaces."""
 
-    Args:
-        session (RunnerSession): Current CLI session state.
-
-    Returns:
-        str: User-facing owner scope label.
-    """
-
-    if session.memory_mode == "guest":
-        return "none (guest mode)"
-    if session.user_id:
-        return f"{session.user_id} (from --user-id)"
-    return f"{session.thread_id} (thread-scoped)"
+    return owner_scope_display(session)
 
 
 def _thread_scoped_memory_hint(session: RunnerSession) -> str | None:
@@ -737,62 +679,16 @@ def render_header(
     user_id: str | None = None,
     response_model_tier: ResponseModelTier | None = None,
 ) -> None:
-    """Render the CLI header.
+    """Render the CLI header."""
 
-    Args:
-        mode: Effective runtime mode for the current session.
-        thread_id: Active persisted thread identifier.
-        memory_mode: Local memory mode (guest or persistent).
-        user_id: Optional explicit owner identifier (set via
-            ``--user-id``). When set, the header shows a ``user:``
-            field so the operator can see at a glance which memory
-            namespace the session is writing to. When None, the
-            field is omitted for the thread-scoped display.
-        response_model_tier: Optional response tier label.
-
-    Returns:
-        None.
-    """
-
-    console.print()
-
-    title = Text()
-    title.append("  OpenCouch", style="brand")
-    title.append("  ·  ", style="panel")
-    title.append("text agent", style="info")
-    console.print(title)
-
-    session_parts: list[str] = [
-        f"[muted]session[/muted] [primary]{mode}[/primary]",
-        f"[muted]memory[/muted] [accent]{memory_mode}[/accent]",
-    ]
-    if response_model_tier is not None:
-        session_parts.append(
-            f"[muted]response[/muted] [success]{response_model_tier}[/success]"
-        )
-    console.print(Text.from_markup("   " + "  [panel]·[/panel]  ".join(session_parts)))
-
-    identity_parts: list[str] = [
-        f"[muted]thread[/muted] [info]{thread_id}[/info]",
-    ]
-    if user_id:
-        identity_parts.append(f"[muted]owner[/muted] [info]{user_id}[/info]")
-    elif memory_mode == "persistent":
-        identity_parts.append("[muted]owner[/muted] [warning]thread-scoped[/warning]")
-    console.print(Text.from_markup("   " + "  [panel]·[/panel]  ".join(identity_parts)))
-
-    hint = Text()
-    hint.append("/", style="accent")
-    hint.append(" commands", style="hint")
-    hint.append("  ·  ", style="panel")
-    hint.append("/status", style="accent")
-    hint.append(" session", style="hint")
-    hint.append("  ·  ", style="panel")
-    hint.append("exit", style="accent")
-    hint.append(" to stop", style="hint")
-    hint.pad_left(3)
-    console.print(hint)
-    console.print()
+    shared_render_header(
+        mode,
+        thread_id,
+        memory_mode,
+        console=console,
+        user_id=user_id,
+        response_model_tier=response_model_tier,
+    )
 
 
 def render_response(
@@ -802,28 +698,15 @@ def render_response(
     thread_id: str | None = None,
     turn_count: int | None = None,
 ) -> None:
-    """Render the assistant reply inside a styled panel.
+    """Render the assistant reply inside a styled panel."""
 
-    Args:
-        response_text: Generated assistant reply text.
-        is_crisis: Whether the response is a crisis response.
-        thread_id: Optional thread label shown in the panel footer.
-        turn_count: Optional turn counter shown in the panel footer.
-
-    Returns:
-        None.
-    """
-
-    output = AgentOutput(
-        response_text=response_text,
-        response_type=(
-            ResponseCategory.CRISIS if is_crisis else ResponseCategory.THERAPEUTIC
-        ),
-        crisis=CrisisAssessment(),
-        response_style="crisis" if is_crisis else "support",
-        diagnostics={},
+    shared_render_response(
+        response_text,
+        console=console,
+        is_crisis=is_crisis,
+        thread_id=thread_id,
+        turn_count=turn_count,
     )
-    console.print(_response_panel(output, thread_id=thread_id, turn_count=turn_count))
 
 
 def render_meta(
@@ -838,125 +721,20 @@ def render_meta(
     memory_deltas: dict | None = None,
     verbose: bool = False,
 ) -> None:
-    """Render classifier metadata as a compact diagnostics line.
+    """Render classifier metadata as a compact diagnostics line."""
 
-    Args:
-        response_style: Therapeutic response style selected for the turn.
-        response_type: High-level response category.
-        level: Crisis severity level.
-        needs_clarification: Whether safety clarification is needed.
-        needs_crisis_response: Whether a crisis response is required.
-        reason: One-line classifier reason.
-        diagnostics: Optional per-stage timing and decision metadata.
-        memory_deltas: Optional before/after store count deltas.
-        verbose: Whether to render the detailed timings table.
-
-    Returns:
-        None.
-    """
-
-    if needs_crisis_response:
-        safety_status = "crisis"
-    elif needs_clarification:
-        safety_status = "check"
-    elif level >= 1:
-        safety_status = "distress"
-    else:
-        safety_status = "normal"
-
-    diag = diagnostics or {}
-    deltas = memory_deltas or {}
-
-    turn_total = diag.get("turn_total_ms")
-    try:
-        turn_total_label = (
-            f"{float(turn_total):.0f}ms" if turn_total is not None else "—"
-        )
-    except (TypeError, ValueError):
-        turn_total_label = "—"
-
-    delta_parts: list[str] = []
-    for key, short in (("semantic", "s"), ("episodic", "e"), ("procedural", "p")):
-        val = deltas.get(key)
-        if val is None:
-            continue
-        delta_parts.append(f"{short}{val:+d}")
-    delta_label = " ".join(delta_parts) if delta_parts else "no writes"
-
-    reason_label = reason if len(reason) <= 72 else f"{reason[:69]}..."
-    summary = Text.from_markup(
-        "  [panel]·[/panel]  ".join(
-            [
-                f"[primary]{response_style or '-'}[/primary]",
-                f"[info]{response_type}[/info]",
-                f"[warning]{safety_status}[/warning]",
-                f"[accent]{turn_total_label}[/accent]",
-                f"[success]{delta_label}[/success]",
-                f"[hint]{reason_label or '-'}[/hint]",
-            ]
-        )
+    shared_render_meta(
+        console=console,
+        response_style=response_style,
+        response_type=response_type,
+        level=level,
+        needs_clarification=needs_clarification,
+        needs_crisis_response=needs_crisis_response,
+        reason=reason,
+        diagnostics=diagnostics,
+        memory_deltas=memory_deltas,
+        verbose=verbose,
     )
-    console.print(
-        Panel(
-            summary,
-            title="[muted]diagnostics[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        )
-    )
-
-    if verbose:
-        _render_stage_timings(diag, deltas)
-        console.print()
-
-
-def _route_label(output: AgentOutput) -> str:
-    """Return the user-facing route label for one output."""
-
-    route_label = output.response_style or "unknown"
-    if output.therapeutic_approach and output.therapeutic_approach != "none":
-        route_label = f"{route_label} / {output.therapeutic_approach}"
-    return route_label
-
-
-def _tool_badges(output: AgentOutput) -> list[str]:
-    """Return compact tool badges derived from turn diagnostics."""
-
-    diagnostics = output.diagnostics or {}
-    badges: list[str] = []
-
-    if diagnostics.get("openai_therapeutic_skill_tool_calls"):
-        badges.append("response-style")
-    if diagnostics.get("openai_memory_tool_calls"):
-        badges.append("memory")
-    if diagnostics.get("openai_grounded_tool_calls"):
-        badges.append("grounded lookup")
-
-    return badges
-
-
-def _tool_activity_lines(output: AgentOutput) -> list[str]:
-    """Return verbose tool-activity lines derived from diagnostics."""
-
-    diagnostics = output.diagnostics or {}
-    lines: list[str] = []
-
-    therapeutic_calls = diagnostics.get("openai_therapeutic_skill_tool_calls") or []
-    if therapeutic_calls:
-        style = str(
-            diagnostics.get("openai_therapeutic_skill_response_style") or ""
-        ).strip()
-        detail = f" → {style}" if style else ""
-        lines.append(f"{therapeutic_calls[-1]}{detail}")
-
-    memory_calls = diagnostics.get("openai_memory_tool_calls") or []
-    lines.extend(str(call) for call in memory_calls if call)
-
-    grounded_calls = diagnostics.get("openai_grounded_tool_calls") or []
-    lines.extend(str(call) for call in grounded_calls if call)
-
-    return lines
 
 
 def render_turn_activity(
@@ -964,64 +742,13 @@ def render_turn_activity(
     *,
     observability_mode: ObservabilityMode,
 ) -> None:
-    """Render tool activity after the route line.
+    """Render tool activity after the route line."""
 
-    Compact mode shows a single badge row. Verbose mode expands into a
-    lightweight panel with route, tool activity, and a small state highlight.
-    """
-
-    tool_badges = _tool_badges(output)
-    if observability_mode == "compact":
-        if not tool_badges:
-            return
-        console.print(
-            Text.from_markup(
-                "   [muted]tools[/muted] "
-                + "  [panel]·[/panel]  ".join(
-                    f"[accent]{badge}[/accent]" for badge in tool_badges
-                )
-            )
-        )
-        console.print()
-        return
-
-    table = Table(show_header=False, box=box.SIMPLE)
-    table.add_column(style="hint", no_wrap=True)
-    table.add_column(style="info")
-
-    table.add_row("route", _route_label(output))
-    if tool_badges:
-        table.add_row("badges", ", ".join(tool_badges))
-
-    tool_lines = _tool_activity_lines(output)
-    if tool_lines:
-        table.add_row("activity", "\n".join(f"• {line}" for line in tool_lines))
-
-    diagnostics = output.diagnostics or {}
-    triage_confidence = str(diagnostics.get("openai_triage_confidence") or "").strip()
-    tentative_route = str(
-        diagnostics.get("openai_triage_tentative_route") or ""
-    ).strip()
-    if triage_confidence:
-        triage_detail = triage_confidence
-        if tentative_route:
-            triage_detail = f"{triage_detail}; tentative {tentative_route}"
-        table.add_row("triage", triage_detail)
-
-    if output.crisis.needs_clarification:
-        table.add_row("state", "awaiting safety clarification")
-    elif output.crisis.needs_crisis_response:
-        table.add_row("state", "crisis response active")
-
-    console.print(
-        Panel(
-            table,
-            title="[muted]turn activity[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
+    shared_render_turn_activity(
+        output,
+        console=console,
+        observability_mode=observability_mode,
     )
-    console.print()
 
 
 def render_turn_route(
@@ -1029,60 +756,13 @@ def render_turn_route(
     *,
     pending_status: str | None = None,
 ) -> None:
-    """Render a compact routing summary for one completed response.
+    """Render a compact routing summary for one completed response."""
 
-    Args:
-        output (AgentOutput): Agent output containing routing metadata.
-        pending_status (str | None): Optional background-work status label.
-
-    Returns:
-        None.
-    """
-
-    crisis = output.crisis
-    if crisis.needs_crisis_response:
-        safety_label = "crisis"
-        safety_style = "danger"
-    elif crisis.needs_clarification:
-        safety_label = "check"
-        safety_style = "warning"
-    elif crisis.level >= 1:
-        safety_label = "distress"
-        safety_style = "warning"
-    else:
-        safety_label = "normal"
-        safety_style = "success"
-
-    diagnostics = output.diagnostics or {}
-    latency = diagnostics.get("turn_total_ms")
-    try:
-        latency_label = f"{float(latency):.0f}ms" if latency is not None else None
-    except (TypeError, ValueError):
-        latency_label = None
-
-    parts: list[tuple[str, str]] = [
-        ("   route ", "muted"),
-        (_route_label(output), "primary"),
-        ("  ·  safety ", "panel"),
-        (safety_label, safety_style),
-    ]
-    if latency_label:
-        parts.extend(
-            [
-                ("  ·  ", "panel"),
-                (latency_label, "accent"),
-            ]
-        )
-    if pending_status:
-        parts.extend(
-            [
-                ("  ·  ", "panel"),
-                (pending_status, "warning"),
-            ]
-        )
-    console.print()
-    console.print(Text.assemble(*parts))
-    console.print()
+    shared_render_turn_route(
+        output,
+        console=console,
+        pending_status=pending_status,
+    )
 
 
 def render_turn_trace(
@@ -1091,224 +771,23 @@ def render_turn_trace(
     status_stages: list[str] | None = None,
     pending_status: str | None = None,
 ) -> None:
-    """Render the optional routing trace diagram for one turn.
+    """Render the optional routing trace diagram for one turn."""
 
-    Args:
-        output (AgentOutput): Agent output containing routing diagnostics.
-        status_stages (list[str] | None): Streamed pipeline stages observed
-            before the response became available.
-        pending_status (str | None): Optional background-work status label.
-
-    Returns:
-        None.
-    """
-
-    entries: list[dict[str, str]] = [
-        {key: str(value) for key, value in entry.items()}
-        for entry in routing_trace_from_diagnostics(output.diagnostics)
-    ]
-    if not entries:
-        entries = _fallback_routing_trace_entries(output)
-
-    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("stage", style="hint", no_wrap=True)
-    table.add_column("decision", style="primary")
-    table.add_column("source", style="accent")
-    table.add_column("reason", style="info")
-
-    for entry in entries:
-        stage = _clip_trace_text(entry.get("stage", "-"), 11)
-        decision = _clip_trace_text(entry.get("decision", "-"), 22)
-        reason = entry.get("reason") or "-"
-        source = entry.get("source") or "-"
-        confidence = entry.get("confidence")
-        if confidence:
-            source = f"{source} / {confidence}"
-        table.add_row(stage, decision, source, reason)
-
-    note_parts: list[str] = []
-    if status_stages:
-        unique_stages = list(dict.fromkeys(status_stages))
-        stage_labels = " -> ".join(friendly_stage(stage) for stage in unique_stages)
-        note_parts.append(f"stages {stage_labels}")
-    if pending_status:
-        note_parts.append(f"tail {pending_status}")
-
-    renderables: list[Table | Text] = [table]
-    if note_parts:
-        renderables.append(Text("  " + "  ·  ".join(note_parts), style="hint"))
-
-    console.print()
-    console.print(
-        Panel(
-            Group(*renderables),
-            title="[muted]routing trace[/muted]",
-            subtitle="[hint]/trace off hides this[/hint]",
-            border_style="panel",
-            box=box.ROUNDED,
-            padding=(1, 2),
-        )
+    shared_render_turn_trace(
+        output,
+        console=console,
+        status_stages=status_stages,
+        pending_status=pending_status,
     )
-    console.print()
-
-
-def _fallback_routing_trace_entries(output: AgentOutput) -> list[dict[str, str]]:
-    """Build trace entries when diagnostics have no structured trace yet.
-
-    Args:
-        output (AgentOutput): Agent output to summarize.
-
-    Returns:
-        list[dict[str, str]]: Minimal routing trace entries.
-    """
-
-    crisis = output.crisis
-    if crisis.needs_crisis_response:
-        safety_decision = "crisis"
-    elif crisis.needs_clarification:
-        safety_decision = "check"
-    elif crisis.level >= 1:
-        safety_decision = "distress"
-    else:
-        safety_decision = "normal"
-
-    route_decision = output.response_style or "unknown"
-    if output.therapeutic_approach and output.therapeutic_approach != "none":
-        route_decision = f"{route_decision}/{output.therapeutic_approach}"
-
-    return [
-        {
-            "stage": "safety",
-            "decision": safety_decision,
-            "source": "output",
-            "reason": crisis.reason or "No structured safety reason was emitted.",
-            "confidence": crisis.confidence,
-        },
-        {
-            "stage": "dispatch",
-            "decision": route_decision,
-            "reason": "Final response route from agent output.",
-        },
-    ]
-
-
-def _clip_trace_text(value: str, max_length: int) -> str:
-    """Clip a trace label for fixed-width diagram columns.
-
-    Args:
-        value (str): Raw label.
-        max_length (int): Maximum display length.
-
-    Returns:
-        str: Clipped label.
-    """
-
-    if len(value) <= max_length:
-        return value
-    return f"{value[: max_length - 1]}..."
 
 
 def _render_stage_timings(diagnostics: dict, memory_deltas: dict) -> None:
-    """Render the per-turn stage timings + memory-write table.
+    """Render the per-turn stage timings + memory-write table."""
 
-    Extracted from ``render_meta`` for testability. Skips entirely when
-    both inputs are empty; that is the "tests constructed an AgentOutput
-    manually and didn't populate diagnostics" case and there's nothing
-    useful to show.
-
-    Timings come from the diagnostics dict stamped by each runtime stage:
-
-    - ``load_memory_ms`` from memory-loading runtime logic
-    - ``crisis_gate_ms`` from crisis-gate runtime logic
-    - ``turn_total_ms`` stamped by ``run_turn`` / ``run_turn_stream``
-      after the agent turn completes
-
-    A missing key renders as ``-`` so the table shape stays stable even
-    when a skip path (incognito, no LLM) short-circuits a stage before
-    it wrote its timing. The "total" column is the outer ``run_turn``
-    clock. It is useful because the stage-level sums don't include session
-    persistence I/O or the Python-side overhead between stages.
-
-    Memory-write deltas come from the CLI's before/after store counts
-    (see the chat_loop bookkeeping), not from the diagnostics dict.
-
-    Args:
-        diagnostics: Per-stage timing and write-attempt metadata.
-        memory_deltas: Store count deltas observed by the CLI.
-
-    Returns:
-        None.
-    """
-
-    if not diagnostics and not memory_deltas:
-        return
-
-    timing_table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    timing_table.add_column("stage", style="hint", no_wrap=True)
-    timing_table.add_column("time (ms)", style="info", justify="right", no_wrap=True)
-    timing_table.add_column("writes", style="accent", justify="right", no_wrap=True)
-    timing_table.add_column("store Δ", style="success", justify="right", no_wrap=True)
-
-    def _fmt_ms(key: str) -> str:
-        """Format a millisecond diagnostic value.
-
-        Args:
-            key: Diagnostic key to read.
-
-        Returns:
-            Formatted value, or ``"-"`` when unavailable.
-        """
-
-        val = diagnostics.get(key)
-        if val is None:
-            return "-"
-        try:
-            return f"{float(val):.2f}"
-        except (TypeError, ValueError):
-            return "-"
-
-    def _fmt_delta(key: str) -> str:
-        """Format a store-count delta.
-
-        Args:
-            key: Memory-delta key to read.
-
-        Returns:
-            Formatted signed delta, or ``"-"`` when unavailable.
-        """
-
-        val = memory_deltas.get(key)
-        if val is None:
-            return "-"
-        return f"+{val}" if val > 0 else str(val)
-
-    timing_table.add_row("load_memory", _fmt_ms("load_memory_ms"), "-", "-")
-    timing_table.add_row("crisis_gate", _fmt_ms("crisis_gate_ms"), "-", "-")
-    timing_table.add_row(
-        "semantic_memory",
-        "-",
-        "-",
-        _fmt_delta("semantic"),
-    )
-    timing_table.add_row(
-        "procedural_memory",
-        "-",
-        "-",
-        _fmt_delta("procedural"),
-    )
-    # Episodic writes happen at session end via the summarizer, not
-    # per-turn, so only the store Δ column carries information here.
-    # We still include the row so the panel layout stays stable.
-    timing_table.add_row("episodic", "-", "-", _fmt_delta("episodic"))
-    timing_table.add_row("turn_total", _fmt_ms("turn_total_ms"), "-", "-")
-
-    console.print(
-        Panel(
-            timing_table,
-            title="[muted]stage timings[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
+    shared_render_stage_timings(
+        diagnostics,
+        memory_deltas,
+        console=console,
     )
 
 
@@ -1665,27 +1144,9 @@ async def _collect_records_with_namespace(
 
 
 def _format_entity_identifier(entity: object) -> str:
-    """Return the ``identifier`` field of a serialized :class:`EntityRef`.
+    """Return the ``identifier`` field of a serialized :class:`EntityRef`."""
 
-    The stored record's ``subject`` and ``object`` fields are dicts
-    with ``type`` and ``identifier`` keys (from
-    ``EntityRef.model_dump()``). This helper extracts the identifier
-    for table rendering, falling back to ``"?"`` when the shape is
-    wrong or the identifier is missing. Defensive against schema
-    drift and malformed records.
-
-    Args:
-        entity: Serialized entity-like value.
-
-    Returns:
-        Entity identifier, or ``"?"`` when unavailable.
-    """
-
-    if isinstance(entity, dict):
-        identifier = entity.get("identifier")
-        if identifier:
-            return str(identifier)
-    return "?"
+    return format_entity_identifier(entity)
 
 
 def _render_semantic_records_table(
@@ -2195,45 +1656,25 @@ async def render_memory_forget_rule(
         None.
     """
 
-    # Parse the index. Accept 1-indexed input (matching the display
-    # convention of the other list commands) and convert to
-    # 0-indexed for the list slice below.
-    try:
-        index_1based = int(index_str)
-    except ValueError:
-        render_info(
-            f"Usage: /memory forget rule <n>  (got: {index_str!r})",
-            style="warning",
-        )
+    index_1based = _parse_one_based_index(index_str, kind_label="rule")
+    if index_1based is None:
         return
 
-    if index_1based < 1:
-        render_info(
-            f"Rule index must be 1 or greater (got: {index_1based}).",
-            style="warning",
-        )
-        return
-
-    store = runtime.memory_store
-    profile = await aget_procedural_profile(store, user_id=session.owner_id())
-
-    if not profile.rules:
-        render_info(
-            "No procedural rules to forget for this thread.",
-            style="warning",
-        )
-        return
-
-    if index_1based > len(profile.rules):
-        render_info(
-            f"Rule #{index_1based} does not exist "
-            f"(only {len(profile.rules)} rule(s) for this thread).",
-            style="warning",
-        )
+    profile = await aget_procedural_profile(
+        runtime.memory_store, user_id=session.owner_id()
+    )
+    error, target_rule = get_memory_forget_target(
+        profile.rules,
+        index_1based=index_1based,
+        kind_title="Rule",
+        empty_message="No procedural rules to forget for this thread.",
+        count_label="rule(s)",
+    )
+    if error is not None:
+        render_info(error, style="warning")
         return
 
     # Rules are short enough to inline in the confirmation prompt.
-    target_rule = profile.rules[index_1based - 1]
     console.print()
     console.print(
         Panel(
@@ -2243,33 +1684,27 @@ async def render_memory_forget_rule(
             box=box.ROUNDED,
         )
     )
-    answer = Prompt.ask(
-        "[muted]Delete this rule?[/muted] [accent][y/N][/accent]",
-        choices=["y", "Y", "n", "N", ""],
-        default="n",
-        show_choices=False,
-        show_default=False,
-    )
-    if answer.strip().lower() != "y":
+    answer = Prompt.ask(**get_yes_no_confirmation_prompt(subject="rule"))
+    if not confirmation_prompt_accepts(answer):
         render_info("Cancelled — no rules deleted.", style="info")
         return
 
-    # Procedural memory is stored as one profile document, not one record per rule.
-    deleted = await adelete_procedural_rule(
-        store,
-        user_id=session.owner_id(),
-        rule_id=target_rule.id,
+    deleted = await execute_memory_forget(
+        runtime,
+        owner_id=session.owner_id(),
+        kind="rule",
+        target=target_rule,
     )
-    if deleted is None:
+    if not deleted["deleted"]:
         render_info(
             "The selected rule changed before deletion could be applied.",
             style="warning",
         )
         return
-    profile, _removed_rule = deleted
+
     render_info(
         f"Deleted rule #{index_1based}. "
-        f"{len(profile.rules)} rule(s) remaining for this thread.",
+        f"{deleted['remaining']} rule(s) remaining for this thread.",
         style="success",
     )
 
@@ -2282,48 +1717,12 @@ def _parse_one_based_index(
     *,
     kind_label: str,
 ) -> int | None:
-    """Parse a 1-indexed CLI argument into an int, or render a warning.
+    """Parse a 1-indexed CLI argument into an int, or render a warning."""
 
-    Shared across forget handlers (``fact``, ``session``) so
-    they produce identical error messages for the same failure modes
-    (non-integer argument, zero, negative). Returns ``None`` when the
-    parse fails or the value is out of the 1-indexed range; the caller
-    should abort without touching the store in that case. Returns the
-    parsed integer on success.
-
-    Why a separate helper and not a one-liner: the warning messages
-    are slightly different per failure mode (wrong type vs. zero vs.
-    negative), and keeping all three paths in one place makes it
-    easy to keep the phrasing consistent across fact / session /
-    rule handlers. The rule handler at
-    :func:`render_memory_forget_rule` inlines the same logic to avoid
-    changing its mature confirmation flow.
-
-    Args:
-        index_str: Raw index argument from the command.
-        kind_label: User-facing memory kind label.
-
-    Returns:
-        Parsed one-based index, or None after rendering a warning.
-    """
-
-    try:
-        index_1based = int(index_str)
-    except ValueError:
-        render_info(
-            f"Usage: /memory forget {kind_label} <n>  (got: {index_str!r})",
-            style="warning",
-        )
+    error, index_1based = get_memory_forget_index(index_str, kind_label=kind_label)
+    if error is not None:
+        render_info(error, style="warning")
         return None
-
-    if index_1based < 1:
-        render_info(
-            f"{kind_label.capitalize()} index must be 1 or greater "
-            f"(got: {index_1based}).",
-            style="warning",
-        )
-        return None
-
     return index_1based
 
 
@@ -2366,14 +1765,8 @@ def _render_forget_confirmation(
             box=box.ROUNDED,
         )
     )
-    answer = Prompt.ask(
-        f"[muted]Delete this {kind_label}?[/muted] [accent][y/N][/accent]",
-        choices=["y", "Y", "n", "N", ""],
-        default="n",
-        show_choices=False,
-        show_default=False,
-    )
-    return answer.strip().lower() == "y"
+    answer = Prompt.ask(**get_yes_no_confirmation_prompt(subject=kind_label))
+    return confirmation_prompt_accepts(answer)
 
 
 async def render_memory_forget_fact(
@@ -2403,7 +1796,7 @@ async def render_memory_forget_fact(
        the current fact count so the user knows what went wrong.
     3. Show a preview panel (category, predicate, object, evidence
        quote) + y/N confirmation. Default is N.
-    4. On confirm, call ``store.adelete(namespace, key)``. A single
+    4. On confirm, call the shared forget execution helper. A single
        record delete, not a profile round-trip, because semantic
        memory is stored one-record-per-fact (unlike procedural).
     5. Render a success message with the remaining fact count.
@@ -2429,37 +1822,22 @@ async def render_memory_forget_fact(
     facts = await _collect_records_with_namespace(
         runtime, kind="semantic", owner_id=session.owner_id()
     )
-
-    if not facts:
-        render_info(
-            "No semantic facts to forget for this thread.",
-            style="warning",
-        )
+    error, target_fact = get_memory_forget_target(
+        facts,
+        index_1based=index_1based,
+        kind_title="Fact",
+        empty_message="No semantic facts to forget for this thread.",
+        count_label="fact(s)",
+    )
+    if error is not None:
+        render_info(error, style="warning")
         return
 
-    if index_1based > len(facts):
-        render_info(
-            f"Fact #{index_1based} does not exist "
-            f"(only {len(facts)} fact(s) for this thread).",
-            style="warning",
-        )
-        return
-
-    namespace, key, value = facts[index_1based - 1]
-
-    # Preview mirrors the semantic table and truncates evidence for compactness.
-    category = str(value.get("category", "?"))
-    predicate = str(value.get("predicate", "?"))
-    object_id = _format_entity_identifier(value.get("object"))
-    quote = str(value.get("evidence_quote", ""))
-    if len(quote) > 120:
-        quote = quote[:117].rstrip() + "…"
-    preview = [
-        f"category:  {category}",
-        f"predicate: {predicate}",
-        f"object:    {object_id}",
-        f"evidence:  {quote}",
-    ]
+    _namespace, _key, value = target_fact
+    preview = build_fact_forget_preview(
+        value,
+        format_entity_identifier=_format_entity_identifier,
+    )
 
     if not _render_forget_confirmation(
         kind_label="fact",
@@ -2469,8 +1847,13 @@ async def render_memory_forget_fact(
         render_info("Cancelled — no facts deleted.", style="info")
         return
 
-    deleted = await runtime.memory_store.adelete(namespace, key)
-    if not deleted:
+    deleted = await execute_memory_forget(
+        runtime,
+        owner_id=session.owner_id(),
+        kind="fact",
+        target=target_fact,
+    )
+    if not deleted["deleted"]:
         # Race condition: the record was deleted between the fetch
         # and the delete call. Unlikely in the single-user CLI but
         # possible in a future multi-process scenario. Report
@@ -2501,7 +1884,7 @@ async def render_memory_forget_session(
     1-indexed position in
     ``/memory list`` (or ``/memory list sessions``). Parallels
     :func:`render_memory_forget_fact` — same index contract, same
-    confirmation pattern, same single-record adelete path.
+    confirmation pattern, same single-record delete path.
 
     Preview shows the arc's summary (truncated) and themes so the
     user knows which session they're about to delete. Date is not
@@ -2525,38 +1908,19 @@ async def render_memory_forget_session(
     sessions = await _collect_records_with_namespace(
         runtime, kind="episodic", owner_id=session.owner_id()
     )
-
-    if not sessions:
-        render_info(
-            "No episodic sessions to forget for this thread.",
-            style="warning",
-        )
+    error, target_session = get_memory_forget_target(
+        sessions,
+        index_1based=index_1based,
+        kind_title="Session",
+        empty_message="No episodic sessions to forget for this thread.",
+        count_label="session arc(s)",
+    )
+    if error is not None:
+        render_info(error, style="warning")
         return
 
-    if index_1based > len(sessions):
-        render_info(
-            f"Session #{index_1based} does not exist "
-            f"(only {len(sessions)} session arc(s) for this thread).",
-            style="warning",
-        )
-        return
-
-    namespace, key, value = sessions[index_1based - 1]
-
-    summary = str(value.get("summary", ""))
-    if len(summary) > 240:
-        summary = summary[:237].rstrip() + "…"
-    themes_value = value.get("primary_themes")
-    themes_display = "—"
-    if isinstance(themes_value, list) and themes_value:
-        themes_display = ", ".join(str(t) for t in themes_value)
-    ended_at = str(value.get("ended_at", ""))
-    date_display = ended_at[:10] if len(ended_at) >= 10 else "—"
-    preview = [
-        f"date:    {date_display}",
-        f"themes:  {themes_display}",
-        f"summary: {summary}",
-    ]
+    _namespace, _key, value = target_session
+    preview = build_session_forget_preview(value)
 
     if not _render_forget_confirmation(
         kind_label="session",
@@ -2566,8 +1930,13 @@ async def render_memory_forget_session(
         render_info("Cancelled — no session arcs deleted.", style="info")
         return
 
-    deleted = await runtime.memory_store.adelete(namespace, key)
-    if not deleted:
+    deleted = await execute_memory_forget(
+        runtime,
+        owner_id=session.owner_id(),
+        kind="session",
+        target=target_session,
+    )
+    if not deleted["deleted"]:
         render_info(
             f"Session #{index_1based} was already gone before the delete "
             "landed (possibly deleted in another session).",
@@ -2611,11 +1980,10 @@ async def render_memory_clear(
 
     Implementation notes:
 
-    Semantic and episodic memory use per-record deletes because the
-    store protocol does not expose a namespace-clear primitive.
-    Procedural memory uses a profile round-trip because it is stored as
-    one profile document per owner. The ``all`` path is not atomic
-    across kinds.
+    The execution sweep now lives in the shared dispatch layer so the
+    CLI remains responsible only for rendering, confirmation, and exact
+    user-facing messaging. The ``all`` path is still not atomic across
+    kinds.
 
     Args:
         runtime: Active persistent runtime, for the memory store.
@@ -2636,17 +2004,9 @@ async def render_memory_clear(
         return
 
     owner_id = session.owner_id()
-    store = runtime.memory_store
 
     # Show concrete counts before destructive confirmation.
-    counts: dict[str, int] = {"facts": 0, "sessions": 0, "rules": 0}
-    if kind in ("facts", "all"):
-        counts["facts"] = await store.arecord_count((owner_id, "semantic"))
-    if kind in ("sessions", "all"):
-        counts["sessions"] = await store.arecord_count((owner_id, "episodic"))
-    if kind in ("rules", "all"):
-        profile = await aget_procedural_profile(store, user_id=owner_id)
-        counts["rules"] = len(profile.rules)
+    counts = await get_memory_clear_plan(runtime, owner_id=owner_id, kind=kind)
 
     # Skip scary confirmation for no-op clears.
     if sum(counts.values()) == 0:
@@ -2685,45 +2045,19 @@ async def render_memory_clear(
             box=box.ROUNDED,
         )
     )
-    answer = Prompt.ask(
-        "[muted]Type the word to confirm[/muted]",
-        default="",
-        show_default=False,
-    )
-    if answer.strip() != "clear":
+    answer = Prompt.ask(**get_typed_confirmation_prompt())
+    if not confirmation_prompt_accepts(answer, expected_word="clear"):
         render_info(
             "Cancelled — no memory cleared.",
             style="info",
         )
         return
 
-    # Confirmed. Sweep each kind in the requested scope.
-    deleted_counts: dict[str, int] = {"facts": 0, "sessions": 0, "rules": 0}
-
-    if kind in ("facts", "all"):
-        records = await _collect_records_with_namespace(
-            runtime, kind="semantic", owner_id=owner_id
-        )
-        for namespace, key, _value in records:
-            if await store.adelete(namespace, key):
-                deleted_counts["facts"] += 1
-
-    if kind in ("sessions", "all"):
-        records = await _collect_records_with_namespace(
-            runtime, kind="episodic", owner_id=owner_id
-        )
-        for namespace, key, _value in records:
-            if await store.adelete(namespace, key):
-                deleted_counts["sessions"] += 1
-
-    if kind in ("rules", "all"):
-        # Procedural is a profile-document, not per-record. Reset
-        # the rules list but preserve the recall toggle (it's a
-        # user preference, not content) and re-put the profile.
-        _profile, deleted_counts["rules"] = await aclear_procedural_rules(
-            store,
-            user_id=owner_id,
-        )
+    deleted_counts = await execute_memory_clear(
+        runtime,
+        owner_id=owner_id,
+        kind=kind,
+    )
 
     # Render a success summary listing every kind that was touched.
     # Zero-count lines are suppressed so the panel is compact when
@@ -2812,15 +2146,7 @@ async def render_memory_purge_crisis(
         return
 
     crisis_log = runtime.crisis_log_backend
-    total_before = await crisis_log.arecord_count()
-
-    # Compute the cutoff as (today - days) in the runtime's timezone.
-    # We use UTC to match the crisis log records' ``detected_at``
-    # strings which are always stored with a Z suffix (UTC). Using
-    # the local timezone would create subtle boundary bugs when the
-    # operator is in a non-UTC zone and runs the purge near midnight.
-    today_utc = datetime.now(UTC).date()
-    cutoff = today_utc - timedelta(days=days)
+    total_before, cutoff = await get_crisis_purge_plan(runtime, days=days)
 
     if total_before == 0:
         render_info(
@@ -2990,273 +2316,39 @@ def render_session_summary(stored_arc: StoredSessionArc) -> None:
 
 
 def render_help() -> None:
-    """Render the available slash commands grouped by category.
+    """Render the available slash commands grouped by category."""
 
-    Returns:
-        None.
-    """
-
-    category_titles = {
-        "session": "session",
-        "display": "display",
-        "memory": "memory",
-        "threads": "threads",
-        "runtime": "runtime",
-        "debug": "debug",
-    }
-    category_order = ("session", "display", "memory", "threads", "runtime", "debug")
-    grouped: dict[str, list[tuple[str, str]]] = {key: [] for key in category_order}
-    for command in help_commands():
-        grouped.setdefault(command.category, []).append(
-            (command.display, command.description)
-        )
-
-    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("category", style="hint", no_wrap=True)
-    table.add_column("command", style="accent", no_wrap=True)
-    table.add_column("description", style="info")
-    for category in category_order:
-        rows = grouped.get(category, [])
-        if not rows:
-            continue
-        for display, description in rows:
-            table.add_row(category_titles.get(category, category), display, description)
-    console.print(
-        Panel(
-            table,
-            title="[muted]command reference[/muted]",
-            subtitle="[hint]type / to search commands from the prompt[/hint]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
-    )
-    console.print()
+    shared_render_help(console=console)
 
 
 def render_keys() -> None:
-    """Render keyboard shortcuts and prompt usage hints.
+    """Render keyboard shortcuts and prompt usage hints."""
 
-    Returns:
-        None.
-    """
-
-    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("shortcut", style="accent", no_wrap=True)
-    table.add_column("action", style="info")
-    table.add_row("/", "Open slash-command completions at prompt start.")
-    table.add_row("↑ / ↓", "Navigate input history.")
-    table.add_row("Tab", "Accept highlighted completion.")
-    table.add_row("Ctrl+L", "Clear prompt surface.")
-    table.add_row("Enter", "Submit current input.")
-
-    console.print(
-        Panel(
-            table,
-            title="[muted]keyboard shortcuts[/muted]",
-            subtitle="[hint]type /help for full command reference[/hint]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
-    )
-    console.print()
+    shared_render_keys(console=console)
 
 
 def render_onboarding() -> None:
-    """Render a one-time quick-start guide for first prompt.
+    """Render a one-time quick-start guide for first prompt."""
 
-    Returns:
-        None.
-    """
-
-    hint = Text()
-    hint.append("  Type ", style="hint")
-    hint.append("/", style="accent")
-    hint.append(" for commands", style="hint")
-    hint.append("  ·  ", style="panel")
-    hint.append("start typing to talk", style="hint")
-    console.print(hint)
-    console.print()
+    shared_render_onboarding(console=console)
 
 
 def render_status(session: RunnerSession) -> None:
-    """Render current runner status.
+    """Render current runner status."""
 
-    Args:
-        session: Mutable CLI session state.
-
-    Returns:
-        None.
-    """
-
-    turn_count = sum(
-        1 for message in session.history if message.role == MessageRole.USER
-    )
-    table = Table(show_header=False, box=box.SIMPLE)
-    table.add_column(style="hint", no_wrap=True)
-    table.add_column(style="info")
-    table.add_row("thread id", session.thread_id)
-    table.add_row("owner id", _owner_scope_display(session))
-    table.add_row("memory mode", session.memory_mode)
-    if session.memory_mode == "guest":
-        table.add_row("persistence", "ephemeral")
-    else:
-        table.add_row("persistence", session.persistence_backend)
-        if session.persistence_backend == "sqlite":
-            table.add_row("sqlite path", session.sqlite_path)
-    table.add_row("requested mode", session.requested_mode)
-    table.add_row("resolved mode", session.resolved_mode)
-    table.add_row(
-        "llm client", "enabled" if session.llm_client is not None else "disabled"
-    )
-    table.add_row("response tier", session.response_model_tier)
-    table.add_row("trace mode", session.trace_mode)
-    table.add_row("ui mode", session.ui_mode)
-    table.add_row("verbosity", session.observability_mode)
-    table.add_row("prompt theme", session.prompt_theme)
-    table.add_row(
-        "response llm",
-        "enabled" if session.response_llm_client is not None else "disabled",
-    )
-    table.add_row("turns", str(turn_count))
-    table.add_row("messages", str(len(session.history)))
-    table.add_row(
-        "context snapshot", "available" if session.last_context is not None else "none"
-    )
-    console.print(
-        Panel(
-            table,
-            title="[muted]session status[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
-    )
-    console.print()
+    shared_render_status(session, console=console)
 
 
-def render_doctor(session: RunnerSession) -> None:
-    """Render lightweight runtime readiness checks for the active CLI session."""
+def render_doctor(session: RunnerSession, *, verbose: bool = False) -> None:
+    """Render runtime readiness checks for the active CLI session."""
 
-    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("check", style="hint", no_wrap=True)
-    table.add_column("status", style="accent", no_wrap=True)
-    table.add_column("detail", style="info")
-
-    if session.llm_client is None:
-        table.add_row(
-            "llm",
-            "smoke",
-            "No control LLM is configured; turns use deterministic smoke mode.",
-        )
-    else:
-        table.add_row(
-            "llm",
-            "ok",
-            f"Control LLM enabled through {session.resolved_mode} mode.",
-        )
-
-    if session.response_llm_client is not None:
-        table.add_row(
-            "response model",
-            "ok",
-            f"Dedicated {session.response_model_tier} response tier is enabled.",
-        )
-    elif session.llm_client is not None:
-        table.add_row(
-            "response model",
-            "shared",
-            "Responses fall back to the control LLM client.",
-        )
-    else:
-        table.add_row(
-            "response model",
-            "skipped",
-            "No response LLM is used in deterministic smoke mode.",
-        )
-
-    if session.memory_mode == "guest":
-        table.add_row(
-            "persistence",
-            "ephemeral",
-            "Guest mode keeps thread and memory state in process-local storage.",
-        )
-    else:
-        table.add_row(
-            "persistence",
-            "ok",
-            f"Persistent mode is using the {session.persistence_backend} backend.",
-        )
-
-    if session.memory_mode == "persistent" and session.user_id is None:
-        table.add_row(
-            "owner scope",
-            "warn",
-            "Memory is thread-scoped; pass --user-id for cross-thread dogfooding.",
-        )
-    else:
-        table.add_row("owner scope", "ok", _owner_scope_display(session))
-
-    table.add_row(
-        "turn recovery",
-        "ok",
-        "Turn and response-tail failures are reported without closing the CLI.",
-    )
-
-    console.print(
-        Panel(
-            table,
-            title="[muted]runtime doctor[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
-    )
-    console.print()
+    shared_render_doctor(session, console=console, verbose=verbose)
 
 
 def render_history(session: RunnerSession, limit: int = 6) -> None:
-    """Render the most recent transcript entries.
+    """Render the most recent transcript entries."""
 
-    Assistant turns show the response style recorded by the runtime.
-    Missing style metadata falls back to ``-`` for older or minimal
-    persisted states.
-
-    Args:
-        session: Mutable CLI session state.
-        limit: Maximum number of recent messages to display.
-
-    Returns:
-        None.
-    """
-
-    if not session.history:
-        console.print(
-            Panel(
-                "[muted]No conversation history yet.[/muted]",
-                title="[muted]history[/muted]",
-                border_style="panel",
-                box=box.ROUNDED,
-            )
-        )
-        console.print()
-        return
-
-    recent = session.history[-max(1, limit) :]
-    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("role", style="accent", no_wrap=True)
-    table.add_column("style", style="muted", no_wrap=True)
-    table.add_column("content", style="info")
-    for message in recent:
-        role = message.role.value
-        style_display = message.response_style if message.response_style else "-"
-        table.add_row(role, style_display, message.content)
-    console.print(
-        Panel(
-            table,
-            title="[muted]recent history[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
-    )
-    console.print()
+    shared_render_history(session, console=console, limit=limit)
 
 
 def render_info(message: str, *, style: str = "panel") -> None:
@@ -3290,41 +2382,14 @@ def render_threads(
     *,
     active_thread_id: str,
 ) -> None:
-    """Render a compact table of persisted thread summaries.
+    """Render a compact table of persisted thread summaries."""
 
-    Args:
-        threads: Thread summaries returned by the runtime.
-        active_thread_id: Currently selected thread id.
-
-    Returns:
-        None.
-    """
-
-    if not threads:
-        render_info("No persisted threads found.", style="warning")
-        return
-
-    table = Table(show_header=True, header_style="muted", box=box.SIMPLE)
-    table.add_column("thread id", style="info")
-    table.add_column("turns", style="hint", justify="right", no_wrap=True)
-    table.add_column("messages", style="hint", justify="right", no_wrap=True)
-    table.add_column("active", style="accent", no_wrap=True)
-    for thread in threads:
-        table.add_row(
-            thread.thread_id,
-            str(thread.turn_count),
-            str(thread.message_count),
-            "[primary]·[/primary]" if thread.thread_id == active_thread_id else "",
-        )
-    console.print(
-        Panel(
-            table,
-            title="[muted]threads[/muted]",
-            border_style="panel",
-            box=box.ROUNDED,
-        )
+    shared_render_threads(
+        threads,
+        active_thread_id=active_thread_id,
+        console=console,
+        info_renderer=render_info,
     )
-    console.print()
 
 
 def set_mode(session: RunnerSession, mode: str) -> None:
@@ -3566,6 +2631,360 @@ def _prompt_for_session_feedback() -> FeedbackLabel | None:
     return None  # Empty input means no feedback record.
 
 
+def _default_export_filename(*, format_name: str) -> str:
+    """Return a timestamped default filename for transcript exports."""
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    return f"session-{timestamp}.{format_name}"
+
+
+async def _active_session_conversation(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+):
+    """Return the active thread's canonical public conversation."""
+
+    state = await runtime.get_state(session.thread_id)
+    if state is None:
+        return None, "No transcript is available for this thread yet."
+    transcript = get_transcript(state)
+    conversation = session_conversation_from_transcript(transcript)
+    if conversation.is_empty:
+        return None, "No transcript is available for this thread yet."
+    return conversation, None
+
+
+def _render_search_results(
+    *,
+    query: str,
+    mode: str,
+    results: list[tuple[str, str]],
+    empty_message: str,
+) -> None:
+    """Render compact labeled search results."""
+
+    if not results:
+        render_info(empty_message, style="warning")
+        return
+
+    display_limit = 8
+    visible_results = results[:display_limit]
+    truncated_count = max(0, len(results) - display_limit)
+
+    table = Table(show_header=True, header_style="muted", box=box.SIMPLE, expand=True)
+    table.add_column("source", style="accent", no_wrap=True, width=14)
+    table.add_column("match", style="info")
+
+    for source, snippet in visible_results:
+        table.add_row(source, snippet)
+
+    subtitle = f'[hint]query: "{query}"[/hint]'
+    if truncated_count:
+        subtitle += f" [hint]· and {truncated_count} more match(es)[/hint]"
+
+    console.print(
+        Panel(
+            table,
+            title=f"[muted]search · {mode}[/muted]",
+            subtitle=subtitle,
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+def _search_history_conversation(
+    conversation,
+    *,
+    query: str,
+) -> list[tuple[str, str]]:
+    """Search the active conversation transcript for visible message matches."""
+
+    return search_history_messages(conversation.messages, query=query)
+
+
+async def _search_memory_records(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    *,
+    query: str,
+) -> list[tuple[str, str]]:
+    """Search semantic, episodic, and procedural memory for the active owner."""
+
+    owner_id = session.owner_id()
+    results: list[tuple[str, str]] = []
+
+    semantic_records = await _collect_records_by_kind(
+        runtime,
+        kind="semantic",
+        owner_id=owner_id,
+    )
+    for index, (_key, value) in enumerate(semantic_records, start=1):
+        object_identifier = _format_entity_identifier(value.get("object"))
+        predicate = str(value.get("predicate", "") or "").strip()
+        evidence_quote = str(value.get("evidence_quote", "") or "").strip()
+        semantic_summary = " ".join(
+            part for part in (predicate, object_identifier) if part and part != "?"
+        ).strip()
+        matched_text = first_matching_text(query, evidence_quote, semantic_summary)
+        if matched_text is None:
+            continue
+        results.append(
+            (
+                "memory/fact",
+                f"#{index}: {snippet_around_match(matched_text, query)}",
+            )
+        )
+
+    episodic_records = await _collect_records_by_kind(
+        runtime,
+        kind="episodic",
+        owner_id=owner_id,
+    )
+    for index, (_key, value) in enumerate(episodic_records, start=1):
+        summary = str(value.get("summary", "") or "").strip()
+        themes_value = value.get("primary_themes")
+        themes = (
+            ", ".join(str(theme) for theme in themes_value)
+            if isinstance(themes_value, list)
+            else ""
+        )
+        matched_text = first_matching_text(query, summary, themes)
+        if matched_text is None:
+            continue
+        results.append(
+            (
+                "memory/session",
+                f"#{index}: {snippet_around_match(matched_text, query)}",
+            )
+        )
+
+    try:
+        profile = await aget_procedural_profile(runtime.memory_store, user_id=owner_id)
+    except AttributeError:
+        profile = None
+
+    if profile is not None:
+        for index, rule in enumerate(profile.rules, start=1):
+            evidence_text = " ".join(
+                str(evidence).strip() for evidence in rule.evidence
+            )
+            matched_text = first_matching_text(query, rule.rule, evidence_text)
+            if matched_text is None:
+                continue
+            results.append(
+                (
+                    "memory/rule",
+                    f"#{index}: {snippet_around_match(matched_text, query)}",
+                )
+            )
+
+    return results
+
+
+async def _handle_search_command(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    args: list[str],
+) -> bool:
+    """Search the active transcript, stored memory, or both."""
+
+    error, parsed = parse_search_command(["/search", *args])
+    if error is not None:
+        render_info(error, style="warning")
+        return True
+    if parsed is None:
+        render_info("Usage: /search <history|memory|all> <query>", style="warning")
+        return True
+
+    mode, query = parsed
+
+    if mode == "history":
+        conversation, error = await _active_session_conversation(session, runtime)
+        if conversation is None:
+            render_info(
+                error or "No transcript is available for this thread yet.",
+                style="warning",
+            )
+            return True
+        results = _search_history_conversation(conversation, query=query)
+        _render_search_results(
+            query=query,
+            mode="history",
+            results=results,
+            empty_message=f'No history matches for "{query}".',
+        )
+        return True
+
+    memory_results = await _search_memory_records(session, runtime, query=query)
+    if mode == "memory":
+        _render_search_results(
+            query=query,
+            mode="memory",
+            results=memory_results,
+            empty_message=f'No memory matches for "{query}".',
+        )
+        return True
+
+    conversation, error = await _active_session_conversation(session, runtime)
+    history_results: list[tuple[str, str]] = []
+    if conversation is not None:
+        history_results = _search_history_conversation(conversation, query=query)
+    elif error:
+        render_info(error, style="warning")
+    combined_results = [*history_results, *memory_results]
+    _render_search_results(
+        query=query,
+        mode="all",
+        results=combined_results,
+        empty_message=f'No matches for "{query}".',
+    )
+    return True
+
+
+async def _handle_export_command(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    args: list[str],
+) -> bool:
+    """Export the active thread transcript in a user-selected format."""
+
+    if not args or args[0] not in {"md", "json", "txt"}:
+        render_info("Usage: /export <md|json|txt> [filename]", style="warning")
+        return True
+
+    conversation, error = await _active_session_conversation(session, runtime)
+    if conversation is None:
+        render_info(error or "No transcript is available to export.", style="warning")
+        return True
+
+    format_name = args[0]
+    filename = " ".join(args[1:]).strip() if len(args) > 1 else ""
+    if not filename:
+        filename = _default_export_filename(format_name=format_name)
+
+    path = Path(filename).expanduser()
+    if format_name == "md":
+        rendered = render_session_conversation_markdown(
+            conversation,
+            thread_id=session.thread_id,
+        )
+    elif format_name == "json":
+        rendered = render_session_conversation_json(
+            conversation,
+            thread_id=session.thread_id,
+        )
+    else:
+        rendered = render_session_conversation_text(
+            conversation,
+            thread_id=session.thread_id,
+        )
+
+    try:
+        path.write_text(rendered, encoding="utf-8")
+    except OSError as exc:
+        render_info(f"Could not write export file: {exc}", style="warning")
+        return True
+
+    render_info(f"Exported transcript to {path}.", style="success")
+    return True
+
+
+async def _summarize_conversation_text(
+    session: RunnerSession,
+    conversation,
+    *,
+    detail: str,
+) -> str:
+    """Return a non-persisting summary of the active conversation."""
+
+    transcript_text = format_transcript_entries_plain(
+        list(conversation.transcript_entries()),
+        uppercase_roles=True,
+    )
+
+    if session.llm_client is None:
+        if detail == "full":
+            return (
+                "Summary\n"
+                f"- Transcript messages: {len(conversation.messages)}\n"
+                f"- User turns: {conversation.user_turn_count}\n"
+                "- No summary LLM is configured in this session.\n"
+                "- Use /export md for the full transcript."
+            )
+        return (
+            "Summary\n"
+            f"- Transcript messages: {len(conversation.messages)}\n"
+            f"- User turns: {conversation.user_turn_count}\n"
+            "- No summary LLM is configured in this session."
+        )
+
+    prompt = (
+        "Summarize the following OpenCouch conversation.\n"
+        f"Detail level: {detail}.\n"
+        "If detail level is short, return 4-6 concise bullets.\n"
+        "If detail level is full, use these sections exactly:\n"
+        "Summary\nKey decisions\nOpen questions\nNext steps\n"
+        "Be faithful to the transcript. Do not invent facts.\n\n"
+        f"Transcript:\n{transcript_text}"
+    )
+    return await session.llm_client.generate_text(
+        prompt=prompt,
+        system_instruction=(
+            "You summarize OpenCouch chat transcripts for the local CLI. "
+            "Be concise, accurate, and faithful to the visible transcript."
+        ),
+    )
+
+
+async def _handle_summary_command(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    args: list[str],
+) -> bool:
+    """Render a non-persisting recap of the active thread transcript."""
+
+    detail = "short"
+    if args:
+        if len(args) != 1 or args[0] not in {"short", "full"}:
+            render_info("Usage: /summary [short|full]", style="warning")
+            return True
+        detail = args[0]
+
+    conversation, error = await _active_session_conversation(session, runtime)
+    if conversation is None:
+        render_info(
+            error or "No transcript is available to summarize.", style="warning"
+        )
+        return True
+
+    try:
+        summary = await _summarize_conversation_text(
+            session,
+            conversation,
+            detail=detail,
+        )
+    except Exception as exc:
+        render_info(
+            _recoverable_error_message("Session summary failed", exc),
+            style="danger",
+        )
+        return True
+
+    console.print(
+        Panel(
+            Text(summary.strip(), style="info"),
+            title=f"[muted]session summary ({detail})[/muted]",
+            subtitle="[hint]need the full conversation record? use /export md[/hint]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+    return True
+
+
 async def _summarize_and_render(
     session: RunnerSession,
     runtime: PersistentAgentRuntime,
@@ -3669,14 +3088,8 @@ async def handle_command(
 
     if command in {"/exit", "/quit"}:
         # Default toward saving a summary; users can delete it later if needed.
-        save = Prompt.ask(
-            "[muted]Save a session summary before exiting?[/muted] [accent][Y/n][/accent]",
-            choices=["y", "Y", "n", "N", ""],
-            default="y",
-            show_choices=False,
-            show_default=False,
-        )
-        if save.strip().lower() != "n":
+        save = Prompt.ask(**get_exit_save_confirmation_prompt())
+        if should_save_summary_on_exit(save):
             await _summarize_and_render(session, runtime, source="cli_exit")
         # If the user declines saving, skip feedback capture as well.
         return False
@@ -3741,14 +3154,19 @@ async def handle_command(
         return False
 
     if command == "/memory":
-        if len(args) == 0 or args[0] == "status":
-            await render_memory_status(runtime, session)
+        error, overview = parse_memory_overview_command([command, *args])
+        if error is not None:
+            render_info(error, style="warning")
             return True
-        if args[0] == "list":
-            if len(args) >= 2 and args[1] == "rules":
+        if overview is not None:
+            action, kind = overview
+            if action == "status":
+                await render_memory_status(runtime, session)
+                return True
+            if kind == "rules":
                 await render_memory_list_rules(runtime, session)
                 return True
-            if len(args) >= 2 and args[1] == "facts":
+            if kind == "facts":
                 # Render just the semantic table. Reuses the existing
                 # helper to avoid duplicating the table rendering
                 # logic across the list / list facts paths.
@@ -3761,7 +3179,7 @@ async def handle_command(
                 _render_semantic_records_table(semantic_records)
                 console.print()
                 return True
-            if len(args) >= 2 and args[1] == "sessions":
+            if kind == "sessions":
                 episodic_records = await _collect_records_by_kind(
                     runtime, kind="episodic", owner_id=session.owner_id()
                 )
@@ -3774,57 +3192,55 @@ async def handle_command(
             await render_memory_list(runtime, session)
             return True
         if args[0] == "recall":
-            if len(args) < 2 or args[1] not in ("on", "off"):
+            error, enable = parse_memory_recall_command([command, *args])
+            if error is not None:
+                render_info(error, style="warning")
+                return True
+            if enable is None:
+                profile = await aget_procedural_profile(
+                    runtime.memory_store,
+                    user_id=session.owner_id(),
+                )
+                state = "on" if profile.proactive_recall_enabled else "off"
                 render_info(
-                    "Usage: /memory recall on  |  /memory recall off",
+                    f"Proactive recall is {state}. Use /memory recall on or /memory recall off to change it.",
+                    style="info",
+                )
+                return True
+            await render_memory_recall_toggle(runtime, session, enable=enable)
+            return True
+        if args[0] == "forget":
+            error, parsed_forget = parse_memory_forget_command([command, *args])
+            if error is not None:
+                render_info(error, style="warning")
+                return True
+            if parsed_forget is None:
+                render_info(
+                    "Usage: /memory forget <fact|session|rule> <n>",
                     style="warning",
                 )
                 return True
-            await render_memory_recall_toggle(
-                runtime, session, enable=(args[1] == "on")
-            )
-            return True
-        if args[0] == "forget":
-            if len(args) >= 2 and args[1] == "rule":
-                if len(args) < 3:
-                    render_info(
-                        "Usage: /memory forget rule <n>",
-                        style="warning",
-                    )
-                    return True
-                await render_memory_forget_rule(runtime, session, index_str=args[2])
+            kind, index_str = parsed_forget
+            if kind == "rule":
+                await render_memory_forget_rule(runtime, session, index_str=index_str)
                 return True
-            if len(args) >= 2 and args[1] == "fact":
-                if len(args) < 3:
-                    render_info(
-                        "Usage: /memory forget fact <n>",
-                        style="warning",
-                    )
-                    return True
-                await render_memory_forget_fact(runtime, session, index_str=args[2])
+            if kind == "fact":
+                await render_memory_forget_fact(runtime, session, index_str=index_str)
                 return True
-            if len(args) >= 2 and args[1] == "session":
-                if len(args) < 3:
-                    render_info(
-                        "Usage: /memory forget session <n>",
-                        style="warning",
-                    )
-                    return True
-                await render_memory_forget_session(runtime, session, index_str=args[2])
-                return True
-            render_info(
-                "Usage: /memory forget <fact|session|rule> <n>",
-                style="warning",
-            )
+            await render_memory_forget_session(runtime, session, index_str=index_str)
             return True
         if args[0] == "clear":
-            if len(args) < 2:
+            error, clear_kind = parse_memory_clear_command([command, *args])
+            if error is not None:
+                render_info(error, style="warning")
+                return True
+            if clear_kind is None:
                 render_info(
                     "Usage: /memory clear <facts|sessions|rules|all>",
                     style="warning",
                 )
                 return True
-            await render_memory_clear(runtime, session, kind=args[1])
+            await render_memory_clear(runtime, session, kind=clear_kind)
             return True
         if args[0] == "purge-crisis":
             days = DEFAULT_CRISIS_RETENTION_DAYS
@@ -3849,6 +3265,15 @@ async def handle_command(
         )
         return True
 
+    if command == "/search":
+        return await _handle_search_command(session, runtime, args)
+
+    if command == "/summary":
+        return await _handle_summary_command(session, runtime, args)
+
+    if command == "/export":
+        return await _handle_export_command(session, runtime, args)
+
     if command == "/help":
         render_help()
         return True
@@ -3858,6 +3283,11 @@ async def handle_command(
         return True
 
     if command == "/ui":
+        if len(args) == 0:
+            next_mode: UIMode = "compact" if session.ui_mode == "full" else "full"
+            set_ui_mode(session, next_mode)
+            render_info(f"UI mode updated. ui={session.ui_mode}", style="success")
+            return True
         if len(args) != 1 or args[0] not in {"compact", "full"}:
             render_info("Usage: /ui <compact|full>", style="warning")
             return True
@@ -3867,6 +3297,12 @@ async def handle_command(
 
     if command == "/theme":
         theme_options = "|".join(available_prompt_themes())
+        if len(args) == 0:
+            render_info(
+                f"Current theme: {session.prompt_theme}. Available themes: {theme_options}.",
+                style="info",
+            )
+            return True
         if len(args) != 1:
             render_info(f"Usage: /theme <{theme_options}>", style="warning")
             return True
@@ -3892,18 +3328,18 @@ async def handle_command(
         return True
 
     if command == "/doctor":
-        render_doctor(session)
+        if len(args) > 1 or (len(args) == 1 and args[0] != "verbose"):
+            render_info("Usage: /doctor [verbose]", style="warning")
+            return True
+        render_doctor(session, verbose=(len(args) == 1 and args[0] == "verbose"))
         return True
 
     if command == "/history":
-        limit = 6
-        if args:
-            try:
-                limit = max(1, int(args[0]))
-            except ValueError:
-                render_info("Usage: /history [count]", style="warning")
-                return True
-        render_history(session, limit=limit)
+        error, limit = get_history_command_limit([command, *args])
+        if error is not None:
+            render_info(error, style="warning")
+            return True
+        render_history(session, limit=limit or 6)
         return True
 
     if command == "/context":
@@ -3911,15 +3347,15 @@ async def handle_command(
         return True
 
     if command == "/threads":
-        limit = 12
-        if args:
-            try:
-                limit = max(1, int(args[0]))
-            except ValueError:
-                render_info("Usage: /threads [count]", style="warning")
-                return True
+        error, summaries = await get_threads_command_summaries(
+            [command, *args],
+            runtime=runtime,
+        )
+        if error is not None:
+            render_info(error, style="warning")
+            return True
         render_threads(
-            await runtime.list_threads(limit=limit),
+            summaries or [],
             active_thread_id=session.thread_id,
         )
         return True
@@ -4077,6 +3513,237 @@ async def handle_command(
     return True
 
 
+async def _run_interactive_session(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+) -> None:
+    """Run the prompt/stream loop for an already-initialized CLI session."""
+
+    pending_tail_task: asyncio.Task[AgentOutput] | None = None
+
+    async def _finalize_pending_turn() -> None:
+        """Wait for any background tail work and refresh session state."""
+
+        nonlocal pending_tail_task
+        if pending_tail_task is None:
+            return
+
+        try:
+            await pending_tail_task
+        except Exception as exc:
+            logger.warning("CLI response tail failed", exc_info=True)
+            render_info(
+                _recoverable_error_message("Response tail failed", exc),
+                style="danger",
+            )
+        finally:
+            pending_tail_task = None
+
+        session.last_context = await runtime.get_state(session.thread_id)
+        session.history = await runtime.get_history(session.thread_id)
+
+    try:
+        set_prompt_theme(session.prompt_theme)
+        render_header(
+            session.resolved_mode,
+            session.thread_id,
+            session.memory_mode,
+            user_id=session.user_id,
+            response_model_tier=session.response_model_tier,
+        )
+        if session.show_onboarding:
+            render_onboarding()
+            session.show_onboarding = False
+        render_info(
+            "Session ready. Models, graph, and memory are warm.",
+            style="success",
+        )
+        hint = _thread_scoped_memory_hint(session)
+        if hint:
+            render_info(hint, style="warning")
+        if session.history:
+            render_info(
+                f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
+                style="success",
+            )
+
+        while True:
+            if pending_tail_task is not None and pending_tail_task.done():
+                await _finalize_pending_turn()
+
+            try:
+                user_text = await read_user_input(
+                    _prompt_toolbar_state(
+                        session,
+                        pending_status=_pending_tail_status(session)
+                        if pending_tail_task is not None
+                        else None,
+                    )
+                )
+            except (EOFError, KeyboardInterrupt):
+                await _finalize_pending_turn()
+                console.print("\n  [hint]session ended[/hint]")
+                break
+
+            await _finalize_pending_turn()
+
+            if not user_text:
+                continue
+            if user_text.startswith("/"):
+                if not await handle_command(user_text, session, runtime):
+                    break
+                continue
+            if user_text.lower() in {"exit", "quit"}:
+                break
+
+            console.print()
+            console.print(Rule(style="panel", characters="─"))
+            accumulated_text = ""
+            final_output: AgentOutput | None = None
+            response_ready_output: AgentOutput | None = None
+            status_stages: list[str] = []
+
+            stream = runtime.run_turn_stream(
+                thread_id=session.thread_id,
+                user_id=session.owner_id(),
+                message=user_text,
+                channel=Channel.TEST,
+                llm_client=session.llm_client,
+                response_llm_client=session.response_llm_client,
+            )
+
+            try:
+                with Live(console=console, refresh_per_second=15) as live:
+                    status_renderable = Spinner(
+                        "dots",
+                        text=Text.assemble(
+                            ("thinking", "primary"),
+                            (" — waiting for pipeline", "hint"),
+                        ),
+                        style="primary",
+                    )
+
+                    def _stream_group(body) -> Group:
+                        """Combine the spinner and response body for live rendering."""
+
+                        return Group(status_renderable, body)
+
+                    live.update(_stream_group(Text("", style="muted")))
+                    async for event in stream:
+                        if isinstance(event, StatusEvent):
+                            status_stages.append(event.stage)
+                            label = friendly_stage(event.stage)
+                            detail = f" ({event.detail})" if event.detail else ""
+                            status_renderable = Spinner(
+                                "dots",
+                                text=Text.assemble(
+                                    (label, "primary"),
+                                    (detail, "hint"),
+                                ),
+                                style="primary",
+                            )
+                            body = _live_preview_renderable(
+                                accumulated_text,
+                                thread_id=session.thread_id,
+                            )
+                            live.update(_stream_group(body))
+
+                        elif isinstance(event, ChunkEvent):
+                            accumulated_text += event.text
+                            live.update(
+                                _stream_group(
+                                    _live_preview_renderable(
+                                        accumulated_text,
+                                        thread_id=session.thread_id,
+                                    )
+                                )
+                            )
+                        elif isinstance(event, ResponseReadyEvent):
+                            response_ready_output = event.output
+                            live.update(
+                                _response_panel(
+                                    response_ready_output,
+                                    thread_id=session.thread_id,
+                                    turn_count=len(
+                                        [
+                                            m
+                                            for m in session.history
+                                            if m.role == MessageRole.USER
+                                        ]
+                                    )
+                                    + 1,
+                                )
+                            )
+                            break
+                        elif isinstance(event, DoneEvent):
+                            final_output = event.output
+                            live.update(
+                                _response_panel(
+                                    final_output,
+                                    thread_id=session.thread_id,
+                                    turn_count=len(
+                                        [
+                                            m
+                                            for m in session.history
+                                            if m.role == MessageRole.USER
+                                        ]
+                                    )
+                                    + 1,
+                                )
+                            )
+            except Exception as exc:
+                logger.warning("CLI turn stream failed", exc_info=True)
+                render_info(
+                    _recoverable_error_message("Turn failed", exc),
+                    style="danger",
+                )
+                continue
+
+            if response_ready_output is not None:
+                pending_tail_task = asyncio.create_task(
+                    _drain_turn_stream_tail(
+                        stream,
+                    )
+                )
+                if _trace_enabled(session):
+                    render_turn_trace(
+                        response_ready_output,
+                        status_stages=status_stages,
+                        pending_status=_pending_tail_status(session),
+                    )
+                    _consume_trace_once(session)
+                render_turn_route(
+                    response_ready_output,
+                    pending_status=_pending_tail_status(session),
+                )
+                render_turn_activity(
+                    response_ready_output,
+                    observability_mode=session.observability_mode,
+                )
+                render_info(
+                    _pending_tail_message(session),
+                    style="muted",
+                )
+                continue
+
+            if final_output is not None:
+                if _trace_enabled(session):
+                    render_turn_trace(
+                        final_output,
+                        status_stages=status_stages,
+                    )
+                    _consume_trace_once(session)
+                render_turn_route(final_output)
+                render_turn_activity(
+                    final_output,
+                    observability_mode=session.observability_mode,
+                )
+                session.last_context = await runtime.get_state(session.thread_id)
+                session.history = await runtime.get_history(session.thread_id)
+    finally:
+        await _finalize_pending_turn()
+
+
 async def chat_loop(
     mode: str,
     *,
@@ -4188,240 +3855,7 @@ async def chat_loop(
             )
             return 2
 
-        pending_tail_task: asyncio.Task[AgentOutput] | None = None
-
-        async def _finalize_pending_turn() -> None:
-            """Wait for any background tail work and refresh session state.
-
-            Returns:
-                None.
-            """
-
-            nonlocal pending_tail_task
-            if pending_tail_task is None:
-                return
-
-            try:
-                await pending_tail_task
-            except Exception as exc:
-                logger.warning("CLI response tail failed", exc_info=True)
-                render_info(
-                    _recoverable_error_message("Response tail failed", exc),
-                    style="danger",
-                )
-            finally:
-                pending_tail_task = None
-
-            session.last_context = await runtime.get_state(session.thread_id)
-            session.history = await runtime.get_history(session.thread_id)
-
-        try:
-            set_prompt_theme(session.prompt_theme)
-            render_header(
-                session.resolved_mode,
-                session.thread_id,
-                session.memory_mode,
-                user_id=session.user_id,
-                response_model_tier=session.response_model_tier,
-            )
-            if session.show_onboarding:
-                render_onboarding()
-                session.show_onboarding = False
-            render_info(
-                "Session ready. Models, graph, and memory are warm.",
-                style="success",
-            )
-            hint = _thread_scoped_memory_hint(session)
-            if hint:
-                render_info(hint, style="warning")
-            if session.history:
-                render_info(
-                    f"Resumed thread {session.thread_id} with {len(session.history)} stored messages.",
-                    style="success",
-                )
-
-            while True:
-                if pending_tail_task is not None and pending_tail_task.done():
-                    await _finalize_pending_turn()
-
-                try:
-                    user_text = await read_user_input(
-                        _prompt_toolbar_state(
-                            session,
-                            pending_status=_pending_tail_status(session)
-                            if pending_tail_task is not None
-                            else None,
-                        )
-                    )
-                except (EOFError, KeyboardInterrupt):
-                    await _finalize_pending_turn()
-                    console.print("\n  [hint]session ended[/hint]")
-                    break
-
-                await _finalize_pending_turn()
-
-                if not user_text:
-                    continue
-                if user_text.startswith("/"):
-                    if not await handle_command(user_text, session, runtime):
-                        break
-                    continue
-                if user_text.lower() in {"exit", "quit"}:
-                    break
-
-                console.print()
-                console.print(Rule(style="panel", characters="─"))
-                accumulated_text = ""
-                final_output: AgentOutput | None = None
-                response_ready_output: AgentOutput | None = None
-                status_stages: list[str] = []
-
-                stream = runtime.run_turn_stream(
-                    thread_id=session.thread_id,
-                    user_id=session.owner_id(),
-                    message=user_text,
-                    channel=Channel.TEST,
-                    llm_client=session.llm_client,
-                    response_llm_client=session.response_llm_client,
-                )
-
-                try:
-                    with Live(console=console, refresh_per_second=15) as live:
-                        status_renderable = Spinner(
-                            "dots",
-                            text=Text.assemble(
-                                ("thinking", "primary"),
-                                (" — waiting for pipeline", "hint"),
-                            ),
-                            style="primary",
-                        )
-
-                        def _stream_group(body) -> Group:
-                            """Combine the spinner and response body for live rendering.
-
-                            Args:
-                                body: Rich renderable shown under the spinner.
-
-                            Returns:
-                                Rich group for the live display.
-                            """
-
-                            return Group(status_renderable, body)
-
-                        live.update(_stream_group(Text("", style="muted")))
-                        async for event in stream:
-                            if isinstance(event, StatusEvent):
-                                status_stages.append(event.stage)
-                                label = friendly_stage(event.stage)
-                                detail = f" ({event.detail})" if event.detail else ""
-                                status_renderable = Spinner(
-                                    "dots",
-                                    text=Text.assemble(
-                                        (label, "primary"),
-                                        (detail, "hint"),
-                                    ),
-                                    style="primary",
-                                )
-                                body = _live_preview_renderable(
-                                    accumulated_text,
-                                    thread_id=session.thread_id,
-                                )
-                                live.update(_stream_group(body))
-
-                            elif isinstance(event, ChunkEvent):
-                                accumulated_text += event.text
-                                live.update(
-                                    _stream_group(
-                                        _live_preview_renderable(
-                                            accumulated_text,
-                                            thread_id=session.thread_id,
-                                        )
-                                    )
-                                )
-                            elif isinstance(event, ResponseReadyEvent):
-                                response_ready_output = event.output
-                                live.update(
-                                    _response_panel(
-                                        response_ready_output,
-                                        thread_id=session.thread_id,
-                                        turn_count=len(
-                                            [
-                                                m
-                                                for m in session.history
-                                                if m.role == MessageRole.USER
-                                            ]
-                                        )
-                                        + 1,
-                                    )
-                                )
-                                break
-                            elif isinstance(event, DoneEvent):
-                                final_output = event.output
-                                live.update(
-                                    _response_panel(
-                                        final_output,
-                                        thread_id=session.thread_id,
-                                        turn_count=len(
-                                            [
-                                                m
-                                                for m in session.history
-                                                if m.role == MessageRole.USER
-                                            ]
-                                        )
-                                        + 1,
-                                    )
-                                )
-                except Exception as exc:
-                    logger.warning("CLI turn stream failed", exc_info=True)
-                    render_info(
-                        _recoverable_error_message("Turn failed", exc),
-                        style="danger",
-                    )
-                    continue
-
-                if response_ready_output is not None:
-                    pending_tail_task = asyncio.create_task(
-                        _drain_turn_stream_tail(
-                            stream,
-                        )
-                    )
-                    if _trace_enabled(session):
-                        render_turn_trace(
-                            response_ready_output,
-                            status_stages=status_stages,
-                            pending_status=_pending_tail_status(session),
-                        )
-                        _consume_trace_once(session)
-                    render_turn_route(
-                        response_ready_output,
-                        pending_status=_pending_tail_status(session),
-                    )
-                    render_turn_activity(
-                        response_ready_output,
-                        observability_mode=session.observability_mode,
-                    )
-                    render_info(
-                        _pending_tail_message(session),
-                        style="muted",
-                    )
-                    continue
-
-                if final_output is not None:
-                    if _trace_enabled(session):
-                        render_turn_trace(
-                            final_output,
-                            status_stages=status_stages,
-                        )
-                        _consume_trace_once(session)
-                    render_turn_route(final_output)
-                    render_turn_activity(
-                        final_output,
-                        observability_mode=session.observability_mode,
-                    )
-                    session.last_context = await runtime.get_state(session.thread_id)
-                    session.history = await runtime.get_history(session.thread_id)
-        finally:
-            await _finalize_pending_turn()
+        await _run_interactive_session(session, runtime)
     return 0
 
 
@@ -4433,6 +3867,20 @@ def main() -> int:
     Returns:
         Process exit code for the CLI session.
     """
+
+    warnings.warn(
+        "opencouch_cli is deprecated; prefer the Textual TUI via `uv run python -m opencouch_tui`.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    console.print(
+        Panel(
+            "Legacy CLI is deprecated. Prefer the Textual TUI via "
+            "[bold]uv run python -m opencouch_tui[/bold].",
+            title="Deprecation Notice",
+            border_style="warning",
+        )
+    )
 
     args = build_parser().parse_args()
 
