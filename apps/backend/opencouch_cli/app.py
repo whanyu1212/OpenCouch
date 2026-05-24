@@ -3596,6 +3596,243 @@ async def _active_session_conversation(
     return conversation, None
 
 
+def _snippet_around_match(text: str, query: str, *, max_len: int = 96) -> str:
+    """Return a compact snippet centered around the first query match."""
+
+    normalized = text.strip()
+    if len(normalized) <= max_len:
+        return normalized
+    lower_text = normalized.lower()
+    lower_query = query.lower()
+    match_index = lower_text.find(lower_query)
+    if match_index < 0:
+        return normalized[: max_len - 1].rstrip() + "…"
+
+    half_window = max_len // 2
+    start = max(0, match_index - half_window)
+    end = min(len(normalized), start + max_len)
+    start = max(0, end - max_len)
+    snippet = normalized[start:end].strip()
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(normalized):
+        snippet = snippet + "…"
+    return snippet
+
+
+def _first_matching_text(query: str, *candidates: str) -> str | None:
+    """Return the first candidate text containing the case-insensitive query."""
+
+    lower_query = query.lower()
+    for candidate in candidates:
+        normalized = candidate.strip()
+        if normalized and lower_query in normalized.lower():
+            return normalized
+    return None
+
+
+def _render_search_results(
+    *,
+    query: str,
+    mode: str,
+    results: list[tuple[str, str]],
+    empty_message: str,
+) -> None:
+    """Render compact labeled search results."""
+
+    if not results:
+        render_info(empty_message, style="warning")
+        return
+
+    display_limit = 8
+    visible_results = results[:display_limit]
+    truncated_count = max(0, len(results) - display_limit)
+
+    table = Table(show_header=True, header_style="muted", box=box.SIMPLE, expand=True)
+    table.add_column("source", style="accent", no_wrap=True, width=14)
+    table.add_column("match", style="info")
+
+    for source, snippet in visible_results:
+        table.add_row(source, snippet)
+
+    subtitle = f'[hint]query: "{query}"[/hint]'
+    if truncated_count:
+        subtitle += f" [hint]· and {truncated_count} more match(es)[/hint]"
+
+    console.print(
+        Panel(
+            table,
+            title=f"[muted]search · {mode}[/muted]",
+            subtitle=subtitle,
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+
+
+def _search_history_conversation(
+    conversation,
+    *,
+    query: str,
+) -> list[tuple[str, str]]:
+    """Search the active conversation transcript for visible message matches."""
+
+    results: list[tuple[str, str]] = []
+    for message in conversation.messages:
+        content = message.content.strip()
+        if not content or query.lower() not in content.lower():
+            continue
+        snippet = _snippet_around_match(content, query)
+        results.append(("history", f"{message.role.value}: {snippet}"))
+    return results
+
+
+async def _search_memory_records(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    *,
+    query: str,
+) -> list[tuple[str, str]]:
+    """Search semantic, episodic, and procedural memory for the active owner."""
+
+    owner_id = session.owner_id()
+    results: list[tuple[str, str]] = []
+
+    semantic_records = await _collect_records_by_kind(
+        runtime,
+        kind="semantic",
+        owner_id=owner_id,
+    )
+    for index, (_key, value) in enumerate(semantic_records, start=1):
+        object_identifier = _format_entity_identifier(value.get("object"))
+        predicate = str(value.get("predicate", "") or "").strip()
+        evidence_quote = str(value.get("evidence_quote", "") or "").strip()
+        semantic_summary = " ".join(
+            part for part in (predicate, object_identifier) if part and part != "?"
+        ).strip()
+        matched_text = _first_matching_text(query, evidence_quote, semantic_summary)
+        if matched_text is None:
+            continue
+        results.append(
+            (
+                "memory/fact",
+                f"#{index}: {_snippet_around_match(matched_text, query)}",
+            )
+        )
+
+    episodic_records = await _collect_records_by_kind(
+        runtime,
+        kind="episodic",
+        owner_id=owner_id,
+    )
+    for index, (_key, value) in enumerate(episodic_records, start=1):
+        summary = str(value.get("summary", "") or "").strip()
+        themes_value = value.get("primary_themes")
+        themes = (
+            ", ".join(str(theme) for theme in themes_value)
+            if isinstance(themes_value, list)
+            else ""
+        )
+        matched_text = _first_matching_text(query, summary, themes)
+        if matched_text is None:
+            continue
+        results.append(
+            (
+                "memory/session",
+                f"#{index}: {_snippet_around_match(matched_text, query)}",
+            )
+        )
+
+    try:
+        profile = await aget_procedural_profile(runtime.memory_store, user_id=owner_id)
+    except AttributeError:
+        profile = None
+
+    if profile is not None:
+        for index, rule in enumerate(profile.rules, start=1):
+            evidence_text = " ".join(
+                str(evidence).strip() for evidence in rule.evidence
+            )
+            matched_text = _first_matching_text(query, rule.rule, evidence_text)
+            if matched_text is None:
+                continue
+            results.append(
+                (
+                    "memory/rule",
+                    f"#{index}: {_snippet_around_match(matched_text, query)}",
+                )
+            )
+
+    return results
+
+
+async def _handle_search_command(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    args: list[str],
+) -> bool:
+    """Search the active transcript, stored memory, or both."""
+
+    if not args:
+        render_info("Usage: /search <history|memory|all> <query>", style="warning")
+        return True
+
+    mode = args[0]
+    query = " ".join(args[1:]).strip()
+    if mode not in {"history", "memory", "all"}:
+        render_info(
+            "Unknown /search subcommand. Available: history, memory, all",
+            style="warning",
+        )
+        return True
+    if not query:
+        render_info(f"Usage: /search {mode} <query>", style="warning")
+        return True
+
+    if mode == "history":
+        conversation, error = await _active_session_conversation(session, runtime)
+        if conversation is None:
+            render_info(
+                error or "No transcript is available for this thread yet.",
+                style="warning",
+            )
+            return True
+        results = _search_history_conversation(conversation, query=query)
+        _render_search_results(
+            query=query,
+            mode="history",
+            results=results,
+            empty_message=f'No history matches for "{query}".',
+        )
+        return True
+
+    memory_results = await _search_memory_records(session, runtime, query=query)
+    if mode == "memory":
+        _render_search_results(
+            query=query,
+            mode="memory",
+            results=memory_results,
+            empty_message=f'No memory matches for "{query}".',
+        )
+        return True
+
+    conversation, error = await _active_session_conversation(session, runtime)
+    history_results: list[tuple[str, str]] = []
+    if conversation is not None:
+        history_results = _search_history_conversation(conversation, query=query)
+    elif error:
+        render_info(error, style="warning")
+    combined_results = [*history_results, *memory_results]
+    _render_search_results(
+        query=query,
+        mode="all",
+        results=combined_results,
+        empty_message=f'No matches for "{query}".',
+    )
+    return True
+
+
 async def _handle_export_command(
     session: RunnerSession,
     runtime: PersistentAgentRuntime,
@@ -4023,6 +4260,9 @@ async def handle_command(
             style="warning",
         )
         return True
+
+    if command == "/search":
+        return await _handle_search_command(session, runtime, args)
 
     if command == "/summary":
         return await _handle_summary_command(session, runtime, args)

@@ -54,6 +54,31 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         "session",
     ),
     SlashCommand(
+        ("/search",),
+        "Search the active transcript, stored memory, or both.",
+        "session",
+        usage="/search <history|memory|all> <query>",
+        example="/search history sleep after travel",
+    ),
+    SlashCommand(
+        ("/search", "history"),
+        "Search the active thread transcript.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/search", "memory"),
+        "Search stored memory for the active owner scope.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/search", "all"),
+        "Search both transcript history and stored memory.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
         ("/summary",),
         "Generate a recap of the current session.",
         "session",

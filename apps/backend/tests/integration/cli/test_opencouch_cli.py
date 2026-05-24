@@ -400,6 +400,7 @@ def test_help_command_registry_contains_current_public_commands() -> None:
 
     assert "/help" in displays
     assert "/doctor" in displays
+    assert "/search <history|memory|all> <query>" in displays
     assert "/summary [short|full]" in displays
     assert "/export <md|json|txt> [filename]" in displays
     assert "/memory list [facts|sessions|rules]" in displays
@@ -446,6 +447,7 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
     assert "list" in completions("/memory l")
     assert {"facts", "sessions", "rules"}.issubset(completions("/memory list "))
     assert {"on", "off"}.issubset(completions("/memory recall "))
+    assert {"history", "memory", "all"}.issubset(completions("/search "))
     assert {"short", "full"}.issubset(completions("/summary "))
     assert {"md", "json", "txt"}.issubset(completions("/export "))
     assert {"compact", "full"}.issubset(completions("/ui "))
@@ -2291,6 +2293,214 @@ async def test_summary_command_validates_args(monkeypatch) -> None:
 
     assert should_continue is True
     assert messages == [("warning", "Usage: /summary [short|full]")]
+
+
+@pytest.mark.asyncio
+async def test_search_command_requires_mode_and_query(monkeypatch) -> None:
+    """`/search` should validate both subcommand and query presence."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+
+    assert await handle_command("/search", session, runtime) is True
+    assert await handle_command("/search history", session, runtime) is True
+    assert await handle_command("/search memory", session, runtime) is True
+
+    assert messages == [
+        ("warning", "Usage: /search <history|memory|all> <query>"),
+        ("warning", "Usage: /search history <query>"),
+        ("warning", "Usage: /search memory <query>"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_command_rejects_unknown_subcommand(monkeypatch) -> None:
+    """Unknown `/search` subcommands should warn with available options."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    should_continue = await handle_command(
+        "/search foo hello", _session(), FakeRuntime()
+    )
+
+    assert should_continue is True
+    assert messages == [
+        ("warning", "Unknown /search subcommand. Available: history, memory, all")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_history_command_finds_transcript_matches(capsys) -> None:
+    """`/search history` should search the active transcript only."""
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "Sleep after travel has been rough this week."},
+        {"role": "assistant", "content": "Try anchoring your wake time first."},
+        {"role": "user", "content": "The travel part really throws me off."},
+    ]
+
+    should_continue = await handle_command(
+        "/search history travel",
+        session,
+        runtime,
+    )
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "search · history" in captured.out
+    assert 'query: "travel"' in captured.out
+    assert "history" in captured.out
+    assert "user: Sleep after travel has been rough this week." in captured.out
+    assert "user: The travel part really throws me off." in captured.out
+    assert "memory/fact" not in captured.out
+
+
+@pytest.mark.asyncio
+async def test_search_history_command_reports_empty_state(monkeypatch) -> None:
+    """`/search history` should show a targeted empty-state message."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+
+    should_continue = await handle_command("/search history travel", session, runtime)
+
+    assert should_continue is True
+    assert messages == [("warning", 'No history matches for "travel".')]
+
+
+@pytest.mark.asyncio
+async def test_search_memory_command_finds_procedural_rule(capsys) -> None:
+    """`/search memory` should search procedural rules via the profile helper."""
+
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="Don't suggest meditation again.",
+            evidence=["Meditation makes me more anxious."],
+        ),
+    )
+
+    should_continue = await handle_command(
+        "/search memory meditation", session, runtime
+    )
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "search · memory" in captured.out
+    assert "memory/rule" in captured.out
+    assert "#1: Don't suggest meditation again." in captured.out
+
+
+@pytest.mark.asyncio
+async def test_search_memory_command_finds_semantic_fact(capsys) -> None:
+    """`/search memory` should search semantic memory through existing collectors."""
+
+    from types import SimpleNamespace
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.memory_store = SimpleNamespace(
+        anamespaces=lambda: _async_return([("thread-a", "semantic")]),
+        asearch=lambda namespace, query=None, limit=1000: _async_return(
+            [
+                SimpleNamespace(
+                    key="fact-1",
+                    value={
+                        "category": "context",
+                        "predicate": "USES",
+                        "object": {"identifier": "fluoxetine"},
+                        "evidence_quote": "I take fluoxetine every day.",
+                        "confidence": "high",
+                    },
+                )
+            ]
+        ),
+    )
+
+    should_continue = await handle_command(
+        "/search memory fluoxetine", session, runtime
+    )
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "memory/fact" in captured.out
+    assert "#1: I take fluoxetine every day." in captured.out
+
+
+@pytest.mark.asyncio
+async def test_search_all_command_combines_history_and_memory(capsys) -> None:
+    """`/search all` should merge history and memory results with labels."""
+
+    from agent.memory.procedural_profile import (
+        aadd_procedural_rule,
+        build_procedural_rule,
+    )
+
+    runtime = FakeProceduralRuntime()
+    session = _session()
+    runtime.get_state = lambda thread_id: _async_return(  # type: ignore[method-assign]
+        {
+            "session_progress": {"turn_count": 2},
+            "transcript": [
+                {"role": "user", "content": "Travel has been rough on my sleep."},
+                {"role": "assistant", "content": "Let's make a travel sleep plan."},
+            ],
+        }
+    )
+
+    await aadd_procedural_rule(
+        runtime.memory_store,
+        user_id="thread-a",
+        rule=build_procedural_rule(
+            rule_text="Keep travel-related advice practical.",
+            evidence=["Travel throws off my routine."],
+        ),
+    )
+
+    should_continue = await handle_command("/search all travel", session, runtime)
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "search · all" in captured.out
+    assert "history" in captured.out
+    assert "memory/rule" in captured.out
+    assert "Travel has been rough on my sleep." in captured.out
+    assert "Keep travel-related advice practical." in captured.out
+
+
+async def _async_return(value):
+    return value
 
 
 # ─── v0.7 Stage E: procedural CLI commands ─────────────────────────────────
