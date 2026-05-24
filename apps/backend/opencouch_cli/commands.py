@@ -53,6 +53,50 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         "Show the latest derived session context snapshot.",
         "session",
     ),
+    SlashCommand(
+        ("/summary",),
+        "Generate a recap of the current session.",
+        "session",
+        usage="/summary [short|full]",
+        example="/summary short",
+    ),
+    SlashCommand(
+        ("/summary", "short"),
+        "Generate a brief recap of the current session.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/summary", "full"),
+        "Generate a detailed recap of the current session.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/export",),
+        "Export the current session transcript to a file.",
+        "session",
+        usage="/export <md|json|txt> [filename]",
+        example="/export md",
+    ),
+    SlashCommand(
+        ("/export", "md"),
+        "Export the current session transcript as Markdown.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/export", "json"),
+        "Export the current session transcript as JSON.",
+        "session",
+        show_in_help=False,
+    ),
+    SlashCommand(
+        ("/export", "txt"),
+        "Export the current session transcript as plain text.",
+        "session",
+        show_in_help=False,
+    ),
     SlashCommand(("/keys",), "Show keyboard shortcuts and prompt tips.", "display"),
     SlashCommand(
         ("/ui",),
@@ -437,3 +481,16 @@ def all_command_names() -> list[str]:
     for cmd in SLASH_COMMANDS:
         names.add(cmd.path[0])
     return sorted(names)
+
+
+def format_commands_for_llm() -> str:
+    """Return a compact help-visible command list for system-prompt injection.
+
+    Returns:
+        str: One command per line using exact user-facing syntax.
+    """
+
+    lines = [
+        f"- {command.display} — {command.description}" for command in help_commands()
+    ]
+    return "\n".join(lines)

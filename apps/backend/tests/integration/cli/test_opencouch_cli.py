@@ -1,6 +1,7 @@
 """Tests for interactive CLI thread-management commands."""
 
 import asyncio
+import json
 import re
 from types import SimpleNamespace
 
@@ -97,6 +98,45 @@ class FakeRuntime:
         self.record_feedback_calls.append((thread_id, label, source))
         self.call_log.append(("record_feedback", thread_id, label, source))
         return self.record_feedback_returns
+
+
+class _FakeSummaryLLM:
+    """Minimal text-only LLM stub for /summary command tests."""
+
+    def __init__(self, response_text: str) -> None:
+        self.response_text = response_text
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        assert use_search is False
+        self.calls.append((prompt, system_instruction))
+        return self.response_text
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ):
+        _ = (prompt, system_instruction)
+        if False:
+            yield ""
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ):
+        raise NotImplementedError
 
 
 class _FakeChatLoopRuntime:
@@ -360,6 +400,8 @@ def test_help_command_registry_contains_current_public_commands() -> None:
 
     assert "/help" in displays
     assert "/doctor" in displays
+    assert "/summary [short|full]" in displays
+    assert "/export <md|json|txt> [filename]" in displays
     assert "/memory list [facts|sessions|rules]" in displays
     assert "/memory recall on|off" in displays
     assert "/keys" in displays
@@ -404,6 +446,8 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
     assert "list" in completions("/memory l")
     assert {"facts", "sessions", "rules"}.issubset(completions("/memory list "))
     assert {"on", "off"}.issubset(completions("/memory recall "))
+    assert {"short", "full"}.issubset(completions("/summary "))
+    assert {"md", "json", "txt"}.issubset(completions("/export "))
     assert {"compact", "full"}.issubset(completions("/ui "))
     assert {"mono", "contrast", "calm"}.issubset(completions("/theme "))
     assert {"fast", "quality"}.issubset(completions("/response-tier "))
@@ -2092,6 +2136,161 @@ def test_render_semantic_records_table_shows_placeholder_for_missing_object(
     # The row should render with a '?' in the object column
     assert "malformed record" in captured.out
     assert "?" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_export_command_writes_markdown_transcript(tmp_path, monkeypatch) -> None:
+    """`/export md` should write the active thread transcript to a file."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    output_path = tmp_path / "transcript.md"
+
+    should_continue = await handle_command(
+        f"/export md {output_path}",
+        session,
+        runtime,
+    )
+
+    assert should_continue is True
+    assert output_path.exists()
+    exported = output_path.read_text(encoding="utf-8")
+    assert "# OpenCouch session transcript" in exported
+    assert "## User" in exported
+    assert "hello" in exported
+    assert "## Assistant" in exported
+    assert "hi there" in exported
+    assert messages == [("success", f"Exported transcript to {output_path}.")]
+
+
+@pytest.mark.asyncio
+async def test_export_command_writes_json_transcript(tmp_path, monkeypatch) -> None:
+    """`/export json` should emit a structured transcript payload."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there", "response_style": "support"},
+    ]
+    output_path = tmp_path / "transcript.json"
+
+    should_continue = await handle_command(
+        f"/export json {output_path}",
+        session,
+        runtime,
+    )
+
+    assert should_continue is True
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["thread_id"] == "thread-a"
+    assert payload["message_count"] == 2
+    assert payload["messages"][0]["role"] == "user"
+    assert payload["messages"][1]["response_style"] == "support"
+    assert messages == [("success", f"Exported transcript to {output_path}.")]
+
+
+@pytest.mark.asyncio
+async def test_export_command_requires_transcript(monkeypatch) -> None:
+    """`/export` should warn instead of crashing when no transcript exists."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = []
+
+    should_continue = await handle_command("/export md", session, runtime)
+
+    assert should_continue is True
+    assert messages == [("warning", "No transcript is available for this thread yet.")]
+
+
+@pytest.mark.asyncio
+async def test_summary_command_uses_llm_when_available(monkeypatch, capsys) -> None:
+    """`/summary full` should call the configured text LLM and render the result."""
+
+    session = _session()
+    session.llm_client = _FakeSummaryLLM(
+        "Summary\nKey decisions\n- keep going\nOpen questions\n- none\nNext steps\n- continue"
+    )
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "I need help organizing my week."},
+        {"role": "assistant", "content": "Let's break it into three priorities."},
+    ]
+
+    should_continue = await handle_command("/summary full", session, runtime)
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "session summary (full)" in captured.out
+    assert "Key decisions" in captured.out
+    assert "need the full conversation record? use /export md" in captured.out
+    assert len(session.llm_client.calls) == 1
+    prompt, system_instruction = session.llm_client.calls[0]
+    assert "Detail level: full." in prompt
+    assert "USER: I need help organizing my week." in prompt
+    assert (
+        "You summarize OpenCouch chat transcripts for the local CLI."
+        in system_instruction
+    )
+
+
+@pytest.mark.asyncio
+async def test_summary_command_falls_back_without_llm(capsys) -> None:
+    """`/summary` should render a deterministic fallback when no LLM is configured."""
+
+    session = _session()
+    runtime = FakeRuntime()
+    runtime.states["thread-a"]["transcript"] = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+
+    should_continue = await handle_command("/summary", session, runtime)
+    captured = capsys.readouterr()
+
+    assert should_continue is True
+    assert "session summary (short)" in captured.out
+    assert "Transcript messages: 2" in captured.out
+    assert "No summary LLM is configured in this session." in captured.out
+
+
+@pytest.mark.asyncio
+async def test_summary_command_validates_args(monkeypatch) -> None:
+    """`/summary` should reject unsupported detail arguments."""
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "opencouch_cli.app.render_info",
+        lambda message, style="panel": messages.append((style, message)),
+    )
+
+    should_continue = await handle_command("/summary nope", _session(), FakeRuntime())
+
+    assert should_continue is True
+    assert messages == [("warning", "Usage: /summary [short|full]")]
 
 
 # ─── v0.7 Stage E: procedural CLI commands ─────────────────────────────────

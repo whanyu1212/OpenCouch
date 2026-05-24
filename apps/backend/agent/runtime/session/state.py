@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
+from agent.runtime.session.history import SessionConversation
 from agent.state import AgentState, cleared_exercise_state
 
 EXERCISE_STATE_FIELDS = (
@@ -222,3 +224,112 @@ def crisis_level_from_state(state: AgentState) -> int:
     if isinstance(crisis, Mapping):
         return int(crisis.get("level", 0) or 0)
     return 0
+
+
+def render_session_conversation_markdown(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> str:
+    """Render a canonical session conversation as Markdown.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export header.
+
+    Returns:
+        Markdown transcript text.
+    """
+
+    lines = [
+        "# OpenCouch session transcript",
+        "",
+        f"- Thread: `{thread_id}`",
+        f"- Messages: {len(conversation.messages)}",
+        "",
+    ]
+    for message in conversation.messages:
+        role = message.role.value.capitalize()
+        lines.extend((f"## {role}", "", message.content, ""))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_session_conversation_text(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> str:
+    """Render a canonical session conversation as plain text.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export header.
+
+    Returns:
+        Plain-text transcript.
+    """
+
+    lines = [
+        "OpenCouch session transcript",
+        f"Thread: {thread_id}",
+        f"Messages: {len(conversation.messages)}",
+        "",
+    ]
+    for message in conversation.messages:
+        role = message.role.value
+        lines.extend((f"{role}: {message.content}", ""))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def session_conversation_to_json_dict(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> dict[str, Any]:
+    """Return a JSON-serializable transcript payload.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export metadata.
+
+    Returns:
+        Structured transcript payload.
+    """
+
+    return {
+        "thread_id": thread_id,
+        "message_count": len(conversation.messages),
+        "messages": [
+            {
+                "role": message.role.value,
+                "content": message.content,
+                "response_style": message.response_style,
+            }
+            for message in conversation.messages
+        ],
+    }
+
+
+def render_session_conversation_json(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> str:
+    """Render a canonical session conversation as pretty JSON.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export metadata.
+
+    Returns:
+        Pretty-printed JSON transcript.
+    """
+
+    return (
+        json.dumps(
+            session_conversation_to_json_dict(conversation, thread_id=thread_id),
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )

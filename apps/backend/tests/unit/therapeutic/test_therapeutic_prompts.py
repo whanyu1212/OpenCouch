@@ -277,6 +277,18 @@ class TestTherapeuticBuilderInjection:
             assert "proactive recall: OFF" in prompt, (
                 f"{name}: recall-off constraint missing"
             )
+            assert "CLI slash commands available in this TUI" in prompt, (
+                f"{name}: cli command block missing"
+            )
+            assert "/summary [short|full]" in prompt, (
+                f"{name}: summary command missing from cli block"
+            )
+            assert "/export <md|json|txt> [filename]" in prompt, (
+                f"{name}: export command missing from cli block"
+            )
+            assert "Never invent slash commands." in prompt, (
+                f"{name}: cli guidance missing"
+            )
 
     def test_rules_are_injected_when_present(self) -> None:
         """When ``procedural_profile.procedural_rules`` is populated, the rules

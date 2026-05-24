@@ -100,6 +100,13 @@ from agent.models import (
 )
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entries
+from agent.runtime.session.history import session_conversation_from_transcript
+from agent.runtime.session.state import (
+    get_transcript,
+    render_session_conversation_json,
+    render_session_conversation_markdown,
+    render_session_conversation_text,
+)
 from agent.observability.routing_trace import routing_trace_from_diagnostics
 from config import (
     PersistenceBackend,
@@ -3566,6 +3573,174 @@ def _prompt_for_session_feedback() -> FeedbackLabel | None:
     return None  # Empty input means no feedback record.
 
 
+def _default_export_filename(*, format_name: str) -> str:
+    """Return a timestamped default filename for transcript exports."""
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    return f"session-{timestamp}.{format_name}"
+
+
+async def _active_session_conversation(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+):
+    """Return the active thread's canonical public conversation."""
+
+    state = await runtime.get_state(session.thread_id)
+    if state is None:
+        return None, "No transcript is available for this thread yet."
+    transcript = get_transcript(state)
+    conversation = session_conversation_from_transcript(transcript)
+    if conversation.is_empty:
+        return None, "No transcript is available for this thread yet."
+    return conversation, None
+
+
+async def _handle_export_command(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    args: list[str],
+) -> bool:
+    """Export the active thread transcript in a user-selected format."""
+
+    if not args or args[0] not in {"md", "json", "txt"}:
+        render_info("Usage: /export <md|json|txt> [filename]", style="warning")
+        return True
+
+    conversation, error = await _active_session_conversation(session, runtime)
+    if conversation is None:
+        render_info(error or "No transcript is available to export.", style="warning")
+        return True
+
+    format_name = args[0]
+    filename = " ".join(args[1:]).strip() if len(args) > 1 else ""
+    if not filename:
+        filename = _default_export_filename(format_name=format_name)
+
+    path = Path(filename).expanduser()
+    if format_name == "md":
+        rendered = render_session_conversation_markdown(
+            conversation,
+            thread_id=session.thread_id,
+        )
+    elif format_name == "json":
+        rendered = render_session_conversation_json(
+            conversation,
+            thread_id=session.thread_id,
+        )
+    else:
+        rendered = render_session_conversation_text(
+            conversation,
+            thread_id=session.thread_id,
+        )
+
+    try:
+        path.write_text(rendered, encoding="utf-8")
+    except OSError as exc:
+        render_info(f"Could not write export file: {exc}", style="warning")
+        return True
+
+    render_info(f"Exported transcript to {path}.", style="success")
+    return True
+
+
+async def _summarize_conversation_text(
+    session: RunnerSession,
+    conversation,
+    *,
+    detail: str,
+) -> str:
+    """Return a non-persisting summary of the active conversation."""
+
+    transcript_lines = []
+    for entry in conversation.transcript_entries():
+        role = str(entry.get("role", "unknown")).upper()
+        content = str(entry.get("content", "")).strip()
+        if content:
+            transcript_lines.append(f"{role}: {content}")
+    transcript_text = "\n".join(transcript_lines)
+
+    if session.llm_client is None:
+        if detail == "full":
+            return (
+                "Summary\n"
+                f"- Transcript messages: {len(conversation.messages)}\n"
+                f"- User turns: {conversation.user_turn_count}\n"
+                "- No summary LLM is configured in this session.\n"
+                "- Use /export md for the full transcript."
+            )
+        return (
+            "Summary\n"
+            f"- Transcript messages: {len(conversation.messages)}\n"
+            f"- User turns: {conversation.user_turn_count}\n"
+            "- No summary LLM is configured in this session."
+        )
+
+    prompt = (
+        "Summarize the following OpenCouch conversation.\n"
+        f"Detail level: {detail}.\n"
+        "If detail level is short, return 4-6 concise bullets.\n"
+        "If detail level is full, use these sections exactly:\n"
+        "Summary\nKey decisions\nOpen questions\nNext steps\n"
+        "Be faithful to the transcript. Do not invent facts.\n\n"
+        f"Transcript:\n{transcript_text}"
+    )
+    return await session.llm_client.generate_text(
+        prompt=prompt,
+        system_instruction=(
+            "You summarize OpenCouch chat transcripts for the local CLI. "
+            "Be concise, accurate, and faithful to the visible transcript."
+        ),
+    )
+
+
+async def _handle_summary_command(
+    session: RunnerSession,
+    runtime: PersistentAgentRuntime,
+    args: list[str],
+) -> bool:
+    """Render a non-persisting recap of the active thread transcript."""
+
+    detail = "short"
+    if args:
+        if len(args) != 1 or args[0] not in {"short", "full"}:
+            render_info("Usage: /summary [short|full]", style="warning")
+            return True
+        detail = args[0]
+
+    conversation, error = await _active_session_conversation(session, runtime)
+    if conversation is None:
+        render_info(
+            error or "No transcript is available to summarize.", style="warning"
+        )
+        return True
+
+    try:
+        summary = await _summarize_conversation_text(
+            session,
+            conversation,
+            detail=detail,
+        )
+    except Exception as exc:
+        render_info(
+            _recoverable_error_message("Session summary failed", exc),
+            style="danger",
+        )
+        return True
+
+    console.print(
+        Panel(
+            Text(summary.strip(), style="info"),
+            title=f"[muted]session summary ({detail})[/muted]",
+            subtitle="[hint]need the full conversation record? use /export md[/hint]",
+            border_style="panel",
+            box=box.ROUNDED,
+        )
+    )
+    console.print()
+    return True
+
+
 async def _summarize_and_render(
     session: RunnerSession,
     runtime: PersistentAgentRuntime,
@@ -3848,6 +4023,12 @@ async def handle_command(
             style="warning",
         )
         return True
+
+    if command == "/summary":
+        return await _handle_summary_command(session, runtime, args)
+
+    if command == "/export":
+        return await _handle_export_command(session, runtime, args)
 
     if command == "/help":
         render_help()
