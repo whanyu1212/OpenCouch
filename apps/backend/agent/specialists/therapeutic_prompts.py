@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from agent.runtime.session.state import current_turn_lifecycle
-from opencouch_cli.commands import format_commands_for_llm
+from opencouch_tui.commands import format_commands_for_llm
 from agent.prompts import (
     compose_sources as _compose,
     format_recent_history as _format_recent_history,

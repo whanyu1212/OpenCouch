@@ -9,134 +9,21 @@ import pytest
 from rich.console import Group
 from rich.spinner import Spinner
 
-from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.models import (
     AgentOutput,
     CrisisAssessment,
     DoneEvent,
-    Message,
-    MessageRole,
     ResponseCategory,
     ResponseReadyEvent,
     StatusEvent,
 )
-from opencouch_cli.app import RunnerSession, chat_loop, handle_command
-
-
-class FakeRuntime:
-    """Minimal runtime stub for CLI command tests."""
-
-    def __init__(self) -> None:
-        self.states = {
-            "thread-a": {"session_progress": {"turn_count": 2}, "transcript": []},
-            "thread-b": {"session_progress": {"turn_count": 1}, "transcript": []},
-        }
-        self.histories = {
-            "thread-a": [
-                Message(role=MessageRole.USER, content="first"),
-                Message(role=MessageRole.ASSISTANT, content="reply"),
-            ],
-            "thread-b": [
-                Message(role=MessageRole.USER, content="other"),
-                Message(role=MessageRole.ASSISTANT, content="reply"),
-            ],
-        }
-        self.thread_summaries = []
-        # v0.4: end_session tracking. Tests can set
-        # ``end_session_returns`` to control what the fake returns, and
-        # ``end_session_calls`` records invocations for assertions.
-        self.end_session_returns: object | None = None
-        self.end_session_calls: list[str] = []
-
-        # v0.10: session-feedback tracking. Same split pattern as
-        # end_session. ``record_feedback_returns`` controls what the
-        # stub returns; ``record_feedback_calls`` captures the args.
-        self.record_feedback_returns: SessionFeedbackRecord | None = None
-        self.record_feedback_calls: list[tuple[str, FeedbackLabel, FeedbackSource]] = []
-
-        # v0.10: unified cross-method call log so tests can assert
-        # cross-method ordering (e.g., "feedback must be recorded
-        # before end_session"). Every stubbed method appends to this
-        # shared log. Per-method lists are kept for backward compat
-        # with existing assertions.
-        self.call_log: list[tuple[str, ...]] = []
-
-    async def get_state(self, thread_id: str):
-        return self.states.get(thread_id)
-
-    async def get_history(self, thread_id: str):
-        return list(self.histories.get(thread_id, []))
-
-    async def list_threads(self, *, limit: int = 20):
-        return self.thread_summaries[:limit]
-
-    async def reset_thread(self, thread_id: str) -> None:
-        self.states.pop(thread_id, None)
-        self.histories.pop(thread_id, None)
-
-    async def end_session(
-        self,
-        thread_id: str,
-        *,
-        llm_client=None,
-    ):
-        """v0.4 stub: record the call and return the canned result."""
-
-        self.end_session_calls.append(thread_id)
-        self.call_log.append(("end_session", thread_id))
-        return self.end_session_returns
-
-    async def record_session_feedback(
-        self,
-        thread_id: str,
-        *,
-        label: FeedbackLabel,
-        source: FeedbackSource,
-    ) -> SessionFeedbackRecord | None:
-        """v0.10 stub: record the call and return the canned result."""
-
-        self.record_feedback_calls.append((thread_id, label, source))
-        self.call_log.append(("record_feedback", thread_id, label, source))
-        return self.record_feedback_returns
-
-
-class _FakeSummaryLLM:
-    """Minimal text-only LLM stub for /summary command tests."""
-
-    def __init__(self, response_text: str) -> None:
-        self.response_text = response_text
-        self.calls: list[tuple[str, str | None]] = []
-
-    async def generate_text(
-        self,
-        *,
-        prompt: str,
-        system_instruction: str | None = None,
-        use_search: bool = False,
-    ) -> str:
-        assert use_search is False
-        self.calls.append((prompt, system_instruction))
-        return self.response_text
-
-    async def generate_text_stream(
-        self,
-        *,
-        prompt: str,
-        system_instruction: str | None = None,
-    ):
-        _ = (prompt, system_instruction)
-        if False:
-            yield ""
-
-    async def generate_structured(
-        self,
-        *,
-        prompt: str,
-        response_schema,
-        system_instruction: str | None = None,
-        use_search: bool = False,
-    ):
-        raise NotImplementedError
+from opencouch_cli.app import chat_loop, handle_command
+from opencouch_tui.models import RunnerSession
+from tests.integration.helpers.runtime import (
+    FakeRuntime,
+    FakeSummaryLLM as _FakeSummaryLLM,
+)
+from tests.integration.helpers.sessions import make_session as _session
 
 
 class _FakeChatLoopRuntime:
@@ -224,24 +111,6 @@ def _make_agent_output(
         response_style="support",
         mode_source="test",
         diagnostics=diagnostics,
-    )
-
-
-def _session() -> RunnerSession:
-    """Return a baseline CLI session for command tests."""
-
-    return RunnerSession(
-        requested_mode="deterministic",
-        resolved_mode="deterministic",
-        llm_client=None,
-        thread_id="thread-a",
-        sqlite_path="/tmp/test.sqlite3",
-        memory_mode="persistent",
-        history=[
-            Message(role=MessageRole.USER, content="first"),
-            Message(role=MessageRole.ASSISTANT, content="reply"),
-        ],
-        last_context={"session_progress": {"turn_count": 2}, "transcript": []},
     )
 
 
@@ -412,7 +281,7 @@ def test_render_doctor_verbose_shows_expanded_diagnostics(capsys) -> None:
 def test_help_command_registry_contains_current_public_commands() -> None:
     """The help registry should cover all public slash commands."""
 
-    from opencouch_cli.commands import help_commands
+    from opencouch_tui.commands import help_commands
 
     displays = [command.display for command in help_commands()]
 
@@ -441,7 +310,7 @@ def test_slash_completer_suggests_top_level_and_nested_commands() -> None:
 
     from prompt_toolkit.document import Document
 
-    from opencouch_cli.input import SlashCommandCompleter
+    from opencouch_tui.input import SlashCommandCompleter
 
     completer = SlashCommandCompleter()
 
@@ -480,7 +349,7 @@ def test_slash_key_opens_command_completion_menu() -> None:
 
     from prompt_toolkit.document import Document
 
-    from opencouch_cli.input import _insert_slash_and_maybe_complete
+    from opencouch_tui.input import _insert_slash_and_maybe_complete
 
     class _FakeBuffer:
         def __init__(self, text: str) -> None:
@@ -518,7 +387,7 @@ def test_slash_key_opens_command_completion_menu() -> None:
 def test_prompt_toolbar_shows_session_state_and_pending_memory() -> None:
     """The input toolbar should expose compact session state."""
 
-    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+    from opencouch_tui.input import PromptToolbarState, prompt_toolbar
 
     toolbar = prompt_toolbar(
         PromptToolbarState(
@@ -550,7 +419,7 @@ def test_prompt_toolbar_shows_session_state_and_pending_memory() -> None:
 def test_prompt_toolbar_keeps_trace_toggle_out_of_status_bar() -> None:
     """Trace mode should not occupy bottom-toolbar status space."""
 
-    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+    from opencouch_tui.input import PromptToolbarState, prompt_toolbar
 
     toolbar = prompt_toolbar(
         PromptToolbarState(
@@ -569,7 +438,7 @@ def test_prompt_toolbar_keeps_trace_toggle_out_of_status_bar() -> None:
 def test_prompt_toolbar_clips_long_thread_identity() -> None:
     """Long thread ids should not dominate the prompt toolbar."""
 
-    from opencouch_cli.input import PromptToolbarState, prompt_toolbar
+    from opencouch_tui.input import PromptToolbarState, prompt_toolbar
 
     toolbar = prompt_toolbar(
         PromptToolbarState(
@@ -602,7 +471,7 @@ def test_guest_pending_tail_status_avoids_memory_copy() -> None:
         _pending_tail_status,
         _prompt_toolbar_state,
     )
-    from opencouch_cli.input import prompt_toolbar
+    from opencouch_tui.input import prompt_toolbar
 
     session = _session()
     session.memory_mode = "guest"

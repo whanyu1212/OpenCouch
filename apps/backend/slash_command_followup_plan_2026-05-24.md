@@ -1,7 +1,7 @@
 # Slash Command Follow-Up Plan
 Date: 2026-05-24
 POC: AdaL
-TL;DR: After shipping `/summary` and `/export`, the next highest-value native TUI slash commands are deterministic search, thread rename, and developer-facing diagnostics. Build them in small PRs, keep command execution app-native, and continue using shared command metadata for help/completion/model awareness.
+TL;DR: After shipping `/summary` and `/export`, the next highest-value native TUI slash commands are deterministic search, developer-facing diagnostics, and small quality-of-life toggles. Build them in small PRs, keep command execution app-native, and continue using shared command metadata for help/completion/model awareness.
 
 ## Context
 We have now shipped:
@@ -11,8 +11,8 @@ We have now shipped:
 
 We intentionally deferred:
 - `/search ...`
-- `/rename <name>`
 - richer debug / workflow commands
+- small no-arg toggle polish
 
 The main product direction remains:
 - slash commands are native TUI commands
@@ -63,28 +63,7 @@ Only add semantic retrieval after real usage proves need.
 
 ---
 
-### PR 3 — `/rename <name>`
-Good UX improvement, but only after checking the persistence model cleanly supports a display label.
-
-#### Why
-Thread management feels incomplete without naming:
-- easier thread switching
-- better `/threads` readability
-- better continuity for longer dogfooding sessions
-
-#### Requirement
-Store a display label without changing canonical thread identity.
-
-#### Risks
-- schema / persistence widening
-- accidental conflation of label and thread id
-
-#### Recommendation
-Only implement once a small metadata field can be added without broad migration work.
-
----
-
-### PR 4 — `/logs` and `/doctor` expansion
+### PR 3 — `/logs` and `/doctor` expansion
 Developer-facing polish for debugging local runs.
 
 #### Candidate syntax
@@ -102,7 +81,7 @@ Do not let these commands become a dumping ground for unrelated diagnostics.
 
 ---
 
-### PR 5 — Quick toggles / quality-of-life polish
+### PR 4 — Quick toggles / quality-of-life polish
 Small but high-feel improvements:
 - `/trace` with no args already reports status; consider toggle behavior
 - `/theme` with no args could cycle or show current
@@ -114,6 +93,7 @@ Only add no-arg toggle behavior where it is obvious and low-surprise.
 
 ## Not recommended yet
 Avoid these until the simpler native commands are proven useful:
+- `/rename <name>` (too expensive relative to current value)
 - natural-language-to-command execution
 - embedding-backed global search
 - `/copy` clipboard integration
@@ -130,9 +110,8 @@ Avoid these until the simpler native commands are proven useful:
 
 ## Suggested delivery order
 1. `/search history|memory|all <query>`
-2. `/rename <name>` if persistence path is cheap
-3. `/logs ...` / doctor polish
-4. small no-arg toggle UX improvements
+2. `/logs ...` / doctor polish
+3. small no-arg toggle UX improvements
 
 ## Acceptance criteria for PR 2
 - `/search history <query>` searches the active thread transcript
