@@ -10,8 +10,8 @@ into a full consolidation system. They answer two narrow questions:
 
 The async helpers use LLM-primary classifiers for product judgment.
 Local code keeps only exact duplicate/storage mechanics; classifier
-failures are raised so callers can skip affected candidates explicitly
-instead of silently writing fallback memories.
+failures raise by default, but callers can opt into conservative
+fallback plans explicitly when they prefer continuity over strictness.
 """
 
 from __future__ import annotations
@@ -37,7 +37,9 @@ class SemanticReconciliationPlan:
     supersede_records: list[StoreRecord] = field(default_factory=list)
 
 
+SemanticReconciliationFailurePolicy = Literal["raise", "coexist"]
 ProceduralRuleAction = Literal["append", "replace", "skip"]
+ProceduralReconciliationFailurePolicy = Literal["raise", "append"]
 
 
 @dataclass(slots=True)
@@ -449,6 +451,7 @@ async def plan_semantic_write_llm_primary(
     existing_records: list[StoreRecord],
     *,
     llm_client: BaseLLMClient | None,
+    failure_policy: SemanticReconciliationFailurePolicy = "raise",
 ) -> SemanticReconciliationPlan:
     """Return semantic reconciliation using an LLM primary path.
 
@@ -456,6 +459,8 @@ async def plan_semantic_write_llm_primary(
         fact (SemanticFact): New semantic fact to reconcile.
         existing_records (list[StoreRecord]): Existing semantic records.
         llm_client (BaseLLMClient | None): Optional classifier client.
+        failure_policy (SemanticReconciliationFailurePolicy): Behavior to use
+            when reconciliation cannot consult the LLM.
 
     Returns:
         SemanticReconciliationPlan: Final reconciliation plan.
@@ -469,6 +474,11 @@ async def plan_semantic_write_llm_primary(
     if exact_duplicate is not None:
         return SemanticReconciliationPlan(bump_record=exact_duplicate)
     if llm_client is None:
+        if failure_policy == "coexist":
+            logger.warning(
+                "Semantic reconciliation requires an LLM client; falling back to coexist."
+            )
+            return SemanticReconciliationPlan()
         raise RuntimeError("Semantic reconciliation requires an LLM client.")
 
     try:
@@ -478,6 +488,12 @@ async def plan_semantic_write_llm_primary(
             system_instruction=_reconciliation_system_prompt(),
         )
     except Exception:
+        if failure_policy == "coexist":
+            logger.warning(
+                "Semantic reconciliation LLM classifier failed; falling back to coexist.",
+                exc_info=True,
+            )
+            return SemanticReconciliationPlan()
         logger.warning(
             "Semantic reconciliation LLM classifier failed.",
             exc_info=True,
@@ -492,6 +508,7 @@ async def plan_procedural_rule_write_llm_primary(
     existing_rules: list[ProceduralRule],
     *,
     llm_client: BaseLLMClient | None,
+    failure_policy: ProceduralReconciliationFailurePolicy = "raise",
 ) -> ProceduralReconciliationPlan:
     """Return procedural reconciliation using an LLM primary path.
 
@@ -499,6 +516,8 @@ async def plan_procedural_rule_write_llm_primary(
         new_rule (ProceduralRule): New procedural rule to reconcile.
         existing_rules (list[ProceduralRule]): Existing procedural rules.
         llm_client (BaseLLMClient | None): Optional classifier client.
+        failure_policy (ProceduralReconciliationFailurePolicy): Behavior to use
+            when reconciliation cannot consult the LLM.
 
     Returns:
         ProceduralReconciliationPlan: Final reconciliation plan.
@@ -513,6 +532,11 @@ async def plan_procedural_rule_write_llm_primary(
     ):
         return ProceduralReconciliationPlan(action="skip")
     if llm_client is None:
+        if failure_policy == "append":
+            logger.warning(
+                "Procedural reconciliation requires an LLM client; falling back to append."
+            )
+            return ProceduralReconciliationPlan(action="append")
         raise RuntimeError("Procedural reconciliation requires an LLM client.")
 
     try:
@@ -524,6 +548,12 @@ async def plan_procedural_rule_write_llm_primary(
             )
         )
     except Exception:
+        if failure_policy == "append":
+            logger.warning(
+                "Procedural reconciliation LLM classifier failed; falling back to append.",
+                exc_info=True,
+            )
+            return ProceduralReconciliationPlan(action="append")
         logger.warning(
             "Procedural reconciliation LLM classifier failed.",
             exc_info=True,
