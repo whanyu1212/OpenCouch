@@ -1,137 +1,122 @@
 import React from 'react';
 import s from './VoiceArchitecture.module.css';
 
-/* ================================================================
-   VoiceArchitecture
-   -----------------
-   Static reference diagram of the OpenAI Realtime voice runtime.
-
-   Three labeled sections stacked vertically:
-     1. Realtime transport — Browser → OpenAI Realtime → Backend tools
-     2. Session core       — Realtime model + app-owned policy/tools
-     3. Shared state       — PersistentAgentRuntime + memory backends
-
-   No animation. Site-native white card aesthetic.
-   ================================================================ */
+/* Static reference diagram of the OpenAI Realtime voice runtime. */
 
 export default function VoiceArchitecture(): React.JSX.Element {
   return (
     <div className={s.root}>
-      {/* ── Section 1: transport ──────────────────────────────── */}
       <Section
-        kicker="Realtime transport"
-        title="Browser ⇢ OpenAI Realtime ⇢ Backend tools"
+        kicker="Transport"
+        title="Browser WebRTC -> OpenAI Realtime -> FastAPI tools"
       >
         <div className={s.transportRow}>
-          <Box title="Browser" sub="mic + speaker" />
-          <Arrow label="client secret" />
-          <Box title="OpenAI Realtime" sub="speech-to-speech · tools" emphasis />
+          <Box title="Browser" sub="mic · speaker · data channel" />
+          <Arrow label="ephemeral secret + SDP" />
+          <Box title="OpenAI Realtime" sub="speech loop · VAD · tools" emphasis />
           <Arrow label="function calls" />
           <Box title="FastAPI" sub="/api/voice/realtime/*" />
         </div>
       </Section>
 
-      <Connector label="WebRTC audio · data-channel events call app-owned tools" />
+      <Connector label="Realtime generates speech; OpenCouch executes product state and tools" />
 
-      {/* ── Section 2: session core ───────────────────────────── */}
       <Section
         kicker="Session core"
-        title="Realtime session · app-owned policy/tools"
+        title="Realtime model with app-owned policy"
       >
         <div className={s.sessionRow}>
-          {/* TherapeuticAgent */}
           <article className={s.agentCard}>
             <header className={s.agentHead}>
-              <span className={s.agentKicker}>default agent</span>
-              <h4 className={s.agentTitle}>TherapeuticAgent</h4>
+              <span className={s.agentKicker}>live model</span>
+              <h4 className={s.agentTitle}>Realtime session</h4>
             </header>
             <p className={s.agentSub}>
-              Holds the thread. <code>on_user_turn_completed</code> runs the
-              LLM crisis gate, turn policy, and selective recall after each turn.
+              Owns the live spoken response loop. Receives compact
+              instructions, private memory context, Realtime tool schemas, and
+              per-turn policy hints.
             </p>
             <ul className={s.agentList}>
-              <li><code>start_grounding_exercise</code></li>
-              <li><code>MemoryControlToolset</code></li>
-              <li><code>GroundedLookupToolset</code></li>
+              <li>server VAD with interrupt support</li>
+              <li>input transcription for turn recording</li>
+              <li><code>response.create</code> policy injection</li>
             </ul>
           </article>
 
-          {/* Handoff column */}
           <div className={s.handoffCol}>
             <span className={[s.handoff, s.handoffOut].join(' ')}>
-              <span className={s.handoffLabel}>LLM crisis gate</span>
-              <span className={s.handoffArrow} aria-hidden>{'\u27F6'}</span>
+              <span className={s.handoffLabel}>final transcript</span>
+              <span className={s.handoffArrow} aria-hidden>{'\u2192'}</span>
             </span>
             <span className={[s.handoff, s.handoffIn].join(' ')}>
-              <span className={s.handoffArrow} aria-hidden>{'\u27F5'}</span>
-              <span className={s.handoffLabel}>de_escalate</span>
+              <span className={s.handoffArrow} aria-hidden>{'\u2190'}</span>
+              <span className={s.handoffLabel}>tool output</span>
             </span>
           </div>
 
-          {/* CrisisAgent */}
           <article className={[s.agentCard, s.agentCardCrisis].join(' ')}>
             <header className={s.agentHead}>
-              <span className={s.agentKicker}>handoff target</span>
-              <h4 className={s.agentTitle}>CrisisAgent</h4>
+              <span className={s.agentKicker}>backend policy</span>
+              <h4 className={s.agentTitle}>Voice endpoints</h4>
             </header>
             <p className={s.agentSub}>
-              Acknowledge · resources · stay present. Restores
-              the therapeutic agent on de-escalate.
+              Create the session, execute tools, prepare observe-only turn
+              policy, record finalized turns, and close persistent sessions.
             </p>
             <ul className={s.agentList}>
-              <li><code>CrisisResourceToolset</code></li>
-              <li>verified hotlines · location-aware</li>
+              <li><code>/session</code> builds config and client secret</li>
+              <li><code>/tools</code> executes app-owned function calls</li>
+              <li><code>/turn</code> records finalized transcripts</li>
+              <li><code>/end</code> runs shared session finalization</li>
             </ul>
           </article>
 
-          {/* Bounded task — sits beneath the therapist column */}
           <div className={s.taskWrap}>
-            <span className={s.taskTetherLabel}>start_grounding_exercise</span>
+            <span className={s.taskTetherLabel}>shared tool services</span>
             <article className={s.taskCard}>
               <header className={s.agentHead}>
-                <span className={s.agentKicker}>bounded task</span>
-                <h4 className={s.agentTitle}>VoiceExerciseTask</h4>
+                <span className={s.agentKicker}>reused by text and voice</span>
+                <h4 className={s.agentTitle}>Memory · lookup · exercises</h4>
               </header>
               <p className={s.agentSub}>
-                10 voice-allowlisted exercises. Owns the loop until the user
-                completes or exits.
+                Realtime schemas call the same service functions used by text
+                SDK specialists.
               </p>
+              <ul className={s.agentList}>
+                <li>memory control and recall status</li>
+                <li>grounded factual lookup and crisis resources</li>
+                <li>therapeutic response skills and guided exercises</li>
+              </ul>
             </article>
           </div>
         </div>
       </Section>
 
-      <Connector label="reads user identity + memory · writes durable insights at session end" />
+      <Connector label="Finalized voice turns are written into the shared runtime state" />
 
-      {/* ── Section 3: shared state ───────────────────────────── */}
       <Section
-        kicker="Shared state"
-        title="Per-session userdata + worker-singleton runtime"
+        kicker="Persistence"
+        title="Transcript recording plus shared session finalization"
       >
         <div className={s.sharedRow}>
           <article className={s.sharedCard}>
             <header className={s.agentHead}>
-              <span className={s.agentKicker}>typed userdata</span>
-              <h4 className={s.agentTitle}>SessionData</h4>
+              <span className={s.agentKicker}>per-session identity</span>
+              <h4 className={s.agentTitle}>Web setup state</h4>
             </header>
             <p className={s.agentSub}>
-              Per-session state shared across agents, tools, and tasks.
+              Voice reuses the active web thread, memory mode, optional user id,
+              and selected assistant voice.
             </p>
             <div className={s.fieldGrid}>
               {[
-                'user_id',
                 'thread_id',
+                'user_id',
                 'memory_mode',
-                'crisis_level',
-                'max_crisis_level',
-                'turn_index',
-                'exercise_consent_turn_index',
-                'recommended_exercise_type',
-                'proactive_recall_enabled',
-                'pending_memory_delete',
-                'therapeutic_instructions',
-                'injected_semantic_memory_keys',
-                'recent_exercise_types',
+                'assistant_voice',
+                'transcript',
+                'tool_activity',
+                'finalization_status',
               ].map((f) => (
                 <code key={f} className={s.field}>{f}</code>
               ))}
@@ -140,20 +125,21 @@ export default function VoiceArchitecture(): React.JSX.Element {
 
           <article className={s.sharedCard}>
             <header className={s.agentHead}>
-              <span className={s.agentKicker}>worker singleton</span>
+              <span className={s.agentKicker}>shared runtime</span>
               <h4 className={s.agentTitle}>PersistentAgentRuntime</h4>
             </header>
             <p className={s.agentSub}>
-              One per worker process. Postgres-first with SQLite fallback.
-              Survives across rooms.
+              Voice does not run a text turn, but it writes state through the
+              same runtime stores and ends persistent sessions through the same
+              finalizer.
             </p>
             <div className={s.fieldGrid}>
               {[
-                'memory store',
-                'crisis log',
-                'session feedback',
-                'embedding provider',
-                'control LLM',
+                'voice_session_memory_context',
+                'build_voice_tool_context',
+                'prepare_voice_turn_policy',
+                'record_voice_turn',
+                'end_session',
               ].map((f) => (
                 <code key={f} className={s.field}>{f}</code>
               ))}
@@ -164,8 +150,6 @@ export default function VoiceArchitecture(): React.JSX.Element {
     </div>
   );
 }
-
-/* ── Section wrapper ───────────────────────────────────────── */
 
 function Section({
   kicker,
@@ -187,8 +171,6 @@ function Section({
   );
 }
 
-/* ── Box used in the transport row ─────────────────────────── */
-
 function Box({
   title,
   sub,
@@ -206,8 +188,6 @@ function Box({
   );
 }
 
-/* ── Horizontal arrow between transport boxes ──────────────── */
-
 function Arrow({ label }: { label: string }) {
   return (
     <div className={s.arrow} role="presentation">
@@ -218,8 +198,6 @@ function Arrow({ label }: { label: string }) {
     </div>
   );
 }
-
-/* ── Vertical connector between sections ───────────────────── */
 
 function Connector({ label }: { label: string }) {
   return (

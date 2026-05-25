@@ -20,11 +20,11 @@ Run the backend and frontend in separate terminals:
 ```bash
 # Terminal 1: FastAPI backend
 cd apps/backend
-uv run uvicorn main:app --port 8000 --reload
+.venv/bin/python -m uvicorn main:app --port 8000 --reload
 
-# Terminal 2: Next.js frontend, from the repo root
-pnpm install
-pnpm --dir apps/web dev
+# Terminal 2: Next.js frontend
+cd apps/web
+pnpm dev
 ```
 
 Open `http://localhost:3000`. By default the frontend talks to
@@ -75,13 +75,25 @@ The provider keeps OpenAI audio transport out of the normal text-chat
 bundle while keeping transcripts, tool activity, and memory finalization
 in the shared Zustand session store.
 
+The production voice route is `/voice`. A lower-level dogfood route,
+`/voice/realtime-dev`, uses the same `connectRealtimeVoiceSession(...)`
+client helper but exposes raw and parsed Realtime events for debugging.
+
+The provider is intentionally separate from the text streaming path:
+
+| Text chat | Voice |
+|---|---|
+| Opens `/api/chat/stream` WebSocket for one user turn. | Opens WebRTC directly to OpenAI Realtime with an ephemeral client secret. |
+| Backend runs `run_turn_stream(...)`. | Backend creates config, executes tools, records finalized turns, and finalizes sessions. |
+| Streaming status comes from runtime stages. | UI status comes from Realtime connection state, transcript events, tool activity, and finalization status. |
+
 ## Verification
 
-Run these checks from the repo root:
+Run these checks from `apps/web`:
 
 ```bash
-pnpm --dir apps/web lint
-pnpm --dir apps/web build
+pnpm lint
+pnpm build
 ```
 
 The repository CI runs both commands for `apps/web` so frontend

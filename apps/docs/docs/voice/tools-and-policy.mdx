@@ -1,0 +1,99 @@
+---
+title: Tools & Policy
+sidebar_position: 3
+---
+
+# Tools & Policy
+
+Voice exposes a narrow OpenAI Realtime function-tool surface. The
+schemas live in `agent/voice/tools.py`, but the implementation reuses
+the same app-owned services as the text runtime: memory control,
+grounded lookup, crisis resources, therapeutic response skills, and
+guided exercises.
+
+## Tool surface
+
+| Tool | Mode | Purpose |
+|---|---|---|
+| `show_memory_status` | Incognito + persistent | Explain whether memory is enabled and report saved-memory counts. |
+| `load_therapeutic_response_skill` | Incognito + persistent | Load prompt-local therapeutic response-style guidance for ordinary replies. |
+| `answer_grounded_lookup` | Incognito + persistent | Answer explicit current, official, source-backed, or externally verifiable requests from grounded results. |
+| `lookup_crisis_resources` | Incognito + persistent | Find verified crisis resources for the current crisis turn. |
+| `list_guided_exercise_skills` | Incognito + persistent | List metadata-only guided exercises available for the current channel and approach. |
+| `load_guided_exercise_skill` | Incognito + persistent | Load the runtime-selected guided-exercise skill block for a step/action. |
+| `record_guided_exercise_progress` | Incognito + persistent | Update active guided-exercise state from the user's latest response. |
+| `show_saved_memory` | Persistent only | Show concise saved facts, session summaries, and procedural rules. |
+| `save_response_preference` | Persistent only | Save an explicit response-style or memory-use preference. |
+| `set_proactive_memory_recall` | Persistent only | Enable or disable proactive memory recall. |
+| `prepare_memory_deletion_by_index` | Persistent only | Stage deletion of a visible saved-memory item by kind and one-based index. |
+| `prepare_memory_deletion_by_query` | Persistent only | Stage deletion of a saved-memory item selected by a query. |
+| `confirm_memory_deletion` | Persistent only | Confirm and perform a pending deletion. |
+| `cancel_memory_deletion` | Persistent only | Cancel a pending deletion. |
+
+Persistent-only tools are rejected in incognito voice mode. The one
+exception is `show_memory_status`, which returns an explicit incognito
+status so the assistant can explain that durable memory is off.
+
+## Observe-only turn policy
+
+After a final user transcript arrives, the browser calls
+`POST /api/voice/realtime/turn-policy`. The backend returns a
+`VoiceTurnPolicy` with:
+
+| Field | Meaning |
+|---|---|
+| `route` | App-level route label such as `therapeutic`, `grounded_lookup`, or `crisis`. |
+| `response_style` | Voice response style metadata recorded with the turn. |
+| `required_tool_name` | Optional tool that the Realtime session should call before answering. |
+| `required_tool_arguments` | Tool arguments for required calls, such as a grounded lookup query. |
+| `instructions` | Short Realtime instructions injected into the next `response.create`. |
+
+This policy is intentionally lightweight. It is not a second text-agent
+turn. It gives the live Realtime model app-owned constraints while
+leaving speech response generation in the Realtime session.
+
+## Crisis and factual lookups
+
+Two cases should be treated as hard boundaries:
+
+- Crisis turns that need specific resources must use
+  `lookup_crisis_resources`; the assistant must not invent hotline
+  names, phone numbers, URLs, or local availability.
+- Factual/current/source-backed requests must use
+  `answer_grounded_lookup`; the assistant should answer only from the
+  tool result.
+
+Provider failures surface as tool failures rather than silent fallback
+answers. Verified-but-empty lookup cases return explicit status values
+so the user gets "I could not verify that" instead of invented content.
+
+## Guided exercises
+
+Voice uses the shared guided-exercise catalog but filters to exercises
+that are suitable for spoken delivery. There are 13 total exercises and
+10 voice-supported exercises today:
+
+- `grounding_5_4_3_2_1`
+- `grounding_box_breathing`
+- `grounding_stop_technique`
+- `grounding_muscle_relaxation`
+- `thought_work_continuum`
+- `behavioral_activation_tiny_action`
+- `defusion_values_compass`
+- `self_compassion_break`
+- `emotion_regulation_improve`
+- `emotion_regulation_gratitude`
+
+The voice prompt explicitly tells the model not to default to
+5-4-3-2-1 grounding unless that exact runtime-selected skill has been
+provided.
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `agent/voice/tools.py` | Realtime function-tool schemas and dispatcher. |
+| `agent/voice/turn_policy.py` | Observe-only voice turn policy model and policy builder. |
+| `agent/voice/policy.py` | Compact Realtime instruction policy for one voice session. |
+| `agent/tools/` | Shared tool implementations used by both text and voice. |
+| `agent/skills/guided_exercises/registry.py` | Shared exercise catalog and voice filtering. |

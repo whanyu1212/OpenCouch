@@ -13,7 +13,7 @@ import s from './ToolRegistry.module.css';
    Designed to scale from 1 tool to many without redesign.
    ================================================================ */
 
-type Provider = 'openai' | 'anthropic' | 'none';
+type Provider = 'openai' | 'app' | 'none';
 
 interface Stage {
   id: string;
@@ -43,10 +43,91 @@ interface Tool {
 
 const TOOLS: Tool[] = [
   {
-    id: 'crisis_resource_search',
-    name: 'find_crisis_resources',
+    id: 'therapeutic_response_skill',
+    name: 'load_therapeutic_response_skill',
     status: 'active',
-    triggerPath: 'lookup_crisis_resources SDK tool',
+    triggerPath: 'TherapeuticAgent SDK tool · Realtime voice tool',
+    triggerCondition: 'ordinary non-crisis therapeutic reply needs response-style guidance',
+    providers: ['app'],
+    description:
+      'Loads prompt-ready guidance for one response style and optional therapeutic approach. The tool is side-effect-free and gives the model the exact local skill context it should use before drafting the reply.',
+    pipeline: [
+      {
+        id: 'select_style',
+        label: 'Select style',
+        systemPrompt:
+          'Text uses specialist/runtime state; voice uses Realtime instructions and tool descriptions.',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'falls back to ordinary supportive guidance only when locally allowed',
+        produces: 'response_style + therapeutic_approach',
+      },
+      {
+        id: 'render_skill',
+        label: 'Render skill context',
+        systemPrompt:
+          'Render the response-style prompt fragment and approach overlay from reviewed local sources.',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'schema/tool error surfaces to the caller',
+        produces: 'TherapeuticResponseSkillToolResult',
+      },
+    ],
+    outputFields: [
+      'context.tool_results.therapeutic_response_skill',
+      'response_style',
+      'therapeutic_approach',
+    ],
+    gracefulDegradation:
+      'The tool has no side effects. Invalid styles or schema failures surface instead of silently loading unrelated guidance.',
+    file: 'agent/tools/therapeutic.py',
+    fn: 'execute_therapeutic_response_skill_tool',
+  },
+  {
+    id: 'memory_control',
+    name: 'memory control tools',
+    status: 'active',
+    triggerPath: 'memory-control text branch · persistent Realtime voice tools',
+    triggerCondition: 'user explicitly asks to inspect or change saved memory state',
+    providers: ['app'],
+    description:
+      'Reads or mutates saved memory through app-owned memory-control services. Destructive actions stage a pending deletion first and require a later confirm/cancel action.',
+    pipeline: [
+      {
+        id: 'normalize_request',
+        label: 'Normalize request',
+        systemPrompt:
+          'Turn explicit memory commands into a structured action such as list, status, set recall, save preference, forget by index, or forget by query.',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'validation error surfaces; no memory mutation occurs',
+        produces: 'MemoryControlRequest',
+      },
+      {
+        id: 'execute_action',
+        label: 'Execute service',
+        systemPrompt: '(local service execution)',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'write failures surface; read-only failures do not mutate state',
+        produces: 'MemoryToolResult / MemoryReadToolResult',
+      },
+    ],
+    outputFields: [
+      'state.memory_control',
+      'state.procedural_profile',
+      'response_text',
+    ],
+    gracefulDegradation:
+      'Incognito voice rejects persistent-only memory tools. Deletes are two-step and non-idempotent confirm actions are not marked retry-safe.',
+    file: 'agent/tools/memory.py',
+    fn: 'execute_memory_tool_action',
+  },
+  {
+    id: 'crisis_resource_search',
+    name: 'lookup_crisis_resources',
+    status: 'active',
+    triggerPath: 'CrisisAgent SDK tool · Realtime voice tool',
     triggerCondition: 'crisis specialist is selected for a level 2/3 crisis response and llm_client is available',
     providers: ['openai'],
     description:
@@ -81,14 +162,14 @@ const TOOLS: Tool[] = [
     gracefulDegradation:
       'No-location, location-refused, and no-verified-result cases return explicit statuses. Missing LLM configuration or provider failures retry or surface through the runtime instead of silently continuing.',
     file: 'agent/tools/grounded_search.py',
-    fn: 'find_crisis_resources',
+    fn: 'execute_crisis_resource_lookup_tool',
     tests: 'tests/unit/runtime/test_grounded_search_crisis_resources.py',
   },
   {
     id: 'grounded_lookup',
-    name: 'answer_factual_lookup',
+    name: 'answer_grounded_lookup',
     status: 'active',
-    triggerPath: 'grounded_lookup runtime branch',
+    triggerPath: 'grounded lookup text branch · Realtime voice tool',
     triggerCondition: 'turn triage routes an explicit factual lookup request AND llm_client is available',
     providers: ['openai'],
     description:
@@ -129,14 +210,64 @@ const TOOLS: Tool[] = [
     ],
     gracefulDegradation:
       'Weak or missing sources produce an explicit "I couldn\'t verify that" reply rather than an invented answer. Missing LLM configuration or provider failures retry or surface. The status field (answered / no_verified_answer) drives observability.',
-    file: 'agent/tools/grounded_search.py',
-    fn: 'answer_factual_lookup',
+    file: 'agent/tools/grounded.py',
+    fn: 'execute_grounded_lookup_tool',
+  },
+  {
+    id: 'guided_exercise',
+    name: 'guided exercise tools',
+    status: 'active',
+    triggerPath: 'GuidedExerciseAgent SDK tools · Realtime voice tools',
+    triggerCondition: 'user explicitly asks for a structured practice or an active exercise needs progress handling',
+    providers: ['app'],
+    description:
+      'Discovers channel-appropriate exercises, loads the selected exercise skill context, and records progress through the local guided-exercise state machine.',
+    pipeline: [
+      {
+        id: 'discover',
+        label: 'Discover candidates',
+        systemPrompt:
+          'Filter the shared exercise catalog by channel, installed skills, and therapeutic approach.',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'returns no available exercises rather than inventing one',
+        produces: 'GuidedExerciseSkillDiscoveryToolResult',
+      },
+      {
+        id: 'load_skill',
+        label: 'Load skill',
+        systemPrompt:
+          'Render the runtime-selected exercise step and action into prompt-ready guidance.',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'invalid exercise/action surfaces to the caller',
+        produces: 'GuidedExerciseSkillToolResult',
+      },
+      {
+        id: 'record_progress',
+        label: 'Record progress',
+        systemPrompt: '(local state-machine update)',
+        temperature: 0,
+        useSearch: false,
+        onFailure: 'state mismatch surfaces; active exercise is not advanced',
+        produces: 'GuidedExerciseProgressToolResult',
+      },
+    ],
+    outputFields: [
+      'state.exercise_state',
+      'state.response_style',
+      'diagnostics.guided_exercise',
+    ],
+    gracefulDegradation:
+      'The catalog is validated at import time. Voice can only receive exercises marked as voice-suitable or available for the voice channel.',
+    file: 'agent/tools/guided_exercise.py',
+    fn: 'execute_guided_exercise_skill_tool',
   },
 ];
 
 const PROVIDER_META: Record<Provider, { label: string; color: string }> = {
   openai: { label: 'OpenAI', color: 'providerOpenai' },
-  anthropic: { label: 'Anthropic', color: 'providerAnthropic' },
+  app: { label: 'App-owned', color: 'providerAnthropic' },
   none: { label: '—', color: 'providerNone' },
 };
 
@@ -299,10 +430,10 @@ export default function ToolRegistry(): React.JSX.Element {
       <div className={s.patternNote}>
         <span className={s.patternNoteLabel}>pattern</span>
         <span className={s.patternNoteText}>
-          Tools in OpenCouch are <strong>runtime-invoked</strong>, not graph-registered.
-          The owning runtime branch or SDK specialist calls the tool function when its condition is met.
-          Provider-native grounding (Google Search, OpenAI web_search) is enabled
-          via the <code>use_search=True</code> kwarg on <code>generate_text()</code>.
+          Tools in OpenCouch are <strong>app-owned</strong>. Text binds them as
+          SDK function tools; voice binds a subset as Realtime function schemas.
+          Both transports call the same backend services for state mutation,
+          memory reads, grounded lookup, crisis resources, and exercise progress.
         </span>
       </div>
 
@@ -323,8 +454,8 @@ export default function ToolRegistry(): React.JSX.Element {
             <span className={s.ghostDot} />
             <span className={s.ghostLabel}>next tool</span>
             <span className={s.ghostHint}>
-              future candidates: structured assessment lookup, skill-library retrieval,
-              calendar/availability stub for session pacing
+              future candidates: structured assessment lookup, clinician-reviewed
+              resource directory, session pacing and availability stubs
             </span>
           </div>
         </article>

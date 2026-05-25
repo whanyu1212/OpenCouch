@@ -9,9 +9,11 @@ import PromptInjectionMatrix from '@site/src/components/PromptInjectionMatrix';
 
 # Context Management
 
-Every turn, the runtime retrieves long-term memory, relies on the SDK session
-for short-term conversation continuity, and assembles the context that the
-OpenAI Agents SDK runner will see.
+Every text turn, the runtime retrieves long-term memory, relies on the
+SDK session for short-term conversation continuity, and assembles the
+context that the OpenAI Agents SDK runner will see. Voice uses a compact
+memory bootstrap at Realtime session start plus transcript recording at
+turn end; see [Voice Persistence](/docs/voice/persistence).
 
 ---
 
