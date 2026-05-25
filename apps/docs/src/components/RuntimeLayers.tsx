@@ -26,7 +26,7 @@ const LAYERS: LayerDef[] = [
     label: 'Persistent',
     entry: 'PersistentAgentRuntime.run_turn()',
     desc: 'Thread-aware runtime with Postgres-first persistence and SQLite fallback. Conversations resume across sessions. Also exposes run_turn_stream() for text-token streaming.',
-    usedBy: ['CLI', 'Web/API text', 'Telegram', 'Multi-turn sessions'],
+    usedBy: ['CLI', 'Web/API text', 'Multi-turn sessions'],
     persists: true,
   },
 ];

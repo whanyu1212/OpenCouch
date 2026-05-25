@@ -28,7 +28,7 @@ const GROUPS: GroupDef[] = [
     blurb: 'Who and where the turn is from. Seeded once at turn start.',
     fields: [
       { name: 'message', type: 'str', setBy: 'caller', lifecycle: 'input', desc: 'Current user message being processed.' },
-      { name: 'channel', type: 'Channel', setBy: 'caller', lifecycle: 'input', desc: 'Transport surface: TEST, WEB, SMS, WHATSAPP, TELEGRAM, VOICE.' },
+      { name: 'channel', type: 'Channel', setBy: 'caller', lifecycle: 'input', desc: 'Transport surface: TEST, WEB, VOICE.' },
       { name: 'user_id', type: 'str | None', setBy: 'caller', lifecycle: 'input', desc: 'Persistent owner. resolve_owner_id() namespaces memory by this; mandatory if session_id is absent.' },
       { name: 'session_id', type: 'str | None', setBy: 'caller', lifecycle: 'input', desc: 'Thread identifier used by persistence and as a fallback memory owner.' },
       { name: 'installed_skills', type: 'list[str]', setBy: 'caller', lifecycle: 'input', desc: 'Skill names resolved into prompt behavior by the runtime.' },

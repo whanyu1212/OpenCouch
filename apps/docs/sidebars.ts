@@ -17,7 +17,6 @@ const sidebars: SidebarsConfig = {
         'backend/runtime',
         'system/api-reference',
         'system/web-ui',
-        'system/telegram',
       ]
     },
     {

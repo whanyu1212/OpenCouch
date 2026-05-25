@@ -13,9 +13,6 @@ class Channel(str, Enum):
 
     TEST = "test"
     WEB = "web"
-    SMS = "sms"
-    WHATSAPP = "whatsapp"
-    TELEGRAM = "telegram"
     VOICE = "voice"
 
 

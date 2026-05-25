@@ -39,16 +39,6 @@ LLM_PROVIDER=openai
 OPENAI_API_KEY=...`}
 </TerminalWindow>
 
-Optional channels need additional variables:
-
-<TerminalWindow title="env — optional surfaces">
-{`# Telegram dogfood gateway.
-OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
-OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
-OPENCOUCH_TELEGRAM_OWNER_ID=alice
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast`}
-</TerminalWindow>
-
 ## Run the CLI
 
 ### Deterministic mode
@@ -134,43 +124,6 @@ Voice mode runs from the web app at `/voice` using OpenAI Realtime
 WebRTC. Start the backend and web app, complete setup, then open the
 Voice tab. Persistent sessions reuse the same memory owner as text;
 incognito voice sessions do not write durable memory.
-
-## Telegram Gateway
-
-The Telegram gateway is a standalone process for direct-message
-dogfood. FastAPI does not need to be running.
-
-Create a bot with `@BotFather`, DM it once, then get your numeric
-Telegram sender id:
-
-<TerminalWindow title="bash — Telegram getUpdates">
-{`curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"`}
-</TerminalWindow>
-
-Use `message.from.id` as the allowlisted sender. If Telegram returns a
-409 webhook conflict, clear the webhook and retry:
-
-<TerminalWindow title="bash — Telegram deleteWebhook">
-{`curl "https://api.telegram.org/bot<YOUR_TOKEN>/deleteWebhook"`}
-</TerminalWindow>
-
-Run the gateway from `apps/backend`:
-
-<TerminalWindow title="bash — Telegram gateway">
-{`OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \\
-OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \\
-OPENCOUCH_TELEGRAM_OWNER_ID="alice" \\
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast \\
-OPENCOUCH_MEMORY_MODE=persistent \\
-OPENCOUCH_TELEGRAM_THREAD_ROTATION_ENABLED=true \\
-.venv/bin/python -m channels.gateway telegram`}
-</TerminalWindow>
-
-Use `/start` or `/help` for the static intro, send normal messages to
-talk, and use `/end` to close the active session manually. After
-`/end`, the next normal message starts a fresh session; `/start` is
-not required again. See [Telegram Gateway](/docs/system/telegram) for
-thread rotation and rendering details.
 
 ## Slash Commands
 

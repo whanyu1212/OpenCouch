@@ -41,7 +41,7 @@ trades the per-turn pipeline for low-latency Realtime function tools.
 
 | Surface | Runtime |
 |---|---|
-| **Text** | CLI, web chat, Telegram, and chat APIs. One OpenAI Agents SDK turn per message, with safety-first routing, memory loading, streaming status events, and post-response extraction. |
+| **Text** | CLI, web chat, and chat APIs. One OpenAI Agents SDK turn per message, with safety-first routing, memory loading, streaming status events, and post-response extraction. |
 | **Voice** | Browser speech-to-speech over OpenAI Realtime WebRTC. The backend creates the session, injects compact memory context, executes app-owned function tools, and finalizes persistent sessions through the shared runtime. |
 
 ---

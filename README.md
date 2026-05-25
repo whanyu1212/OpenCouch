@@ -60,7 +60,7 @@ Voice support is intentionally absent during the current runtime cleanup and wil
 - **Safety routing on every turn.** Pre-response safety classification with a durable crisis-audit log; specialist crisis agent takes over when triggered.
 - **13 state-tracked guided exercises.** Multi-turn flows for grounding, box breathing, thought work, values reflection, and related coping skills — with consent and step-state preserved across turns.
 - **Postgres-first persistence.** Thread state, long-term memory, active sessions, crisis log, and feedback all live in Postgres; SQLite fallback for lightweight local runs.
-- **Multiple surfaces.** Web chat (Next.js), text CLI (`scripts/text_repl.sh`), optional Telegram DM gateway with allow-listing — all backed by the same FastAPI runtime.
+- **Multiple surfaces.** Web chat (Next.js) and text CLI (`scripts/text_repl.sh`), both backed by the same FastAPI runtime.
 - **1120 backend tests + tracing.** Unit, integration, and live-provider suites; Opik and LangSmith tracing wired for regression review.
 
 ## Screenshots
@@ -71,8 +71,7 @@ Voice support is intentionally absent during the current runtime cleanup and wil
     <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/chat.png" width="100%" alt="OpenCouch web chat" /><br/><sub>Web chat</sub></td>
   </tr>
   <tr>
-    <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/cli-example.png" width="100%" alt="OpenCouch CLI session" /><br/><sub>Text CLI</sub></td>
-    <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/telegram-example.png" width="100%" alt="OpenCouch Telegram DM" /><br/><sub>Telegram</sub></td>
+    <td width="50%" align="center" valign="top" colspan="2"><img src="apps/docs/static/img/readme/cli-example.png" width="50%" alt="OpenCouch CLI session" /><br/><sub>Text CLI</sub></td>
   </tr>
 </table>
 
@@ -119,19 +118,6 @@ OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
 ```
 
-<details>
-<summary><b>Optional: Telegram Gateway Environment</b></summary>
-
-```env
-# Telegram gateway.
-OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
-OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
-OPENCOUCH_TELEGRAM_OWNER_ID=alice
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
-```
-
-</details>
-
 </details>
 
 Keep real `.env` files local and out of version control.
@@ -141,7 +127,7 @@ Keep real `.env` files local and out of version control.
 The most reliable dogfood path is `scripts/text_repl.sh` for text. Compose starts the browser stack: Postgres, backend API, and web.
 
 <details>
-<summary><b>View commands for Compose, CLI, web, Telegram, and docs</b></summary>
+<summary><b>View commands for Compose, CLI, web, and docs</b></summary>
 
 #### Compose stack
 
@@ -195,17 +181,6 @@ cd apps/backend && uv run uvicorn main:app --port 8000 --reload
 pnpm install && pnpm --dir apps/web dev
 ```
 
-#### Optional Telegram gateway
-
-```bash
-cd apps/backend
-OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \
-OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \
-OPENCOUCH_TELEGRAM_OWNER_ID="alice" \
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER="fast" \
-uv run python -m channels.gateway telegram
-```
-
 #### Documentation site
 
 The official documentation is live at [whanyu1212.github.io/OpenCouch](https://whanyu1212.github.io/OpenCouch/). Run the docs site locally only when editing documentation:
@@ -232,7 +207,7 @@ flowchart LR
     classDef sdk fill:#10B9811A,stroke:#10B981,stroke-width:2px
     classDef store fill:#7C3AED1A,stroke:#7C3AED,stroke-width:2px
 
-    SURF["**Surfaces**<br/>Web · CLI · Telegram · API"]:::surf
+    SURF["**Surfaces**<br/>Web · CLI · API"]:::surf
     APP["**OpenCouch runtime**<br/>safety routing · state · memory<br/>audit · session lifecycle"]:::app
     SDK["**Agents SDK Runner**<br/>therapeutic · crisis · exercise<br/>tools · model calls · tracing"]:::sdk
     STORE[("**Postgres**<br/>state · memory · sessions<br/>crisis log · feedback")]:::store
@@ -242,7 +217,7 @@ flowchart LR
     APP <--> STORE
 ```
 
-**Interfaces:** Next.js web chat · text CLI · optional Telegram DM gateway · FastAPI REST + WebSocket.
+**Interfaces:** Next.js web chat · text CLI · FastAPI REST + WebSocket.
 **Agent roster:** therapeutic (default), crisis (safety hand-off), guided-exercise (multi-turn skills).
 **Tools exposed to the SDK:** memory ops · grounded lookup · crisis resources · guided-exercise skills.
 
@@ -268,7 +243,6 @@ OpenCouch/
 │   │   │   ├── memory/         # Memory retrieval, write policy, embeddings, stores
 │   │   ├── llm/                # LLM adapter protocol and OpenAI client
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
-│   │   ├── channels/           # Telegram gateway and channel adapters
 │   │   ├── api/                # FastAPI REST + WebSocket routes
 │   │   └── tests/              # 1120 pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
@@ -373,7 +347,6 @@ OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory
 | ✅ **Shipped** | **Core product** | Web chat, threading, persistent/incognito sessions, memory inspection, and session feedback |
 | ✅ **Shipped** | **Guided support** | 13 state-tracked coping exercises for grounding, breathing, thought work, values reflection, and related flows |
 | ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, OpenAI Agents SDK text runtime, Postgres-backed state/session persistence, crisis audit, and feedback storage |
-| 🧪 **Dogfood** | **Messaging** | Telegram direct-message gateway with allow-listing, Markdown rendering, `/end`, and session rotation |
 | 🔜 **Next** | **Product stabilization** | Closed beta readiness, onboarding polish, reliability improvements, clearer session lifecycle, and feedback-driven UX fixes |
 | 🔜 **Next** | **Voice rebuild** | Rebuild voice from scratch after the text runtime cleanup, without carrying the legacy LiveKit worker forward |
 | 🔜 **Next** | **Memory quality** | Background fact consolidation, dormant/obsolete memory handling, better review controls, and undo support |
