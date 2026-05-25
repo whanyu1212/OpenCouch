@@ -10,7 +10,7 @@ import cliScreenshot from '@site/static/img/cli-example.png';
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.11+ (3.12 recommended)
 - [uv](https://docs.astral.sh/uv/) for backend dependency management
 - pnpm for the web and docs apps
 - An OpenAI API key for LLM-backed runs
@@ -39,39 +39,27 @@ LLM_PROVIDER=openai
 OPENAI_API_KEY=...`}
 </TerminalWindow>
 
-## Run the CLI
+## Run the TUI
+
+The Textual TUI is the local dogfood surface for the text agent. It
+ships with switchable `Dogfood`, `Debug`, `Chat`, and `Memory` views;
+`Tab` and `Shift+Tab` cycle them, and `Ctrl+1`–`Ctrl+4` jump directly.
+It starts in light mode by default — use `--theme dark` or press
+`Ctrl+Y` inside the TUI to switch.
 
 ### Deterministic mode
 
-No LLM calls, in-memory only. Good for verifying CLI rendering, slash
+No LLM calls, in-memory only. Good for verifying TUI rendering, slash
 commands, and local persistence plumbing. User turns return a labeled
-deterministic smoke response; use `auto` or `hybrid` for real crisis
-classification and therapeutic generation.
-
-<TerminalWindow title="bash — deterministic CLI">
-{`cd apps/backend
-.venv/bin/python -m opencouch_cli \\
-    --mode deterministic \\
-    --memory-mode guest \\
-    --thread-id scratch`}
-</TerminalWindow>
-
-### Experimental TUI
-
-The Textual TUI is an experimental dogfood surface. It keeps the REPL as
-the canonical local CLI, but adds switchable `Dogfood`, `Debug`, and
-`Chat` workspaces for comparing richer terminal workflows. It starts in
-light mode by default; use `--theme dark` to start dark, or press
-`Ctrl+Y` inside the TUI to switch themes. `Tab` and `Shift+Tab` cycle
-workspaces, while `Ctrl+1`, `Ctrl+2`, and `Ctrl+3` jump directly.
+deterministic smoke response; switch to `auto` or `hybrid` for real
+crisis classification and therapeutic generation.
 
 <TerminalWindow title="bash — deterministic TUI">
 {`./scripts/text_tui.sh \\
     --mode deterministic \\
     --memory-mode guest \\
     --view dogfood \\
-    --theme light \\
-    --thread-id scratch-tui`}
+    --thread-id scratch`}
 </TerminalWindow>
 
 ### Full mode with persistent memory
@@ -79,9 +67,8 @@ workspaces, while `Ctrl+1`, `Ctrl+2`, and `Ctrl+3` jump directly.
 Real LLM with durable configured storage. Facts, session arcs, and style
 rules survive restart; Postgres is recommended for the local durable path.
 
-<TerminalWindow title="bash — persistent CLI">
-{`cd apps/backend
-.venv/bin/python -m opencouch_cli \\
+<TerminalWindow title="bash — persistent TUI">
+{`./scripts/text_tui.sh \\
     --mode auto \\
     --memory-mode persistent \\
     --user-id alice \\
@@ -91,6 +78,18 @@ rules survive restart; Postgres is recommended for the local durable path.
 Reuse the same `--user-id` and `--thread-id` to resume a conversation.
 Use the same `--user-id` with a new `--thread-id` to start a fresh
 session that still has access to the user's long-term memory.
+
+You can also invoke the TUI directly from `apps/backend` without the
+script wrapper:
+
+<TerminalWindow title="bash — direct TUI invocation">
+{`cd apps/backend
+.venv/bin/python -m opencouch_tui \\
+    --mode auto \\
+    --memory-mode persistent \\
+    --user-id alice \\
+    --thread-id alice-s1`}
+</TerminalWindow>
 
 <img className="docs-screenshot" src={cliScreenshot} alt="OpenCouch CLI session" />
 
@@ -112,9 +111,16 @@ Open `http://localhost:3000`. The web app talks to
 `http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` in
 `apps/web/.env.local` if the API runs somewhere else.
 
+:::info Compose stack uses a different API port
+If you launch the full stack with `docker compose up`, the API is
+exposed on port `8080` instead of `8000`. The Compose web service is
+already wired to the correct in-network URL, so this only matters when
+you're running the API manually alongside Compose.
+:::
+
 :::warning Web UI is temporarily behind the backend
 The backend text agent is the current dogfooding surface while the app
-shell catches up with the agent refactor. Use the CLI when you want the
+shell catches up with the agent refactor. Use the TUI when you want the
 most reliable local path.
 :::
 
@@ -127,7 +133,7 @@ incognito voice sessions do not write durable memory.
 
 ## Slash Commands
 
-Once inside the text CLI:
+Once inside the TUI:
 
 ### Session & Display
 
@@ -135,8 +141,12 @@ Once inside the text CLI:
 |---|---|
 | `/help` | List all commands |
 | `/status` | Thread id, response tier, turn count, and active response LLM |
+| `/doctor [verbose]` | Check runtime readiness for the current session |
 | `/history [n]` | Recent messages with response-style metadata |
 | `/context` | Session context snapshot |
+| `/summary [short\|full]` | Generate a recap of the current session |
+| `/search <history\|memory\|all> <query>` | Search the active transcript, stored memory, or both |
+| `/export <md\|json\|txt> [filename]` | Export the current session transcript to a file |
 | `/keys` | Show keyboard shortcuts and prompt tips |
 | `/ui <compact\|full>` | Switch toolbar density |
 | `/theme <mono\|contrast\|calm>` | Switch prompt color theme |
@@ -151,9 +161,9 @@ Once inside the text CLI:
 |---|---|
 | `/memory status` | Per-namespace counts, recall toggle |
 | `/memory list [facts\|sessions\|rules]` | Semantic facts, episodic arcs, or procedural rules |
-| `/memory recall on\|off` | Toggle proactive content recall |
-| `/memory forget fact\|session\|rule <n>` | Delete one record by index |
-| `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
+| `/memory recall [on\|off]` | Toggle proactive recall; omit on/off to show current state |
+| `/memory forget <fact\|session\|rule> <n>` | Delete one record by index |
+| `/memory clear <facts\|sessions\|rules\|all>` | Wipe a namespace |
 | `/memory purge-crisis [days]` | Retention-purge crisis log |
 
 ### Threads
@@ -170,7 +180,8 @@ Once inside the text CLI:
 |---|---|
 | `/mode <deterministic\|hybrid\|auto>` | Switch LLM resolution mode |
 | `/response-tier <fast\|quality>` | Switch response quality/latency tradeoff |
-| `/trace on\|off\|once` | Show or hide routing trace overlay |
+| `/verbosity <compact\|verbose>` | Switch turn observability detail |
+| `/trace <on\|off\|once>` | Show or hide routing trace overlay |
 | `/debug state` | Raw runtime state as JSON |
 
 ### Aliases
@@ -215,26 +226,13 @@ Use backend tests and targeted live-provider tests as the regression checks.
 ## Trace Observability
 
 To enable Opik tracing for local text runs, add this to `.env`
-before starting the CLI or API:
+before starting the TUI or API:
 
 <TerminalWindow title="env — Opik tracing">
-{`# Primary external trace backend.
-OPIK_API_KEY=...
+{`OPIK_API_KEY=...
 OPIK_WORKSPACE=...
-OPIK_PROJECT_NAME=opencouch-dev
-
-# Optional secondary LangSmith / LangChain tracing.
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=...
-LANGSMITH_PROJECT=opencouch-dev
-
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=...
-LANGCHAIN_PROJECT=opencouch-dev`}
+OPIK_PROJECT_NAME=opencouch-dev`}
 </TerminalWindow>
 
-Opik is the primary trace surface for graph execution, run filtering, and
-experiment review. LangSmith tracing remains supported as an optional secondary
-LangChain integration.
+Opik is the trace surface for runtime execution, run filtering, and
+experiment review.

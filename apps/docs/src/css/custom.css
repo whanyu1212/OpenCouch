@@ -821,6 +821,18 @@ html[data-theme='dark'] .button--secondary {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
+.doc-card-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+@media (max-width: 640px) {
+  .doc-card-grid--two {
+    grid-template-columns: 1fr;
+  }
+}
+
 .doc-card {
   position: relative;
   border: 1px solid var(--oc-border);

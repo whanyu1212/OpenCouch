@@ -1,5 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import styles from './MemoryLayers.module.css';
+
+type Variant = 'semantic' | 'episodic' | 'procedural';
+type Destination = 'working' | 'prompt';
+
+const DESTINATION_OF: Record<Variant, Destination> = {
+  semantic: 'working',
+  episodic: 'working',
+  procedural: 'prompt',
+};
 
 const semanticFacts = ['KNOWS Sarah', 'USES fluoxetine', 'WORRIES_ABOUT work'];
 const episodicSessions = [
@@ -12,10 +21,16 @@ function MemoryColumn({
   title,
   variant,
   items,
+  onHover,
+  isDimmed,
+  isHovered,
 }: {
   title: string;
-  variant: 'semantic' | 'episodic' | 'procedural';
+  variant: Variant;
   items: string[];
+  onHover: (v: Variant | null) => void;
+  isDimmed: boolean;
+  isHovered: boolean;
 }): JSX.Element {
   const variantClass = {
     semantic: styles.semantic,
@@ -24,7 +39,17 @@ function MemoryColumn({
   }[variant];
 
   return (
-    <article className={`${styles.column} ${variantClass}`}>
+    <article
+      className={`${styles.column} ${variantClass}`}
+      data-dimmed={isDimmed}
+      data-hovered={isHovered}
+      onMouseEnter={() => onHover(variant)}
+      onMouseLeave={() => onHover(null)}
+      onFocus={() => onHover(variant)}
+      onBlur={() => onHover(null)}
+      tabIndex={0}
+      aria-label={`${title}, feeds ${DESTINATION_OF[variant] === 'working' ? 'Working Memory' : 'System Prompt Suffix'}`}
+    >
       <h4>{title}</h4>
       <ul>
         {items.map((item) => (
@@ -38,26 +63,62 @@ function MemoryColumn({
 }
 
 export default function MemoryLayers(): JSX.Element {
+  const [hovered, setHovered] = useState<Variant | null>(null);
+  const activeDestination = hovered ? DESTINATION_OF[hovered] : null;
+
   return (
-    <section className={styles.container} aria-label="Three memory layers">
+    <section
+      className={styles.container}
+      aria-label="Three memory layers"
+      data-has-hover={hovered !== null}
+    >
       <div className={styles.topGrid}>
-        <MemoryColumn title="Semantic Memory" variant="semantic" items={semanticFacts} />
-        <MemoryColumn title="Episodic Memory" variant="episodic" items={episodicSessions} />
-        <MemoryColumn title="Procedural Memory" variant="procedural" items={proceduralRules} />
+        <MemoryColumn
+          title="Semantic Memory"
+          variant="semantic"
+          items={semanticFacts}
+          onHover={setHovered}
+          isHovered={hovered === 'semantic'}
+          isDimmed={hovered !== null && hovered !== 'semantic'}
+        />
+        <MemoryColumn
+          title="Episodic Memory"
+          variant="episodic"
+          items={episodicSessions}
+          onHover={setHovered}
+          isHovered={hovered === 'episodic'}
+          isDimmed={hovered !== null && hovered !== 'episodic'}
+        />
+        <MemoryColumn
+          title="Procedural Memory"
+          variant="procedural"
+          items={proceduralRules}
+          onHover={setHovered}
+          isHovered={hovered === 'procedural'}
+          isDimmed={hovered !== null && hovered !== 'procedural'}
+        />
       </div>
 
       <div className={styles.connectors} aria-hidden="true">
-        <span />
-        <span />
-        <span />
+        <span data-active={hovered === 'semantic'} data-dimmed={hovered !== null && hovered !== 'semantic'} />
+        <span data-active={hovered === 'episodic'} data-dimmed={hovered !== null && hovered !== 'episodic'} />
+        <span data-active={hovered === 'procedural'} data-dimmed={hovered !== null && hovered !== 'procedural'} />
       </div>
 
       <div className={styles.bottomGrid}>
-        <div className={styles.workingMemory}>
+        <div
+          className={styles.workingMemory}
+          data-active={activeDestination === 'working'}
+          data-dimmed={activeDestination === 'prompt'}
+        >
           <strong>Working Memory</strong>
           <p>Retrieved per turn via hybrid search and session catch-up.</p>
         </div>
-        <div className={styles.promptSuffix}>
+        <div
+          className={styles.promptSuffix}
+          data-active={activeDestination === 'prompt'}
+          data-dimmed={activeDestination === 'working'}
+        >
           <strong>System Prompt Suffix</strong>
           <p>Procedural rules loaded as style directives.</p>
         </div>
@@ -68,6 +129,12 @@ export default function MemoryLayers(): JSX.Element {
       <div className={styles.responseNode}>
         <strong>Response Generation</strong>
       </div>
+
+      <p className={styles.hint} aria-live="polite">
+        {hovered
+          ? `${hovered.charAt(0).toUpperCase() + hovered.slice(1)} memory → ${activeDestination === 'working' ? 'Working Memory' : 'System Prompt Suffix'}`
+          : 'Hover a layer to see where it lands in the prompt.'}
+      </p>
     </section>
   );
 }

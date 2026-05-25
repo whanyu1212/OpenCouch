@@ -10,10 +10,6 @@ OpenCouch uses two complementary surfaces for trace-driven development:
 1. **Opik** for primary external trace-level observability and run search.
 2. **CLI inspection commands + live status** for local visibility into execution, state, and memory.
 
-LangSmith remains supported as an optional secondary LangChain tracing
-integration, but Opik is the default external surface to use when
-reviewing graph behavior.
-
 The CLI intentionally keeps the normal chat loop lightweight now:
 the reply renders as soon as the response is ready, a live spinner
 shows node progress while post-response work finishes, and deeper
@@ -80,12 +76,8 @@ OPIK_WORKSPACE=...
 OPIK_PROJECT_NAME=opencouch-dev
 ```
 
-`OPIK_PROJECT_NAME` is optional; the graph wrapper defaults to
-`opencouch-dev` when it is unset.
-
-LangSmith can be enabled alongside Opik through the standard
-`LANGSMITH_*` and `LANGCHAIN_*` environment variables when a secondary
-trace backend is useful.
+`OPIK_PROJECT_NAME` is optional; runs are grouped under the default
+Opik project when it is unset.
 
 ## Voice observability
 
@@ -125,12 +117,12 @@ Green border for therapeutic, red for crisis.
 
 ### 2. Live execution status
 
-`run_turn_stream` emits one `StatusEvent` per node via LangGraph's
-multi-mode streaming. The CLI renders a progress spinner while the
-graph is still running:
+`run_turn_stream` emits one `StatusEvent` per pipeline stage as the
+turn executes. The CLI renders a progress spinner while the runtime
+is still working:
 
 ```text
-  ⠋ crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
+  ⠋ crisis_gate → load_memory → therapeutic → finalize
 ```
 
 The stream now also has a non-terminal `response_ready` event. That

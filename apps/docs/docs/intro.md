@@ -93,15 +93,7 @@ Architectures for Language Agents, Princeton 2023).
 
 ## Under the hood
 
-<div className="doc-card-grid">
-  <div className="doc-card">
-    <div className="doc-card__header">
-      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-      <strong>Durable persistence</strong>
-    </div>
-    <p>Postgres-first storage for threads, memory, crisis log, and session feedback, with a SQLite fallback for local dev. Audit stores live in <code>agent/audit/</code> so user-facing recall toggles can never touch them.</p>
-  </div>
-
+<div className="doc-card-grid doc-card-grid--two">
   <div className="doc-card">
     <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -112,28 +104,14 @@ Architectures for Language Agents, Princeton 2023).
 
   <div className="doc-card">
     <div className="doc-card__header">
-      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-      <strong>Privacy controls</strong>
-    </div>
-    <p>Memory commands are first-class runtime branches: natural-language <code>list</code>, <code>forget</code>, <code>recall on/off</code>, and explicit-preference saves. Destructive deletes carry a pending action across turns for explicit confirm or cancel.</p>
-  </div>
-
-  <div className="doc-card">
-    <div className="doc-card__header">
-      <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      <strong>Cost &amp; latency levers</strong>
-    </div>
-    <p>Memory prefetches at turn start, the SDK session owns short-term conversation context, and the runtime emits <code>response_ready</code> the moment finalization seals the reply.</p>
-  </div>
-
-  <div className="doc-card">
-    <div className="doc-card__header">
       <svg className="doc-card__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       <strong>Session continuity</strong>
     </div>
     <p>A 20-minute inactivity sweeper auto-finalizes idle sessions through the same end-session path as <code>/end</code>. Held memory candidates persist across restarts so delayed promotion never silently disappears.</p>
   </div>
 </div>
+
+For Postgres-first persistence, privacy controls, and latency tuning, see [Backend Architecture](/docs/backend/overview) and [Privacy Controls](/docs/memory/privacy).
 
 ---
 
