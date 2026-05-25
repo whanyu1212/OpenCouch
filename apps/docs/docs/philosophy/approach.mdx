@@ -24,7 +24,7 @@ clinical authority.
 | Attuned acknowledgment | Reflects the user's specific situation — no generic empathy |
 | Psychoeducation | Brief normalizing explanations of anxiety, stress, grief, and somatic reactions |
 | Pattern reflection | Connects themes across a conversation, never inventing patterns the user hasn't named |
-| Crisis routing | Region-aware hotline lookup overlaid onto the crisis reply via a dedicated graph node |
+| Crisis routing | Region-aware hotline lookup overlaid onto the crisis reply via the `lookup_crisis_resources` tool attached to the CrisisAgent |
 
 ## What AI should not attempt
 
@@ -39,26 +39,35 @@ clinical authority.
 
 ## Response styles vs. therapeutic approaches
 
-Two axes, selected independently per turn by the TherapeuticAgent:
+Two axes, picked along the turn pipeline:
 
 | Axis | What it is | How many | Selected by |
 |---|---|---|---|
-| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | LLM structured-output classifier with local active-flow validation |
-| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | TherapeuticAgent, alongside the response style |
+| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | Triage agent picks the route → TherapeuticAgent picks the style → local validation against active exercise/flow state |
+| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | `therapeutic_policy` selects the approach and passes it to TherapeuticAgent through prompt context |
 
 **Response styles** shape *what* the agent does this turn.
-**Therapeutic approaches** shape *how* — which knowledge file
-loads into the system prompt. In `technique` style, the approach
-drives the response shape directly (e.g., CBT Socratic questioning
-rhythm or ACT defusion language).
+**Therapeutic approaches** shape *how* — which knowledge file loads
+into the system prompt. In `technique` style, the approach drives
+the response shape directly because `technique` is the only style
+with no style-specific knowledge file — the approach overlay (e.g.,
+CBT Socratic questioning rhythm or ACT defusion language) carries
+all the shape.
 
 Two style families have hard structural contracts: `guided_exercise`
 must produce a step (and pin its approach so it can't drift on
 mid-exercise side-turns), `closing` must wrap up. Crisis reply has
-its own contract handled outside the TherapeuticAgent by the crisis gate.
-The remaining styles form a soft continuum where label fuzziness at
-the edges is by design — the dispatcher prompt teaches the LLM how
-to distinguish them, and ambiguous cases default to `supportive`.
+its own contract handled outside the TherapeuticAgent by the crisis
+gate and the dedicated CrisisAgent. The remaining styles form a
+soft continuum where label fuzziness at the edges is by design — the
+dispatcher prompt teaches the LLM how to distinguish them, and
+ambiguous cases default to `supportive`.
+
+When the crisis gate raises level 1 (ambiguous distress, not a clear
+crisis), the active style — usually `clarifying` — is augmented with
+a `safety_check.md` overlay that forces exactly one safety probe
+before ordinary support resumes. The overlay isn't a separate style;
+it sits on top of whichever style was selected for the turn.
 
 ---
 
@@ -96,12 +105,14 @@ the agent:**
 4. **Asks at most one** safety question (e.g., "Are you safe right
    now?").
 5. **Logs** the event to the always-on audit store — even in
-   incognito, with `user_id` scrubbed and `session_id` opaqued.
+   incognito, with `user_id` set to NULL and `session_id` stored as
+   a one-way hash.
 
 **At level 1 (ambiguous distress with `needs_clarification = true`),
-the agent stays inside the therapeutic branch** but uses the
-`safety_check` response shape to ask one focused safety probe
-before any therapeutic work. Memory retrieval still runs.
+the agent stays inside the therapeutic branch** but layers the
+`safety_check.md` overlay on top of the active style (usually
+`clarifying`) to force one focused safety probe before any
+therapeutic work. Memory retrieval still runs.
 
 See [Crisis Gate](/docs/philosophy/crisis-gate) for the full
 detection architecture (LLM classifier + truth-table normalization +

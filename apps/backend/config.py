@@ -1,4 +1,4 @@
-"""Runtime configuration helpers for model and tracing setup."""
+"""Runtime configuration helpers for model and persistence setup."""
 
 from __future__ import annotations
 
@@ -81,14 +81,6 @@ class Settings:
     memory_database_url: str | None = None
     text_session_backend: TextSessionBackend = "auto"
     text_session_database_url: str | None = None
-    langsmith_tracing: bool = False
-    langsmith_endpoint: str | None = None
-    langsmith_api_key: str | None = None
-    langsmith_project: str | None = None
-    langchain_tracing_v2: bool = False
-    langchain_endpoint: str | None = None
-    langchain_api_key: str | None = None
-    langchain_project: str | None = None
 
 
 def get_settings() -> Settings:
@@ -138,16 +130,6 @@ def get_settings() -> Settings:
         memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
         text_session_backend=text_session_backend,
         text_session_database_url=os.getenv("OPENCOUCH_TEXT_SESSION_DATABASE_URL"),
-        langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
-        in {"1", "true", "yes", "on"},
-        langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),
-        langsmith_api_key=os.getenv("LANGSMITH_API_KEY"),
-        langsmith_project=os.getenv("LANGSMITH_PROJECT"),
-        langchain_tracing_v2=os.getenv("LANGCHAIN_TRACING_V2", "").strip().lower()
-        in {"1", "true", "yes", "on"},
-        langchain_endpoint=os.getenv("LANGCHAIN_ENDPOINT"),
-        langchain_api_key=os.getenv("LANGCHAIN_API_KEY"),
-        langchain_project=os.getenv("LANGCHAIN_PROJECT"),
     )
 
 

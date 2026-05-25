@@ -1,0 +1,139 @@
+.root {
+  margin: 1.5rem 0 2rem;
+}
+
+.outer {
+  position: relative;
+  padding: 1.5rem 1.5rem 1.75rem;
+  border: 1px solid rgba(61, 153, 144, 0.45);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(120, 184, 175, 0.08), rgba(120, 184, 175, 0.02));
+  box-shadow: var(--oc-shadow-sm);
+}
+
+.outerHeader,
+.innerHeader {
+  margin-bottom: 1rem;
+}
+
+.eyebrow {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--oc-text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.title {
+  margin: 0 0 0.3rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--oc-text-primary);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--oc-text-secondary);
+  max-width: 56ch;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.listItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.listItemContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.itemLabel {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--oc-text-primary);
+}
+
+.itemDetail {
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--oc-text-secondary);
+}
+
+.dot {
+  flex-shrink: 0;
+  margin-top: 0.45rem;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dotApp {
+  background: var(--oc-teal-500);
+  box-shadow: 0 0 0 3px rgba(120, 184, 175, 0.18);
+}
+
+.dotAgent {
+  background: #d78b5f;
+  box-shadow: 0 0 0 3px rgba(215, 139, 95, 0.18);
+}
+
+.inner {
+  margin-top: 1.5rem;
+  padding: 1.25rem 1.25rem 1.4rem;
+  border: 1px solid rgba(215, 139, 95, 0.42);
+  border-radius: 13px;
+  background: linear-gradient(180deg, rgba(245, 220, 200, 0.32), rgba(245, 220, 200, 0.1));
+}
+
+.caption {
+  margin: 0.95rem 0 0;
+  text-align: center;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--oc-text-secondary);
+  font-style: italic;
+}
+
+html[data-theme='dark'] .outer {
+  background: linear-gradient(180deg, rgba(120, 184, 175, 0.12), rgba(120, 184, 175, 0.04));
+  border-color: rgba(120, 184, 175, 0.35);
+}
+
+html[data-theme='dark'] .listItem {
+  background: rgba(20, 40, 37, 0.55);
+  border-color: rgba(120, 184, 175, 0.14);
+}
+
+html[data-theme='dark'] .inner {
+  background: linear-gradient(180deg, rgba(215, 139, 95, 0.18), rgba(215, 139, 95, 0.06));
+  border-color: rgba(215, 139, 95, 0.4);
+}
+
+@media (max-width: 700px) {
+  .outer {
+    padding: 1.25rem 1rem 1.5rem;
+  }
+
+  .inner {
+    padding: 1rem 0.95rem 1.2rem;
+  }
+}
