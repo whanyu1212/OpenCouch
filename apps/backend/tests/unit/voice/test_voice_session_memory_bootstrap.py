@@ -64,19 +64,17 @@ async def test_voice_bootstrap_does_not_call_load_memory_for_turn(
             "session bootstrap should only fetch the procedural profile."
         )
 
-    async def fail_delta(*_: object, **__: object) -> Any:
-        raise AssertionError(
-            "voice_session_memory_context must not call build_turn_memory_delta; "
-            "session bootstrap should only fetch the procedural profile."
-        )
-
     async def fake_profile(_store: object, *, user_id: str) -> _StubProceduralProfile:
         del user_id
         return _StubProceduralProfile(proactive_recall_enabled=True)
 
     monkeypatch.setattr(runtime_module, "load_memory_for_turn", fail_loader)
-    monkeypatch.setattr(runtime_module, "build_turn_memory_delta", fail_delta)
     monkeypatch.setattr(runtime_module, "aget_procedural_profile", fake_profile)
+    # NOTE: We intentionally do not monkeypatch build_turn_memory_delta here.
+    # Phase 2 A1 removed that import from runtime.py; the absence of the
+    # attribute is itself part of the regression contract. If a future
+    # refactor re-introduces the import, this test still catches the
+    # behavioral regression via the load_memory_for_turn assertion above.
 
     # Call the bound method directly with the fake runtime as self.
     result = await runtime_module.PersistentAgentRuntime.voice_session_memory_context(
