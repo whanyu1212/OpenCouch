@@ -22,6 +22,7 @@ from agent.memory.procedural_profile import (
     build_procedural_rule,
 )
 from agent.memory.semantic_writes import (
+    BatchSemanticWriteOutcome,
     BatchWriteItem,
     apply_semantic_writes_batch,
 )
@@ -752,6 +753,193 @@ def _semantic_procedural_overlap_resolution(
     return "semantic"
 
 
+def _current_session_ids_for_commit(
+    state: AgentState,
+    *,
+    stored_arc: "StoredSessionArc | None",
+    session_buffer: SessionMemoryBuffer,
+) -> set[str]:
+    """Return the session IDs that should be excluded from prior-support lookup."""
+
+    return {
+        session_id
+        for session_id in (
+            state.get("session_id"),
+            stored_arc.session_id if stored_arc is not None else None,
+            session_buffer.session_id,
+        )
+        if session_id
+    }
+
+
+async def _load_prior_support_texts_for_commit(
+    memory_store: MemoryStore,
+    *,
+    owner_id: str,
+    current_session_ids: set[str],
+    result: SessionMemoryCommitResult,
+) -> list[str]:
+    """Load prior episodic support texts while preserving failure accounting."""
+
+    try:
+        return await _load_prior_session_support_texts(
+            memory_store,
+            owner_id=owner_id,
+            current_session_ids=current_session_ids,
+        )
+    except Exception:
+        result.support_load_failed = True
+        logger.warning(
+            "commit_session_memory: failed to load prior episodic support; "
+            "continuing without cross-session repetition evidence.",
+            exc_info=True,
+        )
+        return []
+
+
+def _prepare_semantic_batch_items(
+    semantic_candidates_to_commit: list[BufferedSemanticCandidate],
+    *,
+    procedural_candidates_to_commit: list[
+        tuple[BufferedProceduralCandidate, list[str], int]
+    ],
+) -> tuple[list[BatchWriteItem], int]:
+    """Build semantic batch items and count overlap skips."""
+
+    batch_items: list[BatchWriteItem] = []
+    overlap_skips = 0
+    for record in semantic_candidates_to_commit:
+        candidate = record.candidate
+        if (
+            _semantic_procedural_overlap_resolution(
+                candidate,
+                procedural_candidates_to_commit,
+            )
+            == "procedural"
+        ):
+            overlap_skips += 1
+            continue
+        write_timing = (
+            "promotion"
+            if record.hold_action == "require_repetition"
+            or semantic_candidate_needs_repetition_guard(candidate)
+            else "session_end"
+        )
+        write_reason = (
+            "repetition-qualified semantic candidate promoted at session end"
+            if write_timing == "promotion"
+            else "session-end semantic candidate supported by transcript and episodic summary"
+        )
+        batch_items.append(
+            BatchWriteItem(
+                candidate=candidate,
+                write_timing=write_timing,
+                write_reason=write_reason,
+                policy_version="phase3_v1",
+            )
+        )
+
+    return batch_items, overlap_skips
+
+
+def _apply_semantic_batch_outcome(
+    result: SessionMemoryCommitResult,
+    batch_outcome: BatchSemanticWriteOutcome,
+) -> None:
+    """Apply semantic batch counters to the session commit result."""
+
+    result.semantic_writes += batch_outcome.written
+    result.semantic_bumps += batch_outcome.bumped
+    result.semantic_skips += batch_outcome.skipped
+    result.semantic_failures += batch_outcome.failures
+
+
+async def _commit_semantic_candidates(
+    memory_store: MemoryStore,
+    *,
+    owner_id: str,
+    semantic_candidates_to_commit: list[BufferedSemanticCandidate],
+    procedural_candidates_to_commit: list[
+        tuple[BufferedProceduralCandidate, list[str], int]
+    ],
+    embedding_provider: "EmbeddingProvider | None",
+    llm_client: "BaseLLMClient | None",
+    result: SessionMemoryCommitResult,
+) -> None:
+    """Commit selected semantic candidates and update result counters."""
+
+    if not semantic_candidates_to_commit:
+        return
+
+    batch_items, overlap_skips = _prepare_semantic_batch_items(
+        semantic_candidates_to_commit,
+        procedural_candidates_to_commit=procedural_candidates_to_commit,
+    )
+    result.semantic_skips += overlap_skips
+    if not batch_items:
+        return
+
+    batch_outcome = await apply_semantic_writes_batch(
+        memory_store,
+        owner_id=owner_id,
+        items=batch_items,
+        llm_client=llm_client,
+        embedding_provider=embedding_provider,
+        log_context="commit_session_memory",
+    )
+    _apply_semantic_batch_outcome(result, batch_outcome)
+
+
+async def _commit_procedural_candidates(
+    memory_store: MemoryStore,
+    *,
+    owner_id: str,
+    procedural_candidates_to_commit: list[
+        tuple[BufferedProceduralCandidate, list[str], int]
+    ],
+    llm_client: "BaseLLMClient | None",
+    result: SessionMemoryCommitResult,
+) -> None:
+    """Commit selected procedural candidates and update result counters."""
+
+    if not procedural_candidates_to_commit:
+        return
+
+    for (
+        procedural_record,
+        evidence,
+        effective_support,
+    ) in procedural_candidates_to_commit:
+        procedural_candidate = procedural_record.candidate
+        try:
+            rule = build_procedural_rule(
+                rule_text=procedural_candidate.payload.rule,
+                evidence=evidence,
+                confidence="high" if effective_support >= 3 else "medium",
+                source="consolidation",
+                write_timing="promotion",
+                write_reason="repeated implicit procedural preference promoted at session end",
+                policy_version="phase3_v1",
+            )
+            upsert = await aupsert_procedural_rule(
+                memory_store,
+                user_id=owner_id,
+                rule=rule,
+                llm_client=llm_client,
+            )
+            if upsert.action == "skipped":
+                result.procedural_skips += 1
+                continue
+            result.procedural_writes += 1
+        except Exception:
+            logger.warning(
+                "commit_session_memory: failed to promote buffered procedural rule %r.",
+                procedural_candidate.payload.rule[:60],
+                exc_info=True,
+            )
+            result.procedural_failures += 1
+
+
 async def commit_session_memory(
     state: AgentState,
     *,
@@ -804,29 +992,17 @@ async def commit_session_memory(
         )
         return result
 
-    current_session_ids = {
-        session_id
-        for session_id in (
-            state.get("session_id"),
-            stored_arc.session_id if stored_arc is not None else None,
-            session_buffer.session_id if session_buffer is not None else None,
-        )
-        if session_id
-    }
-    try:
-        prior_session_support_texts = await _load_prior_session_support_texts(
-            memory_store,
-            owner_id=owner_id,
-            current_session_ids=current_session_ids,
-        )
-    except Exception:
-        result.support_load_failed = True
-        logger.warning(
-            "commit_session_memory: failed to load prior episodic support; "
-            "continuing without cross-session repetition evidence.",
-            exc_info=True,
-        )
-        prior_session_support_texts = []
+    current_session_ids = _current_session_ids_for_commit(
+        state,
+        stored_arc=stored_arc,
+        session_buffer=session_buffer,
+    )
+    prior_session_support_texts = await _load_prior_support_texts_for_commit(
+        memory_store,
+        owner_id=owner_id,
+        current_session_ids=current_session_ids,
+        result=result,
+    )
 
     procedural_candidates_to_commit, result.procedural_skips = (
         _select_procedural_candidates_to_commit(
@@ -843,88 +1019,22 @@ async def commit_session_memory(
             prior_session_support_texts=prior_session_support_texts,
         )
     )
-    if semantic_candidates_to_commit:
-        batch_items: list[BatchWriteItem] = []
-        overlap_skips = 0
-        for record in semantic_candidates_to_commit:
-            candidate = record.candidate
-            if (
-                _semantic_procedural_overlap_resolution(
-                    candidate,
-                    procedural_candidates_to_commit,
-                )
-                == "procedural"
-            ):
-                overlap_skips += 1
-                continue
-            write_timing = (
-                "promotion"
-                if record.hold_action == "require_repetition"
-                or semantic_candidate_needs_repetition_guard(candidate)
-                else "session_end"
-            )
-            write_reason = (
-                "repetition-qualified semantic candidate promoted at session end"
-                if write_timing == "promotion"
-                else "session-end semantic candidate supported by transcript and episodic summary"
-            )
-            batch_items.append(
-                BatchWriteItem(
-                    candidate=candidate,
-                    write_timing=write_timing,
-                    write_reason=write_reason,
-                    policy_version="phase3_v1",
-                )
-            )
-
-        result.semantic_skips += overlap_skips
-        if batch_items:
-            batch_outcome = await apply_semantic_writes_batch(
-                memory_store,
-                owner_id=owner_id,
-                items=batch_items,
-                llm_client=llm_client,
-                embedding_provider=embedding_provider,
-                log_context="commit_session_memory",
-            )
-            result.semantic_writes += batch_outcome.written
-            result.semantic_bumps += batch_outcome.bumped
-            result.semantic_skips += batch_outcome.skipped
-            result.semantic_failures += batch_outcome.failures
-    if procedural_candidates_to_commit:
-        for (
-            procedural_record,
-            evidence,
-            effective_support,
-        ) in procedural_candidates_to_commit:
-            procedural_candidate = procedural_record.candidate
-            try:
-                rule = build_procedural_rule(
-                    rule_text=procedural_candidate.payload.rule,
-                    evidence=evidence,
-                    confidence="high" if effective_support >= 3 else "medium",
-                    source="consolidation",
-                    write_timing="promotion",
-                    write_reason="repeated implicit procedural preference promoted at session end",
-                    policy_version="phase3_v1",
-                )
-                upsert = await aupsert_procedural_rule(
-                    memory_store,
-                    user_id=owner_id,
-                    rule=rule,
-                    llm_client=llm_client,
-                )
-                if upsert.action == "skipped":
-                    result.procedural_skips += 1
-                    continue
-                result.procedural_writes += 1
-            except Exception:
-                logger.warning(
-                    "commit_session_memory: failed to promote buffered procedural rule %r.",
-                    procedural_candidate.payload.rule[:60],
-                    exc_info=True,
-                )
-                result.procedural_failures += 1
+    await _commit_semantic_candidates(
+        memory_store,
+        owner_id=owner_id,
+        semantic_candidates_to_commit=semantic_candidates_to_commit,
+        procedural_candidates_to_commit=procedural_candidates_to_commit,
+        embedding_provider=embedding_provider,
+        llm_client=llm_client,
+        result=result,
+    )
+    await _commit_procedural_candidates(
+        memory_store,
+        owner_id=owner_id,
+        procedural_candidates_to_commit=procedural_candidates_to_commit,
+        llm_client=llm_client,
+        result=result,
+    )
 
     logger.info(
         "commit_session_memory: session-end promotion complete — %d semantic written, "
