@@ -10,10 +10,11 @@ after backend, frontend, prompt, or persistence changes.
 
 ## Backend
 
+Run from the repo root.
+
 Postgres-backed persistent mode:
 
 ```bash
-cd /Volumes/ORICO/OpenCouch
 docker compose -f compose.yml up -d postgres --wait
 
 cd apps/backend
@@ -25,7 +26,7 @@ OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/op
 SQLite-backed local fallback:
 
 ```bash
-cd /Volumes/ORICO/OpenCouch/apps/backend
+cd apps/backend
 OPENCOUCH_PERSISTENCE_BACKEND=sqlite \
 .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
