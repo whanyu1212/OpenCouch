@@ -65,8 +65,8 @@ class ExerciseDefinition:
             shown in selection prompts.
         approaches: Therapeutic approaches the exercise is specifically tied
             to. Empty means the exercise is generally available.
-        channels: Delivery channels supported by this exercise. Text covers web,
-            SMS, WhatsApp, Telegram, and test channels.
+        channels: Delivery channels supported by this exercise. Text covers web
+            and test channels.
         required_skill: Optional capability key required before this exercise
             can be offered.
         voice_supported: Whether the exercise is suitable for voice mode.

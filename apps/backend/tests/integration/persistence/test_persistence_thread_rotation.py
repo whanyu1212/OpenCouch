@@ -1,4 +1,4 @@
-"""Runtime liveness contracts used by Telegram thread rotation."""
+"""Runtime liveness contracts for channel thread rotation."""
 
 from __future__ import annotations
 
