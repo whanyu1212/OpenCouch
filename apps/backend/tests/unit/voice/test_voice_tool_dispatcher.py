@@ -226,3 +226,57 @@ async def test_voice_tool_dispatcher_rejects_unknown_tool() -> None:
                 transcript=[],
                 llm_client=None,
             )
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_dispatcher_rejects_recall_in_incognito() -> None:
+    """recall_saved_memory is persistent-only; incognito refuses pre-context."""
+
+    with pytest.raises(ValueError, match="not available in incognito"):
+        await execute_voice_tool_call(
+            runtime=_RuntimeThatMustNotBuildContext(),
+            tool_name="recall_saved_memory",
+            arguments={"query": "work stress"},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="",
+            transcript=[],
+            llm_client=None,
+            memory_mode="incognito",
+        )
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_dispatcher_runtime_incognito_overrides_persistent_body() -> (
+    None
+):
+    """Runtime mode is the floor: a 'persistent' body cannot escalate.
+
+    Regression for the memory_mode override hole. Even when the client
+    body claims ``memory_mode='persistent'``, an incognito runtime must
+    cause persistent-only tools to refuse before any context is built.
+    """
+
+    class _IncognitoRuntimeThatMustNotBuildContext:
+        memory_mode = MemoryMode.INCOGNITO
+
+        async def build_voice_tool_context(self, **kwargs: object) -> object:
+            raise AssertionError(
+                "incognito runtime must refuse persistent-only tools "
+                "regardless of request body"
+            )
+
+    with pytest.raises(ValueError, match="not available in incognito"):
+        await execute_voice_tool_call(
+            runtime=_IncognitoRuntimeThatMustNotBuildContext(),
+            tool_name="recall_saved_memory",
+            arguments={"query": "anything"},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="",
+            transcript=[],
+            llm_client=None,
+            # The client claims persistent; the runtime is incognito.
+            # Incognito must win.
+            memory_mode="persistent",
+        )

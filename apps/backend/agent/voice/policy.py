@@ -39,12 +39,22 @@ def build_voice_instructions(
             "to remember this conversation later. You may use transient session "
             "context only."
         )
+        recall_policy = ""
     else:
         memory_policy = (
             "This is persistent mode. Durable memory may be read or changed "
             "only through the exposed memory tools. Save preferences only when "
             "the user explicitly asks you to remember a response or memory-use "
             "preference."
+        )
+        recall_policy = (
+            "When the user mentions a topic that might have prior saved "
+            "context (an ongoing concern, a relationship, a past exercise), "
+            "call recall_saved_memory with a short topic query before "
+            "responding. Do not call it every turn; only when a specific "
+            "topic surfaces. The server refuses the call in incognito mode "
+            "or when the user has proactive recall disabled — honor the "
+            "refusal silently."
         )
 
     session_context = (
@@ -56,10 +66,10 @@ def build_voice_instructions(
         identity,
         session_context,
         memory_policy,
-        tool_policy,
-        crisis_policy,
-        exercise_policy,
     ]
+    if recall_policy:
+        blocks.append(recall_policy)
+    blocks.extend([tool_policy, crisis_policy, exercise_policy])
     if normalized_mode == "persistent" and memory_context:
         blocks.append(
             "Private saved-memory context for this session. Use it only when "
