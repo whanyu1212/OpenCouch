@@ -57,6 +57,7 @@ class BatchSemanticWriteOutcome:
     written: int = 0
     bumped: int = 0
     skipped: int = 0
+    failures: int = 0
     fetch_failed: bool = False
     written_items: list[SemanticFact] = field(default_factory=list)
 
@@ -402,7 +403,7 @@ async def apply_semantic_writes_batch(
 
     Returns:
         Aggregate batch outcome with counters and written facts. When the
-        existing-records fetch fails, all items are counted as skipped.
+        existing-records fetch fails, all items are counted as failures.
     """
 
     outcome = BatchSemanticWriteOutcome()
@@ -415,12 +416,12 @@ async def apply_semantic_writes_batch(
         )
     except Exception:
         logger.warning(
-            "%s: failed to fetch existing semantic records for dedup; skipping "
-            "all candidates in this batch.",
+            "%s: failed to fetch existing semantic records for dedup; marking "
+            "all candidates in this batch as failed.",
             log_context,
             exc_info=True,
         )
-        outcome.skipped = len(items)
+        outcome.failures = len(items)
         outcome.fetch_failed = True
         return outcome
 
