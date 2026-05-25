@@ -43,6 +43,9 @@ def build_voice_turn_policy(
 ) -> VoiceTurnPolicy:
     """Return deterministic observe-only policy for one voice user turn."""
 
+    mode_hint = (
+        "persistent" if memory_mode.strip().lower() == "persistent" else "incognito"
+    )
     normalized = " ".join(user_text.lower().split())
     if any(marker in normalized for marker in CRISIS_MARKERS):
         return VoiceTurnPolicy(
@@ -56,7 +59,12 @@ def build_voice_turn_policy(
             ),
         )
 
-    if pending_memory_action:
+    # Only route to the memory-control resolution flow in persistent mode.
+    # confirm_memory_deletion / cancel_memory_deletion are persistent-only
+    # tools, so routing an incognito turn here would push the model into an
+    # unfulfillable flow when a thread carrying an old pending deletion is
+    # later used with memory_mode="incognito".
+    if pending_memory_action and mode_hint == "persistent":
         return VoiceTurnPolicy(
             route="memory_control",
             response_style="memory_control",
@@ -84,9 +92,6 @@ def build_voice_turn_policy(
             ),
         )
 
-    mode_hint = (
-        "persistent" if memory_mode.strip().lower() == "persistent" else "incognito"
-    )
     instructions = (
         "Respond naturally for spoken therapeutic support. Use tools only "
         f"when their descriptions match the user's explicit request. "
