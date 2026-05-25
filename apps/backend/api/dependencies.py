@@ -48,6 +48,9 @@ from agent.runtime import (
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
+    RuntimeDependencies,
+    RuntimePersistenceConfig,
+    RuntimeStoragePaths,
 )
 from config import (
     ResponseModelTier,
@@ -122,23 +125,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     )
 
     _runtime = PersistentAgentRuntime(
-        sqlite_path=str(DEFAULT_THREAD_DB_PATH),
-        memory_backend=settings.persistence_backend,
-        memory_database_url=settings.memory_database_url,
-        text_session_backend=settings.text_session_backend,
-        text_session_database_url=(
-            settings.text_session_database_url or settings.memory_database_url
+        storage_paths=RuntimeStoragePaths(
+            sqlite_path=str(DEFAULT_THREAD_DB_PATH),
+            memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
+            crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         ),
-        thread_persistence_backend=settings.persistence_backend,
-        thread_database_url=settings.memory_database_url,
-        crisis_log_persistence_backend=settings.persistence_backend,
-        crisis_log_database_url=settings.memory_database_url,
-        session_feedback_persistence_backend=settings.persistence_backend,
-        session_feedback_database_url=settings.memory_database_url,
-        memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
-        crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
-        memory_mode=memory_mode,
-        default_llm_client=_llm_client,
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=memory_mode,
+            memory_backend=settings.persistence_backend,
+            memory_database_url=settings.memory_database_url,
+            text_session_backend=settings.text_session_backend,
+            text_session_database_url=(
+                settings.text_session_database_url or settings.memory_database_url
+            ),
+            thread_persistence_backend=settings.persistence_backend,
+            thread_database_url=settings.memory_database_url,
+            crisis_log_persistence_backend=settings.persistence_backend,
+            crisis_log_database_url=settings.memory_database_url,
+            session_feedback_persistence_backend=settings.persistence_backend,
+            session_feedback_database_url=settings.memory_database_url,
+        ),
+        dependencies=RuntimeDependencies(
+            default_llm_client=_llm_client,
+        ),
     )
     async with _runtime:
         try:

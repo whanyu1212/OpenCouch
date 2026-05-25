@@ -47,6 +47,9 @@ from agent.runtime import (
     DEFAULT_FEEDBACK_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     PersistentAgentRuntime,
+    RuntimeDependencies,
+    RuntimePersistenceConfig,
+    RuntimeStoragePaths,
 )
 
 
@@ -167,6 +170,36 @@ def test_local_mode_accepts_custom_sqlite_paths(tmp_path: Path) -> None:
     assert runtime.crisis_log_backend.sqlite_path == custom_crisis
 
 
+def test_grouped_storage_paths_override_legacy_sqlite_paths(tmp_path: Path) -> None:
+    """Grouped storage paths should take precedence over legacy path args."""
+
+    grouped_thread = tmp_path / "grouped_threads.sqlite3"
+    grouped_memory = tmp_path / "grouped_memory.sqlite3"
+    grouped_crisis = tmp_path / "grouped_crisis.sqlite3"
+    grouped_feedback = tmp_path / "grouped_feedback.sqlite3"
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=tmp_path / "legacy_threads.sqlite3",
+        memory_sqlite_path=tmp_path / "legacy_memory.sqlite3",
+        crisis_log_sqlite_path=tmp_path / "legacy_crisis.sqlite3",
+        feedback_sqlite_path=tmp_path / "legacy_feedback.sqlite3",
+        storage_paths=RuntimeStoragePaths(
+            sqlite_path=grouped_thread,
+            memory_sqlite_path=grouped_memory,
+            crisis_log_sqlite_path=grouped_crisis,
+            feedback_sqlite_path=grouped_feedback,
+        ),
+    )
+
+    assert runtime.sqlite_path == grouped_thread
+    assert isinstance(runtime.memory_store, SqliteMemoryStore)
+    assert runtime.memory_store.sqlite_path == grouped_memory
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+    assert runtime.crisis_log_backend.sqlite_path == grouped_crisis
+    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
+    assert runtime.session_feedback_backend.sqlite_path == grouped_feedback
+
+
 def test_synced_mode_behaves_like_local_for_v0_8() -> None:
     """SYNCED mode is reserved for a future remote backend. For now
     (v0.8), it should behave identically to LOCAL — SQLite-backed
@@ -190,6 +223,24 @@ def test_local_mode_can_select_postgres_memory_store() -> None:
         memory_backend="postgres",
         memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
     )
+    assert isinstance(runtime.memory_store, PostgresMemoryStore)
+    assert runtime.memory_store.dsn == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+
+
+def test_grouped_persistence_config_can_select_postgres_memory_store() -> None:
+    """Grouped persistence config should drive backend selection."""
+
+    runtime = PersistentAgentRuntime(
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.LOCAL,
+            memory_backend="postgres",
+            memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        )
+    )
+
     assert isinstance(runtime.memory_store, PostgresMemoryStore)
     assert runtime.memory_store.dsn == (
         "postgresql://opencouch:opencouch@postgres:5432/opencouch"
@@ -288,6 +339,20 @@ def test_explicit_crisis_log_overrides_mode_based_selection() -> None:
         crisis_log_backend=custom_backend,
     )
     assert runtime.crisis_log_backend is custom_backend
+
+
+def test_grouped_dependencies_can_override_default_llm_client() -> None:
+    """Grouped dependencies should populate injected runtime services."""
+
+    llm_client = object()
+
+    runtime = PersistentAgentRuntime(
+        dependencies=RuntimeDependencies(
+            default_llm_client=llm_client,  # type: ignore[arg-type]
+        )
+    )
+
+    assert runtime._default_llm_client is llm_client  # noqa: SLF001
 
 
 def test_explicit_overrides_work_with_incognito_too() -> None:

@@ -125,6 +125,58 @@ class SessionSweepResult:
     failed_thread_ids: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class RuntimeStoragePaths:
+    """Grouped SQLite path overrides for runtime-owned storage."""
+
+    sqlite_path: str | Path = DEFAULT_THREAD_DB_PATH
+    memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH
+    crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH
+    feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH
+    text_session_sqlite_path: str | Path | None = None
+
+
+@dataclass(slots=True)
+class RuntimePersistenceConfig:
+    """Grouped backend and database URL configuration for the runtime."""
+
+    memory_mode: MemoryMode = MemoryMode.LOCAL
+    memory_backend: Literal["sqlite", "postgres"] = "sqlite"
+    memory_database_url: str | None = None
+    thread_persistence_backend: Literal["sqlite", "postgres"] = "sqlite"
+    thread_database_url: str | None = None
+    crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "sqlite"
+    crisis_log_database_url: str | None = None
+    session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite"
+    session_feedback_database_url: str | None = None
+    text_session_backend: TextSessionBackend = "auto"
+    text_session_database_url: str | None = None
+
+
+@dataclass(slots=True)
+class RuntimeDependencies:
+    """Grouped dependency injection hooks for runtime construction."""
+
+    memory_store: MemoryStore | None = None
+    crisis_log_backend: CrisisLogBackend | None = None
+    session_feedback_backend: SessionFeedbackBackend | None = None
+    embedding_provider: "EmbeddingProvider | None" = None
+    default_llm_client: BaseLLMClient | None = None
+    auto_finalize_excluded: Callable[[str], bool] | None = None
+
+
+@dataclass(slots=True)
+class RuntimeBehaviorConfig:
+    """Grouped operational behavior settings for the runtime."""
+
+    text_session_create_tables: bool = True
+    text_session_history_limit: int | None = None
+    session_timeout: timedelta = SESSION_TIMEOUT
+    session_sweep_interval_seconds: float = 30.0
+    finalize_active_sessions_on_close: bool = True
+    speculative_memory_prefetch: bool = True
+
+
 class PersistentAgentRuntime:
     """Session-persisted runtime with mode-aware persistence backends."""
 
@@ -132,6 +184,10 @@ class PersistentAgentRuntime:
         self,
         sqlite_path: str | Path = DEFAULT_THREAD_DB_PATH,
         *,
+        storage_paths: RuntimeStoragePaths | None = None,
+        persistence_config: RuntimePersistenceConfig | None = None,
+        dependencies: RuntimeDependencies | None = None,
+        behavior_config: RuntimeBehaviorConfig | None = None,
         memory_store: MemoryStore | None = None,
         crisis_log_backend: CrisisLogBackend | None = None,
         session_feedback_backend: SessionFeedbackBackend | None = None,
@@ -165,6 +221,16 @@ class PersistentAgentRuntime:
         Args:
             sqlite_path: SQLite database path for runtime thread state.
                 Forced to ``:memory:`` in incognito mode.
+            storage_paths: Optional grouped SQLite path overrides. When provided,
+                these values take precedence over the legacy path arguments.
+            persistence_config: Optional grouped backend and database URL
+                settings. When provided, these values take precedence over the
+                legacy persistence arguments.
+            dependencies: Optional grouped dependency overrides. When provided,
+                these values take precedence over the legacy dependency args.
+            behavior_config: Optional grouped runtime behavior settings. When
+                provided, these values take precedence over the legacy behavior
+                arguments.
             memory_store: Optional explicit memory-store override.
             crisis_log_backend: Optional explicit crisis-log override.
             session_feedback_backend: Optional explicit feedback-backend override.
@@ -213,6 +279,52 @@ class PersistentAgentRuntime:
                 paths is bounded; set to ``False`` to revert to the strictly
                 sequential load.
         """
+
+        if storage_paths is not None:
+            sqlite_path = storage_paths.sqlite_path
+            memory_sqlite_path = storage_paths.memory_sqlite_path
+            crisis_log_sqlite_path = storage_paths.crisis_log_sqlite_path
+            feedback_sqlite_path = storage_paths.feedback_sqlite_path
+            text_session_sqlite_path = storage_paths.text_session_sqlite_path
+
+        if persistence_config is not None:
+            memory_mode = persistence_config.memory_mode
+            memory_backend = persistence_config.memory_backend
+            memory_database_url = persistence_config.memory_database_url
+            thread_persistence_backend = persistence_config.thread_persistence_backend
+            thread_database_url = persistence_config.thread_database_url
+            crisis_log_persistence_backend = (
+                persistence_config.crisis_log_persistence_backend
+            )
+            crisis_log_database_url = persistence_config.crisis_log_database_url
+            session_feedback_persistence_backend = (
+                persistence_config.session_feedback_persistence_backend
+            )
+            session_feedback_database_url = (
+                persistence_config.session_feedback_database_url
+            )
+            text_session_backend = persistence_config.text_session_backend
+            text_session_database_url = persistence_config.text_session_database_url
+
+        if dependencies is not None:
+            memory_store = dependencies.memory_store
+            crisis_log_backend = dependencies.crisis_log_backend
+            session_feedback_backend = dependencies.session_feedback_backend
+            embedding_provider = dependencies.embedding_provider
+            default_llm_client = dependencies.default_llm_client
+            auto_finalize_excluded = dependencies.auto_finalize_excluded
+
+        if behavior_config is not None:
+            text_session_create_tables = behavior_config.text_session_create_tables
+            text_session_history_limit = behavior_config.text_session_history_limit
+            session_timeout = behavior_config.session_timeout
+            session_sweep_interval_seconds = (
+                behavior_config.session_sweep_interval_seconds
+            )
+            finalize_active_sessions_on_close = (
+                behavior_config.finalize_active_sessions_on_close
+            )
+            speculative_memory_prefetch = behavior_config.speculative_memory_prefetch
 
         self.memory_mode = memory_mode
         is_incognito = memory_mode == MemoryMode.INCOGNITO
