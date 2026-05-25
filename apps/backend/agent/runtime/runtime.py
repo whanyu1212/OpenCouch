@@ -2079,22 +2079,32 @@ def _latest_user_text(transcript: list[dict[str, object]]) -> str:
 
 def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
     blocks: list[str] = []
-    working_memory = delta.get("working_memory") or []
-    if working_memory:
-        rendered = [_compact_memory_value(item) for item in list(working_memory)[:5]]
-        rendered = [item for item in rendered if item]
-        if rendered:
-            blocks.append(
-                "Relevant saved facts:\n" + "\n".join(f"- {item}" for item in rendered)
-            )
-
-    session_memory = delta.get("session_memory") or {}
-    if isinstance(session_memory, Mapping):
-        summary = str(session_memory.get("summary") or "").strip()
-        if summary and summary != "Guest session without long-term memory.":
-            blocks.append(f"Recent session summary: {summary}")
-
     procedural_profile = delta.get("procedural_profile") or {}
+    proactive_recall_enabled = False
+    if isinstance(procedural_profile, Mapping):
+        proactive_recall_enabled = bool(
+            procedural_profile.get("proactive_recall_enabled", False)
+        )
+
+    if proactive_recall_enabled:
+        working_memory = delta.get("working_memory") or []
+        if working_memory:
+            rendered = [
+                _compact_memory_value(item) for item in list(working_memory)[:5]
+            ]
+            rendered = [item for item in rendered if item]
+            if rendered:
+                blocks.append(
+                    "Relevant saved facts:\n"
+                    + "\n".join(f"- {item}" for item in rendered)
+                )
+
+        session_memory = delta.get("session_memory") or {}
+        if isinstance(session_memory, Mapping):
+            summary = str(session_memory.get("summary") or "").strip()
+            if summary and summary != "Guest session without long-term memory.":
+                blocks.append(f"Recent session summary: {summary}")
+
     if isinstance(procedural_profile, Mapping):
         rules = procedural_profile.get("procedural_rules") or []
         rendered_rules = [_compact_memory_value(rule) for rule in list(rules)[:5]]
@@ -2104,8 +2114,10 @@ def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
                 "Saved response preferences:\n"
                 + "\n".join(f"- {rule}" for rule in rendered_rules)
             )
-        if procedural_profile.get("proactive_recall_enabled") is True:
-            blocks.append("Proactive memory recall is enabled.")
+    if proactive_recall_enabled:
+        blocks.append("Proactive memory recall is enabled.")
+    else:
+        blocks.append("Proactive saved-memory recall is disabled.")
 
     return "\n\n".join(blocks)[:2000]
 
