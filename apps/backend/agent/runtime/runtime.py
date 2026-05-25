@@ -8,6 +8,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -109,6 +110,19 @@ DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES: tuple[str, ...] = ()
 SESSION_TIMEOUT = timedelta(minutes=20)
+
+
+@dataclass(slots=True)
+class SessionSweepResult:
+    """Summary of one expired-session sweep pass."""
+
+    checked: int = 0
+    finalized: int = 0
+    skipped_excluded: int = 0
+    skipped_missing: int = 0
+    skipped_not_expired: int = 0
+    failed_to_list: bool = False
+    failed_thread_ids: list[str] = field(default_factory=list)
 
 
 class PersistentAgentRuntime:
@@ -570,35 +584,42 @@ class PersistentAgentRuntime:
             return
         await self._active_session_manager.save_persisted_active_session(session)
 
-    async def _finalize_expired_sessions_once(self) -> None:
+    async def _finalize_expired_sessions_once(self) -> SessionSweepResult:
         """Finalize any sessions that crossed the inactivity timeout.
 
         Returns:
-            None.
+            Summary of the sweep pass.
         """
+
+        result = SessionSweepResult()
 
         try:
             active_thread_ids = await self._list_active_thread_ids()
         except Exception:
+            result.failed_to_list = True
             logger.warning(
                 "finalize_expired_sessions_once: failed to list active sessions",
                 exc_info=True,
             )
-            return
+            return result
+
+        result.checked = len(active_thread_ids)
 
         for active_thread_id in active_thread_ids:
             try:
                 if self._auto_finalization_excluded(active_thread_id):
+                    result.skipped_excluded += 1
                     continue
                 persisted = (
                     await self._active_session_manager.load_persisted_active_session(
                         active_thread_id
                     )
                 )
-                if (
-                    persisted is None
-                    or not self._active_session_manager.session_has_expired(persisted)
-                ):
+                if persisted is None:
+                    result.skipped_missing += 1
+                    continue
+                if not self._active_session_manager.session_has_expired(persisted):
+                    result.skipped_not_expired += 1
                     continue
                 logger.info(
                     "session timeout reached for thread %s; auto-finalizing expired session",
@@ -608,12 +629,16 @@ class PersistentAgentRuntime:
                     active_thread_id,
                     llm_client=self._effective_llm_client(active_thread_id),
                 )
+                result.finalized += 1
             except Exception:
+                result.failed_thread_ids.append(active_thread_id)
                 logger.warning(
                     "finalize_expired_sessions_once: failed to end expired session for thread %s",
                     active_thread_id,
                     exc_info=True,
                 )
+
+        return result
 
     async def _session_sweeper_loop(self) -> None:
         """Run the background session-timeout sweeper loop.

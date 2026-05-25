@@ -256,6 +256,28 @@ async def _hold_trigger_candidate(
     await runtime._persist_runtime_session_tracking(thread_id)  # noqa: SLF001
 
 
+async def _expire_persisted_active_session(
+    runtime: PersistentAgentRuntime,
+    thread_id: str,
+) -> None:
+    """Force one persisted active session to look expired to the sweeper."""
+
+    persisted = await runtime._active_session_manager.load_persisted_active_session(  # noqa: SLF001
+        thread_id
+    )
+    assert persisted is not None
+    await runtime._active_session_manager.save_persisted_active_session(  # noqa: SLF001
+        PersistedActiveSessionState(
+            thread_id=persisted.thread_id,
+            started_at=persisted.started_at,
+            last_active_at="2026-01-01T00:00:00Z",
+            transcript_start_index=persisted.transcript_start_index,
+            max_crisis_level=persisted.max_crisis_level,
+            session_buffer=persisted.session_buffer,
+        )
+    )
+
+
 def _trigger_supporting_summarization_result(
     *,
     thread_id: str = "thread-a",
@@ -1331,29 +1353,228 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
             thread_id="thread-sweeper",
             user_id="user-1",
         )
-        persisted = await runtime._active_session_manager.load_persisted_active_session(
-            "thread-sweeper"
-        )
-        assert persisted is not None
-        await runtime._active_session_manager.save_persisted_active_session(
-            PersistedActiveSessionState(
-                thread_id=persisted.thread_id,
-                started_at=persisted.started_at,
-                last_active_at="2026-01-01T00:00:00Z",
-                transcript_start_index=persisted.transcript_start_index,
-                max_crisis_level=persisted.max_crisis_level,
-                session_buffer=persisted.session_buffer,
-            )
-        )
+        await _expire_persisted_active_session(runtime, "thread-sweeper")
         runtime._clear_thread_state("thread-sweeper")
 
-        await runtime._finalize_expired_sessions_once()
+        result = await runtime._finalize_expired_sessions_once()
 
+        assert result.checked == 1
+        assert result.finalized == 1
+        assert result.skipped_excluded == 0
+        assert result.skipped_missing == 0
+        assert result.skipped_not_expired == 0
+        assert result.failed_to_list is False
+        assert result.failed_thread_ids == []
         assert await runtime.memory_store.arecord_count(("user-1", "episodic")) == 1
         assert await runtime.memory_store.arecord_count(("user-1", "semantic")) == 1
         assert (
             await runtime._active_session_manager.load_persisted_active_session(
                 "thread-sweeper"
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_background_timeout_sweeper_reports_not_expired_session(
+    tmp_path: Path,
+) -> None:
+    """Sweeper should report active sessions that have not timed out yet."""
+
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM()
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        default_llm_client=llm,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-not-expired",
+            message="I'm checking in after a rough morning.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+
+        result = await runtime._finalize_expired_sessions_once()
+
+        assert result.checked == 1
+        assert result.finalized == 0
+        assert result.skipped_excluded == 0
+        assert result.skipped_missing == 0
+        assert result.skipped_not_expired == 1
+        assert result.failed_to_list is False
+        assert result.failed_thread_ids == []
+        assert (
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-not-expired"
+            )
+            is not None
+        )
+
+
+@pytest.mark.asyncio
+async def test_background_timeout_sweeper_reports_excluded_session(
+    tmp_path: Path,
+) -> None:
+    """Sweeper should report excluded threads without finalizing them."""
+
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM()
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        default_llm_client=llm,
+        auto_finalize_excluded=lambda thread_id: thread_id == "thread-excluded",
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-excluded",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+        await _hold_trigger_candidate(
+            runtime,
+            thread_id="thread-excluded",
+            user_id="user-1",
+        )
+        await _expire_persisted_active_session(runtime, "thread-excluded")
+        runtime._clear_thread_state("thread-excluded")
+
+        result = await runtime._finalize_expired_sessions_once()
+
+        assert result.checked == 1
+        assert result.finalized == 0
+        assert result.skipped_excluded == 1
+        assert result.skipped_missing == 0
+        assert result.skipped_not_expired == 0
+        assert result.failed_to_list is False
+        assert result.failed_thread_ids == []
+        assert (
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-excluded"
+            )
+            is not None
+        )
+
+
+@pytest.mark.asyncio
+async def test_background_timeout_sweeper_reports_listing_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sweeper should surface failures to list active sessions."""
+
+    paths = runtime_paths(tmp_path)
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+
+        async def _raise_list_failure() -> list[str]:
+            raise RuntimeError("forced list failure")
+
+        monkeypatch.setattr(runtime, "_list_active_thread_ids", _raise_list_failure)
+
+        result = await runtime._finalize_expired_sessions_once()
+
+        assert result.checked == 0
+        assert result.finalized == 0
+        assert result.skipped_excluded == 0
+        assert result.skipped_missing == 0
+        assert result.skipped_not_expired == 0
+        assert result.failed_to_list is True
+        assert result.failed_thread_ids == []
+
+
+@pytest.mark.asyncio
+async def test_background_timeout_sweeper_continues_after_per_thread_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sweeper should keep finalizing later sessions after one thread fails."""
+
+    paths = runtime_paths(tmp_path)
+    llm = FakeCrossRestartLLM(
+        extraction_result=_held_trigger_extraction_result(thread_id="thread-fails"),
+        summarization_result=_trigger_supporting_summarization_result(
+            thread_id="thread-fails"
+        ),
+    )
+
+    async with PersistentAgentRuntime(
+        **paths,
+        memory_mode=MemoryMode.LOCAL,
+        default_llm_client=llm,
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-fails",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+        await _hold_trigger_candidate(
+            runtime,
+            thread_id="thread-fails",
+            user_id="user-1",
+        )
+        await _expire_persisted_active_session(runtime, "thread-fails")
+        runtime._clear_thread_state("thread-fails")
+
+        llm.extraction_result = _held_trigger_extraction_result(
+            thread_id="thread-succeeds"
+        )
+        llm.summarization_result = _trigger_supporting_summarization_result(
+            thread_id="thread-succeeds"
+        )
+        await runtime.run_turn(
+            thread_id="thread-succeeds",
+            message="Family conflict is a big trigger for panic.",
+            channel=Channel.TEST,
+            user_id="user-1",
+            llm_client=llm,
+        )
+        await _hold_trigger_candidate(
+            runtime,
+            thread_id="thread-succeeds",
+            user_id="user-1",
+        )
+        await _expire_persisted_active_session(runtime, "thread-succeeds")
+        runtime._clear_thread_state("thread-succeeds")
+
+        original_end_session = runtime.end_session
+
+        async def _end_session_with_failure(thread_id: str, **kwargs: object) -> None:
+            if thread_id == "thread-fails":
+                raise RuntimeError("forced end failure")
+            await original_end_session(thread_id, **kwargs)
+
+        monkeypatch.setattr(runtime, "end_session", _end_session_with_failure)
+
+        result = await runtime._finalize_expired_sessions_once()
+
+        assert result.checked == 2
+        assert result.finalized == 1
+        assert result.skipped_excluded == 0
+        assert result.skipped_missing == 0
+        assert result.skipped_not_expired == 0
+        assert result.failed_to_list is False
+        assert result.failed_thread_ids == ["thread-fails"]
+        assert (
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-fails"
+            )
+            is not None
+        )
+        assert (
+            await runtime._active_session_manager.load_persisted_active_session(
+                "thread-succeeds"
             )
             is None
         )
