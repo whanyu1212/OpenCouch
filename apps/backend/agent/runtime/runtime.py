@@ -7,8 +7,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -34,12 +33,14 @@ from agent.runtime.session import (
     active_transcript_length,
     crisis_level_from_state,
     finalize_session_window,
-    session_continuity_clear_delta,
-    slice_state_to_active_session,
     transcript_length,
     turn_count_from_state,
 )
 from agent.runtime.session.history import messages_from_transcript
+from agent.runtime.session.service import (
+    SessionLifecycleService,
+    SessionSweepResult,
+)
 from agent.runtime.session_feedback import (
     record_session_feedback as record_runtime_session_feedback,
 )
@@ -84,8 +85,6 @@ from agent.runtime.types import (
     ActiveSessionExists,
     ExpectedSessionLiveness,
     PersistentTurnResult,
-    SessionInterrupted,
-    SessionLeaseExpired,
     SessionStatus,
     TextRuntimeChunkEvent,
     TextRuntimeConfig,
@@ -111,19 +110,6 @@ DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES: tuple[str, ...] = ()
 SESSION_TIMEOUT = timedelta(minutes=20)
 _UNSET = object()
-
-
-@dataclass(slots=True)
-class SessionSweepResult:
-    """Summary of one expired-session sweep pass."""
-
-    checked: int = 0
-    finalized: int = 0
-    skipped_excluded: int = 0
-    skipped_missing: int = 0
-    skipped_not_expired: int = 0
-    failed_to_list: bool = False
-    failed_thread_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -512,6 +498,17 @@ class PersistentAgentRuntime:
             memory_mode=self.memory_mode,
             session_timeout=self._session_timeout,
         )
+        self._session_lifecycle = SessionLifecycleService(
+            memory_mode=self.memory_mode,
+            session_tracker=self._session_tracker,
+            active_session_manager=self._active_session_manager,
+            state_store=self._state_store,
+            memory_store=self._memory_store,
+            embedding_provider=self._embedding_provider,
+            thread_llm_clients=self._thread_llm_clients,
+            session_sweep_interval_seconds=self._session_sweep_interval_seconds,
+            auto_finalize_excluded=self._auto_finalize_excluded,
+        )
 
     async def __aenter__(self) -> PersistentAgentRuntime:
         """Open runtime resources.
@@ -602,41 +599,14 @@ class PersistentAgentRuntime:
         return lock
 
     def _auto_finalization_excluded(self, thread_id: str) -> bool:
-        """Return whether runtime background finalization should skip a thread.
+        """Return whether runtime background finalization should skip a thread."""
 
-        Args:
-            thread_id: Thread identifier.
-
-        Returns:
-            True when an external registry owns session finalization.
-        """
-
-        if self._auto_finalize_excluded is None:
-            return False
-        try:
-            return bool(self._auto_finalize_excluded(thread_id))
-        except Exception:
-            logger.warning(
-                "auto-finalize exclusion predicate failed for thread %s",
-                thread_id,
-                exc_info=True,
-            )
-            return False
+        return self._session_lifecycle.auto_finalization_excluded(thread_id)
 
     async def _list_active_thread_ids(self) -> list[str]:
-        """List thread ids with unresolved active sessions.
+        """List thread ids with unresolved active sessions."""
 
-        Incognito runtimes have no persisted store, so they return the
-        in-process tracker's known threads. Persistent runtimes delegate
-        to the active-session manager.
-
-        Returns:
-            The unresolved active-session thread ids.
-        """
-
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            return self._session_tracker.thread_ids()
-        return await self._active_session_manager.list_persisted_active_session_ids()
+        return await self._session_lifecycle.list_active_thread_ids()
 
     async def _clear_session_continuity_in_state(
         self,
@@ -645,57 +615,18 @@ class PersistentAgentRuntime:
         *,
         suppress_errors: bool = False,
     ) -> None:
-        """Clear session-scoped continuity fields from persisted runtime state.
+        """Clear session-scoped continuity fields from persisted runtime state."""
 
-        Args:
-            thread_id: The thread identifier to update.
-            state: The current persisted runtime state, if any.
-            suppress_errors: Whether state update failures should be logged.
-
-        Returns:
-            None.
-
-        Raises:
-            Exception: Propagates state update failures when
-                ``suppress_errors`` is ``False``.
-        """
-
-        delta = session_continuity_clear_delta(state)
-        if not delta:
-            return
-
-        try:
-            updated = cast(AgentState, dict(state))
-            for key, value in delta.items():
-                if isinstance(value, Mapping) and isinstance(updated.get(key), Mapping):
-                    updated[key] = cast(Any, {**dict(updated.get(key, {})), **value})
-                else:
-                    updated[key] = cast(Any, value)
-            await self._state_store.save_state(thread_id, updated)
-        except Exception:
-            if suppress_errors:
-                logger.warning(
-                    "failed to clear session continuity for thread %s",
-                    thread_id,
-                    exc_info=True,
-                )
-                return
-            raise
+        await self._session_lifecycle.clear_session_continuity_in_state(
+            thread_id,
+            state,
+            suppress_errors=suppress_errors,
+        )
 
     def _clear_thread_state(self, thread_id: str) -> None:
-        """Drop all in-process state for one thread.
+        """Drop all in-process state for one thread."""
 
-        Clears the session tracker (active-session metadata, transcript
-        start index, max crisis level, session memory buffer) and pops
-        the cached per-thread LLM client. Composite operation — both
-        pieces are runtime-owned and always cleared together.
-
-        Args:
-            thread_id: The thread identifier to clear.
-        """
-
-        self._session_tracker.clear(thread_id)
-        self._thread_llm_clients.pop(thread_id, None)
+        self._session_lifecycle.clear_thread_state(thread_id)
 
     def _remember_llm_client(
         self,
@@ -743,121 +674,30 @@ class PersistentAgentRuntime:
         *,
         last_active_at: str | None = None,
     ) -> None:
-        """Persist in-process session trackers for one thread.
+        """Persist in-process session trackers for one thread."""
 
-        Args:
-            thread_id: The thread identifier to persist.
-            session_buffer: Optional session buffer override. When in-process
-                tracking has been cleared but a persisted active-session row
-                still exists, this lets callers preserve held candidates.
-            last_active_at: Optional explicit last-active timestamp.
-
-        Returns:
-            None.
-        """
-
-        session = self._session_tracker.to_persisted_session(
+        await self._session_lifecycle.persist_runtime_session_tracking(
             thread_id,
-            last_active_at=last_active_at or _iso_now(),
+            session_buffer,
+            last_active_at=last_active_at,
         )
-        if session is None and session_buffer is not None:
-            persisted = (
-                await self._active_session_manager.load_persisted_active_session(
-                    thread_id
-                )
-            )
-            if persisted is None:
-                return
-            session = PersistedActiveSessionState(
-                thread_id=persisted.thread_id,
-                started_at=persisted.started_at,
-                last_active_at=last_active_at or persisted.last_active_at,
-                transcript_start_index=persisted.transcript_start_index,
-                max_crisis_level=persisted.max_crisis_level,
-                session_buffer=session_buffer.model_copy(deep=True),
-            )
-        elif session is not None and session_buffer is not None:
-            session = PersistedActiveSessionState(
-                thread_id=session.thread_id,
-                started_at=session.started_at,
-                last_active_at=session.last_active_at,
-                transcript_start_index=session.transcript_start_index,
-                max_crisis_level=session.max_crisis_level,
-                session_buffer=session_buffer.model_copy(deep=True),
-            )
-        if session is None:
-            return
-        await self._active_session_manager.save_persisted_active_session(session)
 
     async def _finalize_expired_sessions_once(self) -> SessionSweepResult:
-        """Finalize any sessions that crossed the inactivity timeout.
+        """Finalize any sessions that crossed the inactivity timeout."""
 
-        Returns:
-            Summary of the sweep pass.
-        """
-
-        result = SessionSweepResult()
-
-        try:
-            active_thread_ids = await self._list_active_thread_ids()
-        except Exception:
-            result.failed_to_list = True
-            logger.warning(
-                "finalize_expired_sessions_once: failed to list active sessions",
-                exc_info=True,
-            )
-            return result
-
-        result.checked = len(active_thread_ids)
-
-        for active_thread_id in active_thread_ids:
-            try:
-                if self._auto_finalization_excluded(active_thread_id):
-                    result.skipped_excluded += 1
-                    continue
-                persisted = (
-                    await self._active_session_manager.load_persisted_active_session(
-                        active_thread_id
-                    )
-                )
-                if persisted is None:
-                    result.skipped_missing += 1
-                    continue
-                if not self._active_session_manager.session_has_expired(persisted):
-                    result.skipped_not_expired += 1
-                    continue
-                logger.info(
-                    "session timeout reached for thread %s; auto-finalizing expired session",
-                    active_thread_id,
-                )
-                await self.end_session(
-                    active_thread_id,
-                    llm_client=self._effective_llm_client(active_thread_id),
-                )
-                result.finalized += 1
-            except Exception:
-                result.failed_thread_ids.append(active_thread_id)
-                logger.warning(
-                    "finalize_expired_sessions_once: failed to end expired session for thread %s",
-                    active_thread_id,
-                    exc_info=True,
-                )
-
-        return result
+        return await self._session_lifecycle.finalize_expired_sessions_once(
+            end_session=self.end_session,
+            effective_llm_client=self._effective_llm_client,
+            list_active_thread_ids=self._list_active_thread_ids,
+            is_auto_finalization_excluded=self._auto_finalization_excluded,
+        )
 
     async def _session_sweeper_loop(self) -> None:
-        """Run the background session-timeout sweeper loop.
+        """Run the background session-timeout sweeper loop."""
 
-        Returns:
-            None.
-        """
-
-        try:
-            while True:
-                await asyncio.sleep(self._session_sweep_interval_seconds)
-                await self._finalize_expired_sessions_once()
-        except asyncio.CancelledError:
-            raise
+        await self._session_lifecycle.session_sweeper_loop(
+            finalize_expired_sessions_once=self._finalize_expired_sessions_once
+        )
 
     async def _prepare_session_for_turn(
         self,
@@ -867,59 +707,16 @@ class PersistentAgentRuntime:
         llm_client: BaseLLMClient | None,
         expected_liveness: ExpectedSessionLiveness | None = None,
     ) -> None:
-        """Restore or create the active session before a new turn.
+        """Restore or create the active session before a new turn."""
 
-        Args:
-            thread_id: The thread identifier being prepared.
-            prior_state: The last persisted runtime state for the thread.
-            llm_client: The LLM client for any timeout-driven finalization.
-            expected_liveness: Optional caller-owned liveness expectation.
-
-        Returns:
-            None.
-        """
-
-        status = await self._session_status_unlocked(thread_id)
-        if expected_liveness == "active" and status != SessionStatus.ACTIVE:
-            if status == SessionStatus.INTERRUPTED:
-                raise SessionInterrupted(thread_id)
-            raise SessionLeaseExpired(thread_id, status)
-        if expected_liveness == "absent" and status != SessionStatus.ABSENT:
-            raise ActiveSessionExists(thread_id, status)
-        if expected_liveness is None:
-            if status == SessionStatus.INTERRUPTED:
-                raise SessionInterrupted(thread_id)
-            if status == SessionStatus.ROTATION_REQUIRED:
-                raise SessionLeaseExpired(thread_id, status)
-
-        persisted = await self._active_session_manager.load_persisted_active_session(
-            thread_id
+        await self._session_lifecycle.prepare_session_for_turn(
+            thread_id=thread_id,
+            prior_state=prior_state,
+            llm_client=llm_client,
+            expected_liveness=expected_liveness,
+            session_status_unlocked=self._session_status_unlocked,
+            end_session_unlocked=self._end_session_unlocked,
         )
-        if persisted is not None:
-            self._session_tracker.hydrate(persisted)
-            if self._active_session_manager.session_has_expired(persisted):
-                logger.info(
-                    "session timeout reached for thread %s; ending prior session before new turn",
-                    thread_id,
-                )
-                await self._end_session_unlocked(thread_id, llm_client=llm_client)
-                persisted = None
-
-        if persisted is None and self._session_tracker.has_tracking(thread_id):
-            return
-
-        if persisted is None:
-            await self._clear_session_continuity_in_state(thread_id, prior_state)
-            now = _iso_now()
-            self._session_tracker.start_session(
-                thread_id,
-                started_at=now,
-                transcript_start_index=transcript_length(prior_state),
-            )
-            await self._persist_runtime_session_tracking(
-                thread_id,
-                last_active_at=now,
-            )
 
     async def _record_successful_turn_tracking(
         self,
@@ -1894,100 +1691,15 @@ class PersistentAgentRuntime:
         *,
         llm_client: BaseLLMClient | None = None,
     ) -> StoredSessionArc | None:
-        """Summarize an active session while the caller owns the thread lock.
+        """Summarize an active session while the caller owns the thread lock."""
 
-        Args:
-            thread_id: The thread whose active session should be summarized.
-            llm_client: The optional LLM client for session summarization.
-
-        Returns:
-            The written session arc, or ``None`` when summarization is skipped.
-        """
-
-        effective_llm_client = self._effective_llm_client(thread_id, llm_client)
-        status = await self._session_status_unlocked(thread_id)
-        persisted = await self._active_session_manager.load_persisted_active_session(
-            thread_id
+        return await self._session_lifecycle.end_session_unlocked(
+            thread_id,
+            llm_client=llm_client,
+            effective_llm_client=self._effective_llm_client,
+            session_status_unlocked=self._session_status_unlocked,
+            get_state=self.get_state,
         )
-        if persisted is not None:
-            self._session_tracker.hydrate(persisted)
-        has_active_session = (
-            persisted is not None or self._session_tracker.has_tracking(thread_id)
-        )
-
-        if not has_active_session:
-            return None
-
-        @asynccontextmanager
-        async def _finalize_mutation_scope() -> AsyncIterator[str | None]:
-            if persisted is None:
-                yield None
-                return
-            async with self._active_session_manager.active_session_mutation(
-                thread_id,
-                mutation_kind="finalize",
-                finalize_required_reason=(
-                    "interrupted" if status == SessionStatus.INTERRUPTED else None
-                ),
-            ) as mutation_token:
-                yield mutation_token
-
-        async with _finalize_mutation_scope() as mutation_token:
-            state = await self.get_state(thread_id)
-
-            if state is None:
-                await self._active_session_manager.delete_persisted_active_session(
-                    thread_id
-                )
-                self._clear_thread_state(thread_id)
-                return None
-
-            try:
-                transcript_start_index = self._session_tracker.transcript_start_index(
-                    thread_id
-                )
-                session_state = slice_state_to_active_session(
-                    state,
-                    transcript_start_index=transcript_start_index,
-                )
-                started_at = self._session_tracker.started_at(
-                    thread_id,
-                    default=_iso_now(),
-                )
-                ended_at = _iso_now()
-                crisis_level_max = self._session_tracker.max_crisis_level(thread_id)
-                session_buffer = self._session_tracker.session_memory_buffer_or_none(
-                    thread_id
-                )
-                stored_arc = await finalize_session_window(
-                    session_state,
-                    thread_id=thread_id,
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    crisis_level_max=crisis_level_max,
-                    session_buffer=session_buffer,
-                    llm_client=effective_llm_client,
-                    memory_store=self._memory_store,
-                    memory_mode=self.memory_mode,
-                    embedding_provider=self._embedding_provider,
-                )
-                await self._clear_session_continuity_in_state(
-                    thread_id,
-                    state,
-                    suppress_errors=True,
-                )
-                await self._active_session_manager.delete_persisted_active_session(
-                    thread_id
-                )
-                self._clear_thread_state(thread_id)
-                return stored_arc
-            except Exception:
-                if mutation_token is not None:
-                    await self._active_session_manager.clear_active_session_mutation(
-                        thread_id,
-                        mutation_token,
-                    )
-                raise
 
     async def end_transcript_session(
         self,
@@ -2046,38 +1758,15 @@ class PersistentAgentRuntime:
         *,
         llm_client: BaseLLMClient | None = None,
     ) -> None:
-        """Finalize any unresolved active sessions.
+        """Finalize any unresolved active sessions."""
 
-        Args:
-            llm_client: The fallback LLM client to use for summarization.
-
-        Returns:
-            None.
-        """
-
-        try:
-            active_thread_ids = await self._list_active_thread_ids()
-        except Exception:
-            logger.warning(
-                "finalize_active_sessions: failed to list active sessions",
-                exc_info=True,
-            )
-            return
-
-        for active_thread_id in active_thread_ids:
-            try:
-                if self._auto_finalization_excluded(active_thread_id):
-                    continue
-                await self.end_session(
-                    active_thread_id,
-                    llm_client=self._effective_llm_client(active_thread_id, llm_client),
-                )
-            except Exception:
-                logger.warning(
-                    "finalize_active_sessions: failed to end session for thread %s",
-                    active_thread_id,
-                    exc_info=True,
-                )
+        await self._session_lifecycle.finalize_active_sessions(
+            llm_client=llm_client,
+            end_session=self.end_session,
+            effective_llm_client=self._effective_llm_client,
+            list_active_thread_ids=self._list_active_thread_ids,
+            is_auto_finalization_excluded=self._auto_finalization_excluded,
+        )
 
     async def record_session_feedback(
         self,

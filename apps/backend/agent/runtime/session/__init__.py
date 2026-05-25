@@ -42,12 +42,15 @@ from agent.runtime.session.state import (
     transcript_length,
     turn_count_from_state,
 )
+from agent.runtime.session.service import SessionLifecycleService, SessionSweepResult
 from agent.runtime.session.summarize import run_summarize_session
 from agent.runtime.session.tracking import RuntimeSessionTracker
 
 __all__ = [
     "EXERCISE_STATE_FIELDS",
     "RuntimeSessionTracker",
+    "SessionLifecycleService",
+    "SessionSweepResult",
     "SessionConversation",
     "active_transcript_length",
     "content_to_text",
