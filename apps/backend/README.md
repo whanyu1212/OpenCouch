@@ -43,18 +43,6 @@ Run backend tests:
 uv run pytest
 ```
 
-Run the local Telegram dogfood gateway:
-
-```bash
-OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \
-OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \
-OPENCOUCH_TELEGRAM_OWNER_ID="hanyu" \
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER="fast" \
-uv run python -m channels.gateway telegram
-```
-
-The Telegram gateway is standalone and does not require the FastAPI server.
-
 Run backend tests with coverage:
 
 ```bash

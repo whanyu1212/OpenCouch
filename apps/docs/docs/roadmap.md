@@ -17,7 +17,6 @@ What's shipped, what's in progress, and what's planned.
 | **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
 | **Voice Chat (OpenAI Realtime)** | Browser speech-to-speech over OpenAI Realtime WebRTC with app-owned tools, turn policy, incognito/persistent modes, turn recording, and shared end-session finalization. Lives across `apps/web/src/components/realtime-voice-session-provider.tsx` and `apps/backend/agent/voice/`. |
 | **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /api/threads/{id}/end`. Postgres-first durable backend with incognito-safe in-memory mode and legacy SQLite fallback. |
-| **Telegram DM Gateway** | Standalone local dogfood gateway for Telegram DMs. Uses `Channel.TELEGRAM`, persistent text runtime, allowlisted numeric sender IDs, canonical owner ID memory, `/start`, `/help`, `/end`, safe Telegram HTML rendering, optional thread rotation, startup recovery, per-chat locking, lease retry, and closed-thread reclaim. |
 | **Crisis Gate — LLM-only** | Crisis classification is a structured LLM call with strict truth-table enforcement. Provider failures surface through retries/errors instead of silently degrading to regex rules. |
 | **Routing — LLM-primary** | Crisis, therapeutic dispatch, grounded lookup, memory-control, guided-exercise selection, and memory write policy use LLM-owned classifiers with local validation and hard confirmation gates where needed. |
 | **Knowledge Overhaul** | `core_identity.md` defines assistant role, product stance, voice, therapeutic grounding, cultural sensitivity, repair patterns, and boundary-setting voice. `boundaries.md` expands redirection patterns and dependency framing. |
@@ -40,12 +39,10 @@ What's shipped, what's in progress, and what's planned.
 
 ### Messaging Channels
 
-WhatsApp and Discord adapters. `Channel.WHATSAPP` already exists;
-Discord would need an enum addition. The agent graph is channel-agnostic.
-Each adapter maps platform message formats to `AgentInput` /
-`AgentOutput`. Crisis responses would need channel-specific formatting
-(inline buttons, embeds). Telegram groups, media, and richer Telegram UX
-remain future scope beyond the shipped DM text gateway.
+WhatsApp, Discord, and Telegram adapters. The agent graph is
+channel-agnostic; each adapter would map platform message formats
+to `AgentInput` / `AgentOutput`. Crisis responses would need
+channel-specific formatting (inline buttons, embeds).
 
 ### Acoustic Crisis Detection
 

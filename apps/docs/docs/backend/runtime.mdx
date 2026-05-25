@@ -36,15 +36,6 @@ text. The 20-min inactivity sweeper remains text-session oriented.
 See [Voice](/docs/voice) for the full picture.
 :::
 
-:::note Telegram adds an optional session registry
-The Telegram gateway uses the persistent text runtime. When thread
-rotation is enabled, the channel also owns a Telegram-specific session
-registry that maps one chat to rotating runtime thread ids, recovers
-orphan rows on startup, and reclaims closed checkpoints after a grace
-period. See [Telegram Gateway](/docs/system/telegram) for the channel
-details.
-:::
-
 ---
 
 ## How state accumulates
@@ -128,8 +119,6 @@ caller boundary:
 | CLI text | Generates `local-<12 uuid hex>` | Persistent mode falls back to the active thread id; guest mode ignores `--user-id` | `user_id` if set, otherwise active `thread_id` |
 | Web UI | Blank setup field generates `web-<8 random base36>` | Blank persistent setup uses `web-user`; incognito clears `user_id` | `user_id` if set, otherwise `thread_id` |
 | Web voice | Reuses the active web `thread_id` from setup | Persistent mode uses the active web user id; incognito clears `user_id` | `user_id` if set, otherwise active `thread_id` |
-| Telegram, rotation off | Uses `telegram:dm:<chat_id>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
-| Telegram, rotation on | Uses `telegram:dm:<chat_id>:session:<ulid>` | `OPENCOUCH_TELEGRAM_OWNER_ID` is required | Canonical Telegram owner id |
 
 The generated thread id is never derived from the user id. The fallback
 goes the other direction: when no stable `user_id` is supplied, memory

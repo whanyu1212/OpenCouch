@@ -56,7 +56,6 @@ The project is still pre-beta; a closed beta is planned.
 - **Persistent Memory:** Retains context across sessions using semantic facts, episodic arcs, and procedural rules.
 - **Safety First:** Built-in safety routing evaluates every turn before responding, backed by a durable crisis-audit log.
 - **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
-- **Optional Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
 - **Tracing & Regression Checks:** Backend tests, live-provider checks, and Opik traces for regression tracking.
 
 ## Screenshots
@@ -70,7 +69,6 @@ The project is still pre-beta; a closed beta is planned.
   <tr>
     <td width="16%"></td>
     <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/cli-example.png" width="100%" alt="OpenCouch CLI session" /></td>
-    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/telegram-example.png" width="100%" alt="OpenCouch Telegram DM" /></td>
     <td width="16%"></td>
   </tr>
 </table>
@@ -105,19 +103,6 @@ OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
 ```
 
-<details>
-<summary><b>Optional: Telegram Gateway Environment</b></summary>
-
-```env
-# Telegram gateway.
-OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
-OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
-OPENCOUCH_TELEGRAM_OWNER_ID=alice
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast
-```
-
-</details>
-
 </details>
 
 Keep real `.env` files local and out of version control.
@@ -127,7 +112,7 @@ Keep real `.env` files local and out of version control.
 The most reliable dogfood path is `scripts/text_repl.sh` for text. Compose starts the browser stack: Postgres, backend API, and web.
 
 <details>
-<summary><b>View commands for Compose, CLI, web, Telegram, and docs</b></summary>
+<summary><b>View commands for Compose, CLI, web, and docs</b></summary>
 
 #### Compose stack
 
@@ -181,17 +166,6 @@ cd apps/backend && uv run uvicorn main:app --port 8000 --reload
 pnpm install && pnpm --dir apps/web dev
 ```
 
-#### Optional Telegram gateway
-
-```bash
-cd apps/backend
-OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \
-OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \
-OPENCOUCH_TELEGRAM_OWNER_ID="alice" \
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER="fast" \
-uv run python -m channels.gateway telegram
-```
-
 #### Documentation site
 
 The official documentation is live at [whanyu1212.github.io/OpenCouch](https://whanyu1212.github.io/OpenCouch/). Run the docs site locally only when editing documentation:
@@ -215,7 +189,6 @@ Before response generation, each turn runs through safety routing. Memory writes
 
 - **CLI:** Local text harness for development and testing.
 - **Web chat:** Next.js text UI backed by FastAPI REST and WebSocket streaming routes.
-- **Optional Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
 - **Backend API:** FastAPI route layer used by the web UI and other clients.
 
 OpenCouch owns the graph-like product state machine: thread locks, state
@@ -234,7 +207,6 @@ flowchart TD
     subgraph SURF ["Runtime Surfaces"]
         CLI["CLI / TUI"]:::surfaceNode
         WEB["Next.js web chat"]:::surfaceNode
-        TG["Optional Telegram DM gateway"]:::surfaceNode
         API["FastAPI REST / WebSocket"]:::surfaceNode
     end
 
@@ -327,7 +299,6 @@ OpenCouch/
 │   │   │   ├── memory/         # Memory retrieval, write policy, embeddings, stores
 │   │   ├── llm/                # LLM adapter protocol and OpenAI client
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
-│   │   ├── channels/           # Telegram gateway and channel adapters
 │   │   ├── api/                # FastAPI REST + WebSocket routes
 │   │   └── tests/              # 1100+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
@@ -417,7 +388,6 @@ OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory
 | ✅ **Shipped** | **Core product** | Web chat, threading, persistent/incognito sessions, memory inspection, and session feedback |
 | ✅ **Shipped** | **Guided support** | 13 state-tracked coping exercises for grounding, breathing, thought work, values reflection, and related flows |
 | ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, OpenAI Agents SDK text runtime, Postgres-backed state/session persistence, crisis audit, and feedback storage |
-| 🧪 **Dogfood** | **Messaging** | Telegram direct-message gateway with allow-listing, Markdown rendering, `/end`, and session rotation |
 | 🔜 **Next** | **Product stabilization** | Closed beta readiness, onboarding polish, reliability improvements, clearer session lifecycle, and feedback-driven UX fixes |
 | 🔜 **Next** | **Voice rebuild** | Rebuild voice from scratch after the text runtime cleanup, without carrying the legacy LiveKit worker forward |
 | 🔜 **Next** | **Memory quality** | Background fact consolidation, dormant/obsolete memory handling, better review controls, and undo support |
