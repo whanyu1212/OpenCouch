@@ -110,8 +110,11 @@ class SessionMemoryCommitResult:
     semantic_writes: int = 0
     semantic_bumps: int = 0
     semantic_skips: int = 0
+    semantic_failures: int = 0
     procedural_writes: int = 0
     procedural_skips: int = 0
+    procedural_failures: int = 0
+    support_load_failed: bool = False
 
 
 def _semantic_group_key(candidate: SemanticCandidate) -> tuple[str, ...]:
@@ -817,6 +820,7 @@ async def commit_session_memory(
             current_session_ids=current_session_ids,
         )
     except Exception:
+        result.support_load_failed = True
         logger.warning(
             "commit_session_memory: failed to load prior episodic support; "
             "continuing without cross-session repetition evidence.",
@@ -886,6 +890,7 @@ async def commit_session_memory(
             result.semantic_writes += batch_outcome.written
             result.semantic_bumps += batch_outcome.bumped
             result.semantic_skips += batch_outcome.skipped
+            result.semantic_failures += batch_outcome.failures
     if procedural_candidates_to_commit:
         for (
             procedural_record,
@@ -919,16 +924,18 @@ async def commit_session_memory(
                     procedural_candidate.payload.rule[:60],
                     exc_info=True,
                 )
-                result.procedural_skips += 1
+                result.procedural_failures += 1
 
     logger.info(
         "commit_session_memory: session-end promotion complete — %d semantic written, "
-        "%d semantic bumped, %d semantic skipped, %d procedural written, "
-        "%d procedural skipped",
+        "%d semantic bumped, %d semantic skipped, %d semantic failures, "
+        "%d procedural written, %d procedural skipped, %d procedural failures",
         result.semantic_writes,
         result.semantic_bumps,
         result.semantic_skips,
+        result.semantic_failures,
         result.procedural_writes,
         result.procedural_skips,
+        result.procedural_failures,
     )
     return result

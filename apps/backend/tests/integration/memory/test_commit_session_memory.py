@@ -8,6 +8,8 @@ from typing import Any, Literal, cast
 
 import pytest
 
+import agent.memory.semantic_writes as semantic_writes
+import agent.memory.session_commit_service as session_commit_service
 from agent.memory.policy.candidates import (
     PolicyDecision,
     ProceduralCandidate,
@@ -411,6 +413,9 @@ async def test_supported_held_candidate_writes_at_session_end() -> None:
     assert result is not None
     assert result.semantic_writes == 1
     assert result.semantic_skips == 0
+    assert result.semantic_failures == 0
+    assert result.procedural_failures == 0
+    assert result.support_load_failed is False
     assert await store.arecord_count(("user-1", "semantic")) == 1
     records = await store.asearch(("user-1", "semantic"), query=None)
     assert records[0].value["write_timing"] == "session_end"
@@ -1344,12 +1349,142 @@ async def test_repeated_implicit_procedural_preference_promotes_at_session_end()
     assert result is not None
     assert result.procedural_writes == 1
     assert result.procedural_skips == 0
+    assert result.procedural_failures == 0
+    assert result.semantic_failures == 0
+    assert result.support_load_failed is False
     profile_record = await store.aget(("user-1", "procedural"), "user_response_style")
     assert profile_record is not None
     stored_rule = profile_record.value["rules"][0]
     assert stored_rule["write_timing"] == "promotion"
     assert stored_rule["policy_version"] == "phase3_v1"
     assert stored_rule["source"] == "consolidation"
+
+
+@pytest.mark.asyncio
+async def test_commit_session_memory_marks_prior_support_load_failures() -> None:
+    store = OpenCouchMemoryStore()
+    candidate = build_semantic_candidate(
+        _semantic_write(),
+        message="Family conflict is a big trigger for panic.",
+    )
+    buffer = _held_semantic_buffer(candidate)
+
+    async def _raise_prior_support_failure(
+        *args: object, **kwargs: object
+    ) -> list[str]:
+        raise RuntimeError("forced prior support failure")
+
+    original_loader = session_commit_service._load_prior_session_support_texts
+    session_commit_service._load_prior_session_support_texts = (
+        _raise_prior_support_failure
+    )
+    try:
+        result = await run_commit_session_memory(
+            _partial_state(),
+            memory_store=store,
+            session_buffer=buffer,
+            stored_arc=_stored_arc(),
+        )
+    finally:
+        session_commit_service._load_prior_session_support_texts = original_loader
+
+    assert result is not None
+    assert result.support_load_failed is True
+    assert result.semantic_writes == 1
+    assert result.semantic_failures == 0
+    assert result.procedural_failures == 0
+    assert await store.arecord_count(("user-1", "semantic")) == 1
+
+
+@pytest.mark.asyncio
+async def test_commit_session_memory_marks_semantic_fetch_failures() -> None:
+    store = OpenCouchMemoryStore()
+    candidate = build_semantic_candidate(
+        _semantic_write(),
+        message="Family conflict is a big trigger for panic.",
+    )
+    buffer = _held_semantic_buffer(candidate)
+
+    async def _raise_fetch_failure(*args: object, **kwargs: object) -> list[object]:
+        raise RuntimeError("forced semantic fetch failure")
+
+    original_fetch = semantic_writes.fetch_existing_semantic_records
+    semantic_writes.fetch_existing_semantic_records = _raise_fetch_failure
+    try:
+        result = await run_commit_session_memory(
+            _partial_state(),
+            memory_store=store,
+            session_buffer=buffer,
+            stored_arc=_stored_arc(),
+        )
+    finally:
+        semantic_writes.fetch_existing_semantic_records = original_fetch
+
+    assert result is not None
+    assert result.semantic_writes == 0
+    assert result.semantic_skips == 0
+    assert result.semantic_failures == 1
+    assert result.procedural_failures == 0
+    assert result.support_load_failed is False
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+
+
+@pytest.mark.asyncio
+async def test_commit_session_memory_marks_procedural_upsert_failures() -> None:
+    store = OpenCouchMemoryStore()
+    candidate_a = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="Meditation makes me more anxious.",
+            evidence=["Meditation makes me more anxious."],
+        ),
+        message="Meditation makes me more anxious.",
+        session_id="thread-test",
+        turn_index=0,
+    )
+    candidate_b = build_procedural_candidate(
+        ProceduralRuleDraft(
+            rule="I think meditation makes me more anxious every time.",
+            evidence=["I think meditation makes me more anxious every time."],
+        ),
+        message="I think meditation makes me more anxious every time.",
+        session_id="thread-test",
+        turn_index=1,
+    )
+    buffer = _held_procedural_buffer(candidate_a, candidate_b)
+
+    async def _raise_upsert_failure(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("forced procedural upsert failure")
+
+    original_upsert = session_commit_service.aupsert_procedural_rule
+    session_commit_service.aupsert_procedural_rule = _raise_upsert_failure
+    try:
+        result = await run_commit_session_memory(
+            _partial_state(
+                transcript=[
+                    {
+                        "role": "user",
+                        "content": "Meditation makes me more anxious.",
+                    },
+                    {
+                        "role": "user",
+                        "content": "I think meditation makes me more anxious every time.",
+                    },
+                ]
+            ),
+            memory_store=store,
+            session_buffer=buffer,
+            stored_arc=None,
+        )
+    finally:
+        session_commit_service.aupsert_procedural_rule = original_upsert
+
+    assert result is not None
+    assert result.procedural_writes == 0
+    assert result.procedural_skips == 0
+    assert result.procedural_failures == 1
+    assert result.semantic_failures == 0
+    profile_record = await store.aget(("user-1", "procedural"), "user_response_style")
+    assert profile_record is None
 
 
 def test_privacy_request_clears_session_buffer() -> None:
