@@ -47,6 +47,10 @@ ships with switchable `Dogfood`, `Debug`, `Chat`, and `Memory` views;
 It starts in light mode by default — use `--theme dark` or press
 `Ctrl+Y` inside the TUI to switch.
 
+Run the `./scripts/text_tui.sh` commands below from the repository
+root. If you're still in `apps/backend` from the install step, `cd
+../..` first.
+
 ### Deterministic mode
 
 No LLM calls, in-memory only. Good for verifying TUI rendering, slash
