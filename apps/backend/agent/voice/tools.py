@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -55,6 +56,25 @@ _PERSISTENT_ONLY_TOOL_NAMES = {
     "confirm_memory_deletion",
     "cancel_memory_deletion",
 }
+
+_VOICE_MEMORY_MUTATOR_TOOL_NAMES = {
+    "set_proactive_memory_recall",
+    "save_response_preference",
+    "prepare_memory_deletion_by_index",
+    "prepare_memory_deletion_by_query",
+    "confirm_memory_deletion",
+    "cancel_memory_deletion",
+}
+
+_INTENT_GATED_MUTATOR_TOOL_NAMES = {
+    "set_proactive_memory_recall",
+    "save_response_preference",
+    "prepare_memory_deletion_by_index",
+    "prepare_memory_deletion_by_query",
+}
+
+_RECENT_USER_TURN_LIMIT = 3
+_MIN_USER_QUOTE_LENGTH = 8
 
 
 def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
@@ -242,13 +262,15 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
                     "Use only when the user explicitly asks you to remember such "
                     "a preference. Side effects: writes durable procedural memory."
                 ),
-                properties={
-                    "preference_text": {
-                        "type": "string",
-                        "description": "The explicit user preference to save.",
+                properties=_with_user_quote_property(
+                    {
+                        "preference_text": {
+                            "type": "string",
+                            "description": "The explicit user preference to save.",
+                        }
                     }
-                },
-                required=["preference_text"],
+                ),
+                required=["preference_text", "user_quote"],
             ),
             _function_tool(
                 name="set_proactive_memory_recall",
@@ -256,13 +278,15 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
                     "Turn proactive memory recall on or off for the current "
                     "OpenCouch user. Use only when explicitly requested."
                 ),
-                properties={
-                    "enabled": {
-                        "type": "boolean",
-                        "description": "Whether proactive recall should be enabled.",
+                properties=_with_user_quote_property(
+                    {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Whether proactive recall should be enabled.",
+                        }
                     }
-                },
-                required=["enabled"],
+                ),
+                required=["enabled", "user_quote"],
             ),
             _function_tool(
                 name="prepare_memory_deletion_by_index",
@@ -270,17 +294,21 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
                     "Prepare deletion of a saved memory selected by visible "
                     "kind and one-based index. Side effects: pending deletion only."
                 ),
-                properties={
-                    "target_kind": {
-                        "type": "string",
-                        "enum": ["fact", "session", "rule"],
-                    },
-                    "target_index": {
-                        "type": "integer",
-                        "description": "One-based index from the visible memory list.",
-                    },
-                },
-                required=["target_kind", "target_index"],
+                properties=_with_user_quote_property(
+                    {
+                        "target_kind": {
+                            "type": "string",
+                            "enum": ["fact", "session", "rule"],
+                        },
+                        "target_index": {
+                            "type": "integer",
+                            "description": (
+                                "One-based index from the visible memory list."
+                            ),
+                        },
+                    }
+                ),
+                required=["target_kind", "target_index", "user_quote"],
             ),
             _function_tool(
                 name="prepare_memory_deletion_by_query",
@@ -288,13 +316,15 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
                     "Prepare deletion of a saved memory selected by a concrete "
                     "query. Side effects: pending deletion only."
                 ),
-                properties={
-                    "query": {
-                        "type": "string",
-                        "description": "Concrete saved-memory deletion query.",
+                properties=_with_user_quote_property(
+                    {
+                        "query": {
+                            "type": "string",
+                            "description": "Concrete saved-memory deletion query.",
+                        }
                     }
-                },
-                required=["query"],
+                ),
+                required=["query", "user_quote"],
             ),
             _function_tool(
                 name="confirm_memory_deletion",
@@ -339,6 +369,19 @@ def _function_tool(
     }
 
 
+def _with_user_quote_property(properties: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **properties,
+        "user_quote": {
+            "type": "string",
+            "description": (
+                "Exact recent user words that explicitly requested this memory "
+                "change. The server verifies this quote before executing."
+            ),
+        },
+    }
+
+
 async def execute_voice_tool_call(
     *,
     runtime: Any,
@@ -362,6 +405,31 @@ async def execute_voice_tool_call(
             return _incognito_memory_status_result()
         if tool_name in _PERSISTENT_ONLY_TOOL_NAMES:
             raise ValueError(f"{tool_name!r} is not available in incognito voice mode.")
+
+    if tool_name in _VOICE_MEMORY_MUTATOR_TOOL_NAMES and not _has_owner_or_session_id(
+        user_id=user_id,
+        thread_id=thread_id,
+    ):
+        return _voice_mutator_refusal(
+            reason="owner_or_session_missing",
+            response_text=(
+                "I can't change saved memory because this voice session does "
+                "not include a user or session identifier."
+            ),
+        )
+
+    if tool_name in _INTENT_GATED_MUTATOR_TOOL_NAMES and not _user_quote_matches_turn(
+        arguments=arguments,
+        current_user_message=current_user_message,
+        transcript=transcript,
+    ):
+        return _voice_mutator_refusal(
+            reason="user_intent_not_verified",
+            response_text=(
+                "I can't change saved memory from voice unless the tool call "
+                "includes exact recent user words that asked for that change."
+            ),
+        )
 
     context = await runtime.build_voice_tool_context(
         thread_id=thread_id,
@@ -520,6 +588,72 @@ def _incognito_memory_status_result() -> dict[str, object]:
         ),
         "memory_mode": "incognito",
         "memory_control": {"memory_mode": "incognito"},
+        "side_effect": "none",
+        "retry_safe": True,
+    }
+
+
+def _has_owner_or_session_id(*, user_id: str | None, thread_id: str) -> bool:
+    return bool((user_id or "").strip() or thread_id.strip())
+
+
+def _user_quote_matches_turn(
+    *,
+    arguments: dict[str, object],
+    current_user_message: str,
+    transcript: list[dict[str, object]],
+) -> bool:
+    raw_quote = arguments.get("user_quote")
+    user_quote = raw_quote if isinstance(raw_quote, str) else ""
+    normalized_quote = _normalize_user_quote_text(user_quote)
+    if len(normalized_quote) < _MIN_USER_QUOTE_LENGTH:
+        return False
+
+    evidence_text = _recent_user_evidence_text(
+        current_user_message=current_user_message,
+        transcript=transcript,
+    )
+    normalized_evidence = _normalize_user_quote_text(evidence_text)
+    return bool(normalized_evidence and normalized_quote in normalized_evidence)
+
+
+def _recent_user_evidence_text(
+    *,
+    current_user_message: str,
+    transcript: list[dict[str, object]],
+) -> str:
+    parts: list[str] = []
+    current = current_user_message.strip()
+    if current:
+        parts.append(current)
+
+    user_turns: list[str] = []
+    for turn in transcript:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role") or "").strip().lower()
+        if role != "user":
+            continue
+        content = turn.get("content")
+        if content is None:
+            continue
+        text = str(content).strip()
+        if text:
+            user_turns.append(text)
+    parts.extend(user_turns[-_RECENT_USER_TURN_LIMIT:])
+    return " ".join(parts)
+
+
+def _normalize_user_quote_text(text: str) -> str:
+    cleaned = re.sub(r"[^\w\s]", " ", text)
+    return re.sub(r"\s+", " ", cleaned.strip().lower())
+
+
+def _voice_mutator_refusal(*, reason: str, response_text: str) -> dict[str, object]:
+    return {
+        "response_text": response_text,
+        "refused": True,
+        "reason": reason,
         "side_effect": "none",
         "retry_safe": True,
     }

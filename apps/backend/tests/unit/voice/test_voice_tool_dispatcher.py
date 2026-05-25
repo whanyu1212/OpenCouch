@@ -14,6 +14,23 @@ class _RuntimeThatMustNotBuildContext:
         raise AssertionError("incognito memory status must not read persistent runtime")
 
 
+_MUTATOR_CASES = (
+    (
+        "save_response_preference",
+        {"preference_text": "Please keep replies concise."},
+    ),
+    ("set_proactive_memory_recall", {"enabled": False}),
+    (
+        "prepare_memory_deletion_by_index",
+        {"target_kind": "fact", "target_index": 1},
+    ),
+    (
+        "prepare_memory_deletion_by_query",
+        {"query": "old job anxiety"},
+    ),
+)
+
+
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_executes_memory_status() -> None:
     runtime = PersistentAgentRuntime(
@@ -152,6 +169,53 @@ async def test_voice_tool_dispatcher_executes_grounded_lookup(
     }
 
 
+@pytest.mark.parametrize(("tool_name", "arguments"), _MUTATOR_CASES)
+@pytest.mark.asyncio
+async def test_voice_mutator_refuses_without_verified_user_quote(
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    output = await execute_voice_tool_call(
+        runtime=_RuntimeThatMustNotBuildContext(),
+        tool_name=tool_name,
+        arguments=arguments,
+        thread_id="voice-thread",
+        user_id="user-1",
+        current_user_message="Please keep replies concise.",
+        transcript=[],
+        llm_client=None,
+        memory_mode="persistent",
+    )
+
+    assert output["refused"] is True
+    assert output["reason"] == "user_intent_not_verified"
+    assert output["side_effect"] == "none"
+    assert output["retry_safe"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_mutator_refuses_without_owner_or_session_id() -> None:
+    output = await execute_voice_tool_call(
+        runtime=_RuntimeThatMustNotBuildContext(),
+        tool_name="set_proactive_memory_recall",
+        arguments={
+            "enabled": False,
+            "user_quote": "Please turn off proactive memory recall.",
+        },
+        thread_id="",
+        user_id=None,
+        current_user_message="Please turn off proactive memory recall.",
+        transcript=[],
+        llm_client=None,
+        memory_mode="persistent",
+    )
+
+    assert output["refused"] is True
+    assert output["reason"] == "owner_or_session_missing"
+    assert output["side_effect"] == "none"
+    assert output["retry_safe"] is True
+
+
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_sets_proactive_memory_recall() -> None:
     runtime = PersistentAgentRuntime(
@@ -165,10 +229,121 @@ async def test_voice_tool_dispatcher_sets_proactive_memory_recall() -> None:
         output = await execute_voice_tool_call(
             runtime=runtime,
             tool_name="set_proactive_memory_recall",
-            arguments={"enabled": True},
+            arguments={
+                "enabled": True,
+                "user_quote": "Remember proactively when useful.",
+            },
             thread_id="voice-thread",
             user_id="user-1",
             current_user_message="Remember proactively when useful.",
+            transcript=[],
+            llm_client=None,
+        )
+
+    assert output["side_effect"] == "procedural_profile_update"
+    assert output["retry_safe"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_mutator_verifies_quote_from_recent_user_transcript() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    async with runtime:
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="set_proactive_memory_recall",
+            arguments={
+                "enabled": False,
+                "user_quote": "please turn off proactive recall",
+            },
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="",
+            transcript=[
+                {"role": "user", "content": "Small talk first."},
+                {"role": "assistant", "content": "I'm listening."},
+                {
+                    "role": "user",
+                    "content": "Please   turn OFF proactive recall for now.",
+                },
+            ],
+            llm_client=None,
+        )
+
+    assert output["side_effect"] == "procedural_profile_update"
+    assert output["retry_safe"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_mutator_verifies_quote_with_punctuation_difference() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    async with runtime:
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="set_proactive_memory_recall",
+            arguments={
+                "enabled": False,
+                "user_quote": "turn it off now",
+            },
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="Could you turn it off, now?",
+            transcript=[],
+            llm_client=None,
+        )
+
+    assert output["side_effect"] == "procedural_profile_update"
+    assert output["retry_safe"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_mutator_refuses_too_short_user_quote() -> None:
+    output = await execute_voice_tool_call(
+        runtime=_RuntimeThatMustNotBuildContext(),
+        tool_name="set_proactive_memory_recall",
+        arguments={"enabled": True, "user_quote": "yes"},
+        thread_id="voice-thread",
+        user_id="user-1",
+        current_user_message="Yes, I want help with that.",
+        transcript=[],
+        llm_client=None,
+        memory_mode="persistent",
+    )
+
+    assert output["refused"] is True
+    assert output["reason"] == "user_intent_not_verified"
+    assert output["side_effect"] == "none"
+    assert output["retry_safe"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_mutator_verifies_eligible_user_quote() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    async with runtime:
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="set_proactive_memory_recall",
+            arguments={"enabled": False, "user_quote": "turn it off"},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="Please turn it off for memory recall.",
             transcript=[],
             llm_client=None,
         )
