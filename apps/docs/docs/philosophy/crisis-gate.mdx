@@ -7,14 +7,15 @@ import CrisisGateFlow from '@site/src/components/CrisisGateFlow';
 
 # Crisis Gate
 
-First node in the graph. Every message passes through it before
-memory loads, before routing, before response generation. Cannot
-be skipped.
+First check in every turn. Every message passes through it before
+memory loads, before routing, before response generation. Wired as
+an SDK input guardrail on the Runner, so the runtime cannot reach
+response generation without it.
 
 The classifier is **LLM-only**: a structured-output call decides the
 level for every message, then local normalization enforces the
-level-to-route truth table. Provider failures are handled by graph
-retries and surfaced as errors instead of silently degrading to regex.
+level-to-route truth table. Provider failures surface as errors with
+retry handling instead of silently degrading to regex.
 
 ---
 
@@ -40,19 +41,20 @@ delta on the right, and where the turn ends up routing.
 
 | Final level | Route | Pipeline |
 |---|---|---|
-| 0 / 1 | `therapeutic` | `turn_dispatch → load_memory → TherapeuticAgent` |
-| 2 / 3 | `crisis` | `crisis_resource_lookup → crisis_response → crisis_log` |
+| 0 / 1 | `therapeutic` | triage → load_memory → selected specialist (usually `TherapeuticAgent`) |
+| 2 / 3 | `crisis` | `run_crisis_turn`: resource lookup → CrisisAgent reply → audit log write |
 
 **Level 1 stays therapeutic.** `needs_clarification=true` is set in
-state but doesn't trigger the crisis branch — the therapeutic
-dispatcher picks `clarifying` or `supportive` based on the
-message.
+state but doesn't trigger the crisis branch. The triage agent
+returns the route, and the TherapeuticAgent layers the
+`safety_check.md` overlay on top of the active style (usually
+`clarifying`) to force one safety probe before ordinary support.
 
-The crisis branch leads with crisis-resource lookup so any
-verified hotlines for the user's region land in the same crisis
-reply. Crisis logging is always-on regardless of memory mode —
-even in incognito the event is recorded with `user_id` scrubbed
-and `session_id` opaqued.
+The crisis branch leads with crisis-resource lookup so any verified
+hotlines for the user's region land in the same crisis reply.
+Crisis logging is always-on regardless of memory mode — even in
+incognito the event is recorded with `user_id` set to NULL and
+`session_id` stored as a one-way hash.
 
 ---
 

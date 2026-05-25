@@ -1,170 +1,203 @@
 ---
-title: Why a Runtime Topology, Not a ReAct Loop
+title: What the app owns, what the agent owns
+sidebar_label: App vs agent
 sidebar_position: 1
 ---
 
-import GraphVsReact from '@site/src/components/GraphVsReact';
+import AppVsAgent from '@site/src/components/AppVsAgent';
 
-# Why a Runtime Topology, Not a ReAct Loop
+# What the app owns, what the agent owns
 
-OpenCouch uses an **app-owned runtime topology** around the OpenAI Agents
-SDK runner instead of a ReAct-style agent loop. This isn't a framework
-preference — it's a safety and correctness decision driven by the domain.
+OpenCouch runs a **hybrid architecture** around the OpenAI Agents SDK.
+The application owns **lifecycle and ordering**: which specialist
+runs, when memory writes are allowed, when the crisis gate fires,
+when a session ends. The agents own **judgment within their slot**:
+which tool to call, which response style fits this turn, how to word
+the reply.
 
----
-
-## The core difference
-
-| | ReAct loop | Runtime topology |
-|---|---|---|
-| **Execution order** | LLM *chooses* what runs next | Topology *enforces* what runs next |
-| **Safety guarantee** | Prompt says "check safety first" | Runtime makes it impossible to skip |
-| **Tool usage** | LLM decides when/if to call tools | Runtime branches invoke tools at fixed lifecycle points |
-| **Extraction** | Optional step the LLM might skip | Runtime side effect — always runs after response |
-| **Enforcement** | Runtime guideline (can drift) | Compile-time invariant (cannot drift) |
-
-A ReAct loop is a programming pattern where an LLM picks actions.
-Those choices can be shaped by prompting, but they aren't
-*architecturally guaranteed*. OpenCouch keeps ordering in application code:
-crisis classification, safe-turn triage, retrieval, SDK specialist execution,
-finalization, and side effects are explicit runtime steps rather than actions
-the model is allowed to reorder.
+We don't reject ReAct — we constrain *where* it runs. Each specialist
+is a real SDK agent with attached tools and reasons over them at
+inference time. What the agent never gets to choose is the *outer*
+shape of the turn: it can't skip safety classification, hand off to a
+different specialist, or decide that a memory write should happen
+mid-response.
 
 ---
 
-## Why this matters for mental health
+## The split
 
-In a support agent, two failure classes are unacceptable:
+The dividing line is **before vs inside the specialist**. Everything
+that decides *which* specialist runs (or whether one runs at all)
+lives in the application. Everything that happens *while* a specialist
+runs is the agent's call, scoped to the tools the runtime attached.
 
-1. **Skipped safety check** — a user in crisis gets a therapeutic
-   response instead of crisis routing and resources
-2. **Corrupted memory** — extraction runs before the response exists,
-   or doesn't run at all, breaking cross-session continuity
+<AppVsAgent />
 
-Both failures are *possible* in a ReAct loop through prompt drift,
-model updates, cost-optimization shortcuts, or adversarial input.
-Both are prevented by the runtime topology because there is no serving path
-that reaches ordinary response generation before the crisis gate, and
-post-response side effects are scheduled by the runtime rather than by the
-model.
+The boundary isn't ideological. It's wherever a wrong choice would be
+worse than the LLM's judgment is good enough to justify — which is
+almost always at the *ordering* layer in a mental health product.
 
 ---
 
-## Structural guarantees
+## What stays app-owned
 
-### 1. Safety always runs first
+These responsibilities live in `agent/runtime/` and the orchestration
+helpers around it. The runtime calls into the SDK to execute a chosen
+specialist; it never asks the SDK "which specialist should I be?"
 
-```text
-message → crisis_gate → crisis branch | safe-turn triage
-```
+**Safety classification.** Crisis assessment runs before any
+specialist is built. There is no serving path that reaches ordinary
+response generation without going through the gate. Implementation:
+`agent/gates/` for the classifier, with the runtime branching on its
+output in `agent/runtime/openai_text_runtime.py`.
 
-Every message enters the runtime through the crisis gate. The gate writes
-the crisis assessment and routes to either crisis response handling or
-safe-turn triage.
+**Specialist selection.** The runtime picks the specialist agent
+deterministically — `THERAPEUTIC_AGENT_NAME`, `CRISIS_AGENT_NAME`, or
+`GUIDED_EXERCISE_AGENT_NAME` — based on triage output, crisis level,
+and active exercise state. See the explicit `selected_agent=` calls in
+`OpenAITextRuntime` (`agent/runtime/openai_text_runtime.py`).
+Specialist `handoff_description` fields exist on the agent definitions
+but they aren't used as a model-driven routing mechanism; the app
+makes the call.
 
-**In a ReAct loop**, the LLM could decide to load memory first, or
-skip directly to response generation. Prompt hardening reduces this
-risk but cannot eliminate it — especially under adversarial input or
-model version changes.
+**Memory mutation gating.** Whether a turn can write memory, what
+candidates are held, and how session-end consolidation runs is
+orchestrated by `agent.runtime.memory_context` and
+`agent.runtime.session`. The therapeutic agent has memory tools
+attached, but the runtime decides when those tools are *allowed* to
+mutate state through prompt context and pending-action gates.
 
-### 2. The response path finishes before side effects
+**Guided-exercise state.** Consent, current step, exit semantics, and
+completion all live in `state["exercise_state"]`. The guided-exercise
+agent receives that state in its prompt and is instructed not to
+invent steps or change the active exercise. See the runtime's
+`_load_and_prepare_guided_exercise` flow and the agent instructions in
+`agent/specialists/guided_exercise.py`.
 
-```text
-SDK response → turn finalization → persistence → post-response side effects
-```
-
-The response must be finalized (appended to transcript) before the runtime
-persists the turn. Long-term memory writes are explicit tool or session-end
-operations, not automatic cleanup after every response.
-
-**In a ReAct loop**, persistence and other cleanup side effects can
-be skipped for latency or run before the response is complete.
-
-### 3. Tool invocation is positional, not emergent
-
-The web search for crisis resources is called from the crisis branch, and
-factual lookup is called from the grounded-lookup branch. Both are fixed
-runtime branches chosen by typed routing, not emergent ReAct tool calls that
-can be hallucinated, omitted, or sequenced incorrectly.
-
-```python
-# Inside the crisis-resource branch - always runs before crisis response
-location, resources, status = await find_crisis_resources(state, llm_client=llm_client)
-```
-
-**In a ReAct loop**, the LLM generates
-`{"tool": "web_search", ...}` as text, which gets parsed. The agent
-might hallucinate a tool, forget to call it, or call it at the wrong
-time.
-
-### 4. Routing is paired with state updates
-
-The crisis gate and safe-turn triage each return a state delta alongside
-the route decision. The runtime applies those deltas before selecting the
-next branch:
-
-```python
-apply_state_delta(state, routing_delta)
-```
-
-**In a ReAct loop**, routing and state updates are separate steps —
-the LLM outputs an action string, it gets parsed, then state is
-updated. Parsing failures, malformed JSON, or partial writes can
-leave state inconsistent.
-
-### 5. Transcript continuity via reducers
-
-State fields like `history` and `transcript` use `operator.add`
-reducers. When turn finalization returns `{"transcript": [assistant_turn]}`,
-the reducer appends it to the checkpointed prior turns automatically.
-
-**In a ReAct loop**, manual `state["transcript"].append(...)` calls
-are error-prone across checkpoint/restore cycles — duplicate turns,
-missing history, ordering bugs.
+**Persistence, audit, and session lifecycle.** Thread locks, app-owned
+state snapshots, active-session windows, crisis-audit writes, and
+session finalization are all `PersistentAgentRuntime` concerns. None
+of them are choices the SDK runner can defer or skip.
 
 ---
 
-## What a ReAct loop would look like here
+## What stays agent-owned
 
-```python
-# Pseudocode — the ReAct alternative
-while True:
-    action = llm.decide_next_action(state)  # LLM chooses
+These are SDK agents in the standard sense: an `Agent` definition
+with attached tools, instructions, and a model. Once selected, each
+specialist reasons over its slot.
 
-    if action == "check_crisis":
-        assessment = check_crisis(state)
-    elif action == "load_memory":
-        # BUG: agent skipped crisis check
-        memory = load_memory(state)
-    elif action == "respond":
-        # BUG: agent responded without safety or memory
-        response = generate_response(state)
-    elif action == "persist_state":
-        # BUG: agent might never reach this
-        persist_turn(state)
-```
+**Therapeutic agent** (`agent/specialists/therapeutic.py`). Inside a
+safe turn it chooses among:
 
-Every `elif` branch is a potential skip. The LLM *should* follow the
-right order, but "should" is not "must."
+- `show_saved_memory` / `show_memory_status` (when the user asks)
+- `load_therapeutic_response_skill` with a style argument
+  (`supportive`, `reflective`, `clarifying`, `psychoeducation`,
+  `technique`, `closing`)
+- `answer_grounded_lookup` (when the user asks for current or
+  source-backed information)
+- `list_guided_exercise_skills` (when considering offering an
+  exercise)
+
+The agent ReActs over these tools at inference time — that's
+genuinely the LLM's call, shaped by instructions but not enumerated
+by the runtime.
+
+**Crisis agent** (`agent/specialists/crisis.py`). On a turn already
+classified as level 2/3, the crisis specialist owns the wording and
+chooses between:
+
+- `lookup_crisis_resources` to find region-appropriate hotlines
+- `get_crisis_support_template` for deterministic safety scaffolding
+
+The classification was app-owned; the response shape is the agent's.
+
+**Guided-exercise agent** (`agent/specialists/guided_exercise.py`).
+Given runtime-provided exercise state, the agent chooses when to call:
+
+- `load_guided_exercise_skill` for the next step's guidance
+- `record_guided_exercise_progress` when the user's reply changes
+  state (complete, partial, hold, stuck, exit, unsafe)
+
+The agent never picks the exercise or invents steps; the runtime
+validates progress and computes the next step.
+
+**Triage agent** (`agent/specialists/triage.py`). The clearest example
+of the hybrid: triage is itself an LLM-judgment step (returning a
+structured dispatch decision) but the runtime is the one that
+*invokes* triage and *acts on* its output. The agent decides the
+route; the app decides what to do with the route.
 
 ---
 
-## When a ReAct loop is better
+## Why split it that way
 
-ReAct loops excel when:
+Each boundary exists because of a specific failure mode that's
+unacceptable in this domain — and a specific kind of decision that
+genuinely benefits from LLM judgment.
 
-- The task is open-ended and the agent needs to explore
-- Tool sequences are unpredictable and context-dependent
-- The cost of a wrong action is low (web browsing, code search)
-- Autonomy and creativity matter more than determinism
+**Crisis classification is app-owned** because the only acceptable
+outcome is that it runs before any specialist. The failure mode is
+"a user in crisis gets a therapeutic reply instead of crisis routing
+and resources." Prompt hardening can reduce that risk; an
+architectural invariant eliminates it.
 
-OpenCouch's pipeline is the opposite: the sequence is known, safety
-ordering is critical, and the cost of a wrong action (missed crisis)
-is high. The runtime encodes these constraints once and enforces them
-regardless of prompt changes, model updates, or adversarial inputs.
+**Specialist selection is app-owned** because the routing decision is
+small, structured, and has user-visible cost when wrong. Handing
+"which specialist owns this turn?" to the model adds variance for no
+real upside — the runtime already has the triage output, the crisis
+level, and the exercise state.
+
+**Memory mutation is app-owned at the gate** because the failure mode
+is silent corruption: a write that lands on the wrong owner, runs
+before the response is finalized, or never runs at all because the
+model didn't think to call the tool. The runtime owns *when* a write
+is allowed; the agent still owns *whether to call the tool* within
+that gate.
+
+**Guided-exercise state is app-owned** because exercises have an
+explicit protocol (steps, consent, completion) that the agent
+shouldn't be free to reshape mid-flow. The agent provides wording;
+the runtime tracks the protocol.
+
+**Tool selection inside a specialist is agent-owned** because the LLM
+genuinely benefits from context. Does this user want grounded facts
+or emotional reflection right now? Should the response open with
+acknowledgment or move straight to a clarifying question? These are
+judgment calls that depend on the conversation, not invariants.
+
+**Response wording is agent-owned** for the same reason. The runtime
+can choose the style scaffold (`load_therapeutic_response_skill`); it
+shouldn't be writing the prose.
 
 ---
 
-## Summary
+## What this isn't
 
-<GraphVsReact />
+This isn't a claim that LLMs are untrustworthy or that determinism is
+universally better. ReAct loops genuinely shine when the task is
+open-ended, the tool sequence is unpredictable, and the cost of a
+wrong action is low — web search, code search, exploratory research.
+
+In a mental health support agent, the *outer* shape of a turn isn't
+exploratory. The sequence is known, safety ordering is critical, and
+the cost of a wrong action (missed crisis, corrupted memory, drifted
+exercise) is high. The *inner* shape — which tool to call, how to
+phrase support — *is* contextual and is where the LLM earns its keep.
+
+The hybrid puts each decision at the layer where it lives best. The
+app owns what would be unacceptable to let drift. The agent owns what
+would be wasteful to enumerate.
+
+---
+
+## Where to read the code
+
+- **Runtime orchestration**: `agent/runtime/openai_text_runtime.py`
+  (the `OpenAITextRuntime` class)
+- **Specialist agents**: `agent/specialists/{therapeutic,crisis,guided_exercise,triage}.py`
+- **Tool registries** (what each agent can reach):
+  `agent/tools/{memory,grounded,crisis,therapeutic,guided_exercise}.py`
+- **State and persistence**: `agent/state.py`,
+  `agent/runtime/session/`
+- **Top-level summary**: [`apps/backend/agent/README.md`](https://github.com/whanyu1212/OpenCouch/blob/main/apps/backend/agent/README.md)
