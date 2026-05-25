@@ -60,7 +60,7 @@ classification and therapeutic generation.
 
 <TerminalWindow title="bash — deterministic CLI">
 {`cd apps/backend
-uv run python -m opencouch_cli \\
+.venv/bin/python -m opencouch_cli \\
     --mode deterministic \\
     --memory-mode guest \\
     --thread-id scratch`}
@@ -91,7 +91,7 @@ rules survive restart; Postgres is recommended for the local durable path.
 
 <TerminalWindow title="bash — persistent CLI">
 {`cd apps/backend
-uv run python -m opencouch_cli \\
+.venv/bin/python -m opencouch_cli \\
     --mode auto \\
     --memory-mode persistent \\
     --user-id alice \\
@@ -110,12 +110,12 @@ Start the backend and frontend in separate terminals:
 
 <TerminalWindow title="bash — API server">
 {`cd apps/backend
-uv run uvicorn main:app --port 8000 --reload`}
+.venv/bin/python -m uvicorn main:app --port 8000 --reload`}
 </TerminalWindow>
 
 <TerminalWindow title="bash — web UI">
-{`# From the repository root
-pnpm --dir apps/web dev`}
+{`cd apps/web
+pnpm dev`}
 </TerminalWindow>
 
 Open `http://localhost:3000`. The web app talks to
@@ -163,7 +163,7 @@ OPENCOUCH_TELEGRAM_OWNER_ID="alice" \\
 OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast \\
 OPENCOUCH_MEMORY_MODE=persistent \\
 OPENCOUCH_TELEGRAM_THREAD_ROTATION_ENABLED=true \\
-uv run python -m channels.gateway telegram`}
+.venv/bin/python -m channels.gateway telegram`}
 </TerminalWindow>
 
 Use `/start` or `/help` for the static intro, send normal messages to
@@ -246,14 +246,15 @@ Run backend tests from `apps/backend`:
 
 <TerminalWindow title="bash — backend tests">
 {`cd apps/backend
-uv run pytest tests/unit tests/integration`}
+.venv/bin/python -m pytest tests/unit tests/integration`}
 </TerminalWindow>
 
-Run frontend checks from the repo root:
+Run frontend checks from `apps/web`:
 
 <TerminalWindow title="bash — web checks">
-{`pnpm --dir apps/web lint
-pnpm --dir apps/web build`}
+{`cd apps/web
+pnpm lint
+pnpm build`}
 </TerminalWindow>
 
 Use backend tests and targeted live-provider tests as the regression checks.

@@ -11,7 +11,7 @@ Run locally:
 
 ```bash
 cd apps/backend
-uv run uvicorn main:app --port 8000 --reload
+.venv/bin/python -m uvicorn main:app --port 8000 --reload
 ```
 
 ## Text chat
@@ -64,6 +64,75 @@ long-term memory.
 Voice is OpenAI Realtime-native. The browser owns WebRTC audio, while
 the backend owns session configuration, memory bootstrap, function-tool
 execution, turn persistence, and end-session memory finalization.
+
+Session creation request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "user_id": "alice",
+  "memory_mode": "persistent",
+  "assistant_voice": "marin"
+}
+```
+
+Tool execution request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "user_id": "alice",
+  "memory_mode": "persistent",
+  "current_user_message": "Can you look up the official guidance?",
+  "transcript": [
+    {"role": "user", "content": "Can you look up the official guidance?"}
+  ],
+  "tool_name": "answer_grounded_lookup",
+  "arguments": {"query": "official guidance"}
+}
+```
+
+Turn-policy response:
+
+```json
+{
+  "route": "grounded_lookup",
+  "response_style": "grounded_lookup",
+  "required_tool_name": "answer_grounded_lookup",
+  "required_tool_arguments": {"query": "Can you look up the official guidance?"},
+  "instructions": "Call answer_grounded_lookup exactly once before answering. Answer only from the tool result."
+}
+```
+
+Turn recording request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "user_id": "alice",
+  "memory_mode": "persistent",
+  "user_text": "Can you look up the official guidance?",
+  "assistant_text": "I found the official source...",
+  "route": "grounded_lookup",
+  "response_style": "grounded_lookup",
+  "tool_calls": [
+    {
+      "tool_name": "answer_grounded_lookup",
+      "status": "completed",
+      "output": {"response_text": "I found the official source..."}
+    }
+  ]
+}
+```
+
+End-session request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "memory_mode": "persistent"
+}
+```
 
 ## Client contracts
 

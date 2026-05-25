@@ -1,0 +1,84 @@
+---
+title: Dogfood
+sidebar_position: 5
+---
+
+# Voice Dogfood
+
+Use this page when manually checking OpenAI Realtime voice behavior
+after backend, frontend, prompt, or persistence changes.
+
+## Backend
+
+Postgres-backed persistent mode:
+
+```bash
+cd /Volumes/ORICO/OpenCouch
+docker compose -f compose.yml up -d postgres --wait
+
+cd apps/backend
+OPENCOUCH_PERSISTENCE_BACKEND=postgres \
+OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch \
+.venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+SQLite-backed local fallback:
+
+```bash
+cd /Volumes/ORICO/OpenCouch/apps/backend
+OPENCOUCH_PERSISTENCE_BACKEND=sqlite \
+.venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+## Web
+
+Run from `apps/web`:
+
+```bash
+pnpm dev
+```
+
+Open:
+
+| Route | Use it for |
+|---|---|
+| `http://localhost:3000/voice` | Product voice experience. |
+| `http://localhost:3000/voice/realtime-dev` | Raw Realtime dogfood and event inspection. |
+
+## Scenarios
+
+| Scenario | Expected result |
+|---|---|
+| Incognito supportive turn | Assistant does not claim durable memory will be saved. |
+| Incognito persistence guard | Disconnect, reload the same thread, and verify the backend did not save the turn. |
+| Persistent memory status | Ask "is memory on?" and verify `show_memory_status` runs. |
+| Persistent restart check | Use Postgres mode, restart the backend, and verify memory status/history survives. |
+| Grounded lookup | Ask for current or official guidance and verify `answer_grounded_lookup` runs before the answer. |
+| Crisis resource | Ask for a local hotline and verify `lookup_crisis_resources` runs before specific resources are named. |
+| Guided exercise | Ask for a grounding, breathing, values, or emotion-regulation exercise and verify skill tools run. |
+| End session | Disconnect and verify the finalization result in the UI or dogfood panel. |
+
+## Regression commands
+
+Backend voice tests:
+
+```bash
+cd apps/backend
+.venv/bin/python -m pytest -q tests/unit/voice tests/integration/voice
+```
+
+Web voice checks:
+
+```bash
+cd apps/web
+node tests/realtime-voice-api.test.mjs
+node tests/realtime-voice-events.test.mjs
+node tests/realtime-voice-session.test.mjs
+node tests/session-store-voice-reset.test.mjs
+node tests/voice-provider-routing.test.mjs
+pnpm lint
+pnpm build
+```
+
+Run the broader backend and web suites before merging a voice runtime
+change.

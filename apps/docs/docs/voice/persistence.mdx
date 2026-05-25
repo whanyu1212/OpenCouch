@@ -1,0 +1,78 @@
+---
+title: Persistence
+sidebar_position: 4
+---
+
+# Voice Persistence
+
+Voice persistence is transcript-first. OpenAI Realtime generates the
+live speech response; OpenCouch records the finalized transcript and
+session metadata after the exchange is complete.
+
+## Persistent mode
+
+In persistent voice mode:
+
+1. Session startup loads compact saved-memory context for the Realtime
+   instructions.
+2. Final transcript pairs are written with
+   `PersistentAgentRuntime.record_voice_turn(...)`.
+3. Tool calls observed during the turn are recorded in diagnostics and
+   can update app-owned state when the tool has a side effect.
+4. Disconnect calls `PersistentAgentRuntime.end_session(...)`.
+5. The session finalizer may write an episodic arc and promote held
+   memory candidates through the same services used by text.
+
+Voice does not currently collect an explicit thumbs feedback value
+before ending. The session still finalizes memory on disconnect.
+
+## Incognito mode
+
+In incognito voice mode:
+
+- Startup does not inject durable saved-memory context.
+- Persistent-only memory tools are unavailable.
+- Finalized turns return `recorded=false` and are not written to
+  durable thread history.
+- Disconnect returns `finalized=false` and skips durable session
+  summarization.
+- Crisis and session feedback backends remain process-local and
+  ephemeral when the runtime is configured for incognito.
+
+## Identity
+
+Voice reuses the active web setup:
+
+| Value | Source |
+|---|---|
+| `thread_id` | Active web thread id. |
+| `user_id` | Active web user id in persistent mode; omitted in incognito. |
+| Memory owner | `user_id` when present, otherwise `thread_id`. |
+| Assistant voice | Setup/store-selected Realtime voice name. |
+
+The generated thread id is never derived from the user id. When no
+stable user id is supplied, the thread id isolates memory by session.
+
+## State written by `record_voice_turn(...)`
+
+| State field | Voice behavior |
+|---|---|
+| `channel` | Set to `voice`. |
+| `transcript` | Appends finalized user/assistant entries. |
+| `response_text` | Final assistant transcript text. |
+| `response_style` | Turn-policy style, `grounded_lookup`, or `voice`. |
+| `route` | Turn-policy route, defaulting to `therapeutic`. |
+| `grounded_lookup` | Merged from completed grounded lookup tool output when present. |
+| `diagnostics.voice_runtime` | `openai_realtime`. |
+| `diagnostics.voice_tool_calls` | Names of observed voice tools for the turn. |
+| `session_progress.turn_count` | Increments once per recorded voice exchange. |
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `agent/runtime/runtime.py` | `voice_session_memory_context`, `build_voice_tool_context`, `prepare_voice_turn_policy`, `record_voice_turn`, and `end_session`. |
+| `agent/voice/transcript.py` | Converts finalized voice text into runtime transcript entries. |
+| `api/routes/voice.py` | Public endpoint layer and incognito/persistent branch behavior. |
+| `apps/web/src/lib/realtime-voice-turn-record.ts` | Builds the browser request body for turn recording. |
+| `apps/web/src/lib/session.ts` | Stores voice transcripts, activities, session info, and finalization status in the web client. |

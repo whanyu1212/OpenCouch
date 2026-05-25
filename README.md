@@ -4,80 +4,94 @@
 
 **A chat mental health companion that supports your well-being through reflection, guided exercises, and a memory that grows with you.**
 
+[![CI](https://img.shields.io/github/actions/workflow/status/whanyu1212/OpenCouch/ci.yml?branch=develop&label=CI&style=flat-square)](https://github.com/whanyu1212/OpenCouch/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-live-2563EB?style=flat-square)](https://whanyu1212.github.io/OpenCouch/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![OpenAI Agents SDK](https://img.shields.io/badge/OpenAI_Agents_SDK-runtime-10B981?style=flat-square)](apps/backend/agent/README.md)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-1120%20passing-success?style=flat-square)](apps/backend/tests)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
+
+[**Documentation**](https://whanyu1212.github.io/OpenCouch/) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](#roadmap) · [**Architecture**](#architecture)
 
 </div>
 
 > [!IMPORTANT]
 > **Not a therapist. Not a diagnostic tool. Not an emergency service.**
-> OpenCouch is a supportive companion for self-reflection and wellness exercises. It is not a substitute for professional mental health care or medical advice.
+> OpenCouch is a supportive companion for self-reflection and wellness exercises — not a substitute for professional mental health care or medical advice. If you are in crisis, contact local emergency services or a regional crisis line.
 
-> [!WARNING]
-> **Invasive Changes In Progress:** OpenCouch is currently going through significant architecture and product changes. The web UI is broken for now while the app shell catches up with the backend refactor. For local dogfooding, use [`scripts/text_repl.sh`](scripts/text_repl.sh) to start the text agent. Voice support is temporarily removed and will be rebuilt from scratch. Expect breaking changes, moving APIs, and documentation that may temporarily lag behind the code while the system is being simplified and stabilized.
+> [!NOTE]
+> **Project status — pre-beta, active rebuild.** The web UI is temporarily broken while the app shell catches up with the backend refactor; voice has been removed and will be rebuilt from scratch. For local dogfooding, run [`scripts/text_repl.sh`](scripts/text_repl.sh). Expect moving APIs and documentation that may lag the code.
 
 ---
 
-## Table of Contents
-- [📖 Overview](#-overview)
-- [✨ Key Features](#-key-features)
+## Table of contents
+- [Overview](#overview)
+- [Key features](#key-features)
 - [Screenshots](#screenshots)
-- [🚀 Quick Start](#-quick-start)
-  - [Prerequisites](#prerequisites)
-  - [Environment](#environment)
-  - [Local run commands](#local-run-commands)
-- [🧠 Architecture](#-architecture)
-  - [Supported Interfaces](#supported-interfaces)
-- [📁 Project Structure](#-project-structure)
-- [🧪 Development \& Validation](#-development--validation)
-  - [Observability](#observability)
-- [📝 Changelog](#-changelog)
-- [🤝 Contributing](#-contributing)
-- [🗺️ Roadmap](#️-roadmap)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [Development & validation](#development--validation)
+- [Changelog](#changelog)
+- [Contributing](#contributing)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ---
 
-## 📖 Overview
+## Overview
 
-OpenCouch is a chat companion for day-to-day emotional support, self-reflection, and practical coping. It combines modern conversational AI with structured therapeutic patterns, so users can move between open-ended conversation, guided exercises, and longer-term reflection without starting over each time.
+OpenCouch is a chat companion for day-to-day emotional support, self-reflection, and practical coping. The text runtime uses the OpenAI Agents SDK behind a FastAPI server, with Postgres-first durable persistence, three-layer memory ([CoALA](https://arxiv.org/abs/2309.02427)-inspired), and safety routing on every turn.
 
-Unlike chatting with general-purpose AI assistants on the web, OpenCouch is not a blank general-purpose assistant. It is built around mental-health-adjacent product needs: safety-aware routing, continuity across sessions, structured memory, and concrete coping workflows. General AI chat can be helpful in the moment, but OpenCouch is designed to support ongoing daily use—remembering what has mattered, guiding users through exercises like grounding or thought work, and keeping the experience focused on emotional support rather than generic task completion.
+**What sets it apart from a general AI assistant:**
 
-Under the hood, the text runtime uses the OpenAI Agents SDK behind a FastAPI server, with Postgres-first durable persistence and a legacy SQLite fallback. Memory is split into three [CoALA](https://arxiv.org/abs/2309.02427)-inspired layers: semantic facts, episodic arcs, and procedural rules. Before the assistant responds, each turn goes through safety routing, and backend tests plus Opik traces help catch regressions in core routing behavior.
+- **Continuity by default** — memory and session state persist across days; users don't restart their context every conversation.
+- **Safety-aware routing** — a classifier evaluates every turn before response generation and can hand off to a specialist crisis agent with durable audit.
+- **Structured coping flows** — 13 multi-turn guided exercises (grounding, breathing, thought work, values) with consent and step-state tracking, instead of free-form advice.
+- **Designed for ongoing use** — the product surface is intentionally narrow (emotional support and reflection), not a general task assistant.
 
-Voice support is intentionally absent during the current runtime cleanup and will be rebuilt from scratch after the text agent architecture settles.
+Voice support is intentionally absent during the current runtime cleanup and will be rebuilt from scratch after the text agent architecture settles. The project is pre-beta; a closed beta is planned.
 
-The project is still pre-beta; a closed beta is planned.
+## Key features
 
-## ✨ Key Features
-- **Persistent Memory:** Retains context across sessions using semantic facts, episodic arcs, and procedural rules.
-- **Safety First:** Built-in safety routing evaluates every turn before responding, backed by a durable crisis-audit log.
-- **Guided Exercises:** 13 multi-turn, state-tracked exercises including grounding, breathing, thought work, and values reflection.
-- **Optional Telegram Gateway:** Direct message interface with allow-listing, markdown rendering, and session rotation.
-- **Tracing & Regression Checks:** Backend tests, live-provider checks, and Opik traces for regression tracking.
+- **Three-layer persistent memory.** Semantic facts, episodic arcs, and procedural rules persisted across sessions ([CoALA](https://arxiv.org/abs/2309.02427)-inspired), with per-turn extraction and session-end consolidation.
+- **Safety routing on every turn.** Pre-response safety classification with a durable crisis-audit log; specialist crisis agent takes over when triggered.
+- **13 state-tracked guided exercises.** Multi-turn flows for grounding, box breathing, thought work, values reflection, and related coping skills — with consent and step-state preserved across turns.
+- **Postgres-first persistence.** Thread state, long-term memory, active sessions, crisis log, and feedback all live in Postgres; SQLite fallback for lightweight local runs.
+- **Multiple surfaces.** Web chat (Next.js), text CLI (`scripts/text_repl.sh`), optional Telegram DM gateway with allow-listing — all backed by the same FastAPI runtime.
+- **1120 backend tests + tracing.** Unit, integration, and live-provider suites; Opik and LangSmith tracing wired for regression review.
 
 ## Screenshots
 
 <table>
   <tr>
-    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/landing.png" width="100%" alt="OpenCouch landing page" /></td>
-    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/chat.png" width="100%" alt="OpenCouch web chat" /></td>
-    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/voice.png" width="100%" alt="OpenCouch voice mode" /></td>
+    <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/landing.png" width="100%" alt="OpenCouch landing page" /><br/><sub>Landing</sub></td>
+    <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/chat.png" width="100%" alt="OpenCouch web chat" /><br/><sub>Web chat</sub></td>
   </tr>
   <tr>
-    <td width="16%"></td>
-    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/cli-example.png" width="100%" alt="OpenCouch CLI session" /></td>
-    <td colspan="2" width="33%" align="center" valign="top"><img src="apps/docs/static/img/readme/telegram-example.png" width="100%" alt="OpenCouch Telegram DM" /></td>
-    <td width="16%"></td>
+    <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/cli-example.png" width="100%" alt="OpenCouch CLI session" /><br/><sub>Text CLI</sub></td>
+    <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/telegram-example.png" width="100%" alt="OpenCouch Telegram DM" /><br/><sub>Telegram</sub></td>
   </tr>
 </table>
 
+<sub>Voice mode screenshot omitted while voice is being rebuilt from scratch.</sub>
+
 ---
 
-## 🚀 Quick Start
+## Quick start
+
+The fastest path to a working chat session — clone, set an API key, run one script:
+
+```bash
+git clone https://github.com/whanyu1212/OpenCouch.git
+cd OpenCouch
+echo "OPENAI_API_KEY=sk-..." > apps/backend/.env
+./scripts/text_repl.sh
+```
+
+This starts a Dockerized Postgres and drops you into the text agent CLI. No web stack, no manual env wiring. For the full browser experience, see the [Compose section](#local-run-commands) below.
 
 ### Prerequisites
 - Docker Desktop running for the Compose stack.
@@ -207,114 +221,41 @@ See [`apps/backend/README.md`](apps/backend/README.md) for backend-specific comm
 
 ---
 
-## 🧠 Architecture
+## Architecture
 
-Before response generation, each turn runs through safety routing. Memory writes happen in two phases: per-turn extraction, then a runtime-coordinated session-end commit for episodic summaries and held candidates.
-
-### Supported Interfaces
-
-- **CLI:** Local text harness for development and testing.
-- **Web chat:** Next.js text UI backed by FastAPI REST and WebSocket streaming routes.
-- **Optional Telegram:** Direct-message gateway with allow-listing, markdown rendering, `/end`, and session rotation.
-- **Backend API:** FastAPI route layer used by the web UI and other clients.
-
-OpenCouch owns the graph-like product state machine: thread locks, state
-snapshots, routing policy, memory lifecycle, audit, and persistence. The
-OpenAI Agents SDK Runner owns the model/tool execution loop for the selected
-agent, plus the model-visible SDK session history used during that loop.
+OpenCouch owns the product state machine (thread locks, routing policy, memory lifecycle, audit, persistence). The OpenAI Agents SDK Runner owns the model/tool execution loop and the model-visible conversation history. Every turn runs safety routing before response generation; memory writes happen in two phases — per-turn extraction and a session-end commit.
 
 ```mermaid
-flowchart TD
-    classDef surfaceNode fill:#64748B1A,stroke:#64748B,stroke-width:2px
-    classDef appNode fill:#2563EB1A,stroke:#2563EB,stroke-width:2px
-    classDef sdkNode fill:#10B9811A,stroke:#10B981,stroke-width:2px
-    classDef toolNode fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
-    classDef storeNode fill:#7C3AED1A,stroke:#7C3AED,stroke-width:2px
+flowchart LR
+    classDef surf fill:#64748B1A,stroke:#64748B,stroke-width:2px
+    classDef app fill:#2563EB1A,stroke:#2563EB,stroke-width:2px
+    classDef sdk fill:#10B9811A,stroke:#10B981,stroke-width:2px
+    classDef store fill:#7C3AED1A,stroke:#7C3AED,stroke-width:2px
 
-    subgraph SURF ["Runtime Surfaces"]
-        CLI["CLI / TUI"]:::surfaceNode
-        WEB["Next.js web chat"]:::surfaceNode
-        TG["Optional Telegram DM gateway"]:::surfaceNode
-        API["FastAPI REST / WebSocket"]:::surfaceNode
-    end
+    SURF["**Surfaces**<br/>Web · CLI · Telegram · API"]:::surf
+    APP["**OpenCouch runtime**<br/>safety routing · state · memory<br/>audit · session lifecycle"]:::app
+    SDK["**Agents SDK Runner**<br/>therapeutic · crisis · exercise<br/>tools · model calls · tracing"]:::sdk
+    STORE[("**Postgres**<br/>state · memory · sessions<br/>crisis log · feedback")]:::store
 
-    subgraph APP ["OpenCouch-owned runtime and graph-like state"]
-        direction TB
-        PR["PersistentAgentRuntime<br/>thread locks • active session lifecycle"]:::appNode
-        STATE["AgentState snapshot<br/>transcript fallback • route • crisis metadata<br/>exercise state • diagnostics • pending memory actions"]:::appNode
-        MEM["Memory orchestration<br/>turn recall • write policy • session-end commit"]:::appNode
-        POLICY{"OpenAITextRuntime policy<br/>prepare turn • safety result • branch selection<br/>consent and exercise lifecycle"}:::appNode
-        FINAL["Finalize turn<br/>public history • response metadata • audit hooks"]:::appNode
-    end
-
-    subgraph SDK ["OpenAI Agents SDK Runner-owned execution"]
-        direction TB
-        RUN["Runner.run / Runner.run_streamed<br/>agent loop • model calls • max turns • streaming events"]:::sdkNode
-        ROSTER["Agent roster<br/>TherapeuticAgent • CrisisAgent • GuidedExerciseAgent"]:::sdkNode
-        SDKSESSION["SDK session<br/>model-visible short-term conversation history"]:::sdkNode
-        SDKTOOLS["SDK tool-call dispatch<br/>invoke registered tools and return tool outputs"]:::sdkNode
-        TRACE["SDK tracing and guardrail plumbing"]:::sdkNode
-    end
-
-    subgraph TOOLS ["OpenCouch tool implementations exposed to the SDK"]
-        direction TB
-        MEMTOOLS["memory ops"]:::toolNode
-        LOOKUP["grounded lookup"]:::toolNode
-        CRISIS["crisis resources"]:::toolNode
-        EXERCISE["guided-exercise skills"]:::toolNode
-    end
-
-    APPDB[("OpenCouch persistence<br/>thread state • long-term memory • active sessions<br/>crisis log • feedback")]:::storeNode
-    SDKDB[("SDK session persistence<br/>model-visible conversation items")]:::storeNode
-
-    CLI --> PR
-    WEB --> API
-    TG --> API
-    API --> PR
-    PR <--> STATE
-    PR <--> APPDB
-    PR --> MEM
-    MEM <--> APPDB
-    MEM --> POLICY
-    STATE --> POLICY
-
-    POLICY -->|"selected agent + input + app context + SDK session"| RUN
-    RUN --> ROSTER
-    RUN <--> SDKSESSION
-    SDKSESSION <--> SDKDB
-    RUN --> SDKTOOLS
-    RUN --> TRACE
-
-    SDKTOOLS --> MEMTOOLS
-    SDKTOOLS --> LOOKUP
-    SDKTOOLS --> CRISIS
-    SDKTOOLS --> EXERCISE
-    MEMTOOLS --> MEM
-    LOOKUP --> POLICY
-    CRISIS --> POLICY
-    EXERCISE --> STATE
-
-    RUN -->|"RunResult or stream events"| POLICY
-    POLICY --> FINAL
-    FINAL --> STATE
-    FINAL --> APPDB
-
-    SDKSESSION -.->|"separate from app-owned state snapshot"| STATE
-
-    style SURF fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style APP fill:none,stroke:#2563EB,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style SDK fill:none,stroke:#10B981,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
-    style TOOLS fill:none,stroke:#F59E0B,stroke-width:1px,stroke-dasharray: 5 5,rx:5,ry:5
+    SURF --> APP
+    APP <--> SDK
+    APP <--> STORE
 ```
+
+**Interfaces:** Next.js web chat · text CLI · optional Telegram DM gateway · FastAPI REST + WebSocket.
+**Agent roster:** therapeutic (default), crisis (safety hand-off), guided-exercise (multi-turn skills).
+**Tools exposed to the SDK:** memory ops · grounded lookup · crisis resources · guided-exercise skills.
+
+For the full runtime diagram, tool dispatch flow, and SDK/app state boundary, see [`apps/docs` → Architecture](https://whanyu1212.github.io/OpenCouch/) and [`apps/backend/agent/README.md`](apps/backend/agent/README.md).
 
 ---
 
-## 📁 Project Structure
+## Project structure
 
 This repository is a monorepo managed with `uv` and `pnpm`.
 
 <details>
-<summary><b>View Repository Tree</b></summary>
+<summary><b>View repository tree</b></summary>
 
 ```text
 OpenCouch/
@@ -329,15 +270,18 @@ OpenCouch/
 │   │   ├── opencouch_cli/      # Interactive terminal CLI
 │   │   ├── channels/           # Telegram gateway and channel adapters
 │   │   ├── api/                # FastAPI REST + WebSocket routes
-│   │   └── tests/              # 1100+ pytest unit/integration tests
+│   │   └── tests/              # 1120 pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
+├── eval/                       # Trajectory runners and evaluation datasets
+├── scripts/                    # Local dogfooding scripts (text_repl.sh, voice_agent.sh)
+└── compose.yml                 # Local Postgres + API + web stack
 ```
 </details>
 
 ---
 
-## 🧪 Development & Validation
+## Development & validation
 
 Backend:
 
@@ -388,27 +332,39 @@ LANGCHAIN_PROJECT=opencouch-dev
 
 ---
 
-## 📝 Changelog
+## Changelog
 
-See [`CHANGELOG.md`](CHANGELOG.md) for project history and release notes.
+See [`CHANGELOG.md`](CHANGELOG.md) for dated release notes and project history.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions. Run the relevant checks in [Development & Validation](#-development--validation) before submitting a Pull Request.
+Contributions are welcome. Because OpenCouch sits in a sensitive product space, please open an issue to discuss anything beyond a small fix or doc tweak before opening a PR — this avoids work that conflicts with safety, memory, or routing changes already in flight.
 
-**Branch Conventions:**
+**Before opening a PR**
+
+1. Run the relevant checks from [Development & validation](#development--validation): backend tests, web lint/build, and `pre-commit`.
+2. Add tests for new service or routing behavior. Live-provider tests live under `tests/live` and are opt-in.
+3. Target the `develop` branch. PR templates live in [`.github/`](.github/).
+
+**Branch conventions**
 - `feature/*` for new capabilities
 - `fix/*` for bug fixes
 - `refactor/*` for architectural changes
 - `docs/*` for documentation updates
 
-*(Note: All PRs should target the `develop` branch.)*
+**Filing issues, asking questions**
+
+- **Bugs and feature requests:** [GitHub Issues](https://github.com/whanyu1212/OpenCouch/issues).
+- **Safety concerns** (a routing miss, an unsafe response, a missed crisis signal): please file a private security-style report rather than a public issue.
+- **Discussion and questions:** GitHub Issues with the `question` label until a Discussions board is set up.
+
+By contributing, you agree your contributions are licensed under the project's [AGPL-3.0 license](LICENSE).
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory, and safety experience before expanding to more platforms.
 
@@ -426,13 +382,16 @@ OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory
 | 🧭 **Later** | **More channels** | WhatsApp and Discord adapters after the core messaging abstraction is stable |
 | 🧭 **Later** | **Graph memory** | Graphiti + Neo4j exploration for entity-relationship reasoning |
 | 🧭 **Later** | **Acoustic safety** | Paralinguistic crisis signals such as prosody, flatness, or distress markers |
-| 🛑 **Blocked** | **Clinical review** | Expert clinician audit of knowledge files, prompts, guided exercises, and safety logic |
+| ⏳ **Awaiting expert** | **Clinical review** | Expert clinician audit of knowledge files, prompts, guided exercises, and safety logic |
+
+---
+
+## License
+
+OpenCouch is released under the [GNU Affero General Public License v3.0](LICENSE). If you run a modified version as a network service, the AGPL requires you to make the corresponding source available to its users. See the license file for full terms.
 
 ---
 
 <div align="center">
-<sub>AGPL-3.0. Not a substitute for professional care.</sub>
-<br/>
-<br/>
-<a href="LICENSE">AGPL-3.0 License</a>
+<sub>OpenCouch is not a substitute for professional care. If you are in crisis, please contact local emergency services or a regional crisis line.</sub>
 </div>

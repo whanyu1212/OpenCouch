@@ -50,7 +50,17 @@ const sidebars: SidebarsConfig = {
       label: 'Memory',
       items: ['memory/why-memory', 'memory/overview', 'memory/retrieval', 'memory/privacy']
     },
-    'voice/overview',
+    {
+      type: 'category',
+      label: 'Voice',
+      items: [
+        'voice/overview',
+        'voice/realtime-lifecycle',
+        'voice/tools-and-policy',
+        'voice/persistence',
+        'voice/dogfood',
+      ],
+    },
     {
       type: 'category',
       label: 'Observability & Evaluation',
