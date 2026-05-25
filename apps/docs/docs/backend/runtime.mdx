@@ -170,7 +170,7 @@ memory overhead. Both are free correctness wins.
 ## Active session recovery
 
 `PersistentAgentRuntime` keeps an `opencouch_active_sessions` table
-in the same SQLite checkpoint database. Each row carries the
+in the configured active-session backend. Each row carries the
 thread's `session_buffer` (held semantic / procedural candidates),
 `max_crisis_level`, and `transcript_start_index` for the current
 session. A 20-minute inactivity sweeper auto-finalizes expired
@@ -179,8 +179,8 @@ on shutdown — so held candidates and session-end summarization
 trigger reliably even if the user never types `/end`.
 
 In `INCOGNITO` mode the same flow runs entirely in memory: the
-checkpoint goes to `:memory:` and the active-session table is
-skipped.
+checkpoint and active-session tracking are process-local and no durable
+session row is written.
 
 ---
 

@@ -68,6 +68,26 @@ remain available for compatibility fallback and focused migration tests.
 
 ---
 
+## Runtime ownership
+
+Text and voice share product services, but they do not share the same
+transport loop.
+
+| Area | Text agent | Realtime voice |
+|---|---|---|
+| Live turn loop | `OpenAITextRuntime` runs one SDK turn per message through app-owned routing and specialist agents. | OpenAI Realtime owns the live speech loop; the browser sends policy hints and tool outputs over the data channel. |
+| Short-term conversation | SDK session plus reducer-backed runtime state. | Realtime session context plus final transcript recording after each exchange. |
+| Safety and lookup policy | Crisis gate and turn triage run before the text specialist response. | Compact session instructions plus observe-only turn policy can require crisis-resource or grounded-lookup tools. |
+| Tools | SDK function tools attached to the owning specialist agent or runtime branch. | Realtime function schemas that call the same backend service functions. |
+| Persistence | `run_turn` / `run_turn_stream` save text state and emit streaming status events. | `record_voice_turn` appends finalized transcript entries; `end_session` finalizes persistent voice sessions. |
+
+The practical rule: **shared services live under `agent/tools`,
+`agent/memory`, `agent/skills`, and `agent/runtime`; transport-specific
+orchestration lives under `agent/runtime/openai_text_runtime.py` for
+text and `agent/voice/` plus `api/routes/voice.py` for voice.**
+
+---
+
 ## Prompt layers
 
 <PromptLayersVisual />

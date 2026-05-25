@@ -1,19 +1,62 @@
 ---
-title: Voice
-sidebar_position: 7
+title: Overview
+sidebar_label: Overview
+sidebar_position: 1
 slug: /voice
 ---
 
+import VoiceArchitecture from '@site/src/components/VoiceArchitecture';
+
 # Voice
 
-Voice support uses OpenAI Realtime speech-to-speech sessions from the
-web app.
+Voice is **OpenAI Realtime-native**, not the text agent wrapped in
+audio. The browser owns WebRTC audio and data-channel events, OpenAI
+Realtime owns the live speech-to-speech loop, and the FastAPI backend
+owns OpenCouch policy, tools, memory, transcript recording, and
+session finalization.
 
-The browser connects to OpenAI Realtime over WebRTC. The FastAPI backend
-creates the client secret, injects OpenCouch instructions and memory
-context, exposes the same app-owned tools as the text runtime, records
-finalized turns, and runs session finalization for persistent mode.
+<VoiceArchitecture />
 
-The production web route is `/voice`. The lower-level dogfood route
-`/voice/realtime-dev` remains available for inspecting raw Realtime
-events without the full product shell.
+:::tip Shared services, different transport
+Text turns run through the OpenAI Agents SDK text runtime. Voice turns
+run through OpenAI Realtime and record finalized transcripts back into
+OpenCouch state. Both surfaces reuse the same app-owned memory,
+grounded lookup, crisis-resource, guided-exercise, and session-end
+services.
+:::
+
+## Product surfaces
+
+| Surface | Purpose |
+|---|---|
+| `/voice` | Production web voice page. Uses the app shell, session setup, assistant voice selector, transcript display, tool activity, and end-session options. |
+| `/voice/realtime-dev` | Lower-level dogfood route for inspecting raw Realtime events, parsed transcripts, tool calls, and finalization responses. |
+| `/api/voice/realtime/*` | Backend contract for session creation, tool execution, observe-only turn policy, turn recording, and session end. |
+
+## Ownership boundary
+
+| Owner | Responsibilities |
+|---|---|
+| Browser | Microphone permission, WebRTC peer connection, audio playback, Realtime data-channel parsing, transcript UI, and disconnect/finalization UX. |
+| OpenAI Realtime | Speech input/output, server VAD, interruption handling, live model response generation, and function-call events. |
+| FastAPI backend | Ephemeral client secret creation, Realtime session config, private memory context, function tool execution, turn policy hints, durable transcript recording, and persistent session finalization. |
+| Shared runtime services | Memory store, crisis log, grounded lookup, guided-exercise catalog/state, session feedback store, and `PersistentAgentRuntime.end_session(...)`. |
+
+## What voice intentionally does not do
+
+- It does not call `run_turn(...)` or `run_turn_stream(...)` for each
+  spoken user turn.
+- It does not expose LiveKit; the product voice path is OpenAI
+  Realtime.
+- It does not save durable memory in incognito mode.
+- It does not let the model invent crisis resources; specific crisis
+  resources must come from `lookup_crisis_resources`.
+
+## Related pages
+
+| Topic | Page |
+|---|---|
+| Realtime connection flow | [Realtime Lifecycle](/docs/voice/realtime-lifecycle) |
+| Function tools and turn policy | [Tools & Policy](/docs/voice/tools-and-policy) |
+| Transcript recording and memory finalization | [Voice Persistence](/docs/voice/persistence) |
+| Manual verification checklist | [Voice Dogfood](/docs/voice/dogfood) |

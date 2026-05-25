@@ -32,7 +32,7 @@ OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \
 OPENCOUCH_TELEGRAM_OWNER_ID="alice" \
 OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast \
 OPENCOUCH_MEMORY_MODE=persistent \
-uv run python -m channels.gateway telegram
+.venv/bin/python -m channels.gateway telegram
 ```
 
 If Telegram reports a webhook conflict, clear it once:

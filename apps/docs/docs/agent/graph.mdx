@@ -9,8 +9,14 @@ import GraphTopology from '@site/src/components/GraphTopology';
 
 # Agent Graph
 
-Every message follows the same pipeline: safety check first, then a
-safe-turn dispatcher for memory commands or factual lookups, then
+This page describes the **text agent runtime** used by the CLI, web
+text chat, Telegram, and synchronous/streaming chat APIs. Voice uses
+OpenAI Realtime as its live speech loop and records finalized
+transcripts back into the shared runtime; see [Voice](/docs/voice) for
+that path.
+
+Every text message follows the same pipeline: safety check first, then
+a safe-turn dispatcher for memory commands or factual lookups, then
 memory retrieval and response generation. Long-term memory writes are
 handled by explicit memory commands and the shared session-end path.
 Click any step below to see what it does.
@@ -21,11 +27,11 @@ Click any step below to see what it does.
 
 ## Topology
 
-The text runtime now keeps the branch decisions explicit while delegating
-response generation to OpenAI Agents SDK specialist agents. The crisis gate
-runs first, deterministic dispatch handles memory-control and grounded lookup
-branches, and safe therapeutic turns enter the TherapeuticAgent. Post-response
-extractors remain runtime-managed side effects.
+The text runtime keeps branch decisions explicit while delegating response
+generation to OpenAI Agents SDK specialist agents. The crisis gate runs first,
+deterministic dispatch handles memory-control and grounded lookup branches, and
+safe therapeutic turns enter the TherapeuticAgent. Post-response extractors
+remain runtime-managed side effects.
 
 <GraphTopology />
 
@@ -48,6 +54,10 @@ finalization → END
 Runtime stages own deterministic state deltas, persistence boundaries, and
 tool-result validation. Specialist agents own natural-language response
 generation and the tools assigned to their branch.
+
+Voice reuses the service implementations behind those tools, but not this
+text-stage topology. Realtime function tools call the backend service layer
+directly through `/api/voice/realtime/tools`.
 
 ## Therapeutic Response Selection
 

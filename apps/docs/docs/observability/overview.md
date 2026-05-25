@@ -20,6 +20,11 @@ shows node progress while post-response work finishes, and deeper
 inspection is available on demand through commands like `/status`,
 `/context`, `/memory status`, and `/debug state`.
 
+Voice has a different observability shape because OpenAI Realtime owns
+the live speech loop. The backend still records app-owned policy,
+tools, transcript persistence, and finalization state, but there is no
+per-turn text-runtime graph trace for a spoken exchange.
+
 ---
 
 ## How diagnostics flow
@@ -81,6 +86,27 @@ OPIK_PROJECT_NAME=opencouch-dev
 LangSmith can be enabled alongside Opik through the standard
 `LANGSMITH_*` and `LANGCHAIN_*` environment variables when a secondary
 trace backend is useful.
+
+## Voice observability
+
+Realtime voice debugging combines browser events and backend state:
+
+| Surface | What it shows |
+|---|---|
+| `/voice` | Product-level connection, transcript, tool activity, error, and finalization status. |
+| `/voice/realtime-dev` | Raw Realtime server events, parsed transcript updates, tool calls, policy responses, and end-session response. |
+| `/api/voice/realtime/turn-policy` | App-owned route/style hints and required tool instructions for a finalized user transcript. |
+| `/api/voice/realtime/tools` | Backend execution result for one Realtime function call. |
+| `/api/voice/realtime/turn` | Whether the finalized voice turn was recorded and the resulting message count. |
+| `/api/voice/realtime/end` | Whether persistent session finalization produced a summary. |
+
+Recorded voice turns stamp `diagnostics.voice_runtime=openai_realtime`
+and `diagnostics.voice_tool_calls=[...]` in runtime state. Grounded
+lookup tool output also merges into `state.grounded_lookup` when present.
+
+Use Opik for text-runtime traces. Use the Realtime dogfood route and
+voice API responses when debugging audio, tool-call, or finalization
+issues.
 
 ---
 
