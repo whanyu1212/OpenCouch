@@ -248,6 +248,22 @@ def test_grouped_persistence_config_can_select_postgres_memory_store() -> None:
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
 
 
+def test_partial_grouped_persistence_config_preserves_legacy_thread_backend() -> None:
+    """Unset grouped persistence fields should not clobber legacy kwargs."""
+
+    runtime = PersistentAgentRuntime(
+        thread_persistence_backend="postgres",
+        thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        persistence_config=RuntimePersistenceConfig(
+            memory_backend="postgres",
+            memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        ),
+    )
+
+    assert isinstance(runtime.memory_store, PostgresMemoryStore)
+    assert isinstance(runtime._active_session_store, PostgresActiveSessionStore)  # noqa: SLF001
+
+
 def test_postgres_memory_backend_requires_database_url() -> None:
     """Selecting the Postgres memory backend without a DSN should fail
     fast at runtime construction rather than later on first query."""

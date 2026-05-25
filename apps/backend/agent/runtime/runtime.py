@@ -110,6 +110,7 @@ DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 ALLOWED_MSGPACK_MODULES: tuple[str, ...] = ()
 SESSION_TIMEOUT = timedelta(minutes=20)
+_UNSET = object()
 
 
 @dataclass(slots=True)
@@ -129,52 +130,54 @@ class SessionSweepResult:
 class RuntimeStoragePaths:
     """Grouped SQLite path overrides for runtime-owned storage."""
 
-    sqlite_path: str | Path = DEFAULT_THREAD_DB_PATH
-    memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH
-    crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH
-    feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH
-    text_session_sqlite_path: str | Path | None = None
+    sqlite_path: str | Path | object = _UNSET
+    memory_sqlite_path: str | Path | object = _UNSET
+    crisis_log_sqlite_path: str | Path | object = _UNSET
+    feedback_sqlite_path: str | Path | object = _UNSET
+    text_session_sqlite_path: str | Path | None | object = _UNSET
 
 
 @dataclass(slots=True)
 class RuntimePersistenceConfig:
     """Grouped backend and database URL configuration for the runtime."""
 
-    memory_mode: MemoryMode = MemoryMode.LOCAL
-    memory_backend: Literal["sqlite", "postgres"] = "sqlite"
-    memory_database_url: str | None = None
-    thread_persistence_backend: Literal["sqlite", "postgres"] = "sqlite"
-    thread_database_url: str | None = None
-    crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "sqlite"
-    crisis_log_database_url: str | None = None
-    session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite"
-    session_feedback_database_url: str | None = None
-    text_session_backend: TextSessionBackend = "auto"
-    text_session_database_url: str | None = None
+    memory_mode: MemoryMode | object = _UNSET
+    memory_backend: Literal["sqlite", "postgres"] | object = _UNSET
+    memory_database_url: str | None | object = _UNSET
+    thread_persistence_backend: Literal["sqlite", "postgres"] | object = _UNSET
+    thread_database_url: str | None | object = _UNSET
+    crisis_log_persistence_backend: Literal["sqlite", "postgres"] | object = _UNSET
+    crisis_log_database_url: str | None | object = _UNSET
+    session_feedback_persistence_backend: Literal["sqlite", "postgres"] | object = (
+        _UNSET
+    )
+    session_feedback_database_url: str | None | object = _UNSET
+    text_session_backend: TextSessionBackend | object = _UNSET
+    text_session_database_url: str | None | object = _UNSET
 
 
 @dataclass(slots=True)
 class RuntimeDependencies:
     """Grouped dependency injection hooks for runtime construction."""
 
-    memory_store: MemoryStore | None = None
-    crisis_log_backend: CrisisLogBackend | None = None
-    session_feedback_backend: SessionFeedbackBackend | None = None
-    embedding_provider: "EmbeddingProvider | None" = None
-    default_llm_client: BaseLLMClient | None = None
-    auto_finalize_excluded: Callable[[str], bool] | None = None
+    memory_store: MemoryStore | None | object = _UNSET
+    crisis_log_backend: CrisisLogBackend | None | object = _UNSET
+    session_feedback_backend: SessionFeedbackBackend | None | object = _UNSET
+    embedding_provider: "EmbeddingProvider | None | object" = _UNSET
+    default_llm_client: BaseLLMClient | None | object = _UNSET
+    auto_finalize_excluded: Callable[[str], bool] | None | object = _UNSET
 
 
 @dataclass(slots=True)
 class RuntimeBehaviorConfig:
     """Grouped operational behavior settings for the runtime."""
 
-    text_session_create_tables: bool = True
-    text_session_history_limit: int | None = None
-    session_timeout: timedelta = SESSION_TIMEOUT
-    session_sweep_interval_seconds: float = 30.0
-    finalize_active_sessions_on_close: bool = True
-    speculative_memory_prefetch: bool = True
+    text_session_create_tables: bool | object = _UNSET
+    text_session_history_limit: int | None | object = _UNSET
+    session_timeout: timedelta | object = _UNSET
+    session_sweep_interval_seconds: float | object = _UNSET
+    finalize_active_sessions_on_close: bool | object = _UNSET
+    speculative_memory_prefetch: bool | object = _UNSET
 
 
 class PersistentAgentRuntime:
@@ -281,50 +284,140 @@ class PersistentAgentRuntime:
         """
 
         if storage_paths is not None:
-            sqlite_path = storage_paths.sqlite_path
-            memory_sqlite_path = storage_paths.memory_sqlite_path
-            crisis_log_sqlite_path = storage_paths.crisis_log_sqlite_path
-            feedback_sqlite_path = storage_paths.feedback_sqlite_path
-            text_session_sqlite_path = storage_paths.text_session_sqlite_path
+            if storage_paths.sqlite_path is not _UNSET:
+                sqlite_path = cast(str | Path, storage_paths.sqlite_path)
+            if storage_paths.memory_sqlite_path is not _UNSET:
+                memory_sqlite_path = cast(
+                    str | Path,
+                    storage_paths.memory_sqlite_path,
+                )
+            if storage_paths.crisis_log_sqlite_path is not _UNSET:
+                crisis_log_sqlite_path = cast(
+                    str | Path,
+                    storage_paths.crisis_log_sqlite_path,
+                )
+            if storage_paths.feedback_sqlite_path is not _UNSET:
+                feedback_sqlite_path = cast(
+                    str | Path,
+                    storage_paths.feedback_sqlite_path,
+                )
+            if storage_paths.text_session_sqlite_path is not _UNSET:
+                text_session_sqlite_path = cast(
+                    str | Path | None,
+                    storage_paths.text_session_sqlite_path,
+                )
 
         if persistence_config is not None:
-            memory_mode = persistence_config.memory_mode
-            memory_backend = persistence_config.memory_backend
-            memory_database_url = persistence_config.memory_database_url
-            thread_persistence_backend = persistence_config.thread_persistence_backend
-            thread_database_url = persistence_config.thread_database_url
-            crisis_log_persistence_backend = (
-                persistence_config.crisis_log_persistence_backend
-            )
-            crisis_log_database_url = persistence_config.crisis_log_database_url
-            session_feedback_persistence_backend = (
-                persistence_config.session_feedback_persistence_backend
-            )
-            session_feedback_database_url = (
-                persistence_config.session_feedback_database_url
-            )
-            text_session_backend = persistence_config.text_session_backend
-            text_session_database_url = persistence_config.text_session_database_url
+            if persistence_config.memory_mode is not _UNSET:
+                memory_mode = cast(MemoryMode, persistence_config.memory_mode)
+            if persistence_config.memory_backend is not _UNSET:
+                memory_backend = cast(
+                    Literal["sqlite", "postgres"],
+                    persistence_config.memory_backend,
+                )
+            if persistence_config.memory_database_url is not _UNSET:
+                memory_database_url = cast(
+                    str | None,
+                    persistence_config.memory_database_url,
+                )
+            if persistence_config.thread_persistence_backend is not _UNSET:
+                thread_persistence_backend = cast(
+                    Literal["sqlite", "postgres"],
+                    persistence_config.thread_persistence_backend,
+                )
+            if persistence_config.thread_database_url is not _UNSET:
+                thread_database_url = cast(
+                    str | None,
+                    persistence_config.thread_database_url,
+                )
+            if persistence_config.crisis_log_persistence_backend is not _UNSET:
+                crisis_log_persistence_backend = cast(
+                    Literal["sqlite", "postgres"],
+                    persistence_config.crisis_log_persistence_backend,
+                )
+            if persistence_config.crisis_log_database_url is not _UNSET:
+                crisis_log_database_url = cast(
+                    str | None,
+                    persistence_config.crisis_log_database_url,
+                )
+            if persistence_config.session_feedback_persistence_backend is not _UNSET:
+                session_feedback_persistence_backend = cast(
+                    Literal["sqlite", "postgres"],
+                    persistence_config.session_feedback_persistence_backend,
+                )
+            if persistence_config.session_feedback_database_url is not _UNSET:
+                session_feedback_database_url = cast(
+                    str | None,
+                    persistence_config.session_feedback_database_url,
+                )
+            if persistence_config.text_session_backend is not _UNSET:
+                text_session_backend = cast(
+                    TextSessionBackend,
+                    persistence_config.text_session_backend,
+                )
+            if persistence_config.text_session_database_url is not _UNSET:
+                text_session_database_url = cast(
+                    str | None,
+                    persistence_config.text_session_database_url,
+                )
 
         if dependencies is not None:
-            memory_store = dependencies.memory_store
-            crisis_log_backend = dependencies.crisis_log_backend
-            session_feedback_backend = dependencies.session_feedback_backend
-            embedding_provider = dependencies.embedding_provider
-            default_llm_client = dependencies.default_llm_client
-            auto_finalize_excluded = dependencies.auto_finalize_excluded
+            if dependencies.memory_store is not _UNSET:
+                memory_store = cast(MemoryStore | None, dependencies.memory_store)
+            if dependencies.crisis_log_backend is not _UNSET:
+                crisis_log_backend = cast(
+                    CrisisLogBackend | None,
+                    dependencies.crisis_log_backend,
+                )
+            if dependencies.session_feedback_backend is not _UNSET:
+                session_feedback_backend = cast(
+                    SessionFeedbackBackend | None,
+                    dependencies.session_feedback_backend,
+                )
+            if dependencies.embedding_provider is not _UNSET:
+                embedding_provider = cast(
+                    EmbeddingProvider | None,
+                    dependencies.embedding_provider,
+                )
+            if dependencies.default_llm_client is not _UNSET:
+                default_llm_client = cast(
+                    BaseLLMClient | None,
+                    dependencies.default_llm_client,
+                )
+            if dependencies.auto_finalize_excluded is not _UNSET:
+                auto_finalize_excluded = cast(
+                    Callable[[str], bool] | None,
+                    dependencies.auto_finalize_excluded,
+                )
 
         if behavior_config is not None:
-            text_session_create_tables = behavior_config.text_session_create_tables
-            text_session_history_limit = behavior_config.text_session_history_limit
-            session_timeout = behavior_config.session_timeout
-            session_sweep_interval_seconds = (
-                behavior_config.session_sweep_interval_seconds
-            )
-            finalize_active_sessions_on_close = (
-                behavior_config.finalize_active_sessions_on_close
-            )
-            speculative_memory_prefetch = behavior_config.speculative_memory_prefetch
+            if behavior_config.text_session_create_tables is not _UNSET:
+                text_session_create_tables = cast(
+                    bool,
+                    behavior_config.text_session_create_tables,
+                )
+            if behavior_config.text_session_history_limit is not _UNSET:
+                text_session_history_limit = cast(
+                    int | None,
+                    behavior_config.text_session_history_limit,
+                )
+            if behavior_config.session_timeout is not _UNSET:
+                session_timeout = cast(timedelta, behavior_config.session_timeout)
+            if behavior_config.session_sweep_interval_seconds is not _UNSET:
+                session_sweep_interval_seconds = cast(
+                    float,
+                    behavior_config.session_sweep_interval_seconds,
+                )
+            if behavior_config.finalize_active_sessions_on_close is not _UNSET:
+                finalize_active_sessions_on_close = cast(
+                    bool,
+                    behavior_config.finalize_active_sessions_on_close,
+                )
+            if behavior_config.speculative_memory_prefetch is not _UNSET:
+                speculative_memory_prefetch = cast(
+                    bool,
+                    behavior_config.speculative_memory_prefetch,
+                )
 
         self.memory_mode = memory_mode
         is_incognito = memory_mode == MemoryMode.INCOGNITO
