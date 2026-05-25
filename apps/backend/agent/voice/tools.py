@@ -13,6 +13,10 @@ from agent.tools.guided_exercise import (
     execute_guided_exercise_progress_tool,
     execute_guided_exercise_skill_tool,
 )
+from agent.memory.modes import resolve_effective_memory_mode
+from agent.memory.procedural_profile import aget_procedural_profile
+from agent.memory.recall import load_memory_for_turn
+from agent.state import resolve_owner_id
 from agent.tools.memory import (
     execute_memory_tool_action,
     execute_read_only_memory_action,
@@ -20,9 +24,13 @@ from agent.tools.memory import (
 from agent.tools.therapeutic import execute_therapeutic_response_skill_tool
 from llm.base import BaseLLMClient
 
+_RECALL_DEFAULT_LIMIT = 5
+_RECALL_MAX_LIMIT = 10
+
 _SUPPORTED_VOICE_TOOL_NAMES = {
     "show_memory_status",
     "show_saved_memory",
+    "recall_saved_memory",
     "set_proactive_memory_recall",
     "save_response_preference",
     "prepare_memory_deletion_by_index",
@@ -39,6 +47,7 @@ _SUPPORTED_VOICE_TOOL_NAMES = {
 
 _PERSISTENT_ONLY_TOOL_NAMES = {
     "show_saved_memory",
+    "recall_saved_memory",
     "set_proactive_memory_recall",
     "save_response_preference",
     "prepare_memory_deletion_by_index",
@@ -198,6 +207,35 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
                 required=[],
             ),
             _function_tool(
+                name="recall_saved_memory",
+                description=(
+                    "Query the user's saved memory for facts and session arcs "
+                    "relevant to a specific topic. Use when the user mentions a "
+                    "topic that might have prior saved context (e.g. an ongoing "
+                    "concern, a relationship, a past exercise); do not call "
+                    "every turn. Refused server-side in incognito mode and when "
+                    "the user has proactive recall disabled. Side effects: none."
+                ),
+                properties={
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Topic to search saved memory for. Use the user's "
+                            "own words when possible (e.g. 'work stress', "
+                            "'partner conversation', 'sleep')."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of entries to return. Defaults to 5; "
+                            "use a small value to keep voice replies concise."
+                        ),
+                    },
+                },
+                required=["query"],
+            ),
+            _function_tool(
                 name="save_response_preference",
                 description=(
                     "Save an explicit response-style or memory-use preference. "
@@ -337,6 +375,8 @@ async def execute_voice_tool_call(
         result = await execute_read_only_memory_action(context, {"type": "status"})
     elif tool_name == "show_saved_memory":
         result = await execute_read_only_memory_action(context, {"type": "list"})
+    elif tool_name == "recall_saved_memory":
+        result = await _execute_recall_saved_memory(context, arguments)
     elif tool_name == "save_response_preference":
         result = await execute_memory_tool_action(
             context,
@@ -459,12 +499,17 @@ def _optional_int(value: object) -> int | None:
 
 
 def _effective_memory_mode(runtime: Any, memory_mode: str | None) -> str:
-    if memory_mode is not None:
-        return memory_mode.strip().lower()
-    runtime_mode = getattr(runtime, "memory_mode", None)
-    if str(runtime_mode).lower().endswith("incognito"):
-        return "incognito"
-    return "persistent"
+    """Return the resolved binary memory mode for a tool dispatch.
+
+    Delegates to ``resolve_effective_memory_mode`` so incognito is the
+    floor: if the runtime is incognito, the request cannot escalate to
+    persistent. Routes resolve this upstream; the helper stays as
+    defense-in-depth for direct callers (tests, future channels).
+    """
+
+    return resolve_effective_memory_mode(
+        getattr(runtime, "memory_mode", None), memory_mode
+    )
 
 
 def _incognito_memory_status_result() -> dict[str, object]:
@@ -477,4 +522,118 @@ def _incognito_memory_status_result() -> dict[str, object]:
         "memory_control": {"memory_mode": "incognito"},
         "side_effect": "none",
         "retry_safe": True,
+    }
+
+
+async def _execute_recall_saved_memory(
+    context: Any,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    """Run the recall_saved_memory tool with server-side gating.
+
+    Gating order:
+    1. Empty query -> refuse without touching the store.
+    2. Procedural profile fetch (cheap document read) -> if the user has
+       proactive recall disabled, refuse before any semantic retrieval.
+       A model tool call is not the same as explicit user consent, so a
+       recall-off setting always takes precedence.
+    3. Otherwise call ``load_memory_for_turn`` and project results.
+
+    Incognito refusal is handled upstream by ``_PERSISTENT_ONLY_TOOL_NAMES``.
+    """
+
+    raw_query = arguments.get("query")
+    query = raw_query.strip() if isinstance(raw_query, str) else ""
+    if not query:
+        return {
+            "response_text": (
+                "No recall query was provided. Try again with a topic to "
+                "search saved memory for."
+            ),
+            "results": [],
+            "refused": True,
+            "side_effect": "none",
+            "retry_safe": True,
+        }
+
+    raw_limit = arguments.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit is not None else _RECALL_DEFAULT_LIMIT
+    except (TypeError, ValueError):
+        limit = _RECALL_DEFAULT_LIMIT
+    limit = max(1, min(limit, _RECALL_MAX_LIMIT))
+
+    workflow_context = context.workflow_context
+    owner_id = resolve_owner_id(context.agent_state)
+
+    profile = await aget_procedural_profile(
+        workflow_context.memory_store, user_id=owner_id
+    )
+    if not profile.proactive_recall_enabled:
+        return {
+            "response_text": (
+                "Saved memory exists, but proactive recall is off for this "
+                "user. Honor that setting and continue without quoting saved "
+                "facts; suggest turning recall on only if the user asks."
+            ),
+            "results": [],
+            "refused": True,
+            "reason": "proactive_recall_disabled",
+            "side_effect": "none",
+            "retry_safe": True,
+        }
+
+    result = await load_memory_for_turn(
+        memory_store=workflow_context.memory_store,
+        embedding_provider=workflow_context.embedding_provider,
+        owner_id=owner_id,
+        query=query,
+        is_first_turn=False,
+    )
+
+    entries = [
+        _recall_entry_payload(entry) for entry in list(result.working_memory)[:limit]
+    ]
+    entries = [entry for entry in entries if entry]
+
+    return {
+        "response_text": (
+            "Recalled memory entries follow. Use them only when relevant to "
+            "the current turn and avoid reciting them verbatim."
+        ),
+        "query": query,
+        "results": entries,
+        "result_count": len(entries),
+        "side_effect": "none",
+        "retry_safe": True,
+    }
+
+
+def _recall_entry_payload(entry: Any) -> dict[str, object] | None:
+    """Project a WorkingMemoryEntry into a compact tool-result shape."""
+
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        snippet = (
+            entry.get("evidence_quote")
+            or entry.get("summary")
+            or entry.get("text")
+            or ""
+        )
+        return {
+            "snippet": str(snippet).strip(),
+            "kind": str(entry.get("kind") or entry.get("source") or "memory"),
+        }
+    snippet = (
+        getattr(entry, "evidence_quote", None)
+        or getattr(entry, "summary", None)
+        or getattr(entry, "text", None)
+        or ""
+    )
+    return {
+        "snippet": str(snippet).strip(),
+        "kind": str(
+            getattr(entry, "kind", None) or getattr(entry, "source", None) or "memory"
+        ),
     }

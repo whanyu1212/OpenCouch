@@ -6,6 +6,7 @@ import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from agent.memory.modes import resolve_effective_memory_mode
 from agent.voice import realtime
 from agent.voice import tools as voice_tools
 from api.dependencies import get_llm_client, get_runtime
@@ -39,15 +40,18 @@ async def create_voice_realtime_session(
 ) -> VoiceRealtimeSessionResponse:
     """Create an ephemeral OpenAI Realtime client secret for browser voice."""
 
+    effective_mode = resolve_effective_memory_mode(
+        getattr(runtime, "memory_mode", None), body.memory_mode
+    )
     memory_context = await runtime.voice_session_memory_context(
         thread_id=body.thread_id,
         user_id=body.user_id,
-        memory_mode=body.memory_mode,
+        memory_mode=effective_mode,
     )
     session_config = realtime.build_realtime_session_config(
         thread_id=body.thread_id,
         user_id=body.user_id,
-        memory_mode=body.memory_mode,
+        memory_mode=effective_mode,
         memory_context=memory_context,
         assistant_voice=body.assistant_voice,
     )
@@ -73,7 +77,7 @@ async def create_voice_realtime_session(
         client_secret=client_secret,
         thread_id=body.thread_id,
         user_id=body.user_id,
-        memory_mode=body.memory_mode,
+        memory_mode=effective_mode,
         session_config=session_config,
     )
 
@@ -86,6 +90,9 @@ async def execute_voice_realtime_tool(
 ) -> VoiceToolCallResponse:
     """Execute one app-owned OpenAI Realtime function tool call."""
 
+    effective_mode = resolve_effective_memory_mode(
+        getattr(runtime, "memory_mode", None), body.memory_mode
+    )
     try:
         output = await voice_tools.execute_voice_tool_call(
             runtime=runtime,
@@ -95,7 +102,7 @@ async def execute_voice_realtime_tool(
             user_id=body.user_id,
             current_user_message=body.current_user_message,
             transcript=body.transcript,
-            memory_mode=body.memory_mode,
+            memory_mode=effective_mode,
             llm_client=llm_client,
         )
     except Exception as exc:
@@ -118,12 +125,15 @@ async def prepare_voice_realtime_turn_policy(
 ) -> VoiceTurnPolicyResponse:
     """Return observe-only app policy for a finalized voice user transcript."""
 
+    effective_mode = resolve_effective_memory_mode(
+        getattr(runtime, "memory_mode", None), body.memory_mode
+    )
     try:
         policy = await runtime.prepare_voice_turn_policy(
             thread_id=body.thread_id,
             user_id=body.user_id,
             user_text=body.user_text,
-            memory_mode=body.memory_mode,
+            memory_mode=effective_mode,
         )
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
@@ -146,7 +156,10 @@ async def record_voice_realtime_turn(
 ) -> VoiceTurnRecordResponse:
     """Record a finalized voice user/assistant turn in app-owned history."""
 
-    if body.memory_mode == "incognito":
+    effective_mode = resolve_effective_memory_mode(
+        getattr(runtime, "memory_mode", None), body.memory_mode
+    )
+    if effective_mode == "incognito":
         return VoiceTurnRecordResponse(
             recorded=False,
             thread_id=body.thread_id,
@@ -189,7 +202,10 @@ async def end_voice_realtime_session(
 ) -> VoiceEndSessionResponse:
     """Finalize a voice session using the runtime session finalizer."""
 
-    if body.memory_mode == "incognito":
+    effective_mode = resolve_effective_memory_mode(
+        getattr(runtime, "memory_mode", None), body.memory_mode
+    )
+    if effective_mode == "incognito":
         return VoiceEndSessionResponse(
             finalized=False,
             summary=None,

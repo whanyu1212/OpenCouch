@@ -24,6 +24,7 @@ from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.policy.write import text_contains_memory_control_request
+from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.recall import load_memory_for_turn
 from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
 from agent.memory.types import StoredSessionArc
@@ -52,7 +53,6 @@ from agent.runtime.session_store import (
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.memory_context import build_turn_memory_delta
 from agent.voice.transcript import voice_turn_to_transcript_entries
 from agent.voice.turn_policy import VoiceTurnPolicy, build_voice_turn_policy
 from agent.memory.modes import MemoryMode
@@ -95,7 +95,7 @@ from agent.runtime.types import (
 )
 from agent.runtime_context import PrefetchedTurnMemory
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState, AgentTurnInputState
+from agent.state import AgentState, AgentTurnInputState, resolve_owner_id
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -1103,29 +1103,36 @@ class PersistentAgentRuntime:
         user_id: str | None,
         memory_mode: str | None = None,
     ) -> str:
-        """Return compact saved-memory context for a Realtime voice session."""
+        """Return compact saved-memory context for a Realtime voice session.
+
+        Voice sessions are created before the user has said anything, so a
+        semantic recall here has no real query to match on. Bootstrap context
+        is therefore limited to the user's standing procedural rules and the
+        proactive-recall toggle; topic-specific recall happens mid-session via
+        the ``recall_saved_memory`` tool when the user introduces a topic.
+        """
 
         if memory_mode == "incognito" or self.memory_mode == MemoryMode.INCOGNITO:
             return ""
+
         initial_state = self._build_turn_initial_state(
             thread_id=thread_id,
-            message="voice session start",
+            message="",
             channel=Channel.VOICE,
             user_id=user_id,
             installed_skills=None,
             prior_turn_count=0,
         )
-        context = WorkflowContext(
-            llm_client=None,
-            response_llm=None,
-            memory_store=self._memory_store,
-            crisis_log_backend=self._crisis_log_backend,
-            memory_mode=self.memory_mode,
-            embedding_provider=self._embedding_provider,
-            session_memory_buffer=None,
-            pre_fetched_memory=None,
-        )
-        delta = await build_turn_memory_delta(cast(AgentState, initial_state), context)
+        owner_id = resolve_owner_id(cast(AgentState, initial_state))
+        profile = await aget_procedural_profile(self._memory_store, user_id=owner_id)
+        delta: dict[str, Any] = {
+            "working_memory": [],
+            "session_memory": {"summary": ""},
+            "procedural_profile": {
+                "procedural_rules": [{"rule": rule.rule} for rule in profile.rules],
+                "proactive_recall_enabled": profile.proactive_recall_enabled,
+            },
+        }
         return _compact_voice_memory_context(delta)
 
     async def record_voice_turn(

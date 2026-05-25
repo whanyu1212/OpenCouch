@@ -49,7 +49,7 @@ async def test_voice_turn_endpoint_records_transcript() -> None:
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
         feedback_sqlite_path=":memory:",
-        memory_mode=MemoryMode.INCOGNITO,
+        memory_mode=MemoryMode.LOCAL,
     )
 
     app = FastAPI()
@@ -91,7 +91,7 @@ async def test_voice_turn_endpoint_records_route_and_tool_metadata() -> None:
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
         feedback_sqlite_path=":memory:",
-        memory_mode=MemoryMode.INCOGNITO,
+        memory_mode=MemoryMode.LOCAL,
     )
 
     app = FastAPI()
@@ -149,7 +149,7 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization() -> None:
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
         feedback_sqlite_path=":memory:",
-        memory_mode=MemoryMode.INCOGNITO,
+        memory_mode=MemoryMode.LOCAL,
     )
 
     app = FastAPI()
