@@ -160,6 +160,16 @@ class VoiceEndSessionRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     memory_mode: ApiMemoryMode | None = None
+    feedback: FeedbackLabel | None = Field(
+        default=None,
+        description=(
+            "Optional end-of-session rating: 'positive', 'negative', "
+            "or 'skip'. When set, written to the session_feedback "
+            "store before summarization runs. When null or omitted, "
+            "no feedback record is created and summarization proceeds "
+            "as usual."
+        ),
+    )
 
 
 # Response models
@@ -283,6 +293,12 @@ class VoiceEndSessionResponse(BaseModel):
     finalized: bool
     summary: str | None = None
     detail: str
+    themes: list[str] = Field(default_factory=list)
+    mood_opened: str | None = None
+    mood_closed: str | None = None
+    turn_count: int | None = None
+    open_loops: list[str] = Field(default_factory=list)
+    resolved_threads: list[str] = Field(default_factory=list)
 
 
 class MemoryStatusResponse(BaseModel):

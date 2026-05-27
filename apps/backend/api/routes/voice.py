@@ -205,6 +205,13 @@ async def end_voice_realtime_session(
             detail="Incognito voice session ended without durable finalization.",
         )
 
+    if body.feedback is not None:
+        await runtime.record_session_feedback(
+            body.thread_id,
+            label=body.feedback,
+            source="api_end",
+        )
+
     try:
         arc = await runtime.end_session(body.thread_id, llm_client=llm_client)
     except Exception as exc:
@@ -228,6 +235,12 @@ async def end_voice_realtime_session(
         finalized=True,
         summary=arc.summary,
         detail="Session summary produced.",
+        themes=list(arc.primary_themes),
+        mood_opened=arc.mood_arc.opened,
+        mood_closed=arc.mood_arc.closed,
+        turn_count=arc.turn_count,
+        open_loops=list(arc.open_loops),
+        resolved_threads=list(arc.resolved_threads),
     )
 
 

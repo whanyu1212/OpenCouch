@@ -153,6 +153,13 @@ async def test_persistent_voice_turn_request_still_persists_runtime_state(
 class _FakeEndRuntime:
     def __init__(self) -> None:
         self.called = False
+        self.feedback_called = False
+
+    async def record_session_feedback(
+        self, thread_id: str, *, label: str, source: str
+    ) -> None:
+        self.feedback_called = True
+        raise AssertionError("incognito voice end should not persist feedback")
 
     async def end_session(self, thread_id: str, *, llm_client: object | None) -> Any:
         self.called = True
@@ -175,13 +182,25 @@ async def test_incognito_voice_end_request_skips_runtime_finalization(
     ) as client:
         response = await client.post(
             "/api/voice/realtime/end",
-            json={"thread_id": "voice-thread", "memory_mode": "incognito"},
+            json={
+                "thread_id": "voice-thread",
+                "memory_mode": "incognito",
+                "feedback": "positive",
+            },
         )
 
     assert response.status_code == 200
     assert runtime.called is False
-    assert response.json() == {
-        "finalized": False,
-        "summary": None,
-        "detail": "Incognito voice session ended without durable finalization.",
-    }
+    assert runtime.feedback_called is False
+    data = response.json()
+    assert data["finalized"] is False
+    assert data["summary"] is None
+    assert (
+        data["detail"] == "Incognito voice session ended without durable finalization."
+    )
+    assert data["themes"] == []
+    assert data["mood_opened"] is None
+    assert data["mood_closed"] is None
+    assert data["turn_count"] is None
+    assert data["open_loops"] == []
+    assert data["resolved_threads"] == []
