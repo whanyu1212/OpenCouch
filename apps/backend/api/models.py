@@ -80,6 +80,13 @@ class EndSessionRequest(BaseModel):
             "as usual."
         ),
     )
+    memory_mode: ApiMemoryMode | None = Field(
+        default=None,
+        description=(
+            "Optional memory mode for the thread session being ended. "
+            "When omitted, the API default from OPENCOUCH_MEMORY_MODE is used."
+        ),
+    )
 
 
 class VoiceRealtimeSessionRequest(BaseModel):
@@ -87,7 +94,7 @@ class VoiceRealtimeSessionRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     user_id: str | None = None
-    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    memory_mode: ApiMemoryMode | None = None
     assistant_voice: (
         Literal[
             "alloy",
@@ -112,7 +119,7 @@ class VoiceToolCallRequest(BaseModel):
     user_id: str | None = None
     current_user_message: str = ""
     transcript: list[dict[str, object]] = Field(default_factory=list)
-    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    memory_mode: ApiMemoryMode | None = None
     tool_name: str = Field(min_length=1)
     arguments: dict[str, object] = Field(default_factory=dict)
 
@@ -133,7 +140,7 @@ class VoiceTurnRecordRequest(BaseModel):
     user_id: str | None = None
     user_text: str = ""
     assistant_text: str = ""
-    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    memory_mode: ApiMemoryMode | None = None
     route: str | None = None
     response_style: str | None = None
     tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
@@ -145,14 +152,14 @@ class VoiceTurnPolicyRequest(BaseModel):
     thread_id: str = Field(min_length=1)
     user_id: str | None = None
     user_text: str = Field(min_length=1)
-    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    memory_mode: ApiMemoryMode | None = None
 
 
 class VoiceEndSessionRequest(BaseModel):
     """POST /api/voice/realtime/end request body."""
 
     thread_id: str = Field(min_length=1)
-    memory_mode: Literal["incognito", "persistent"] = "incognito"
+    memory_mode: ApiMemoryMode | None = None
 
 
 # Response models

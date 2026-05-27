@@ -212,12 +212,20 @@ def _build_runtime(
     )
 
 
+def resolve_api_memory_mode(
+    memory_mode: ApiMemoryMode | str | None = None,
+) -> ApiMemoryMode:
+    """Resolve an API memory mode against the configured backend default."""
+
+    return parse_api_memory_mode(memory_mode, default=_default_memory_mode)
+
+
 def get_runtime_for_memory_mode(
     memory_mode: ApiMemoryMode | str | None = None,
 ) -> PersistentAgentRuntime:
     """Return the shared runtime for a request's resolved API memory mode."""
 
-    resolved_mode = parse_api_memory_mode(memory_mode, default=_default_memory_mode)
+    resolved_mode = resolve_api_memory_mode(memory_mode)
     runtime = _runtimes.get(resolved_mode)
     if runtime is None:
         raise RuntimeError(

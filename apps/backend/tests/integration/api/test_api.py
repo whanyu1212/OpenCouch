@@ -206,6 +206,7 @@ async def client(runtime, monkeypatch: pytest.MonkeyPatch):
     from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
     from api.router import api_router
     from api.routes import chat as chat_routes
+    from api.routes import threads as thread_routes
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
@@ -216,6 +217,7 @@ async def client(runtime, monkeypatch: pytest.MonkeyPatch):
     app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_response_llm_clients] = lambda: {}
     monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(thread_routes, "get_runtime_for_memory_mode", lambda _: runtime)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -680,6 +682,92 @@ class TestThreads:
         resp = await client.get("/api/threads/status-thread/session-status")
         assert resp.status_code == 200
         assert resp.json() == {"has_active_session": False}
+
+    @pytest.mark.asyncio
+    async def test_session_status_uses_requested_memory_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from api.dependencies import get_llm_client
+        from api.router import api_router
+        from api.routes import threads as thread_routes
+
+        seen_modes: list[ApiMemoryMode | None] = []
+
+        class _FakeThreadRuntime:
+            async def has_active_session(self, thread_id: str) -> bool:
+                return True
+
+        def fake_selector(mode: ApiMemoryMode | None):
+            seen_modes.append(mode)
+            return _FakeThreadRuntime()
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_llm_client] = lambda: None
+        monkeypatch.setattr(thread_routes, "get_runtime_for_memory_mode", fake_selector)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.get(
+                "/api/threads/thread-mode/session-status",
+                params={"memory_mode": "incognito"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"has_active_session": True}
+        assert seen_modes == [ApiMemoryMode.INCOGNITO]
+
+    @pytest.mark.asyncio
+    async def test_end_session_uses_requested_memory_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from api.dependencies import get_llm_client
+        from api.router import api_router
+        from api.routes import threads as thread_routes
+
+        seen_modes: list[ApiMemoryMode | None] = []
+
+        class _FakeThreadRuntime:
+            async def record_session_feedback(
+                self, thread_id: str, *, label: str, source: str
+            ) -> None:
+                return None
+
+            async def end_session(
+                self, thread_id: str, *, llm_client: object | None
+            ) -> None:
+                return None
+
+        def fake_selector(mode: ApiMemoryMode | None):
+            seen_modes.append(mode)
+            return _FakeThreadRuntime()
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_llm_client] = lambda: None
+        monkeypatch.setattr(thread_routes, "get_runtime_for_memory_mode", fake_selector)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/threads/thread-mode/end",
+                json={"memory_mode": "incognito"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "summary": None,
+            "detail": "No summary produced (session too short, no LLM, or incognito mode).",
+        }
+        assert seen_modes == [ApiMemoryMode.INCOGNITO]
 
     @pytest.mark.asyncio
     async def test_get_history_returns_messages(self, client) -> None:
