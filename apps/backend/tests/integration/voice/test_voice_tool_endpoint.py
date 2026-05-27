@@ -6,8 +6,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from api.dependencies import get_llm_client, get_runtime
+from api.dependencies import get_llm_client
 from api.router import api_router
+from api.routes import voice as voice_routes
 
 
 class _FakeRuntime:
@@ -15,12 +16,12 @@ class _FakeRuntime:
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
     runtime = _FakeRuntime()
 
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with AsyncClient(

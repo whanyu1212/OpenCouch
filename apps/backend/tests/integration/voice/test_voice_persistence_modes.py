@@ -8,8 +8,9 @@ from httpx import ASGITransport, AsyncClient
 
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
-from api.dependencies import get_llm_client, get_runtime
+from api.dependencies import get_llm_client
 from api.router import api_router
+from api.routes import voice as voice_routes
 
 
 class _FakeSessionRuntime:
@@ -36,7 +37,7 @@ async def test_incognito_voice_session_does_not_bootstrap_persistent_memory(
     runtime = _FakeSessionRuntime()
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
 
     async def fake_create_realtime_client_secret(
         *,
@@ -73,7 +74,9 @@ async def test_incognito_voice_session_does_not_bootstrap_persistent_memory(
 
 
 @pytest.mark.asyncio
-async def test_incognito_voice_turn_request_does_not_persist_runtime_state() -> None:
+async def test_incognito_voice_turn_request_does_not_persist_runtime_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
@@ -83,7 +86,7 @@ async def test_incognito_voice_turn_request_does_not_persist_runtime_state() -> 
     )
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -109,7 +112,9 @@ async def test_incognito_voice_turn_request_does_not_persist_runtime_state() -> 
 
 
 @pytest.mark.asyncio
-async def test_persistent_voice_turn_request_still_persists_runtime_state() -> None:
+async def test_persistent_voice_turn_request_still_persists_runtime_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
@@ -119,7 +124,7 @@ async def test_persistent_voice_turn_request_still_persists_runtime_state() -> N
     )
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -155,11 +160,13 @@ class _FakeEndRuntime:
 
 
 @pytest.mark.asyncio
-async def test_incognito_voice_end_request_skips_runtime_finalization() -> None:
+async def test_incognito_voice_end_request_skips_runtime_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = _FakeEndRuntime()
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with AsyncClient(

@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from api.dependencies import get_runtime
 from api.router import api_router
+from api.routes import voice as voice_routes
 
 
 class _FakeRuntime:
@@ -22,11 +22,11 @@ class _FakeRuntime:
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
     runtime = _FakeRuntime()
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -81,7 +81,7 @@ async def test_create_voice_realtime_session_returns_client_secret(
 
 
 @pytest.mark.asyncio
-async def test_create_voice_realtime_session_defaults_to_incognito(
+async def test_create_voice_realtime_session_defaults_to_persistent(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -90,7 +90,7 @@ async def test_create_voice_realtime_session_defaults_to_incognito(
         session_config: dict[str, object],
         safety_identifier: str | None,
     ) -> str:
-        assert "incognito" in str(session_config["instructions"]).lower()
+        assert "persistent" in str(session_config["instructions"]).lower()
         assert safety_identifier
         return "ek_test_secret"
 
@@ -105,7 +105,7 @@ async def test_create_voice_realtime_session_defaults_to_incognito(
     )
 
     assert response.status_code == 200
-    assert response.json()["memory_mode"] == "incognito"
+    assert response.json()["memory_mode"] == "persistent"
 
 
 @pytest.mark.asyncio

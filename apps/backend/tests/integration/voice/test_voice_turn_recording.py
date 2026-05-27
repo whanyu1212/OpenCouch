@@ -7,8 +7,9 @@ from httpx import ASGITransport, AsyncClient
 from agent.memory.modes import MemoryMode
 from agent.models import MessageRole
 from agent.runtime import PersistentAgentRuntime
-from api.dependencies import get_llm_client, get_runtime
+from api.dependencies import get_llm_client
 from api.router import api_router
+from api.routes import voice as voice_routes
 from tests.support.persistence import FakeCrossRestartLLM
 
 
@@ -43,7 +44,9 @@ async def test_record_voice_turn_persists_thread_history() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_turn_endpoint_records_transcript() -> None:
+async def test_voice_turn_endpoint_records_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
@@ -54,7 +57,7 @@ async def test_voice_turn_endpoint_records_transcript() -> None:
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -85,7 +88,9 @@ async def test_voice_turn_endpoint_records_transcript() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_turn_endpoint_records_route_and_tool_metadata() -> None:
+async def test_voice_turn_endpoint_records_route_and_tool_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
@@ -96,7 +101,7 @@ async def test_voice_turn_endpoint_records_route_and_tool_metadata() -> None:
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -143,7 +148,9 @@ async def test_voice_turn_endpoint_records_route_and_tool_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_end_endpoint_uses_runtime_session_finalization() -> None:
+async def test_voice_end_endpoint_uses_runtime_session_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
@@ -154,7 +161,7 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization() -> None:
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -184,7 +191,9 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization() -> None:
 
 
 @pytest.mark.asyncio
-async def test_voice_end_endpoint_summarizes_persistent_voice_session() -> None:
+async def test_voice_end_endpoint_summarizes_persistent_voice_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
@@ -196,7 +205,7 @@ async def test_voice_end_endpoint_summarizes_persistent_voice_session() -> None:
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    app.dependency_overrides[get_runtime] = lambda: runtime
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
     app.dependency_overrides[get_llm_client] = lambda: fake_llm
 
     async with runtime:

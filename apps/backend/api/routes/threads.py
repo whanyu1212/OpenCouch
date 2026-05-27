@@ -8,11 +8,11 @@ POST /api/threads/{id}/end: end session and summarize.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from agent.runtime import PersistentAgentRuntime
-from api.dependencies import get_llm_client, get_runtime
+from api.dependencies import get_llm_client, get_runtime_for_memory_mode
 from api.models import (
+    ApiMemoryMode,
     EndSessionRequest,
     MessageResponse,
     SessionArcResponse,
@@ -27,18 +27,19 @@ router = APIRouter(prefix="/threads", tags=["threads"])
 @router.get("", response_model=list[ThreadSummaryResponse])
 async def list_threads(
     limit: int = 20,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> list[ThreadSummaryResponse]:
     """List persisted threads, most recent first.
 
     Args:
         limit: Maximum number of threads to return.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         Persisted thread summaries.
     """
 
+    runtime = get_runtime_for_memory_mode(memory_mode)
     summaries = await runtime.list_threads(limit=limit)
     return [
         ThreadSummaryResponse(
@@ -54,7 +55,7 @@ async def list_threads(
 @router.get("/{thread_id}/state")
 async def get_thread_state(
     thread_id: str,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> dict:
     """Return the raw persisted runtime state for a thread.
 
@@ -66,12 +67,13 @@ async def get_thread_state(
 
     Args:
         thread_id: Thread identifier to inspect.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         JSON-serializable persisted runtime state.
     """
 
+    runtime = get_runtime_for_memory_mode(memory_mode)
     state = await runtime.get_state(thread_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"No state for thread {thread_id}")
@@ -88,7 +90,7 @@ async def get_thread_state(
 @router.get("/{thread_id}/history", response_model=list[MessageResponse])
 async def get_thread_history(
     thread_id: str,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> list[MessageResponse]:
     """Return the transcript for a thread.
 
@@ -100,12 +102,13 @@ async def get_thread_history(
 
     Args:
         thread_id: Thread identifier to inspect.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         Transcript messages for the thread.
     """
 
+    runtime = get_runtime_for_memory_mode(memory_mode)
     messages = await runtime.get_history(thread_id)
     return [
         MessageResponse(
@@ -120,18 +123,19 @@ async def get_thread_history(
 @router.get("/{thread_id}/session-status", response_model=ThreadSessionStatusResponse)
 async def get_thread_session_status(
     thread_id: str,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> ThreadSessionStatusResponse:
     """Return whether this thread currently has an active session.
 
     Args:
         thread_id: Thread identifier to inspect.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         Active-session status for the thread.
     """
 
+    runtime = get_runtime_for_memory_mode(memory_mode)
     return ThreadSessionStatusResponse(
         has_active_session=await runtime.has_active_session(thread_id)
     )
@@ -141,7 +145,6 @@ async def get_thread_session_status(
 async def end_session(
     thread_id: str,
     body: EndSessionRequest = Body(default_factory=EndSessionRequest),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
 ) -> SessionArcResponse | dict:
     """End the session for a thread and produce an episodic summary.
@@ -167,13 +170,14 @@ async def end_session(
     Args:
         thread_id: Thread identifier to end.
         body: Optional session-ending request body.
-        runtime: Shared persistent agent runtime.
         llm_client: Optional control-plane LLM client.
 
     Returns:
         Session summary response, or an explanatory detail payload when
         no summary was produced.
     """
+
+    runtime = get_runtime_for_memory_mode(body.memory_mode)
 
     # Optional best-effort feedback capture. Runtime outages do not block summary.
     if body.feedback is not None:
