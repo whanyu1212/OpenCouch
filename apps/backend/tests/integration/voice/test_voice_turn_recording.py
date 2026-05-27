@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.models import MessageRole
 from agent.runtime import PersistentAgentRuntime
@@ -183,11 +184,19 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization(
             )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "finalized": False,
-        "summary": None,
-        "detail": "No summary produced (session too short, no LLM, or incognito mode).",
-    }
+    data = response.json()
+    assert data["finalized"] is False
+    assert data["summary"] is None
+    assert (
+        data["detail"]
+        == "No summary produced (session too short, no LLM, or incognito mode)."
+    )
+    assert data["themes"] == []
+    assert data["mood_opened"] is None
+    assert data["mood_closed"] is None
+    assert data["turn_count"] is None
+    assert data["open_loops"] == []
+    assert data["resolved_threads"] == []
 
 
 @pytest.mark.asyncio
@@ -242,9 +251,100 @@ async def test_voice_end_endpoint_summarizes_persistent_voice_session(
             )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "finalized": True,
-        "summary": "User mentioned their sister Sarah in passing.",
-        "detail": "Session summary produced.",
-    }
+    data = response.json()
+    assert data["finalized"] is True
+    assert data["summary"] == "User mentioned their sister Sarah in passing."
+    assert data["detail"] == "Session summary produced."
+    assert isinstance(data["themes"], list)
+    assert data["mood_opened"] is not None
+    assert data["mood_closed"] is not None
+    assert data["turn_count"] is not None
+    assert isinstance(data["open_loops"], list)
+    assert isinstance(data["resolved_threads"], list)
     assert fake_llm.summarization_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_voice_end_with_positive_feedback_writes_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-feedback-thread",
+            user_id="user-1",
+            user_text="I want to wrap up for today.",
+            assistant_text="We can close here and note what mattered.",
+            response_style="supportive",
+            llm_client=None,
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/end",
+                json={
+                    "thread_id": "voice-feedback-thread",
+                    "memory_mode": "persistent",
+                    "feedback": "positive",
+                },
+            )
+
+        records = await runtime.session_feedback_backend.alist_by_session(
+            hash_session_id("voice-feedback-thread")
+        )
+
+    assert response.status_code == 200
+    assert len(records) == 1
+    assert records[0].label == "positive"
+    assert records[0].source == "api_end"
+
+
+@pytest.mark.asyncio
+async def test_voice_end_rejects_invalid_feedback_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/end",
+                json={
+                    "thread_id": "voice-feedback-thread",
+                    "memory_mode": "persistent",
+                    "feedback": "awesome",
+                },
+            )
+
+        feedback_count = await runtime.session_feedback_backend.arecord_count()
+
+    assert response.status_code == 422
+    assert feedback_count == 0
