@@ -46,6 +46,13 @@ class ChatRequest(BaseModel):
         "memory. When set, memory is namespaced by user_id rather "
         "than thread_id.",
     )
+    memory_mode: ApiMemoryMode | None = Field(
+        default=None,
+        description=(
+            "Optional memory mode for this chat session. When omitted, "
+            "the API default from OPENCOUCH_MEMORY_MODE is used."
+        ),
+    )
     response_model_tier: ResponseModelTier | None = Field(
         default="fast",
         description=(

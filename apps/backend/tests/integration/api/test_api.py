@@ -12,6 +12,7 @@ thin wrapper; these tests verify the wrapping is correct.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -29,7 +30,9 @@ from agent.memory.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
 )
+from agent.models import AgentOutput, CrisisAssessment, ResponseCategory
 from agent.runtime import PersistentAgentRuntime
+from api.models import ApiMemoryMode
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
@@ -189,7 +192,7 @@ async def runtime():
 
 
 @pytest.fixture
-async def client(runtime):
+async def client(runtime, monkeypatch: pytest.MonkeyPatch):
     """Yield an async HTTP client wired to a test FastAPI app.
 
     The app uses the same routes as the real app but with the
@@ -202,6 +205,7 @@ async def client(runtime):
 
     from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
     from api.router import api_router
+    from api.routes import chat as chat_routes
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
@@ -211,6 +215,7 @@ async def client(runtime):
     app.dependency_overrides[get_runtime] = lambda: runtime
     app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_response_llm_clients] = lambda: {}
+    monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", lambda _: runtime)
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -303,7 +308,9 @@ class TestChat:
         # The second turn should succeed — the thread state persisted
 
     @pytest.mark.asyncio
-    async def test_chat_can_use_response_tier_client(self, runtime) -> None:
+    async def test_chat_can_use_response_tier_client(
+        self, runtime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Text response tier should affect only the final prose writer."""
 
         from fastapi import FastAPI
@@ -314,11 +321,15 @@ class TestChat:
             get_runtime,
         )
         from api.router import api_router
+        from api.routes import chat as chat_routes
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         llm = _FakeAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
+        monkeypatch.setattr(
+            chat_routes, "get_runtime_for_memory_mode", lambda _: runtime
+        )
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {
             "quality": _FakeResponseTierLLM("quality-tier reply"),
@@ -341,7 +352,9 @@ class TestChat:
         assert resp.json()["response_text"] == "quality-tier reply"
 
     @pytest.mark.asyncio
-    async def test_chat_defaults_to_fast_response_tier(self, runtime) -> None:
+    async def test_chat_defaults_to_fast_response_tier(
+        self, runtime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Omitted response tier should use the fast response client."""
 
         from fastapi import FastAPI
@@ -352,11 +365,15 @@ class TestChat:
             get_runtime,
         )
         from api.router import api_router
+        from api.routes import chat as chat_routes
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         llm = _FakeAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
+        monkeypatch.setattr(
+            chat_routes, "get_runtime_for_memory_mode", lambda _: runtime
+        )
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {
             "fast": _FakeResponseTierLLM("fast-tier reply"),
@@ -379,7 +396,7 @@ class TestChat:
 
     @pytest.mark.asyncio
     async def test_chat_runtime_failure_returns_stable_error_detail(
-        self, runtime
+        self, runtime, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Runtime failures should surface without replacement assistant text."""
 
@@ -391,11 +408,15 @@ class TestChat:
             get_runtime,
         )
         from api.router import api_router
+        from api.routes import chat as chat_routes
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         llm = _FailingAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
+        monkeypatch.setattr(
+            chat_routes, "get_runtime_for_memory_mode", lambda _: runtime
+        )
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {"fast": llm}
 
@@ -419,6 +440,177 @@ class TestChat:
         assert (await runtime.session_status("api-failure-contract")).value == (
             "interrupted"
         )
+
+    @pytest.mark.asyncio
+    async def test_chat_memory_mode_omitted_uses_default_selector_path(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from api.dependencies import get_llm_client, get_response_llm_clients
+        from api.router import api_router
+        from api.routes import chat as chat_routes
+
+        seen_modes: list[ApiMemoryMode | None] = []
+
+        class _FakeChatRuntime:
+            async def run_turn(self, **kwargs):
+                return SimpleNamespace(
+                    output=AgentOutput(
+                        response_text="selected default runtime",
+                        response_type=ResponseCategory.THERAPEUTIC,
+                        crisis=CrisisAssessment(
+                            level=0,
+                            confidence="high",
+                            reason="selector test",
+                            needs_crisis_response=False,
+                            needs_clarification=False,
+                        ),
+                    )
+                )
+
+        def fake_selector(mode: ApiMemoryMode | None):
+            seen_modes.append(mode)
+            return _FakeChatRuntime()
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_response_llm_clients] = lambda: {}
+        monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", fake_selector)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={"message": "hello", "thread_id": "chat-default-mode"},
+            )
+
+        assert resp.status_code == 200
+        assert seen_modes == [None]
+
+    @pytest.mark.asyncio
+    async def test_chat_persistent_memory_mode_selects_persistent_runtime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from api.dependencies import get_llm_client, get_response_llm_clients
+        from api.router import api_router
+        from api.routes import chat as chat_routes
+
+        seen_modes: list[ApiMemoryMode | None] = []
+
+        class _FakeChatRuntime:
+            async def run_turn(self, **kwargs):
+                return SimpleNamespace(
+                    output=AgentOutput(
+                        response_text="selected persistent runtime",
+                        response_type=ResponseCategory.THERAPEUTIC,
+                        crisis=CrisisAssessment(
+                            level=0,
+                            confidence="high",
+                            reason="selector test",
+                            needs_crisis_response=False,
+                            needs_clarification=False,
+                        ),
+                    )
+                )
+
+        def fake_selector(mode: ApiMemoryMode | None):
+            seen_modes.append(mode)
+            return _FakeChatRuntime()
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_response_llm_clients] = lambda: {}
+        monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", fake_selector)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "message": "hello",
+                    "thread_id": "chat-persistent-mode",
+                    "memory_mode": "persistent",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert seen_modes == [ApiMemoryMode.PERSISTENT]
+
+    @pytest.mark.asyncio
+    async def test_chat_incognito_memory_mode_selects_incognito_runtime(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from api.dependencies import get_llm_client, get_response_llm_clients
+        from api.router import api_router
+        from api.routes import chat as chat_routes
+
+        seen_modes: list[ApiMemoryMode | None] = []
+
+        class _FakeChatRuntime:
+            async def run_turn(self, **kwargs):
+                return SimpleNamespace(
+                    output=AgentOutput(
+                        response_text="selected incognito runtime",
+                        response_type=ResponseCategory.THERAPEUTIC,
+                        crisis=CrisisAssessment(
+                            level=0,
+                            confidence="high",
+                            reason="selector test",
+                            needs_crisis_response=False,
+                            needs_clarification=False,
+                        ),
+                    )
+                )
+
+        def fake_selector(mode: ApiMemoryMode | None):
+            seen_modes.append(mode)
+            return _FakeChatRuntime()
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_response_llm_clients] = lambda: {}
+        monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", fake_selector)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/chat",
+                json={
+                    "message": "hello",
+                    "thread_id": "chat-incognito-mode",
+                    "memory_mode": "incognito",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert seen_modes == [ApiMemoryMode.INCOGNITO]
+
+    @pytest.mark.asyncio
+    async def test_chat_rejects_invalid_memory_mode(self, client) -> None:
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "hello",
+                "thread_id": "chat-invalid-mode",
+                "memory_mode": "guest",
+            },
+        )
+
+        assert resp.status_code == 422
 
 
 # ── Threads ─────────────────────────────────────────────────────────

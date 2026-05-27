@@ -21,13 +21,16 @@ from agent.models import (
     StatusEvent,
     friendly_stage,
 )
-from agent.runtime import PersistentAgentRuntime
 from agent.runtime.types import (
     ActiveSessionExists,
     SessionInterrupted,
     SessionLeaseExpired,
 )
-from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
+from api.dependencies import (
+    get_llm_client,
+    get_response_llm_clients,
+    get_runtime_for_memory_mode,
+)
 from api.models import (
     ChatRequest,
     ChatResponse,
@@ -161,7 +164,6 @@ def _output_to_chat_response(output: AgentOutput) -> ChatResponse:
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
     response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = Depends(
         get_response_llm_clients
@@ -182,7 +184,6 @@ async def chat(
 
     Args:
         body: Validated chat request body.
-        runtime: Shared persistent agent runtime.
         llm_client: Optional control-plane LLM client.
         response_llm_clients: Response-tier clients keyed by tier.
 
@@ -191,6 +192,7 @@ async def chat(
     """
 
     response_tier: ResponseModelTier = body.response_model_tier or "fast"
+    runtime = get_runtime_for_memory_mode(body.memory_mode)
     try:
         result = await runtime.run_turn(
             thread_id=body.thread_id,
@@ -214,7 +216,6 @@ async def chat(
 @router.websocket("/chat/stream")
 async def chat_stream(
     websocket: WebSocket,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
     response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = Depends(
         get_response_llm_clients
@@ -242,7 +243,6 @@ async def chat_stream(
 
     Args:
         websocket: Accepted WebSocket connection.
-        runtime: Shared persistent agent runtime.
         llm_client: Optional control-plane LLM client.
         response_llm_clients: Response-tier clients keyed by tier.
 
@@ -257,6 +257,7 @@ async def chat_stream(
         data = await websocket.receive_json()
         request = ChatRequest.model_validate(data)
         response_tier: ResponseModelTier = request.response_model_tier or "fast"
+        runtime = get_runtime_for_memory_mode(request.memory_mode)
 
         async for event in runtime.run_turn_stream(
             thread_id=request.thread_id,
