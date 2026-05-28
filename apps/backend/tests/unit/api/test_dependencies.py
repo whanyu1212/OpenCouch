@@ -8,6 +8,7 @@ from api import dependencies
 from api.dependencies import (
     get_runtime,
     get_runtime_for_memory_mode,
+    get_runtime_selection,
     parse_api_memory_mode,
 )
 from api.models import ApiMemoryMode
@@ -48,7 +49,7 @@ def test_parse_api_memory_mode_rejects_stale_or_internal_values(value: str) -> N
         parse_api_memory_mode(value, default=ApiMemoryMode.PERSISTENT)
 
 
-def test_get_runtime_for_memory_mode_returns_requested_runtime(
+def test_get_runtime_selection_returns_requested_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     persistent_runtime = object()
@@ -67,11 +68,13 @@ def test_get_runtime_for_memory_mode_returns_requested_runtime(
         ApiMemoryMode.PERSISTENT,
     )
 
-    assert get_runtime_for_memory_mode(ApiMemoryMode.PERSISTENT) is persistent_runtime
+    selection = get_runtime_selection(ApiMemoryMode.PERSISTENT)
+    assert selection.memory_mode is ApiMemoryMode.PERSISTENT
+    assert selection.runtime is persistent_runtime
     assert get_runtime_for_memory_mode("incognito") is incognito_runtime
 
 
-def test_get_runtime_for_memory_mode_uses_configured_default(
+def test_get_runtime_selection_uses_configured_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     persistent_runtime = object()
@@ -90,17 +93,19 @@ def test_get_runtime_for_memory_mode_uses_configured_default(
         ApiMemoryMode.INCOGNITO,
     )
 
-    assert get_runtime_for_memory_mode(None) is incognito_runtime
+    selection = get_runtime_selection(None)
+    assert selection.memory_mode is ApiMemoryMode.INCOGNITO
+    assert selection.runtime is incognito_runtime
     assert get_runtime() is incognito_runtime
 
 
-def test_get_runtime_for_memory_mode_errors_before_lifespan(
+def test_get_runtime_selection_errors_before_lifespan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(dependencies, "_runtimes", {})
 
     with pytest.raises(RuntimeError, match="Agent runtime not initialized"):
-        get_runtime_for_memory_mode(ApiMemoryMode.PERSISTENT)
+        get_runtime_selection(ApiMemoryMode.PERSISTENT)
 
 
 class _FakeRuntime:

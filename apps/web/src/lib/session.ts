@@ -554,6 +554,7 @@ export function startTextChatStream({
     message: msg,
     threadId,
     userId,
+    memoryMode: sessionMode,
     responseModelTier,
     onEvent: (event: StreamEvent) => {
       if (!isCurrentStream()) return;
@@ -627,7 +628,7 @@ export function startTextChatStream({
         sessionMode === "persistent" &&
         (semanticWrites > 0 || memoryControlTurn)
       ) {
-        void getMemoryFacts(threadId, userId || undefined)
+        void getMemoryFacts(threadId, userId || undefined, sessionMode)
           .then((facts) => {
             if (!isCurrentStream()) return;
             useSessionStore.getState().setMemoryFacts(facts);

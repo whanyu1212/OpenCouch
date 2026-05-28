@@ -213,7 +213,7 @@ export default function TextChatPage() {
     if (sessionMode === "incognito") return;
     if (messages.length > 0) return;
     let cancelled = false;
-    getHistory(threadId)
+    getHistory(threadId, sessionMode)
       .then((history) => {
         const state = useSessionStore.getState();
         if (
@@ -245,12 +245,12 @@ export default function TextChatPage() {
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
-    getMemoryStatus(threadId, userId)
+    getMemoryStatus(threadId, userId, sessionMode)
       .then(setMemoryStatus)
       .catch(() => {
         setNotice("Could not load memory status.");
       });
-    getMemoryFacts(threadId, userId || undefined)
+    getMemoryFacts(threadId, userId || undefined, sessionMode)
       .then((facts) => setMemoryFacts(facts))
       .catch(() => {
         setNotice("Could not load memory facts.");
@@ -266,7 +266,7 @@ export default function TextChatPage() {
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
-    getThreads(5)
+    getThreads(5, sessionMode)
       .then(setRecentThreads)
       .catch(() => {
         setNotice("Could not load recent sessions.");

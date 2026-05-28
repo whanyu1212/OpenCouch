@@ -9,6 +9,7 @@ from agent.runtime import PersistentAgentRuntime
 from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
+from tests.support.api_selection import runtime_selection
 
 
 @pytest.mark.asyncio
@@ -24,7 +25,11 @@ async def test_voice_turn_policy_endpoint_returns_route(
     )
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:

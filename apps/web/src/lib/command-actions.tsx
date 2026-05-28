@@ -120,7 +120,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false;
     const refreshStatus = () => {
-      getThreadSessionStatus(threadId)
+      getThreadSessionStatus(threadId, sessionMode)
         .then((status) => {
           if (!cancelled) {
             setHasActiveSession(status.has_active_session);
@@ -159,7 +159,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const facts = await getMemoryFacts(threadId, userId || undefined);
+    const facts = await getMemoryFacts(threadId, userId || undefined, sessionMode);
     setMemoryFacts(facts);
     addUnseenMemories(Math.max(0, facts.length - memoryFacts.length));
   }, [
@@ -187,7 +187,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
       setEndError(null);
 
       try {
-        const result = await endSession(threadId);
+        const result = await endSession(threadId, undefined, sessionMode);
         try {
           await refreshSemanticFacts();
         } catch {
@@ -246,7 +246,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
   const setMemoryRecall = useCallback(
     async (enabled: boolean) => {
       if (isIncognito) return;
-      await updateMemoryRecall(enabled, threadId, userId || undefined);
+      await updateMemoryRecall(enabled, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     },
     [bumpMemoryRefreshVersion, isIncognito, threadId, userId]

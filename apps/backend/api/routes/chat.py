@@ -29,7 +29,7 @@ from agent.runtime.types import (
 from api.dependencies import (
     get_llm_client,
     get_response_llm_clients,
-    get_runtime_for_memory_mode,
+    get_runtime_selection,
 )
 from api.models import (
     ChatRequest,
@@ -192,9 +192,9 @@ async def chat(
     """
 
     response_tier: ResponseModelTier = body.response_model_tier or "fast"
-    runtime = get_runtime_for_memory_mode(body.memory_mode)
+    selection = get_runtime_selection(body.memory_mode)
     try:
-        result = await runtime.run_turn(
+        result = await selection.runtime.run_turn(
             thread_id=body.thread_id,
             message=body.message,
             channel=Channel.WEB,
@@ -257,9 +257,9 @@ async def chat_stream(
         data = await websocket.receive_json()
         request = ChatRequest.model_validate(data)
         response_tier: ResponseModelTier = request.response_model_tier or "fast"
-        runtime = get_runtime_for_memory_mode(request.memory_mode)
+        selection = get_runtime_selection(request.memory_mode)
 
-        async for event in runtime.run_turn_stream(
+        async for event in selection.runtime.run_turn_stream(
             thread_id=request.thread_id,
             message=request.message,
             channel=Channel.WEB,

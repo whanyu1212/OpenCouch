@@ -25,7 +25,8 @@ export const ASSISTANT_VOICE_OPTIONS = [
 export type AssistantVoiceOption =
   (typeof ASSISTANT_VOICE_OPTIONS)[number]["value"];
 
-export type VoiceMemoryMode = "persistent" | "incognito";
+export type ApiMemoryMode = "persistent" | "incognito";
+export type VoiceMemoryMode = ApiMemoryMode;
 export type SessionAction = "none" | "suggest_end_session";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -193,6 +194,7 @@ export interface ChatStreamOptions {
   message: string;
   threadId: string;
   userId?: string;
+  memoryMode?: ApiMemoryMode;
   responseModelTier?: ResponseModelTier;
   onEvent?: (event: StreamEvent) => void;
   onProtocolError?: (error: Error) => void;
@@ -200,11 +202,48 @@ export interface ChatStreamOptions {
 
 // ── REST helpers ─────────────────────────────────────────────────────
 
+function setOptionalParam(
+  params: URLSearchParams,
+  key: string,
+  value?: string | number
+): void {
+  if (value !== undefined && value !== null && String(value) !== "") {
+    params.set(key, String(value));
+  }
+}
+
+function querySuffix(params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function threadScopedParams({
+  threadId,
+  userId,
+  memoryMode,
+}: {
+  threadId: string;
+  userId?: string;
+  memoryMode?: ApiMemoryMode;
+}): URLSearchParams {
+  const params = new URLSearchParams({ thread_id: threadId });
+  setOptionalParam(params, "user_id", userId);
+  setOptionalParam(params, "memory_mode", memoryMode);
+  return params;
+}
+
+function memoryModePayload(memoryMode?: ApiMemoryMode): {
+  memory_mode?: ApiMemoryMode;
+} {
+  return memoryMode ? { memory_mode: memoryMode } : {};
+}
+
 export async function postChat(
   message: string,
   threadId: string,
   userId?: string,
-  responseModelTier?: ResponseModelTier
+  responseModelTier?: ResponseModelTier,
+  memoryMode?: ApiMemoryMode
 ): Promise<ChatResponse> {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
@@ -214,6 +253,7 @@ export async function postChat(
       thread_id: threadId,
       user_id: userId || undefined,
       response_model_tier: responseModelTier || undefined,
+      ...memoryModePayload(memoryMode),
     }),
   });
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
@@ -226,22 +266,40 @@ export async function getInfo(): Promise<RuntimeInfo> {
   return res.json();
 }
 
-export async function getThreads(limit = 20): Promise<ThreadSummary[]> {
-  const res = await fetch(`${API_BASE}/threads?limit=${limit}`);
+export async function getThreads(
+  limit = 20,
+  memoryMode?: ApiMemoryMode
+): Promise<ThreadSummary[]> {
+  const params = new URLSearchParams();
+  setOptionalParam(params, "limit", limit);
+  setOptionalParam(params, "memory_mode", memoryMode);
+  const res = await fetch(`${API_BASE}/threads${querySuffix(params)}`);
   if (!res.ok) throw new Error(`Threads failed: ${res.status}`);
   return res.json();
 }
 
-export async function getHistory(threadId: string): Promise<Message[]> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/history`);
+export async function getHistory(
+  threadId: string,
+  memoryMode?: ApiMemoryMode
+): Promise<Message[]> {
+  const params = new URLSearchParams();
+  setOptionalParam(params, "memory_mode", memoryMode);
+  const res = await fetch(
+    `${API_BASE}/threads/${threadId}/history${querySuffix(params)}`
+  );
   if (!res.ok) throw new Error(`History failed: ${res.status}`);
   return res.json();
 }
 
 export async function getThreadSessionStatus(
-  threadId: string
+  threadId: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<ThreadSessionStatus> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/session-status`);
+  const params = new URLSearchParams();
+  setOptionalParam(params, "memory_mode", memoryMode);
+  const res = await fetch(
+    `${API_BASE}/threads/${threadId}/session-status${querySuffix(params)}`
+  );
   if (!res.ok) throw new Error(`Session status failed: ${res.status}`);
   return res.json();
 }
@@ -250,12 +308,16 @@ export type SessionFeedbackLabel = "positive" | "negative" | "skip";
 
 export async function endSession(
   threadId: string,
-  feedback?: SessionFeedbackLabel
+  feedback?: SessionFeedbackLabel,
+  memoryMode?: ApiMemoryMode
 ): Promise<EndSessionResponse> {
   const res = await fetch(`${API_BASE}/threads/${threadId}/end`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ feedback: feedback ?? null }),
+    body: JSON.stringify({
+      feedback: feedback ?? null,
+      ...memoryModePayload(memoryMode),
+    }),
   });
   if (!res.ok) throw new Error(`End session failed: ${res.status}`);
   return res.json();
@@ -263,10 +325,10 @@ export async function endSession(
 
 export async function getMemoryStatus(
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<MemoryStatus> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/status?${params}`);
   if (!res.ok) throw new Error(`Memory status failed: ${res.status}`);
   return res.json();
@@ -275,10 +337,10 @@ export async function getMemoryStatus(
 export async function updateMemoryRecall(
   enabled: boolean,
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<MemoryRecallUpdateResponse> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/recall?${params}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -290,10 +352,10 @@ export async function updateMemoryRecall(
 
 export async function getMemoryFacts(
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<MemoryFact[]> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/facts?${params}`);
   if (!res.ok) throw new Error(`Memory facts failed: ${res.status}`);
   return res.json();
@@ -301,10 +363,10 @@ export async function getMemoryFacts(
 
 export async function getMemorySessions(
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<MemorySession[]> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/sessions?${params}`);
   if (!res.ok) throw new Error(`Memory sessions failed: ${res.status}`);
   return res.json();
@@ -312,10 +374,10 @@ export async function getMemorySessions(
 
 export async function getMemoryRules(
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<MemoryRule[]> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/rules?${params}`);
   if (!res.ok) throw new Error(`Memory rules failed: ${res.status}`);
   return res.json();
@@ -331,10 +393,10 @@ export interface DeleteMemoryResponse {
 export async function deleteMemoryFact(
   index: number,
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<DeleteMemoryResponse> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/facts/${index}?${params}`, {
     method: "DELETE",
   });
@@ -345,10 +407,10 @@ export async function deleteMemoryFact(
 export async function deleteMemorySession(
   index: number,
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<DeleteMemoryResponse> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/sessions/${index}?${params}`, {
     method: "DELETE",
   });
@@ -359,10 +421,10 @@ export async function deleteMemorySession(
 export async function deleteMemoryRule(
   index: number,
   threadId: string,
-  userId?: string
+  userId?: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<DeleteMemoryResponse> {
-  const params = new URLSearchParams({ thread_id: threadId });
-  if (userId) params.set("user_id", userId);
+  const params = threadScopedParams({ threadId, userId, memoryMode });
   const res = await fetch(`${API_BASE}/memory/rules/${index}?${params}`, {
     method: "DELETE",
   });
@@ -373,9 +435,14 @@ export async function deleteMemoryRule(
 // ── Thread state (raw agent state dict) ─────────────────────────────
 
 export async function getThreadState(
-  threadId: string
+  threadId: string,
+  memoryMode?: ApiMemoryMode
 ): Promise<Record<string, unknown> | null> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/state`);
+  const params = new URLSearchParams();
+  setOptionalParam(params, "memory_mode", memoryMode);
+  const res = await fetch(
+    `${API_BASE}/threads/${threadId}/state${querySuffix(params)}`
+  );
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Thread state failed: ${res.status}`);
   return res.json();
@@ -429,6 +496,7 @@ export function createChatStream({
   message,
   threadId,
   userId,
+  memoryMode,
   responseModelTier,
   onEvent,
   onProtocolError,
@@ -441,6 +509,7 @@ export function createChatStream({
         message,
         thread_id: threadId,
         user_id: userId || undefined,
+        ...memoryModePayload(memoryMode),
         response_model_tier: responseModelTier || undefined,
       })
     );

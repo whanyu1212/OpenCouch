@@ -11,6 +11,7 @@ from agent.runtime import PersistentAgentRuntime
 from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
+from tests.support.api_selection import runtime_selection
 from tests.support.persistence import FakeCrossRestartLLM
 
 
@@ -58,7 +59,11 @@ async def test_voice_turn_endpoint_records_transcript(
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -102,7 +107,11 @@ async def test_voice_turn_endpoint_records_route_and_tool_metadata(
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -162,7 +171,11 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization(
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -214,7 +227,11 @@ async def test_voice_end_endpoint_summarizes_persistent_voice_session(
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: fake_llm
 
     async with runtime:
@@ -278,7 +295,11 @@ async def test_voice_end_with_positive_feedback_writes_record(
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -314,6 +335,60 @@ async def test_voice_end_with_positive_feedback_writes_record(
 
 
 @pytest.mark.asyncio
+async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-incognito-feedback",
+            user_id="private-user",
+            user_text="I want to wrap up privately.",
+            assistant_text="We can close here without saving durable memory.",
+            response_style="supportive",
+            llm_client=None,
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/end",
+                json={
+                    "thread_id": "voice-incognito-feedback",
+                    "memory_mode": "incognito",
+                    "feedback": "positive",
+                },
+            )
+
+        records = await runtime.session_feedback_backend.alist_by_session(
+            hash_session_id("voice-incognito-feedback")
+        )
+
+    assert response.status_code == 200
+    assert len(records) == 1
+    assert records[0].label == "positive"
+    assert records[0].source == "api_end"
+    assert records[0].user_id_or_null is None
+
+
+@pytest.mark.asyncio
 async def test_voice_end_rejects_invalid_feedback_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -327,7 +402,11 @@ async def test_voice_end_rejects_invalid_feedback_label(
 
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:

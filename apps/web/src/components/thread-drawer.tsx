@@ -30,7 +30,7 @@ export function ThreadDrawer() {
     setLoading(true);
     setError(null);
     try {
-      const result = await getThreads(30);
+      const result = await getThreads(30, sessionMode);
       setThreads(result.filter((thread) => thread.turn_count > 0));
     } catch {
       setError("Could not load previous sessions.");
