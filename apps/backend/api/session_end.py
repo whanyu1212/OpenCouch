@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent.feedback.models import FeedbackLabel
+from agent.feedback.models import FeedbackLabel, FeedbackModality
 from agent.runtime import PersistentAgentRuntime
 from api.models import ApiMemoryMode
+from api.session_feedback import record_runtime_feedback
 from llm.base import BaseLLMClient
 
 _GENERIC_NO_SUMMARY_DETAIL = (
@@ -37,14 +38,16 @@ async def end_runtime_session(
     feedback: FeedbackLabel | None,
     llm_client: BaseLLMClient | None,
     memory_mode: ApiMemoryMode,
+    modality: FeedbackModality = "text",
 ) -> SessionEndResult:
     """Record optional feedback, finalize the runtime session, and normalize output."""
 
     if feedback is not None:
-        await runtime.record_session_feedback(
-            thread_id,
-            label=feedback,
-            source="api_end",
+        await record_runtime_feedback(
+            runtime=runtime,
+            thread_id=thread_id,
+            feedback=feedback,
+            modality=modality,
         )
 
     arc = await runtime.end_session(thread_id, llm_client=llm_client)

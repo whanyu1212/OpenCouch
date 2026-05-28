@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ASSISTANT_VOICE_OPTIONS,
+  type ApiMemoryMode,
   type AssistantVoiceOption,
 } from "@/lib/api";
 import { useCommandActions } from "@/lib/command-actions";
@@ -11,6 +12,7 @@ import { useSessionStore, type EndedSessionResult } from "@/lib/session";
 import { useRealtimeVoiceSession } from "@/components/realtime-voice-session-provider";
 import { CouchLogo } from "@/components/logo";
 import { SessionPill } from "@/components/conversation-shell";
+import { SessionFeedback } from "@/components/session-feedback";
 
 const ENABLE_VOICE_DEBUG = process.env.NEXT_PUBLIC_ENABLE_VOICE_DEBUG === "true";
 
@@ -80,6 +82,8 @@ function VoiceDebugRow({
 }
 
 function VoiceEndOptionsDialog({
+  threadId,
+  memoryMode,
   finalizationStatus,
   detail,
   endedSession,
@@ -89,6 +93,8 @@ function VoiceEndOptionsDialog({
   onStartNewSession,
   onStayOnVoice,
 }: {
+  threadId: string;
+  memoryMode: ApiMemoryMode;
   finalizationStatus: VoiceEndOptionsStatus;
   detail: string | null;
   endedSession: EndedSessionResult | null;
@@ -180,6 +186,13 @@ function VoiceEndOptionsDialog({
               )}
             </div>
           )}
+
+          <SessionFeedback
+            threadId={threadId}
+            memoryMode={memoryMode}
+            modality="voice"
+            className="mb-4"
+          />
 
           <div className="grid gap-2">
             <button
@@ -859,6 +872,10 @@ export default function VoicePage() {
 
       {voiceEndOptionsOpen && (
         <VoiceEndOptionsDialog
+          threadId={endedVoiceThreadId || threadId}
+          memoryMode={
+            effectiveVoiceMemoryMode === "incognito" ? "incognito" : "persistent"
+          }
           finalizationStatus={endOptionsFinalizationStatus}
           detail={endOptionsFinalizationDetail}
           endedSession={endedVoiceSession}

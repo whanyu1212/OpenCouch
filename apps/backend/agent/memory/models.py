@@ -19,6 +19,7 @@ from agent.audit.models import (
 )
 from agent.feedback.models import (
     FeedbackLabel,
+    FeedbackModality,
     FeedbackSource,
     SessionFeedbackRecord,
 )
@@ -108,6 +109,7 @@ __all__ = [
     "TurnDispatchDecision",
     "DispatchDecision",
     "FeedbackLabel",
+    "FeedbackModality",
     "FeedbackSource",
     "SessionFeedbackRecord",
 ]

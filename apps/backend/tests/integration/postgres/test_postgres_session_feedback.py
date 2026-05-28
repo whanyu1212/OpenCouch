@@ -19,6 +19,7 @@ def _record(
     session: str,
     label: str = "positive",
     source: str = "cli_end",
+    modality: str = "text",
     recorded_at: str = "2099-04-16T10:00:00Z",
     user_id: str | None = None,
     turn_count: int = 3,
@@ -46,6 +47,7 @@ def _record(
         label=label,  # type: ignore[arg-type]
         turn_count_at_end=turn_count,
         source=source,  # type: ignore[arg-type]
+        modality=modality,  # type: ignore[arg-type]
     )
 
 
@@ -92,6 +94,7 @@ async def test_postgres_feedback_round_trip_preserves_order() -> None:
                 session=session_id,
                 label="negative",
                 source="api_end",
+                modality="voice",
                 recorded_at="2099-04-16T11:00:00Z",
             )
         )
@@ -107,6 +110,7 @@ async def test_postgres_feedback_round_trip_preserves_order() -> None:
 
         results = await backend.alist_by_session(session_id)
         assert [record.id for record in results] == record_ids
+        assert results[1].modality == "voice"
     finally:
         await backend.aclose()
         await _delete_records(dsn, record_ids)
@@ -135,6 +139,7 @@ async def test_postgres_feedback_persists_across_close_and_reopen() -> None:
                 session=session_id,
                 recorded_at="2099-04-17T08:00:00Z",
                 turn_count=7,
+                modality="voice",
             )
         )
         await backend_a.aclose()
@@ -145,6 +150,7 @@ async def test_postgres_feedback_persists_across_close_and_reopen() -> None:
             assert len(results) == 1
             assert results[0].id == record_id
             assert results[0].turn_count_at_end == 7
+            assert results[0].modality == "voice"
         finally:
             await backend_b.aclose()
     finally:

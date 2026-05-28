@@ -7,6 +7,7 @@ import {
   getMemoryStatus,
   getMemoryFacts,
   getThreads,
+  type ApiMemoryMode,
   type Message,
   type MemoryStatus,
   type ThreadSummary,
@@ -22,6 +23,7 @@ import { resolveSlashCommand } from "@/lib/slash-commands";
 import { CouchLogo } from "@/components/logo";
 import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
 import { SessionPill } from "@/components/conversation-shell";
+import { SessionFeedback } from "@/components/session-feedback";
 
 const PROMPT_CARDS = [
   {
@@ -679,10 +681,10 @@ export default function TextChatPage() {
       {/* Composer */}
       <div className="oc-composer-bar">
         <div style={{ width: "100%", maxWidth: 680 }}>
-          {isPersistent &&
-          lastEndedSession?.threadId === threadId ? (
+          {lastEndedSession?.threadId === threadId ? (
             <SessionEndedCard
               session={lastEndedSession}
+              memoryMode={sessionMode}
               onNewSession={handleNewSession}
               onContinueInThread={handleContinueInThread}
               onReviewMemory={handleReviewMemory}
@@ -725,12 +727,14 @@ export default function TextChatPage() {
 
 function SessionEndedCard({
   session,
+  memoryMode,
   onNewSession,
   onContinueInThread,
   onReviewMemory,
   newSessionDisabled,
 }: {
   session: EndedSessionResult;
+  memoryMode: ApiMemoryMode;
   onNewSession: () => void;
   onContinueInThread: () => void;
   onReviewMemory: () => void;
@@ -764,6 +768,12 @@ function SessionEndedCard({
           ))}
         </div>
       ) : null}
+      <SessionFeedback
+        threadId={session.threadId}
+        memoryMode={memoryMode}
+        modality="text"
+        className="mt-3"
+      />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"

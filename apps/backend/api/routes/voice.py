@@ -193,6 +193,7 @@ async def end_voice_realtime_session(
             feedback=body.feedback,
             llm_client=llm_client,
             memory_mode=selection.memory_mode,
+            modality="voice",
         )
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__

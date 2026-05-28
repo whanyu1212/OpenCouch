@@ -756,7 +756,12 @@ class TestThreads:
 
         class _FakeThreadRuntime:
             async def record_session_feedback(
-                self, thread_id: str, *, label: str, source: str
+                self,
+                thread_id: str,
+                *,
+                label: str,
+                source: str,
+                modality: str = "text",
             ) -> None:
                 return None
 
@@ -912,6 +917,101 @@ class TestThreads:
         assert len(records) == 1
         assert records[0].label == "positive"
         assert records[0].source == "api_end"
+        assert records[0].modality == "text"
+
+    @pytest.mark.asyncio
+    async def test_feedback_endpoint_records_text_feedback(
+        self, client, runtime
+    ) -> None:
+        from agent.memory.hashing import hash_session_id
+
+        resp = await client.post(
+            "/api/threads/feedback-text/feedback",
+            json={"feedback": "positive", "modality": "text"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"recorded": True}
+        records = await runtime.session_feedback_backend.alist_by_session(
+            hash_session_id("feedback-text")
+        )
+        assert len(records) == 1
+        assert records[0].label == "positive"
+        assert records[0].source == "api_end"
+        assert records[0].modality == "text"
+
+    @pytest.mark.asyncio
+    async def test_feedback_endpoint_records_voice_feedback(
+        self, client, runtime
+    ) -> None:
+        from agent.memory.hashing import hash_session_id
+
+        resp = await client.post(
+            "/api/threads/feedback-voice/feedback",
+            json={"feedback": "negative", "modality": "voice"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"recorded": True}
+        records = await runtime.session_feedback_backend.alist_by_session(
+            hash_session_id("feedback-voice")
+        )
+        assert len(records) == 1
+        assert records[0].label == "negative"
+        assert records[0].source == "api_end"
+        assert records[0].modality == "voice"
+
+    @pytest.mark.asyncio
+    async def test_feedback_endpoint_rejects_invalid_modality(
+        self, client, runtime
+    ) -> None:
+        resp = await client.post(
+            "/api/threads/feedback-bad-modality/feedback",
+            json={"feedback": "positive", "modality": "sms"},
+        )
+
+        assert resp.status_code == 422
+        assert await runtime.session_feedback_backend.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_feedback_endpoint_returns_false_when_write_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from api.router import api_router
+        from api.routes import threads as thread_routes
+
+        class _FailingFeedbackRuntime:
+            async def record_session_feedback(
+                self,
+                thread_id: str,
+                *,
+                label: str,
+                source: str,
+                modality: str = "text",
+            ) -> None:
+                return None
+
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        monkeypatch.setattr(
+            thread_routes,
+            "get_runtime_selection",
+            lambda mode: runtime_selection(_FailingFeedbackRuntime(), mode),
+        )
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            resp = await ac.post(
+                "/api/threads/feedback-fails/feedback",
+                json={"feedback": "positive", "modality": "text"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"recorded": False}
 
     @pytest.mark.asyncio
     async def test_end_session_rejects_invalid_feedback_label(
@@ -998,6 +1098,7 @@ class TestThreads:
         assert len(records) == 1
         assert records[0].label == "positive"
         assert records[0].source == "api_end"
+        assert records[0].modality == "text"
         assert records[0].user_id_or_null is None
 
 

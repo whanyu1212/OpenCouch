@@ -332,6 +332,7 @@ async def test_voice_end_with_positive_feedback_writes_record(
     assert len(records) == 1
     assert records[0].label == "positive"
     assert records[0].source == "api_end"
+    assert records[0].modality == "voice"
 
 
 @pytest.mark.asyncio
@@ -385,6 +386,7 @@ async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
     assert len(records) == 1
     assert records[0].label == "positive"
     assert records[0].source == "api_end"
+    assert records[0].modality == "voice"
     assert records[0].user_id_or_null is None
 
 

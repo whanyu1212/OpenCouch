@@ -294,6 +294,30 @@ export async function getThreadSessionStatus(
 }
 
 export type SessionFeedbackLabel = "positive" | "negative" | "skip";
+export type SessionFeedbackModality = "text" | "voice";
+
+export interface SessionFeedbackResponse {
+  recorded: boolean;
+}
+
+export async function submitSessionFeedback(
+  threadId: string,
+  feedback: SessionFeedbackLabel,
+  memoryMode?: ApiMemoryMode,
+  modality: SessionFeedbackModality = "text"
+): Promise<SessionFeedbackResponse> {
+  const res = await fetch(`${API_BASE}/threads/${threadId}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      feedback,
+      ...memoryModePayload(memoryMode),
+      modality,
+    }),
+  });
+  if (!res.ok) throw new Error(`Session feedback failed: ${res.status}`);
+  return res.json();
+}
 
 export async function endSession(
   threadId: string,
