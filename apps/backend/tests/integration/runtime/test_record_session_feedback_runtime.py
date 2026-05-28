@@ -92,17 +92,18 @@ async def test_writes_record_with_server_derived_session_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_writes_record_with_caller_supplied_label_and_source() -> None:
-    """``label`` and ``source`` are the only caller-controlled fields
+async def test_writes_record_with_caller_supplied_label_source_and_modality() -> None:
+    """``label``, ``source``, and ``modality`` are caller-controlled fields
     that flow into the record as-is."""
 
     async with _runtime() as rt:
         record = await rt.record_session_feedback(
-            "t", label="negative", source="api_end"
+            "t", label="negative", source="api_end", modality="voice"
         )
         assert record is not None
         assert record.label == "negative"
         assert record.source == "api_end"
+        assert record.modality == "voice"
 
 
 @pytest.mark.asyncio

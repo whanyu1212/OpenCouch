@@ -170,12 +170,13 @@ class _FakeEndRuntime:
         self.feedback_called = False
 
     async def record_session_feedback(
-        self, thread_id: str, *, label: str, source: str
+        self, thread_id: str, *, label: str, source: str, modality: str = "text"
     ) -> None:
         self.feedback_called = True
         assert thread_id == "voice-thread"
         assert label == "positive"
         assert source == "api_end"
+        assert modality == "voice"
 
     async def end_session(self, thread_id: str, *, llm_client: object | None) -> Any:
         self.called = True

@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
+from agent.feedback.models import (
+    FeedbackLabel,
+    FeedbackModality,
+    FeedbackSource,
+    SessionFeedbackRecord,
+)
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import hash_session_id, iso_now
 from agent.memory.modes import MemoryMode
@@ -23,6 +28,7 @@ async def record_session_feedback(
     memory_mode: MemoryMode,
     label: FeedbackLabel,
     source: FeedbackSource,
+    modality: FeedbackModality = "text",
 ) -> SessionFeedbackRecord | None:
     """Build and persist one trusted end-of-session feedback record.
 
@@ -47,6 +53,7 @@ async def record_session_feedback(
             label=label,
             turn_count_at_end=turn_count,
             source=source,
+            modality=modality,
             schema_version=1,
         )
 

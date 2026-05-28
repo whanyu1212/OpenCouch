@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 FeedbackLabel = Literal["positive", "negative", "skip"]
 FeedbackSource = Literal["cli_end", "cli_exit", "api_end"]
+FeedbackModality = Literal["text", "voice"]
 
 
 class SessionFeedbackRecord(BaseModel):
@@ -25,11 +26,13 @@ class SessionFeedbackRecord(BaseModel):
     label: FeedbackLabel
     turn_count_at_end: int
     source: FeedbackSource
+    modality: FeedbackModality = "text"
     schema_version: int = 1
 
 
 __all__ = [
     "FeedbackLabel",
     "FeedbackSource",
+    "FeedbackModality",
     "SessionFeedbackRecord",
 ]

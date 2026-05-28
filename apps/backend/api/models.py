@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.feedback.models import FeedbackLabel
+from agent.feedback.models import FeedbackLabel, FeedbackModality
 from config import ResponseModelTier
 
 
@@ -86,6 +86,25 @@ class EndSessionRequest(BaseModel):
             "Optional memory mode for the thread session being ended. "
             "When omitted, the API default from OPENCOUCH_MEMORY_MODE is used."
         ),
+    )
+
+
+class SessionFeedbackRequest(BaseModel):
+    """POST /api/threads/{thread_id}/feedback request body."""
+
+    feedback: FeedbackLabel = Field(
+        description="Explicit end-of-session rating: positive, negative, or skip."
+    )
+    memory_mode: ApiMemoryMode | None = Field(
+        default=None,
+        description=(
+            "Optional runtime selector. When omitted, the API default from "
+            "OPENCOUCH_MEMORY_MODE is used."
+        ),
+    )
+    modality: FeedbackModality = Field(
+        default="text",
+        description="Interaction channel being rated: text or voice.",
     )
 
 
@@ -299,6 +318,12 @@ class VoiceEndSessionResponse(BaseModel):
     turn_count: int | None = None
     open_loops: list[str] = Field(default_factory=list)
     resolved_threads: list[str] = Field(default_factory=list)
+
+
+class SessionFeedbackResponse(BaseModel):
+    """POST /api/threads/{thread_id}/feedback response body."""
+
+    recorded: bool
 
 
 class MemoryStatusResponse(BaseModel):

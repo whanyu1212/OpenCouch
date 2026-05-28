@@ -45,6 +45,7 @@ def _record(
     session: str = "abc",
     label: str = "positive",
     source: str = "cli_end",
+    modality: str = "text",
     recorded_at: str = "2026-04-16T10:00:00Z",
     user_id: str | None = None,
     turn_count: int = 3,
@@ -58,6 +59,7 @@ def _record(
         label=label,  # type: ignore[arg-type]
         turn_count_at_end=turn_count,
         source=source,  # type: ignore[arg-type]
+        modality=modality,  # type: ignore[arg-type]
     )
 
 
@@ -225,11 +227,12 @@ class TestSqliteBackend:
         """The full record shape survives the JSON-blob round trip,
         including ``user_id_or_null`` and ``schema_version``."""
         backend = SqliteSessionFeedbackBackend(":memory:")
-        original = _record(user_id="alice", turn_count=7)
+        original = _record(user_id="alice", turn_count=7, modality="voice")
         await backend.aappend(original)
 
         records = await backend.alist_by_session("abc")
         assert records == [original]
+        assert records[0].modality == "voice"
 
     @pytest.mark.asyncio
     async def test_apurge_before_uses_exclusive_boundary(self) -> None:

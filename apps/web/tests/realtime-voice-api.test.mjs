@@ -61,6 +61,34 @@ test("sends memory mode through text chat and thread API helpers", async () => {
   ]);
 });
 
+test("submits standalone session feedback with modality", async () => {
+  let capturedUrl = "";
+  let capturedBody = {};
+  globalThis.fetch = async (url, init = {}) => {
+    capturedUrl = String(url);
+    capturedBody = init.body ? JSON.parse(String(init.body)) : undefined;
+    return new Response(JSON.stringify({ recorded: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const response = await api.submitSessionFeedback(
+    "voice-thread",
+    "negative",
+    "incognito",
+    "voice"
+  );
+
+  assert.equal(capturedUrl, "http://backend.test/api/threads/voice-thread/feedback");
+  assert.deepEqual(capturedBody, {
+    feedback: "negative",
+    memory_mode: "incognito",
+    modality: "voice",
+  });
+  assert.deepEqual(response, { recorded: true });
+});
+
 test("sends memory mode through memory API helpers", async () => {
   const captured = [];
   globalThis.fetch = async (url, init = {}) => {

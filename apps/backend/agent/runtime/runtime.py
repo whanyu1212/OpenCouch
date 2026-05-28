@@ -26,7 +26,12 @@ from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.policy.write import text_contains_memory_control_request
 from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.recall import load_memory_for_turn
-from agent.feedback.models import FeedbackLabel, FeedbackSource, SessionFeedbackRecord
+from agent.feedback.models import (
+    FeedbackLabel,
+    FeedbackModality,
+    FeedbackSource,
+    SessionFeedbackRecord,
+)
 from agent.memory.types import StoredSessionArc
 from agent.runtime.session import (
     RuntimeSessionTracker,
@@ -1774,6 +1779,7 @@ class PersistentAgentRuntime:
         *,
         label: FeedbackLabel,
         source: FeedbackSource,
+        modality: FeedbackModality = "text",
     ) -> SessionFeedbackRecord | None:
         """Record an explicit end-of-session feedback label.
 
@@ -1781,6 +1787,7 @@ class PersistentAgentRuntime:
             thread_id: The thread whose session is ending.
             label: The explicit feedback label the user provided.
             source: Which end-session surface produced this feedback.
+            modality: Which interaction channel the user is rating.
 
         Returns:
             The written feedback record, or ``None`` on failure.
@@ -1803,6 +1810,7 @@ class PersistentAgentRuntime:
             memory_mode=self.memory_mode,
             label=label,
             source=source,
+            modality=modality,
         )
 
     async def run_turn_stream(

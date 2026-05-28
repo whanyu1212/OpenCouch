@@ -16,9 +16,12 @@ from api.models import (
     EndSessionRequest,
     MessageResponse,
     SessionArcResponse,
+    SessionFeedbackRequest,
+    SessionFeedbackResponse,
     ThreadSessionStatusResponse,
     ThreadSummaryResponse,
 )
+from api.session_feedback import record_runtime_feedback
 from api.session_end import end_runtime_session
 from llm.base import BaseLLMClient
 
@@ -206,3 +209,20 @@ async def end_session(
         open_loops=result.open_loops,
         resolved_threads=result.resolved_threads,
     )
+
+
+@router.post("/{thread_id}/feedback", response_model=SessionFeedbackResponse)
+async def record_session_feedback(
+    thread_id: str,
+    body: SessionFeedbackRequest,
+) -> SessionFeedbackResponse:
+    """Record explicit post-session feedback without finalizing the session again."""
+
+    selection = get_runtime_selection(body.memory_mode)
+    recorded = await record_runtime_feedback(
+        runtime=selection.runtime,
+        thread_id=thread_id,
+        feedback=body.feedback,
+        modality=body.modality,
+    )
+    return SessionFeedbackResponse(recorded=recorded)

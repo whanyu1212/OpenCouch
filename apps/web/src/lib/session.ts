@@ -12,6 +12,7 @@ import {
   type MemoryFact,
   type ResponseModelTier,
   type SessionAction,
+  type SessionFeedbackModality,
   type StreamEvent,
 } from "./api";
 
@@ -97,6 +98,19 @@ export interface VoiceSessionInfo {
 
 export interface EndedSessionResult extends EndSessionResponse {
   threadId: string;
+  modality: SessionFeedbackModality;
+}
+
+export function buildEndedSessionResult({
+  threadId,
+  result,
+  modality,
+}: {
+  threadId: string;
+  result: EndSessionResponse;
+  modality: SessionFeedbackModality;
+}): EndedSessionResult {
+  return { threadId, modality, ...result };
 }
 
 type VoiceConnectionHandle = {

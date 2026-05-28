@@ -44,7 +44,8 @@ async function importSessionStoreForNode() {
   return import(pathToFileURL(tempSessionPath).href);
 }
 
-const { useSessionStore } = await importSessionStoreForNode();
+const { buildEndedSessionResult, useSessionStore } =
+  await importSessionStoreForNode();
 
 function seedStaleVoiceState() {
   useSessionStore.setState({
@@ -85,6 +86,7 @@ function seedStaleVoiceState() {
     voiceError: "old voice error",
     lastEndedSession: {
       threadId: "old-thread",
+      modality: "voice",
       finalized: true,
       summary: "old summary",
       detail: "old detail",
@@ -133,4 +135,20 @@ test("newSession clears stale voice transcript and ended-call state", () => {
   assert.equal(useSessionStore.getState().isSetup, false);
   assert.equal(useSessionStore.getState().threadId, "");
   assertVoiceUiReset();
+});
+
+test("ended session metadata carries the originating modality", () => {
+  const textSession = buildEndedSessionResult({
+    threadId: "text-thread",
+    result: { summary: "text summary", detail: "text ended" },
+    modality: "text",
+  });
+  const voiceSession = buildEndedSessionResult({
+    threadId: "voice-thread",
+    result: { summary: "voice summary", detail: "voice ended" },
+    modality: "voice",
+  });
+
+  assert.equal(textSession.modality, "text");
+  assert.equal(voiceSession.modality, "voice");
 });
