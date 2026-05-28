@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,11 +34,13 @@ from agent.runtime.types import (
     TextRuntimeStreamEvent,
 )
 from agent.runtime_context import WorkflowContext
+from agent.state import AgentState
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
 from agent.skills.guided_exercises.registry import (
     available_exercise_definitions,
     iter_exercise_selection_aliases,
 )
+from agent.skills.guided_exercises.state import clear_exercise_delta
 
 
 def guided_exercise_selection_basis(state: Mapping[str, object]) -> str | None:
@@ -85,6 +87,111 @@ def guided_exercise_runtime_action(state: Mapping[str, object]) -> str:
             return "preserve"
         return "continue"
     return "start"
+
+
+async def prepare_guided_exercise_route(
+    state: AgentState,
+    context: WorkflowContext,
+    *,
+    load_turn_memory: Callable[
+        [AgentState, WorkflowContext],
+        Awaitable[AgentState],
+    ],
+) -> tuple[AgentState, bool]:
+    """Load turn memory and resolve whether guided exercise should execute."""
+
+    state = await load_turn_memory(state, context)
+    exercise_state = state.get("exercise_state", {}) or {}
+    has_active_exercise = (
+        isinstance(exercise_state, Mapping)
+        and exercise_state.get("exercise_type") is not None
+        and exercise_state.get("exercise_step") is not None
+    )
+    turn_lifecycle = state.get("turn_lifecycle", {}) or {}
+    lifecycle_action = (
+        turn_lifecycle.get("action") if isinstance(turn_lifecycle, Mapping) else None
+    )
+    lifecycle_metadata = {}
+    if isinstance(turn_lifecycle, Mapping):
+        for key in (
+            "tentative_route",
+            "triage_confidence",
+            "clarification_needed",
+            "clarification_kind",
+            "secondary_route",
+            "intent_summary",
+            "clarification_question",
+            "no_clarification_reason",
+        ):
+            if turn_lifecycle.get(key) is not None:
+                lifecycle_metadata[key] = turn_lifecycle[key]
+        if (
+            turn_lifecycle.get("clarification_needed") is True
+            and turn_lifecycle.get("clarification_kind") == "blocking"
+        ):
+            return state, False
+    if has_active_exercise and lifecycle_action == "clear":
+        apply_state_delta(state, clear_exercise_delta(state))
+        if state.get("route") != "guided_exercise":
+            apply_state_delta(
+                state,
+                {
+                    "turn_lifecycle": {
+                        "active_flow": "none",
+                        "action": "none",
+                    }
+                },
+            )
+            return state, False
+    if has_active_exercise and lifecycle_action == "preserve":
+        apply_state_delta(
+            state,
+            {
+                "route": "therapeutic",
+                "response_style": "clarifying",
+                "turn_lifecycle": {
+                    "active_flow": "guided_exercise",
+                    "action": "preserve",
+                    **lifecycle_metadata,
+                },
+            },
+        )
+        return state, False
+
+    action = guided_exercise_runtime_action(state)
+    guided_exercise_basis = guided_exercise_selection_basis(state)
+    if guided_exercise_basis is None:
+        if action == "preserve":
+            apply_state_delta(
+                state,
+                {
+                    "route": "therapeutic",
+                    "response_style": "clarifying",
+                    "turn_lifecycle": {
+                        "active_flow": "guided_exercise",
+                        "action": "preserve",
+                        **lifecycle_metadata,
+                    },
+                },
+            )
+        return state, False
+    apply_state_delta(
+        state,
+        {
+            "route": "therapeutic",
+            "response_style": "guided_exercise",
+            "therapeutic_approach": state.get("therapeutic_approach") or "none",
+            "turn_lifecycle": {
+                "active_flow": "guided_exercise",
+                "action": action,
+                **lifecycle_metadata,
+            },
+            "diagnostics": {
+                "openai_guided_exercise_selection_basis": guided_exercise_basis,
+            },
+        },
+    )
+    return state, True
 
 
 def message_is_operational_side_request(message: str) -> bool:
@@ -695,6 +802,7 @@ __all__ = [
     "guided_exercise_runtime_action",
     "guided_exercise_selection_basis",
     "guided_exercise_skill_service",
+    "prepare_guided_exercise_route",
     "run_guided_exercise_turn",
     "run_guided_exercise_turn_stream",
 ]

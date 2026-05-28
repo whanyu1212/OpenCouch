@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
 from typing import Any, cast
 
 from agents import Runner
@@ -13,16 +11,11 @@ from agent.runtime.session.state import format_recent_history
 from agent.guardrails.prompts import build_crisis_response_prompt
 from agent.models import Channel, CrisisAssessment, MessageRole
 from agent.observability.timing import elapsed_ms
-from agent.specialists.crisis import CRISIS_AGENT_NAME
-from agent.specialists.guided_exercise import (
-    GUIDED_EXERCISE_AGENT_NAME,
-)
 from agent.specialists.roster import build_openai_text_agent_roster
 from agent.specialists.therapeutic import (
     THERAPEUTIC_AGENT_NAME,
     build_therapeutic_shadow_agent,
 )
-from agent.specialists.triage import TRIAGE_AGENT_NAME
 from agent.runtime.context import OpenAITextRunContext
 from agent.flows.crisis import (
     run_crisis_response_llm_turn as run_crisis_response_llm_turn_path,
@@ -30,10 +23,12 @@ from agent.flows.crisis import (
     run_crisis_turn_stream as run_crisis_turn_stream_path,
 )
 from agent.flows.guided_exercise import (
-    guided_exercise_runtime_action,
-    guided_exercise_selection_basis,
+    prepare_guided_exercise_route,
     run_guided_exercise_turn as run_guided_exercise_turn_path,
     run_guided_exercise_turn_stream as run_guided_exercise_turn_stream_path,
+)
+from agent.flows.grounded_lookup import (
+    run_grounded_lookup_turn as run_grounded_lookup_turn_path,
 )
 from agent.flows.therapeutic import (
     TherapeuticAgentResult as TherapeuticAgentResultPath,
@@ -62,6 +57,13 @@ from agent.runtime.session.history import (
     state_without_prompt_history,
 )
 from agent.runtime.services import TextRuntimeServices
+from agent.runtime.text_turn_graph import (
+    PreparedTurn,
+    TextRoutePlan,
+    TextTurnGraph,
+    TextTurnGraphResult,
+)
+from agent.runtime.turn_dispatch import state_delta_for_turn_dispatch
 from agent.runtime.types import (
     TextRuntimeConfig,
     TextRuntimeShadowResult,
@@ -73,17 +75,8 @@ from agent.runtime_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
 from agent.specialists.therapeutic_prompts import build_therapeutic_response_prompt
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
-from agent.skills.guided_exercises.state import clear_exercise_delta
-from agent.tools.grounded import build_grounded_lookup_delta
 from llm.base import BaseLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL
-
-
-@dataclass(frozen=True)
-class _PreparedTurn:
-    state: AgentState
-    eligible: bool
-    fallback_reason: str = ""
 
 
 class OpenAIAgentsSDKRunner:
@@ -103,6 +96,20 @@ class OpenAIAgentsSDKRunner:
             context=context,
             max_turns=3,
             session=session,
+        )
+
+    async def run_triage(
+        self,
+        *,
+        agent: Any,
+        input_text: str,
+        context: OpenAITextRunContext,
+    ) -> Any:
+        return await Runner.run(
+            agent,
+            input_text,
+            context=context,
+            max_turns=1,
         )
 
     def run_streamed(
@@ -138,6 +145,10 @@ class OpenAITextRuntime:
         self._runner = runner or _DEFAULT_OPENAI_RUNNER
         self._model = model
         self._roster = build_openai_text_agent_roster(model=model)
+        self._turn_graph = TextTurnGraph(
+            prepare_turn=self._prepare_turn,
+            load_and_prepare_guided_exercise=self._load_and_prepare_guided_exercise,
+        )
 
     def _services(self) -> TextRuntimeServices:
         return TextRuntimeServices(
@@ -170,70 +181,20 @@ class OpenAITextRuntime:
                 streamed=False,
             )
 
-        prepared = await self._prepare_turn(
+        route_result = await self._turn_graph.resolve(
             initial_state,
             config=config,
             context=context,
             prior_state=prior_state,
         )
-        if not prepared.eligible:
-            raise RuntimeError("OpenAI text runtime produced an ineligible turn.")
-
-        crisis_mode = _crisis_runtime_mode(prepared)
-        if crisis_mode is not None:
-            return await self._run_crisis_turn(
-                prepared.state,
-                config=config,
-                context=context,
-                runtime_mode=crisis_mode,
-                streamed=False,
-                session=session,
-            )
-
-        state = prepared.state
-        if state.get("route") == "grounded_lookup":
-            query = str(
-                (state.get("grounded_lookup", {}) or {}).get("query")
-                or state.get("message")
-                or ""
-            ).strip()
-            return await self._run_grounded_lookup_tool_turn(
-                state,
-                query=query,
-                config=config,
-                context=context,
-                streamed=False,
-                session=session,
-            )
-
-        state, guided_exercise = await self._load_and_prepare_guided_exercise(
-            state,
-            context,
-        )
-        if guided_exercise:
-            return await self._run_guided_exercise_turn(
-                state,
-                config=config,
-                context=context,
-                streamed=False,
-                session=session,
-            )
-
-        therapeutic_result = await self._run_safe_agent_turn(
-            state,
+        plan = self._require_route_plan(route_result)
+        self._apply_route_plan_diagnostics(plan)
+        return await self._execute_route_plan(
+            plan,
             config=config,
+            streamed=False,
             context=context,
             session=session,
-        )
-        return await self._finalize_openai_turn(
-            state,
-            response_text=therapeutic_result.response_text,
-            config=config,
-            runtime_mode=therapeutic_result.runtime_mode,
-            response_style=therapeutic_result.response_style,
-            selected_agent=THERAPEUTIC_AGENT_NAME,
-            sdk_duration_ms=therapeutic_result.sdk_duration_ms,
-            streamed=False,
         )
 
     async def run_turn_stream(
@@ -258,69 +219,18 @@ class OpenAITextRuntime:
             yield TextRuntimeStateEvent(state=final_state)
             return
 
-        prepared = await self._prepare_turn(
+        route_result = await self._turn_graph.resolve(
             initial_state,
             config=config,
             context=context,
             prior_state=prior_state,
         )
-        if not prepared.eligible:
-            raise RuntimeError("OpenAI text runtime produced an ineligible turn.")
-
-        crisis_mode = _crisis_runtime_mode(prepared)
-        if crisis_mode is not None:
-            if crisis_mode == "crisis_response":
-                yield TextRuntimeStatusEvent(stage="crisis_resource_lookup")
-            elif crisis_mode == "crisis_clarification":
-                yield TextRuntimeStatusEvent(stage="load_memory")
-            async for event in self._run_crisis_turn_stream(
-                prepared.state,
-                config=config,
-                context=context,
-                runtime_mode=crisis_mode,
-                session=session,
-            ):
-                yield event
-            return
-
-        state = prepared.state
-        if state.get("route") == "grounded_lookup":
-            yield TextRuntimeStatusEvent(stage="grounded_lookup")
-            query = str(
-                (state.get("grounded_lookup", {}) or {}).get("query")
-                or state.get("message")
-                or ""
-            ).strip()
-            final_state = await self._run_grounded_lookup_tool_turn(
-                state,
-                query=query,
-                config=config,
-                context=context,
-                streamed=True,
-                session=session,
-            )
-            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-            yield TextRuntimeStateEvent(state=final_state)
-            return
-
-        yield TextRuntimeStatusEvent(stage="load_memory")
-        state, guided_exercise = await self._load_and_prepare_guided_exercise(
-            state,
-            context,
-        )
-        if guided_exercise:
-            async for event in self._run_guided_exercise_turn_stream(
-                state,
-                config=config,
-                context=context,
-                session=session,
-            ):
-                yield event
-            return
-
-        async for event in run_therapeutic_turn_stream_path(
-            self._services(),
-            state,
+        plan = self._require_route_plan(route_result)
+        self._apply_route_plan_diagnostics(plan)
+        for stage in plan.stream_status_stages:
+            yield TextRuntimeStatusEvent(stage=stage)
+        async for event in self._stream_route_plan(
+            plan,
             config=config,
             context=context,
             session=session,
@@ -339,49 +249,39 @@ class OpenAITextRuntime:
 
         shadow_start = time.monotonic()
         try:
-            prepared = await self._prepare_turn(
+            route_result = await self._turn_graph.resolve(
                 initial_state,
                 config=config,
                 context=context,
                 prior_state=prior_state,
             )
-            if not prepared.eligible:
+            if route_result.plan is None:
                 return build_shadow_result(
-                    prepared,
+                    route_result.prepared,
                     status="fallback",
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
-
-            crisis_mode = _crisis_runtime_mode(prepared)
-            if crisis_mode is not None:
+            plan = route_result.plan
+            self._apply_route_plan_diagnostics(plan)
+            if plan.kind in {
+                "crisis_response",
+                "crisis_clarification",
+                "grounded_lookup",
+                "guided_exercise",
+            }:
                 return build_shadow_result(
-                    prepared,
+                    plan.prepared,
                     status="eligible",
-                    selected_agent=CRISIS_AGENT_NAME,
+                    selected_agent=plan.selected_agent,
                     shadow_duration_ms=elapsed_ms(shadow_start),
                 )
 
-            state, guided_exercise = await self._load_and_prepare_guided_exercise(
-                prepared.state,
-                context,
-            )
-            if guided_exercise:
-                return build_shadow_result(
-                    _PreparedTurn(
-                        state=state,
-                        eligible=True,
-                    ),
-                    status="eligible",
-                    selected_agent=GUIDED_EXERCISE_AGENT_NAME,
-                    shadow_duration_ms=elapsed_ms(shadow_start),
-                )
-
-            run_context = self._run_context_for_state(state, config, context)
+            run_context = self._run_context_for_state(plan.state, config, context)
             agent = build_therapeutic_shadow_agent(
-                state=state,
+                state=plan.state,
                 model=self._model,
             )
-            input_text = self._input_text_for_state(state)
+            input_text = self._input_text_for_state(plan.state)
 
             run_start = time.monotonic()
             result = await self._runner.run(
@@ -391,9 +291,9 @@ class OpenAITextRuntime:
             )
             response_text = final_output_text(getattr(result, "final_output", None))
             return build_shadow_result(
-                prepared,
+                plan.prepared,
                 status="eligible",
-                selected_agent=THERAPEUTIC_AGENT_NAME,
+                selected_agent=plan.selected_agent,
                 sdk_duration_ms=elapsed_ms(run_start),
                 shadow_duration_ms=elapsed_ms(shadow_start),
                 response_text=response_text,
@@ -408,6 +308,129 @@ class OpenAITextRuntime:
                 error_message=str(exc),
             )
 
+    def _require_route_plan(self, result: TextTurnGraphResult) -> TextRoutePlan:
+        if result.plan is None:
+            raise RuntimeError("OpenAI text runtime produced an ineligible turn.")
+        return result.plan
+
+    def _apply_route_plan_diagnostics(self, plan: TextRoutePlan) -> None:
+        apply_state_delta(
+            plan.state,
+            {
+                "diagnostics": {
+                    "openai_text_route_plan_kind": plan.kind,
+                    "openai_text_route_plan_runtime_mode": plan.runtime_mode,
+                    "openai_text_route_plan_selected_agent": plan.selected_agent,
+                }
+            },
+        )
+
+    async def _execute_route_plan(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        streamed: bool,
+        session: Any | None = None,
+    ) -> AgentState:
+        if plan.kind in {"crisis_response", "crisis_clarification"}:
+            return await self._run_crisis_turn(
+                plan.state,
+                config=config,
+                context=context,
+                runtime_mode=plan.runtime_mode,
+                streamed=streamed,
+                session=session,
+            )
+        if plan.kind == "grounded_lookup":
+            return await run_grounded_lookup_turn_path(
+                self._services(),
+                plan.state,
+                query=plan.query,
+                config=config,
+                context=context,
+                streamed=streamed,
+                session=session,
+            )
+        if plan.kind == "guided_exercise":
+            return await self._run_guided_exercise_turn(
+                plan.state,
+                config=config,
+                context=context,
+                streamed=streamed,
+                session=session,
+            )
+
+        therapeutic_result = await self._run_safe_agent_turn(
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        )
+        return await self._finalize_openai_turn(
+            plan.state,
+            response_text=therapeutic_result.response_text,
+            config=config,
+            runtime_mode=therapeutic_result.runtime_mode,
+            response_style=therapeutic_result.response_style,
+            selected_agent=THERAPEUTIC_AGENT_NAME,
+            sdk_duration_ms=therapeutic_result.sdk_duration_ms,
+            streamed=streamed,
+        )
+
+    async def _stream_route_plan(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        if plan.kind in {"crisis_response", "crisis_clarification"}:
+            async for event in self._run_crisis_turn_stream(
+                plan.state,
+                config=config,
+                context=context,
+                runtime_mode=plan.runtime_mode,
+                session=session,
+            ):
+                yield event
+            return
+
+        if plan.kind == "grounded_lookup":
+            final_state = await run_grounded_lookup_turn_path(
+                self._services(),
+                plan.state,
+                query=plan.query,
+                config=config,
+                context=context,
+                streamed=True,
+                session=session,
+            )
+            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+            yield TextRuntimeStateEvent(state=final_state)
+            return
+
+        if plan.kind == "guided_exercise":
+            async for event in self._run_guided_exercise_turn_stream(
+                plan.state,
+                config=config,
+                context=context,
+                session=session,
+            ):
+                yield event
+            return
+
+        async for event in run_therapeutic_turn_stream_path(
+            self._services(),
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        ):
+            yield event
+
     async def _prepare_turn(
         self,
         initial_state: AgentTurnInputState,
@@ -415,7 +438,7 @@ class OpenAITextRuntime:
         config: TextRuntimeConfig,
         context: WorkflowContext,
         prior_state: AgentState | None | object = _PRIOR_STATE_NOT_PROVIDED,
-    ) -> _PreparedTurn:
+    ) -> PreparedTurn:
         if prior_state is _PRIOR_STATE_NOT_PROVIDED:
             prior_state = None
         state = _effective_turn_state(prior_state, initial_state)
@@ -429,16 +452,17 @@ class OpenAITextRuntime:
         apply_state_delta(state, dict(guardrail_output.delta))
         assessment = guardrail_output.assessment
         if assessment.level != 0:
-            return _PreparedTurn(
+            return PreparedTurn(
                 state=state,
                 eligible=True,
             )
 
         state = await self._apply_triage_turn_dispatch(
             state,
+            config=config,
             context=context,
         )
-        return _PreparedTurn(
+        return PreparedTurn(
             state=state,
             eligible=True,
         )
@@ -447,16 +471,33 @@ class OpenAITextRuntime:
         self,
         state: AgentState,
         *,
+        config: TextRuntimeConfig,
         context: WorkflowContext,
     ) -> AgentState:
         llm_client = context.llm_client
         if llm_client is None:
             return state
-        decision = await llm_client.generate_structured(
-            prompt=self._triage_input_text_for_state(state),
-            response_schema=TurnDispatchDecision,
-            system_instruction=self._roster.triage_agent.instructions,
-        )
+        run_context = self._run_context_for_state(state, config, context)
+        triage_input = self._triage_input_text_for_state(state)
+        fallback_reason: str | None = None
+        try:
+            result = await self._runner.run_triage(
+                agent=self._roster.triage_agent,
+                input_text=triage_input,
+                context=run_context,
+            )
+            decision = _turn_dispatch_decision_from_output(
+                getattr(result, "final_output", None)
+            )
+        except Exception as exc:
+            if not can_fallback_to_control_response_path(exc, context):
+                raise
+            fallback_reason = openai_sdk_fallback_reason_path(exc)
+            decision = await llm_client.generate_structured(
+                prompt=triage_input,
+                response_schema=TurnDispatchDecision,
+                system_instruction=self._roster.triage_agent.instructions,
+            )
         clarification_kind = decision.clarification_kind
         needs_blocking_clarification = (
             decision.clarification_needed and clarification_kind == "blocking"
@@ -470,7 +511,16 @@ class OpenAITextRuntime:
         tentative_route = decision.route if should_route_to_clarification else None
         if should_route_to_clarification:
             decision.route = "therapeutic"
-        apply_state_delta(state, _state_delta_for_turn_dispatch(state, decision))
+        apply_state_delta(state, state_delta_for_turn_dispatch(state, decision))
+        if fallback_reason is not None:
+            apply_state_delta(
+                state,
+                {
+                    "diagnostics": {
+                        "openai_triage_sdk_fallback_reason": fallback_reason,
+                    }
+                },
+            )
         if should_route_to_clarification:
             apply_state_delta(
                 state,
@@ -509,173 +559,10 @@ class OpenAITextRuntime:
         state: AgentState,
         context: WorkflowContext,
     ) -> tuple[AgentState, bool]:
-        state = await self._load_turn_memory(state, context)
-        exercise_state = state.get("exercise_state", {}) or {}
-        has_active_exercise = (
-            isinstance(exercise_state, Mapping)
-            and exercise_state.get("exercise_type") is not None
-            and exercise_state.get("exercise_step") is not None
-        )
-        turn_lifecycle = state.get("turn_lifecycle", {}) or {}
-        lifecycle_action = (
-            turn_lifecycle.get("action")
-            if isinstance(turn_lifecycle, Mapping)
-            else None
-        )
-        lifecycle_metadata = {}
-        if isinstance(turn_lifecycle, Mapping):
-            for key in (
-                "tentative_route",
-                "triage_confidence",
-                "clarification_needed",
-                "clarification_kind",
-                "secondary_route",
-                "intent_summary",
-                "clarification_question",
-                "no_clarification_reason",
-            ):
-                if turn_lifecycle.get(key) is not None:
-                    lifecycle_metadata[key] = turn_lifecycle[key]
-            if (
-                turn_lifecycle.get("clarification_needed") is True
-                and turn_lifecycle.get("clarification_kind") == "blocking"
-            ):
-                return state, False
-        if has_active_exercise and lifecycle_action == "clear":
-            apply_state_delta(state, clear_exercise_delta(state))
-            if state.get("route") != "guided_exercise":
-                apply_state_delta(
-                    state,
-                    {
-                        "turn_lifecycle": {
-                            "active_flow": "none",
-                            "action": "none",
-                        }
-                    },
-                )
-                return state, False
-        if has_active_exercise and lifecycle_action == "preserve":
-            apply_state_delta(
-                state,
-                {
-                    "route": "therapeutic",
-                    "response_style": "clarifying",
-                    "turn_lifecycle": {
-                        "active_flow": "guided_exercise",
-                        "action": "preserve",
-                        **lifecycle_metadata,
-                    },
-                },
-            )
-            return state, False
-
-        action = guided_exercise_runtime_action(state)
-        guided_exercise_basis = guided_exercise_selection_basis(state)
-        if guided_exercise_basis is None:
-            if action == "preserve":
-                apply_state_delta(
-                    state,
-                    {
-                        "route": "therapeutic",
-                        "response_style": "clarifying",
-                        "turn_lifecycle": {
-                            "active_flow": "guided_exercise",
-                            "action": "preserve",
-                            **lifecycle_metadata,
-                        },
-                    },
-                )
-            return state, False
-        apply_state_delta(
+        return await prepare_guided_exercise_route(
             state,
-            {
-                "route": "therapeutic",
-                "response_style": "guided_exercise",
-                "therapeutic_approach": state.get("therapeutic_approach") or "none",
-                "turn_lifecycle": {
-                    "active_flow": "guided_exercise",
-                    "action": action,
-                    **lifecycle_metadata,
-                },
-                "diagnostics": {
-                    "openai_guided_exercise_selection_basis": guided_exercise_basis,
-                },
-            },
-        )
-        return state, True
-
-    async def _run_grounded_lookup_tool_turn(
-        self,
-        state: AgentState,
-        *,
-        query: str,
-        config: TextRuntimeConfig,
-        context: WorkflowContext,
-        streamed: bool,
-        session: Any | None = None,
-    ) -> AgentState:
-        run_context = self._run_context_for_state(state, config, context)
-        agent = self._build_agent(state)
-        sdk_duration_ms: float | None
-        fallback_reason: str | None = None
-        try:
-            _, sdk_duration_ms = await self._run_openai_agent_with(
-                state,
-                agent=agent,
-                input_text=self._grounded_lookup_input_text_for_state(state, query),
-                run_context=run_context,
-                session=session,
-            )
-        except Exception as exc:
-            if not can_fallback_to_control_response_path(exc, context):
-                raise
-            sdk_duration_ms = None
-            fallback_reason = openai_sdk_fallback_reason_path(exc)
-        tool_result = run_context.latest_grounded_tool_result()
-        diagnostics: dict[str, Any] = {
-            **dict(state.get("diagnostics", {}) or {}),
-            "openai_grounded_tool_expected": "answer_grounded_lookup",
-            "openai_grounded_tool_calls": [
-                call.tool_name for call in run_context.grounded_tool_calls
-            ],
-        }
-        if fallback_reason is not None:
-            diagnostics["openai_sdk_fallback_reason"] = fallback_reason
-
-        if tool_result is None:
-            fallback_delta = await build_grounded_lookup_delta(state, context)
-            response_text = str(fallback_delta.get("response_text") or "")
-            if not response_text:
-                raise ValueError("grounded_lookup returned an empty response.")
-            diagnostics["openai_grounded_tool_fallback"] = True
-            apply_state_delta(
-                state,
-                {
-                    **dict(fallback_delta),
-                    "route": "grounded_lookup",
-                    "diagnostics": diagnostics,
-                },
-            )
-        else:
-            response_text = tool_result.response_text
-            diagnostics["openai_grounded_tool_fallback"] = False
-            apply_state_delta(
-                state,
-                {
-                    "grounded_lookup": tool_result.grounded_lookup,
-                    "diagnostics": diagnostics,
-                },
-            )
-
-        return await self._finalize_openai_turn(
-            state,
-            response_text=response_text,
-            config=config,
-            runtime_mode="grounded_lookup",
-            response_style="grounded_lookup",
-            selected_agent=THERAPEUTIC_AGENT_NAME,
-            sdk_duration_ms=sdk_duration_ms,
-            streamed=streamed,
+            context,
+            load_turn_memory=self._load_turn_memory,
         )
 
     async def _run_guided_exercise_turn(
@@ -1003,22 +890,6 @@ class OpenAITextRuntime:
             f'Current user message: "{state.get("message", "")}"'
         )
 
-    def _grounded_lookup_input_text_for_state(
-        self,
-        state: AgentState,
-        query: str,
-    ) -> str:
-        return (
-            "The current user turn is an explicit grounded lookup request "
-            "selected by the OpenCouch runtime.\n\n"
-            "Required tool: answer_grounded_lookup\n"
-            f"Required tool arguments: {json.dumps({'query': query}, sort_keys=True)}\n"
-            "Call the required tool exactly once before answering. Then answer "
-            "using only the tool result's response_text. Do not provide "
-            "ungrounded factual claims.\n\n"
-            f'Current user message: "{state.get("message", "")}"'
-        )
-
     def _crisis_input_text_for_state(
         self,
         state: AgentState,
@@ -1102,6 +973,17 @@ def _effective_turn_state(
         else:
             state[key] = value
     return cast(AgentState, state)
+
+
+def _turn_dispatch_decision_from_output(output: Any) -> TurnDispatchDecision:
+    if isinstance(output, TurnDispatchDecision):
+        return output
+    if isinstance(output, Mapping):
+        return TurnDispatchDecision.model_validate(dict(output))
+    raise TypeError(
+        "OpenAI triage agent returned unsupported output "
+        f"{type(output).__name__}; expected TurnDispatchDecision."
+    )
 
 
 def _deterministic_smoke_state(
@@ -1272,106 +1154,6 @@ def _apply_crisis_resource_fallback_diagnostics(
         "openai_crisis_tool_fallback": True,
     }
     apply_state_delta(state, {"diagnostics": diagnostics})
-
-
-def _state_delta_for_turn_dispatch(
-    state: AgentState,
-    decision: TurnDispatchDecision,
-) -> dict[str, Any]:
-    diagnostics = {
-        **dict(state.get("diagnostics", {}) or {}),
-        "openai_triage_agent": TRIAGE_AGENT_NAME,
-        "openai_triage_route": decision.route,
-        "openai_triage_active_flow_action": decision.active_flow_action,
-        "openai_triage_confidence": decision.confidence,
-        "openai_triage_clarification_needed": decision.clarification_needed,
-        "openai_triage_clarification_kind": decision.clarification_kind,
-        "openai_triage_secondary_route": decision.secondary_route,
-        "openai_triage_no_clarification_reason": decision.no_clarification_reason,
-    }
-    existing_memory_reference = state.get("memory_reference", {}) or {}
-    existing_memory_reference_mode = (
-        existing_memory_reference.get("mode")
-        if isinstance(existing_memory_reference, Mapping)
-        else None
-    )
-    memory_reference_mode = (
-        "explicit"
-        if existing_memory_reference_mode == "explicit"
-        and decision.memory_reference_mode == "none"
-        else decision.memory_reference_mode
-    )
-    turn_lifecycle: dict[str, Any] = {
-        "active_flow": (
-            "guided_exercise" if decision.route == "guided_exercise" else "none"
-        ),
-        "action": decision.active_flow_action,
-    }
-    if decision.clarification_needed or decision.no_clarification_reason != "none":
-        turn_lifecycle.update(
-            {
-                "triage_confidence": decision.confidence,
-                "clarification_needed": decision.clarification_needed,
-                "clarification_kind": decision.clarification_kind,
-                "secondary_route": decision.secondary_route,
-                "intent_summary": decision.intent_summary,
-                "clarification_question": decision.clarification_question,
-                "no_clarification_reason": decision.no_clarification_reason,
-            }
-        )
-    delta: dict[str, Any] = {
-        "route": decision.route,
-        "memory_reference": {"mode": memory_reference_mode},
-        "turn_lifecycle": turn_lifecycle,
-        "diagnostics": diagnostics,
-    }
-    if decision.route == "grounded_lookup":
-        delta["grounded_lookup"] = {
-            **dict(state.get("grounded_lookup", {}) or {}),
-            "query": decision.query or str(state.get("message") or "").strip(),
-        }
-        delta["response_style"] = "grounded_lookup"
-    if decision.route == "guided_exercise":
-        delta["response_style"] = "guided_exercise"
-        delta["therapeutic_approach"] = state.get("therapeutic_approach") or "none"
-        diagnostics["openai_guided_exercise_selection_basis"] = (
-            decision.exercise_start_basis
-        )
-        if decision.exercise_type:
-            exercise_state = dict(state.get("exercise_state", {}) or {})
-            exercise_state.setdefault("exercise_type", decision.exercise_type)
-            delta["exercise_state"] = exercise_state
-    return delta
-
-
-def _crisis_runtime_mode(prepared: _PreparedTurn) -> str | None:
-    crisis = prepared.state.get("crisis")
-    if crisis is None:
-        return None
-    if (
-        getattr(crisis, "needs_crisis_response", False)
-        or getattr(
-            crisis,
-            "level",
-            0,
-        )
-        >= 2
-    ):
-        return "crisis_response"
-    if (
-        getattr(crisis, "needs_clarification", False)
-        or getattr(crisis, "level", 0) == 1
-    ):
-        return "crisis_clarification"
-    return None
-
-
-def _response_style_for_crisis_mode(runtime_mode: str) -> str:
-    if runtime_mode == "crisis_response":
-        return "crisis_response"
-    if runtime_mode == "crisis_clarification":
-        return "clarifying"
-    raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
 
 
 def _thread_id_from_config(config: TextRuntimeConfig, state: Mapping[str, Any]) -> str:

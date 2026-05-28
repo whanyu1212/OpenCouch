@@ -25,6 +25,7 @@ def build_agent(
     *,
     model: str = DEFAULT_OPENAI_MODEL,
     tools: Sequence[Any] | None = None,
+    output_type: type[Any] | None = None,
 ) -> Agent[OpenAITextRunContext]:
     """Build an OpenAI Agents SDK agent from OpenCouch metadata."""
 
@@ -34,6 +35,7 @@ def build_agent(
         instructions=definition.instructions,
         model=model,
         tools=list(tools or ()),
+        output_type=output_type,
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agents import Agent
 
+from agent.memory.types import TurnDispatchDecision
 from agent.runtime.context import OpenAITextRunContext
 from agent.specialists.common import AgentDefinition, build_agent
 from llm.openai_client import DEFAULT_OPENAI_MODEL
@@ -88,6 +89,7 @@ def build_triage_agent(
         _TRIAGE_DEFINITION,
         model=model,
         tools=[],
+        output_type=TurnDispatchDecision,
     )
 
 

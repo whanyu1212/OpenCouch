@@ -35,7 +35,7 @@ memory retrieval and all operational gates are skipped entirely.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Execution | OpenAI Agents SDK runner with app-owned runtime state | Explicit branches, deterministic ordering, checkpoint persistence; SDK sessions carry short-term model-visible history while OpenCouch owns product state |
+| Execution | OpenAI Agents SDK runner with app-owned runtime state | `TextTurnGraph` resolves one route plan with deterministic ordering; SDK sessions carry short-term model-visible history while OpenCouch owns product state |
 | LLM | `BaseLLMClient` protocol | OpenAI client behind a thin protocol; `WorkflowContext` exposes both control LLM and optional response LLM |
 | Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` when an API key is present; null provider when no API key |
 | Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
