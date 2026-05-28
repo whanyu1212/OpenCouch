@@ -30,6 +30,7 @@ from agent.audit.models import (
     CrisisLogPathCounts,
     CrisisLogRecord,
 )
+from agent.audit.summary import summarize_crisis_log_records
 from agent.guardrails.service import CrisisAssessmentSchema
 from agent.audit.crisis_log import write_crisis_log
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
@@ -230,6 +231,67 @@ class TestCrisisLogNode:
         assert record.override_kind == "none"
         assert record.classifier_path == "llm_primary"
         assert record.llm_failure_occurred is False
+
+    @pytest.mark.asyncio
+    async def test_operational_review_metadata_is_written_to_record(self) -> None:
+        """The record should carry non-prompt operational review metadata."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(
+            crisis_audit={
+                "crisis_override_kind": "none",
+                "crisis_classifier_path": "llm_primary",
+                "crisis_llm_failure_occurred": False,
+            }
+        )
+        state["response_style"] = "crisis_response"
+        state["resource_lookup_status"] = "found"
+        state["found_resources"] = [
+            {"name": "988", "phone": "988", "url": "https://988lifeline.org"}
+        ]
+        state["diagnostics"] = {
+            "openai_crisis_tool_calls": ["lookup_crisis_resources"],
+            "openai_crisis_tool_fallback": False,
+        }
+
+        await write_crisis_log(state, runtime.context)
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.event_type == "crisis_response"
+        assert record.response_style == "crisis_response"
+        assert record.resource_lookup_status == "found"
+        assert record.resource_count == 1
+        assert record.tool_calls == ["lookup_crisis_resources"]
+        assert record.response_path == "sdk"
+        assert record.fallback_reason is None
+
+    @pytest.mark.asyncio
+    async def test_response_llm_override_path_is_written_to_record(self) -> None:
+        """The record should identify direct response-LLM crisis fallback paths."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state()
+        state["response_style"] = "crisis_response"
+        state["resource_lookup_status"] = "no_location"
+        state["found_resources"] = []
+        state["diagnostics"] = {
+            "openai_response_llm_override": True,
+            "openai_crisis_tool_fallback": True,
+        }
+
+        await write_crisis_log(state, runtime.context)
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.response_path == "response_llm_override"
+        assert record.fallback_reason == "response_llm_override"
+        assert record.resource_lookup_status == "no_location"
+        assert record.resource_count == 0
 
     @pytest.mark.asyncio
     async def test_session_id_stored_as_opaque_hash(self) -> None:
@@ -476,6 +538,63 @@ class TestCrisisLogMetadata:
         assert len(records) == 0
 
 
+# ─── 5. Crisis-log aggregate summaries ───────────────────────────────────────
+
+
+class TestCrisisLogSummaries:
+    """Summaries turn daily crisis records into operator-facing counts."""
+
+    def test_daily_summary_counts_levels_paths_and_fallbacks(self) -> None:
+        records = [
+            _build_retention_record(
+                record_id="a",
+                detected_at="2026-04-10T08:00:00Z",
+                level=2,
+                response_path="sdk",
+                llm_failure_occurred=False,
+                response_node_completed=True,
+            ),
+            _build_retention_record(
+                record_id="b",
+                detected_at="2026-04-10T09:00:00Z",
+                level=2,
+                response_path="sdk_tool_fallback",
+                llm_failure_occurred=True,
+                response_node_completed=True,
+            ),
+            _build_retention_record(
+                record_id="c",
+                detected_at="2026-04-10T10:00:00Z",
+                level=3,
+                response_path="response_llm_override",
+                llm_failure_occurred=False,
+                response_node_completed=False,
+            ),
+        ]
+
+        aggregate = summarize_crisis_log_records(date(2026, 4, 10), records)
+
+        assert aggregate.date == "2026-04-10"
+        assert aggregate.events_total == 3
+        assert aggregate.events_by_level.level_2 == 2
+        assert aggregate.events_by_level.level_3 == 1
+        assert aggregate.events_by_classifier_path.llm_primary == 3
+        assert aggregate.llm_failures_total == 1
+        assert aggregate.tool_fallbacks_total == 1
+        assert aggregate.response_llm_overrides_total == 1
+        assert aggregate.response_node_completion_rate == pytest.approx(2 / 3)
+
+    def test_daily_summary_handles_empty_records(self) -> None:
+        aggregate = summarize_crisis_log_records(date(2026, 4, 10), [])
+
+        assert aggregate.date == "2026-04-10"
+        assert aggregate.events_total == 0
+        assert aggregate.llm_failures_total == 0
+        assert aggregate.tool_fallbacks_total == 0
+        assert aggregate.response_llm_overrides_total == 0
+        assert aggregate.response_node_completion_rate == 1.0
+
+
 # ─── 5. Retention purge (v0.8.1) ──────────────────────────────────────────
 
 
@@ -484,6 +603,9 @@ def _build_retention_record(
     record_id: str,
     detected_at: str,
     level: int = 1,
+    response_path: str = "sdk",
+    llm_failure_occurred: bool = False,
+    response_node_completed: bool = True,
 ) -> CrisisLogRecord:
     """Build a minimal CrisisLogRecord for retention-purge tests.
 
@@ -503,8 +625,13 @@ def _build_retention_record(
         confidence="medium",
         reason="retention purge test",
         override_kind="none",
-        response_node_completed=True,
-        llm_failure_occurred=False,
+        response_node_completed=response_node_completed,
+        llm_failure_occurred=llm_failure_occurred,
+        response_path=response_path,
+        response_style="crisis_response",
+        resource_lookup_status="not_attempted",
+        resource_count=0,
+        tool_calls=[],
     )
 
 

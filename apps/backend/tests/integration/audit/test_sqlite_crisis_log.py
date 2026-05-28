@@ -61,6 +61,12 @@ def _crisis_record(
         reason="test",
         response_node_completed=True,
         llm_failure_occurred=False,
+        response_path="sdk_tool_fallback",
+        response_style="crisis_response",
+        resource_lookup_status="no_verified_results",
+        resource_count=2,
+        tool_calls=["lookup_crisis_resources"],
+        fallback_reason="crisis_resource_tool_not_called",
     )
 
 
@@ -185,6 +191,13 @@ async def test_records_preserve_all_fields_round_trip() -> None:
     assert restored.reason == "test"
     assert restored.response_node_completed is True
     assert restored.llm_failure_occurred is False
+    assert restored.event_type == "crisis_response"
+    assert restored.response_path == "sdk_tool_fallback"
+    assert restored.response_style == "crisis_response"
+    assert restored.resource_lookup_status == "no_verified_results"
+    assert restored.resource_count == 2
+    assert restored.tool_calls == ["lookup_crisis_resources"]
+    assert restored.fallback_reason == "crisis_resource_tool_not_called"
     await backend.aclose()
 
 

@@ -13,12 +13,27 @@ from pydantic import BaseModel, Field
 
 CrisisOverrideOutcome = Literal["none"]
 CrisisClassifierPath = Literal["llm_primary"]
+SafetyAuditEventType = Literal["crisis_response"]
+CrisisResponsePath = Literal[
+    "sdk",
+    "sdk_tool_fallback",
+    "response_llm_override",
+    "unknown",
+]
+CrisisResourceLookupStatus = Literal[
+    "not_attempted",
+    "found",
+    "no_location",
+    "location_refused",
+    "no_verified_results",
+]
 
 
 class CrisisLogRecord(BaseModel):
     """One crisis event in the always-on safety log."""
 
     id: str
+    event_type: SafetyAuditEventType = "crisis_response"
     session_id_opaque: str
     user_id_or_null: str | None = None
     detected_at: str
@@ -28,6 +43,12 @@ class CrisisLogRecord(BaseModel):
     reason: str = Field(max_length=500)
     response_node_completed: bool
     llm_failure_occurred: bool
+    response_style: str = "crisis_response"
+    resource_lookup_status: CrisisResourceLookupStatus = "not_attempted"
+    resource_count: int = Field(default=0, ge=0)
+    tool_calls: list[str] = Field(default_factory=list)
+    response_path: CrisisResponsePath = "unknown"
+    fallback_reason: str | None = Field(default=None, max_length=200)
     retention_extended_until: str | None = None
     retention_extended_reason: str | None = None
 
@@ -55,12 +76,17 @@ class CrisisLogAggregate(BaseModel):
     events_by_level: CrisisLogLevelCounts
     events_by_classifier_path: CrisisLogPathCounts
     llm_failures_total: int = Field(default=0, ge=0)
+    tool_fallbacks_total: int = Field(default=0, ge=0)
+    response_llm_overrides_total: int = Field(default=0, ge=0)
     response_node_completion_rate: float = Field(ge=0.0, le=1.0)
 
 
 __all__ = [
     "CrisisOverrideOutcome",
     "CrisisClassifierPath",
+    "SafetyAuditEventType",
+    "CrisisResponsePath",
+    "CrisisResourceLookupStatus",
     "CrisisLogRecord",
     "CrisisLogLevelCounts",
     "CrisisLogPathCounts",
