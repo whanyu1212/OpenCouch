@@ -126,11 +126,6 @@ export interface EndSessionResponse {
   resolved_threads?: string[];
 }
 
-export interface RuntimeInfo {
-  model: string;
-  version: string;
-}
-
 export interface RealtimeVoiceSessionResponse {
   client_secret: string;
   thread_id: string;
@@ -257,12 +252,6 @@ export async function postChat(
     }),
   });
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
-  return res.json();
-}
-
-export async function getInfo(): Promise<RuntimeInfo> {
-  const res = await fetch(`${API_BASE}/info`);
-  if (!res.ok) throw new Error(`Info failed: ${res.status}`);
   return res.json();
 }
 
