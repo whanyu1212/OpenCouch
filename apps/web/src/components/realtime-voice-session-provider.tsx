@@ -17,6 +17,7 @@ import {
   type RealtimeVoiceToolEvent,
 } from "@/lib/realtime-voice-session";
 import {
+  buildEndedSessionResult,
   useSessionStore,
   type EndedSessionResult,
   type VoiceActivityEvent,
@@ -368,11 +369,13 @@ export function RealtimeVoiceSessionProvider({
           }
         },
         onEnded: (response) => {
-          handleEnded({
-            threadId,
-            summary: response.summary,
-            detail: response.detail,
-          });
+          handleEnded(
+            buildEndedSessionResult({
+              threadId,
+              result: response,
+              modality: "voice",
+            })
+          );
         },
         onAgentSpeaking: setVoiceAgentSpeaking,
         onReadyToSpeak: setVoiceReadyToSpeak,

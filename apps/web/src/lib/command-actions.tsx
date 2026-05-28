@@ -17,7 +17,7 @@ import {
   updateMemoryRecall,
   type ResponseModelTier,
 } from "@/lib/api";
-import { useSessionStore } from "@/lib/session";
+import { buildEndedSessionResult, useSessionStore } from "@/lib/session";
 
 export type CommandActionId =
   | "show_help"
@@ -196,7 +196,13 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
         bumpMemoryRefreshVersion();
 
         if (captureResult) {
-          setLastEndedSession({ threadId, ...result });
+          setLastEndedSession(
+            buildEndedSessionResult({
+              threadId,
+              result,
+              modality: "text",
+            })
+          );
         } else {
           clearLastEndedSession();
         }

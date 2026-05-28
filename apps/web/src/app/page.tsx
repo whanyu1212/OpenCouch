@@ -771,7 +771,7 @@ function SessionEndedCard({
       <SessionFeedback
         threadId={session.threadId}
         memoryMode={memoryMode}
-        modality="text"
+        modality={session.modality}
         className="mt-3"
       />
       <div className="mt-3 flex flex-wrap items-center gap-2">
