@@ -5,6 +5,10 @@ process.env.NEXT_PUBLIC_API_URL = "http://backend.test/api";
 
 const api = await import("../src/lib/api.ts");
 
+test("does not expose the unused backend info helper", () => {
+  assert.equal(api.getInfo, undefined);
+});
+
 test("sends memory mode through text chat and thread API helpers", async () => {
   const captured = [];
   globalThis.fetch = async (url, init = {}) => {
