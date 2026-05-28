@@ -20,10 +20,14 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import date
-from typing import TYPE_CHECKING, Any, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, cast
 from uuid import uuid4
 
-from agent.audit.models import CrisisLogRecord
+from agent.audit.models import (
+    CrisisLogRecord,
+    CrisisResourceLookupStatus,
+    CrisisResponsePath,
+)
 from agent.memory.hashing import hash_session_id
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
@@ -123,6 +127,10 @@ async def write_crisis_log(
     )
     level = crisis.get("level", 0) if isinstance(crisis, Mapping) else crisis.level
     reason = crisis.get("reason", "") if isinstance(crisis, Mapping) else crisis.reason
+    diagnostics = state.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        diagnostics = {}
+    response_path = _response_path_from_diagnostics(diagnostics)
     record = CrisisLogRecord(
         id=str(uuid4()),
         session_id_opaque=hash_session_id(state.get("session_id")),
@@ -134,6 +142,15 @@ async def write_crisis_log(
         reason=reason or "",
         response_node_completed=True,
         llm_failure_occurred=llm_failure_occurred,
+        response_style=str(state.get("response_style") or "crisis_response"),
+        resource_lookup_status=_resource_lookup_status_from_state(state),
+        resource_count=_resource_count_from_state(state),
+        tool_calls=_tool_calls_from_diagnostics(diagnostics),
+        response_path=response_path,
+        fallback_reason=_fallback_reason_from_diagnostics(
+            diagnostics,
+            response_path=response_path,
+        ),
     )
 
     try:
@@ -145,6 +162,62 @@ async def write_crisis_log(
         )
 
     return {}
+
+
+def _resource_lookup_status_from_state(
+    state: Mapping[str, Any],
+) -> CrisisResourceLookupStatus:
+    status = str(state.get("resource_lookup_status") or "not_attempted")
+    if status in {
+        "not_attempted",
+        "found",
+        "no_location",
+        "location_refused",
+        "no_verified_results",
+    }:
+        return cast(CrisisResourceLookupStatus, status)
+    return "not_attempted"
+
+
+def _resource_count_from_state(state: Mapping[str, Any]) -> int:
+    resources = state.get("found_resources")
+    if not isinstance(resources, list):
+        return 0
+    return len(resources)
+
+
+def _tool_calls_from_diagnostics(diagnostics: Mapping[str, Any]) -> list[str]:
+    tool_calls = diagnostics.get("openai_crisis_tool_calls")
+    if not isinstance(tool_calls, list):
+        return []
+    return [str(tool_name) for tool_name in tool_calls]
+
+
+def _response_path_from_diagnostics(
+    diagnostics: Mapping[str, Any],
+) -> CrisisResponsePath:
+    if diagnostics.get("openai_response_llm_override") is True:
+        return "response_llm_override"
+    if diagnostics.get("openai_crisis_tool_fallback") is True:
+        return "sdk_tool_fallback"
+    if "openai_crisis_tool_fallback" in diagnostics:
+        return "sdk"
+    return "unknown"
+
+
+def _fallback_reason_from_diagnostics(
+    diagnostics: Mapping[str, Any],
+    *,
+    response_path: CrisisResponsePath,
+) -> str | None:
+    explicit_reason = diagnostics.get("openai_sdk_fallback_reason")
+    if explicit_reason:
+        return str(explicit_reason)[:200]
+    if response_path == "response_llm_override":
+        return "response_llm_override"
+    if response_path == "sdk_tool_fallback":
+        return "crisis_resource_tool_not_called"
+    return None
 
 
 class InMemoryCrisisLogBackend:

@@ -45,6 +45,12 @@ def _crisis_record(
         reason="test",
         response_node_completed=True,
         llm_failure_occurred=False,
+        response_path="sdk_tool_fallback",
+        response_style="crisis_response",
+        resource_lookup_status="no_verified_results",
+        resource_count=2,
+        tool_calls=["lookup_crisis_resources"],
+        fallback_reason="crisis_resource_tool_not_called",
     )
 
 
@@ -141,6 +147,12 @@ async def test_postgres_crisis_log_persists_across_close_and_reopen() -> None:
             filtered = [record for record in results if record.id == record_id]
             assert len(filtered) == 1
             assert filtered[0].level == 3
+            assert filtered[0].event_type == "crisis_response"
+            assert filtered[0].response_path == "sdk_tool_fallback"
+            assert filtered[0].resource_lookup_status == "no_verified_results"
+            assert filtered[0].resource_count == 2
+            assert filtered[0].tool_calls == ["lookup_crisis_resources"]
+            assert filtered[0].fallback_reason == "crisis_resource_tool_not_called"
         finally:
             await backend_b.aclose()
     finally:

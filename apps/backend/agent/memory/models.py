@@ -12,7 +12,10 @@ from agent.audit.models import (
     CrisisLogLevelCounts,
     CrisisLogPathCounts,
     CrisisLogRecord,
+    CrisisResourceLookupStatus,
+    CrisisResponsePath,
     CrisisOverrideOutcome,
+    SafetyAuditEventType,
 )
 from agent.feedback.models import (
     FeedbackLabel,
@@ -88,6 +91,9 @@ __all__ = [
     "ProceduralExtractionResult",
     "CrisisOverrideOutcome",
     "CrisisClassifierPath",
+    "SafetyAuditEventType",
+    "CrisisResponsePath",
+    "CrisisResourceLookupStatus",
     "CrisisLogRecord",
     "CrisisLogLevelCounts",
     "CrisisLogPathCounts",

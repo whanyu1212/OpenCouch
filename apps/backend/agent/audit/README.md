@@ -1,62 +1,90 @@
-# Audit Backends
+# Safety Audit Ledger
 
-This package contains always-on operational records for safety and operator
-review. Audit data is intentionally separate from prompt memory: audit records
-are not loaded into `working_memory`, are not used to generate ordinary
-therapeutic responses, and are not controlled by conversational memory recall
-toggles.
+This package owns OpenCouch's deployment-facing safety audit ledger. It is not
+therapeutic memory, prompt context, or a general observability bucket. The ledger
+exists so operators can review crisis-response behavior after the fact without
+loading audit data back into the assistant's ordinary responses.
+
+## Why It Exists
+
+For a user-facing deployment, the safety ledger should answer operational
+questions that app logs and prompt memory should not own:
+
+- Did the crisis classifier fire, at what level, and through which classifier
+  path?
+- Did the crisis-response branch complete?
+- Did crisis-resource lookup run, find resources, or fall back?
+- Did the runtime use the SDK path, SDK tool fallback path, or direct response
+  LLM override?
+- Can maintainers build daily safety summaries without exposing raw user text?
+
+If nobody can review or summarize a record, it does not belong here.
+
+## Runtime Flow
+
+The crisis path writes audit records in one direction only:
+
+1. The crisis gate writes turn-scoped `crisis` and `crisis_audit` state.
+2. The crisis-response branch resolves resources and produces the user-facing
+   safety reply.
+3. `agent.audit.crisis_log.write_crisis_log` builds one `CrisisLogRecord` after
+   the response branch completes.
+4. The configured `CrisisLogBackend` appends the record.
+5. Operator review, status, export, summary, and retention paths may read or
+   purge records later.
+
+Audit rows must never be loaded into `working_memory` or used by normal
+therapeutic response generation.
 
 ## File Map
 
 | File | Responsibility |
 | --- | --- |
 | `__init__.py` | Package marker and short package-level contract. |
-| `models.py` | Source-of-truth pydantic models for crisis logs and classifier audit metadata. |
-| `crisis_log.py` | Defines `CrisisLogBackend` plus in-memory and null crisis-log implementations. Used by tests, incognito mode, and explicit fixtures. |
-| `postgres_crisis_log.py` | Primary Postgres implementation of `CrisisLogBackend` for durable local/runtime deployments. |
-| `sqlite_crisis_log.py` | Legacy SQLite implementation of `CrisisLogBackend` for compatibility fallback and migration coverage. |
+| `models.py` | Pydantic record and aggregate models for safety audit data. |
+| `summary.py` | Daily aggregate helper for operator-facing counts. |
+| `crisis_log.py` | `CrisisLogBackend`, in-memory/null implementations, and crisis record writer. |
+| `postgres_crisis_log.py` | Primary durable Postgres implementation of `CrisisLogBackend`. |
+| `sqlite_crisis_log.py` | Legacy SQLite fallback and migration-compatible implementation. |
 
-## Runtime Significance
+## What Records Store
 
-The OpenAI text runtime writes one `CrisisLogRecord` for crisis-response turns
-through `agent.audit.crisis_log.write_crisis_log`. Its purpose is the audit side
-effect, keeping safety observability separate from response generation and
-ordinary memory operations.
+`CrisisLogRecord` stores structured operational metadata:
 
-The crisis log is always-on across memory modes:
+- opaque record id and SHA-256 session id
+- `user_id_or_null`, with incognito mode always writing `None`
+- detection timestamp, crisis level, classifier path, and bounded classifier
+  reason
+- response completion and LLM failure flags
+- response path, response style, resource lookup status, resource count, tool
+  calls, and fallback reason
+- optional retention extension fields
 
-- Incognito mode uses `InMemoryCrisisLogBackend`, so records exist only for the
-  runtime lifetime.
-- Local/synced modes use the configured durable backend; Postgres is recommended and SQLite remains a legacy fallback.
-- `NullCrisisLogBackend` should stay limited to explicit tests.
+It should not store raw transcripts, raw user messages, assistant responses, or
+ordinary therapeutic memory.
 
-Session feedback lives in `agent.feedback`; runtime lifecycle policy for
-writing feedback records lives in `agent.runtime.session_feedback`.
+## Persistence Behavior
 
-`PersistentAgentRuntime` selects concrete audit backends from memory mode and
-exposes them through runtime context or runtime accessors.
+The crisis log is always available across memory modes, but persistence is
+mode-aware:
 
-## Privacy And Persistence
+- Incognito mode uses `InMemoryCrisisLogBackend`; records die with the runtime.
+- Persistent modes use the configured durable backend. Postgres is preferred for
+  deployed environments; SQLite remains a local/legacy fallback.
+- `NullCrisisLogBackend` is reserved for explicit tests and fixtures.
 
-Audit records use opaque session identifiers and mode-aware persistence. They
-should not be treated as therapeutic memory:
-
-- Do not load audit rows into prompt memory.
-- Do not let user memory recall controls disable crisis audit writes.
-- Do not write ordinary therapeutic content into audit stores unless it belongs
-  to an explicit audit record type.
-- Keep purge/retention paths operator- or maintenance-driven, not agent-driven.
+User memory recall controls must not disable crisis audit writes. Retention and
+purge flows are operator- or maintenance-driven, never agent-driven.
 
 ## Extension Rules
 
-Add a new audit backend here only when the record is operational rather than
-therapeutic memory. A good audit feature usually has these properties:
+Add audit records here only for operational safety or review data. A valid
+extension must have:
 
-- It must be reviewable by operators or maintainers.
-- It should persist independently of conversational memory settings.
-- It should not influence normal therapeutic response generation unless a
-  dedicated runtime service explicitly reads it.
-- It has a clear runtime owner.
+- a clear runtime owner and write point
+- a review, export, summary, or retention use case
+- tests for record construction and every backend's round-trip behavior
+- privacy boundaries that keep raw therapeutic content out by default
 
-If a feature is meant to help the assistant remember the user, place it under
-`agent.memory` instead.
+If a feature helps the assistant remember or personalize future replies, put it
+under `agent.memory` instead.
