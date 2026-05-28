@@ -34,6 +34,7 @@ from agent.models import AgentOutput, CrisisAssessment, ResponseCategory
 from agent.runtime import PersistentAgentRuntime
 from api.models import ApiMemoryMode
 from llm.base import BaseLLMClient, StructuredResponseT
+from tests.support.api_selection import runtime_selection
 
 
 class _FakeResponseTierLLM(BaseLLMClient):
@@ -206,6 +207,7 @@ async def client(runtime, monkeypatch: pytest.MonkeyPatch):
     from api.dependencies import get_llm_client, get_response_llm_clients, get_runtime
     from api.router import api_router
     from api.routes import chat as chat_routes
+    from api.routes import memory as memory_routes
     from api.routes import threads as thread_routes
 
     app = FastAPI()
@@ -216,8 +218,21 @@ async def client(runtime, monkeypatch: pytest.MonkeyPatch):
     app.dependency_overrides[get_runtime] = lambda: runtime
     app.dependency_overrides[get_llm_client] = lambda: llm
     app.dependency_overrides[get_response_llm_clients] = lambda: {}
-    monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", lambda _: runtime)
-    monkeypatch.setattr(thread_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        chat_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    monkeypatch.setattr(
+        thread_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    monkeypatch.setattr(
+        memory_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -330,7 +345,9 @@ class TestChat:
         llm = _FakeAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
         monkeypatch.setattr(
-            chat_routes, "get_runtime_for_memory_mode", lambda _: runtime
+            chat_routes,
+            "get_runtime_selection",
+            lambda mode: runtime_selection(runtime, mode),
         )
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {
@@ -374,7 +391,9 @@ class TestChat:
         llm = _FakeAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
         monkeypatch.setattr(
-            chat_routes, "get_runtime_for_memory_mode", lambda _: runtime
+            chat_routes,
+            "get_runtime_selection",
+            lambda mode: runtime_selection(runtime, mode),
         )
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {
@@ -417,7 +436,9 @@ class TestChat:
         llm = _FailingAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
         monkeypatch.setattr(
-            chat_routes, "get_runtime_for_memory_mode", lambda _: runtime
+            chat_routes,
+            "get_runtime_selection",
+            lambda mode: runtime_selection(runtime, mode),
         )
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_response_llm_clients] = lambda: {"fast": llm}
@@ -473,13 +494,13 @@ class TestChat:
 
         def fake_selector(mode: ApiMemoryMode | None):
             seen_modes.append(mode)
-            return _FakeChatRuntime()
+            return runtime_selection(_FakeChatRuntime(), mode)
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         app.dependency_overrides[get_llm_client] = lambda: None
         app.dependency_overrides[get_response_llm_clients] = lambda: {}
-        monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", fake_selector)
+        monkeypatch.setattr(chat_routes, "get_runtime_selection", fake_selector)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -523,13 +544,13 @@ class TestChat:
 
         def fake_selector(mode: ApiMemoryMode | None):
             seen_modes.append(mode)
-            return _FakeChatRuntime()
+            return runtime_selection(_FakeChatRuntime(), mode)
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         app.dependency_overrides[get_llm_client] = lambda: None
         app.dependency_overrides[get_response_llm_clients] = lambda: {}
-        monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", fake_selector)
+        monkeypatch.setattr(chat_routes, "get_runtime_selection", fake_selector)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -577,13 +598,13 @@ class TestChat:
 
         def fake_selector(mode: ApiMemoryMode | None):
             seen_modes.append(mode)
-            return _FakeChatRuntime()
+            return runtime_selection(_FakeChatRuntime(), mode)
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         app.dependency_overrides[get_llm_client] = lambda: None
         app.dependency_overrides[get_response_llm_clients] = lambda: {}
-        monkeypatch.setattr(chat_routes, "get_runtime_for_memory_mode", fake_selector)
+        monkeypatch.setattr(chat_routes, "get_runtime_selection", fake_selector)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -701,12 +722,12 @@ class TestThreads:
 
         def fake_selector(mode: ApiMemoryMode | None):
             seen_modes.append(mode)
-            return _FakeThreadRuntime()
+            return runtime_selection(_FakeThreadRuntime(), mode)
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         app.dependency_overrides[get_llm_client] = lambda: None
-        monkeypatch.setattr(thread_routes, "get_runtime_for_memory_mode", fake_selector)
+        monkeypatch.setattr(thread_routes, "get_runtime_selection", fake_selector)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -746,12 +767,12 @@ class TestThreads:
 
         def fake_selector(mode: ApiMemoryMode | None):
             seen_modes.append(mode)
-            return _FakeThreadRuntime()
+            return runtime_selection(_FakeThreadRuntime(), mode)
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
         app.dependency_overrides[get_llm_client] = lambda: None
-        monkeypatch.setattr(thread_routes, "get_runtime_for_memory_mode", fake_selector)
+        monkeypatch.setattr(thread_routes, "get_runtime_selection", fake_selector)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -765,7 +786,7 @@ class TestThreads:
         assert resp.status_code == 200
         assert resp.json() == {
             "summary": None,
-            "detail": "No summary produced (session too short, no LLM, or incognito mode).",
+            "detail": "Incognito session ended without durable finalization.",
         }
         assert seen_modes == [ApiMemoryMode.INCOGNITO]
 
@@ -913,6 +934,72 @@ class TestThreads:
         # Nothing written on a 422.
         assert await runtime.session_feedback_backend.arecord_count() == 0
 
+    @pytest.mark.asyncio
+    async def test_incognito_end_session_with_feedback_scrubs_user_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi import FastAPI
+
+        from agent.memory.hashing import hash_session_id
+        from agent.memory.modes import MemoryMode
+        from api.dependencies import get_llm_client, get_response_llm_clients
+        from api.router import api_router
+        from api.routes import chat as chat_routes
+        from api.routes import threads as thread_routes
+
+        runtime = PersistentAgentRuntime(
+            sqlite_path=":memory:",
+            memory_sqlite_path=":memory:",
+            crisis_log_sqlite_path=":memory:",
+            feedback_sqlite_path=":memory:",
+            memory_mode=MemoryMode.INCOGNITO,
+            default_llm_client=_FakeAPILLM(),
+        )
+        app = FastAPI()
+        app.include_router(api_router, prefix="/api")
+        app.dependency_overrides[get_llm_client] = lambda: None
+        app.dependency_overrides[get_response_llm_clients] = lambda: {}
+        monkeypatch.setattr(
+            chat_routes,
+            "get_runtime_selection",
+            lambda mode: runtime_selection(runtime, mode),
+        )
+        monkeypatch.setattr(
+            thread_routes,
+            "get_runtime_selection",
+            lambda mode: runtime_selection(runtime, mode),
+        )
+
+        async with runtime:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as ac:
+                turn = await ac.post(
+                    "/api/chat",
+                    json={
+                        "message": "hello",
+                        "thread_id": "incognito-feedback",
+                        "user_id": "private-user",
+                        "memory_mode": "incognito",
+                    },
+                )
+                response = await ac.post(
+                    "/api/threads/incognito-feedback/end",
+                    json={"memory_mode": "incognito", "feedback": "positive"},
+                )
+
+            records = await runtime.session_feedback_backend.alist_by_session(
+                hash_session_id("incognito-feedback")
+            )
+
+        assert turn.status_code == 200
+        assert response.status_code == 200
+        assert len(records) == 1
+        assert records[0].label == "positive"
+        assert records[0].source == "api_end"
+        assert records[0].user_id_or_null is None
+
 
 # ── Memory ──────────────────────────────────────────────────────────
 
@@ -933,6 +1020,7 @@ class TestMemory:
         assert "episodic" in data["counts"]
         assert "procedural" in data["counts"]
         assert "proactive_recall_enabled" in data
+        assert data["memory_mode"] == "persistent"
         # v0.10: feedback count surfaced alongside crisis_log_count.
         assert "crisis_log_count" in data
         assert "session_feedback_count" in data
@@ -960,6 +1048,107 @@ class TestMemory:
         )
         assert resp.status_code == 200
         assert resp.json()["session_feedback_count"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_incognito_memory_status_returns_empty_off_state(
+        self, client, runtime
+    ) -> None:
+        await runtime.memory_store.aput(
+            ("incognito-status-owner", "semantic"),
+            "persistent-fact",
+            {
+                "evidence_quote": "persistent fact",
+                "created_at": "2026-01-01T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+        await aput_procedural_profile(
+            runtime.memory_store,
+            user_id="incognito-status-owner",
+            profile=ProceduralProfile(
+                rules=[
+                    ProceduralRule(
+                        rule="Keep replies concise.",
+                        evidence=["concise"],
+                        confidence="high",
+                        added_at="2026-01-01T00:00:00Z",
+                        source="explicit_user",
+                    )
+                ],
+                proactive_recall_enabled=True,
+            ),
+        )
+
+        resp = await client.get(
+            "/api/memory/status",
+            params={
+                "thread_id": "incognito-status-thread",
+                "user_id": "incognito-status-owner",
+                "memory_mode": "incognito",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "memory_mode": "incognito",
+            "owner_id": "incognito-status-owner",
+            "counts": {"semantic": 0, "episodic": 0, "procedural": 0},
+            "crisis_log_count": 0,
+            "session_feedback_count": 0,
+            "proactive_recall_enabled": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_incognito_memory_reads_return_empty_lists(
+        self, client, runtime
+    ) -> None:
+        await runtime.memory_store.aput(
+            ("incognito-read-owner", "semantic"),
+            "persistent-fact",
+            {
+                "evidence_quote": "persistent fact",
+                "created_at": "2026-01-01T00:00:00Z",
+                "user_visible": True,
+            },
+        )
+
+        params = {
+            "thread_id": "incognito-read-thread",
+            "user_id": "incognito-read-owner",
+            "memory_mode": "incognito",
+        }
+        facts = await client.get("/api/memory/facts", params=params)
+        sessions = await client.get("/api/memory/sessions", params=params)
+        rules = await client.get("/api/memory/rules", params=params)
+
+        assert facts.status_code == 200
+        assert sessions.status_code == 200
+        assert rules.status_code == 200
+        assert facts.json() == []
+        assert sessions.json() == []
+        assert rules.json() == []
+
+    @pytest.mark.asyncio
+    async def test_incognito_memory_mutations_return_stable_conflict(
+        self, client
+    ) -> None:
+        params = {"thread_id": "incognito-mutation", "memory_mode": "incognito"}
+
+        recall = await client.patch(
+            "/api/memory/recall",
+            params=params,
+            json={"enabled": True},
+        )
+        delete_fact = await client.delete("/api/memory/facts/1", params=params)
+
+        assert recall.status_code == 409
+        assert delete_fact.status_code == 409
+        assert recall.json()["detail"] == (
+            "Saved-memory controls are unavailable in incognito mode."
+        )
+        assert delete_fact.json()["detail"] == (
+            "Saved-memory controls are unavailable in incognito mode."
+        )
 
     @pytest.mark.asyncio
     async def test_update_memory_recall_toggles_owner_state(

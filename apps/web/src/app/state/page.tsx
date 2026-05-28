@@ -38,6 +38,7 @@ const STATE_SECTIONS: { key: string; label: string; desc: string; icon: string }
 
 export default function StateInspectorPage() {
   const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
   const [state, setState] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +48,7 @@ export default function StateInspectorPage() {
     setLoading(true);
     setError(null);
     try {
-      const s = await getThreadState(threadId);
+      const s = await getThreadState(threadId, sessionMode);
       setState(s);
       if (!s) setError("No state found for this thread.");
     } catch {
@@ -55,7 +56,7 @@ export default function StateInspectorPage() {
     } finally {
       setLoading(false);
     }
-  }, [threadId]);
+  }, [sessionMode, threadId]);
 
   useEffect(() => {
     fetchState();

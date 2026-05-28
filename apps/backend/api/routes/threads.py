@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from api.dependencies import get_llm_client, get_runtime_for_memory_mode
+from api.dependencies import get_llm_client, get_runtime_selection
 from api.models import (
     ApiMemoryMode,
     EndSessionRequest,
@@ -19,6 +19,7 @@ from api.models import (
     ThreadSessionStatusResponse,
     ThreadSummaryResponse,
 )
+from api.session_end import end_runtime_session
 from llm.base import BaseLLMClient
 
 router = APIRouter(prefix="/threads", tags=["threads"])
@@ -39,8 +40,8 @@ async def list_threads(
         Persisted thread summaries.
     """
 
-    runtime = get_runtime_for_memory_mode(memory_mode)
-    summaries = await runtime.list_threads(limit=limit)
+    selection = get_runtime_selection(memory_mode)
+    summaries = await selection.runtime.list_threads(limit=limit)
     return [
         ThreadSummaryResponse(
             thread_id=s.thread_id,
@@ -73,8 +74,8 @@ async def get_thread_state(
         JSON-serializable persisted runtime state.
     """
 
-    runtime = get_runtime_for_memory_mode(memory_mode)
-    state = await runtime.get_state(thread_id)
+    selection = get_runtime_selection(memory_mode)
+    state = await selection.runtime.get_state(thread_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"No state for thread {thread_id}")
 
@@ -108,8 +109,8 @@ async def get_thread_history(
         Transcript messages for the thread.
     """
 
-    runtime = get_runtime_for_memory_mode(memory_mode)
-    messages = await runtime.get_history(thread_id)
+    selection = get_runtime_selection(memory_mode)
+    messages = await selection.runtime.get_history(thread_id)
     return [
         MessageResponse(
             role=m.role.value,
@@ -135,9 +136,9 @@ async def get_thread_session_status(
         Active-session status for the thread.
     """
 
-    runtime = get_runtime_for_memory_mode(memory_mode)
+    selection = get_runtime_selection(memory_mode)
     return ThreadSessionStatusResponse(
-        has_active_session=await runtime.has_active_session(thread_id)
+        has_active_session=await selection.runtime.has_active_session(thread_id)
     )
 
 
@@ -177,31 +178,31 @@ async def end_session(
         no summary was produced.
     """
 
-    runtime = get_runtime_for_memory_mode(body.memory_mode)
+    selection = get_runtime_selection(body.memory_mode)
+    result = await end_runtime_session(
+        runtime=selection.runtime,
+        thread_id=thread_id,
+        feedback=body.feedback,
+        llm_client=llm_client,
+        memory_mode=selection.memory_mode,
+    )
 
-    # Optional best-effort feedback capture. Runtime outages do not block summary.
-    if body.feedback is not None:
-        await runtime.record_session_feedback(
-            thread_id,
-            label=body.feedback,
-            source="api_end",
-        )
-
-    # Existing summarization flow.
-    arc = await runtime.end_session(thread_id, llm_client=llm_client)
-
-    if arc is None:
+    if not result.finalized:
         return {
             "summary": None,
-            "detail": "No summary produced (session too short, no LLM, or incognito mode).",
+            "detail": result.detail,
         }
 
+    assert result.summary is not None
+    assert result.mood_opened is not None
+    assert result.mood_closed is not None
+    assert result.turn_count is not None
     return SessionArcResponse(
-        summary=arc.summary,
-        themes=list(arc.primary_themes),
-        mood_opened=arc.mood_arc.opened,
-        mood_closed=arc.mood_arc.closed,
-        turn_count=arc.turn_count,
-        open_loops=list(arc.open_loops),
-        resolved_threads=list(arc.resolved_threads),
+        summary=result.summary,
+        themes=result.themes,
+        mood_opened=result.mood_opened,
+        mood_closed=result.mood_closed,
+        turn_count=result.turn_count,
+        open_loops=result.open_loops,
+        resolved_threads=result.resolved_threads,
     )

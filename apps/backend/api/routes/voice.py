@@ -10,9 +10,9 @@ from agent.voice import realtime
 from agent.voice import tools as voice_tools
 from api.dependencies import (
     get_llm_client,
-    get_runtime_for_memory_mode,
-    resolve_api_memory_mode,
+    get_runtime_selection,
 )
+from api.session_end import end_runtime_session
 from api.models import (
     VoiceRealtimeSessionRequest,
     VoiceRealtimeSessionResponse,
@@ -42,17 +42,16 @@ async def create_voice_realtime_session(
 ) -> VoiceRealtimeSessionResponse:
     """Create an ephemeral OpenAI Realtime client secret for browser voice."""
 
-    effective_mode = resolve_api_memory_mode(body.memory_mode)
-    runtime = get_runtime_for_memory_mode(effective_mode)
-    memory_context = await runtime.voice_session_memory_context(
+    selection = get_runtime_selection(body.memory_mode)
+    memory_context = await selection.runtime.voice_session_memory_context(
         thread_id=body.thread_id,
         user_id=body.user_id,
-        memory_mode=effective_mode,
+        memory_mode=selection.memory_mode,
     )
     session_config = realtime.build_realtime_session_config(
         thread_id=body.thread_id,
         user_id=body.user_id,
-        memory_mode=effective_mode,
+        memory_mode=selection.memory_mode,
         memory_context=memory_context,
         assistant_voice=body.assistant_voice,
     )
@@ -78,7 +77,7 @@ async def create_voice_realtime_session(
         client_secret=client_secret,
         thread_id=body.thread_id,
         user_id=body.user_id,
-        memory_mode=effective_mode,
+        memory_mode=selection.memory_mode,
         session_config=session_config,
     )
 
@@ -90,18 +89,17 @@ async def execute_voice_realtime_tool(
 ) -> VoiceToolCallResponse:
     """Execute one app-owned OpenAI Realtime function tool call."""
 
-    effective_mode = resolve_api_memory_mode(body.memory_mode)
-    runtime = get_runtime_for_memory_mode(effective_mode)
+    selection = get_runtime_selection(body.memory_mode)
     try:
         output = await voice_tools.execute_voice_tool_call(
-            runtime=runtime,
+            runtime=selection.runtime,
             tool_name=body.tool_name,
             arguments=body.arguments,
             thread_id=body.thread_id,
             user_id=body.user_id,
             current_user_message=body.current_user_message,
             transcript=body.transcript,
-            memory_mode=effective_mode,
+            memory_mode=selection.memory_mode,
             llm_client=llm_client,
         )
     except Exception as exc:
@@ -123,14 +121,13 @@ async def prepare_voice_realtime_turn_policy(
 ) -> VoiceTurnPolicyResponse:
     """Return observe-only app policy for a finalized voice user transcript."""
 
-    effective_mode = resolve_api_memory_mode(body.memory_mode)
-    runtime = get_runtime_for_memory_mode(effective_mode)
+    selection = get_runtime_selection(body.memory_mode)
     try:
-        policy = await runtime.prepare_voice_turn_policy(
+        policy = await selection.runtime.prepare_voice_turn_policy(
             thread_id=body.thread_id,
             user_id=body.user_id,
             user_text=body.user_text,
-            memory_mode=effective_mode,
+            memory_mode=selection.memory_mode,
         )
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
@@ -152,17 +149,9 @@ async def record_voice_realtime_turn(
 ) -> VoiceTurnRecordResponse:
     """Record a finalized voice user/assistant turn in app-owned history."""
 
-    effective_mode = resolve_api_memory_mode(body.memory_mode)
-    runtime = get_runtime_for_memory_mode(effective_mode)
-    if effective_mode == "incognito":
-        return VoiceTurnRecordResponse(
-            recorded=False,
-            thread_id=body.thread_id,
-            message_count=0,
-        )
-
+    selection = get_runtime_selection(body.memory_mode)
     try:
-        state = await runtime.record_voice_turn(
+        state = await selection.runtime.record_voice_turn(
             thread_id=body.thread_id,
             user_id=body.user_id,
             user_text=body.user_text,
@@ -196,24 +185,15 @@ async def end_voice_realtime_session(
 ) -> VoiceEndSessionResponse:
     """Finalize a voice session using the runtime session finalizer."""
 
-    effective_mode = resolve_api_memory_mode(body.memory_mode)
-    runtime = get_runtime_for_memory_mode(effective_mode)
-    if effective_mode == "incognito":
-        return VoiceEndSessionResponse(
-            finalized=False,
-            summary=None,
-            detail="Incognito voice session ended without durable finalization.",
-        )
-
-    if body.feedback is not None:
-        await runtime.record_session_feedback(
-            body.thread_id,
-            label=body.feedback,
-            source="api_end",
-        )
-
+    selection = get_runtime_selection(body.memory_mode)
     try:
-        arc = await runtime.end_session(body.thread_id, llm_client=llm_client)
+        result = await end_runtime_session(
+            runtime=selection.runtime,
+            thread_id=body.thread_id,
+            feedback=body.feedback,
+            llm_client=llm_client,
+            memory_mode=selection.memory_mode,
+        )
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
         raise HTTPException(
@@ -224,23 +204,24 @@ async def end_voice_realtime_session(
             },
         ) from exc
 
-    if arc is None:
+    if not result.finalized:
         return VoiceEndSessionResponse(
             finalized=False,
             summary=None,
-            detail="No summary produced (session too short, no LLM, or incognito mode).",
+            detail=result.detail,
         )
 
+    assert result.summary is not None
     return VoiceEndSessionResponse(
         finalized=True,
-        summary=arc.summary,
-        detail="Session summary produced.",
-        themes=list(arc.primary_themes),
-        mood_opened=arc.mood_arc.opened,
-        mood_closed=arc.mood_arc.closed,
-        turn_count=arc.turn_count,
-        open_loops=list(arc.open_loops),
-        resolved_threads=list(arc.resolved_threads),
+        summary=result.summary,
+        detail=result.detail,
+        themes=result.themes,
+        mood_opened=result.mood_opened,
+        mood_closed=result.mood_closed,
+        turn_count=result.turn_count,
+        open_loops=result.open_loops,
+        resolved_threads=result.resolved_threads,
     )
 
 

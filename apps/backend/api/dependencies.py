@@ -37,6 +37,7 @@ the persistent session store, and the LLM clients are stateless
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -78,6 +79,14 @@ _response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = {
     "fast": None,
     "quality": None,
 }
+
+
+@dataclass(frozen=True)
+class ApiRuntimeSelection:
+    """Resolved API memory mode and its shared runtime."""
+
+    memory_mode: ApiMemoryMode
+    runtime: PersistentAgentRuntime
 
 
 @asynccontextmanager
@@ -225,6 +234,14 @@ def get_runtime_for_memory_mode(
 ) -> PersistentAgentRuntime:
     """Return the shared runtime for a request's resolved API memory mode."""
 
+    return get_runtime_selection(memory_mode).runtime
+
+
+def get_runtime_selection(
+    memory_mode: ApiMemoryMode | str | None = None,
+) -> ApiRuntimeSelection:
+    """Return a request's resolved API memory mode and matching runtime."""
+
     resolved_mode = resolve_api_memory_mode(memory_mode)
     runtime = _runtimes.get(resolved_mode)
     if runtime is None:
@@ -232,7 +249,7 @@ def get_runtime_for_memory_mode(
             "Agent runtime not initialized. "
             "Ensure the lifespan handler is configured on the FastAPI app."
         )
-    return runtime
+    return ApiRuntimeSelection(memory_mode=resolved_mode, runtime=runtime)
 
 
 def get_runtime() -> PersistentAgentRuntime:

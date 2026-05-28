@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from api.router import api_router
 from api.routes import voice as voice_routes
+from tests.support.api_selection import runtime_selection
 
 
 class _FakeRuntime:
@@ -26,7 +27,11 @@ async def client(monkeypatch: pytest.MonkeyPatch):
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
     runtime = _FakeRuntime()
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

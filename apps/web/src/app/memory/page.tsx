@@ -24,6 +24,7 @@ type Tab = "overview" | "facts" | "sessions" | "rules";
 export default function MemoryPage() {
   const userId = useSessionStore((s) => s.userId);
   const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
   const memoryRefreshVersion = useSessionStore((s) => s.memoryRefreshVersion);
   const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
   const [tab, setTab] = useState<Tab>("overview");
@@ -40,10 +41,10 @@ export default function MemoryPage() {
     setError(null);
     try {
       const [s, f, sess, r] = await Promise.all([
-        getMemoryStatus(threadId, userId),
-        getMemoryFacts(threadId, userId),
-        getMemorySessions(threadId, userId),
-        getMemoryRules(threadId, userId),
+        getMemoryStatus(threadId, userId, sessionMode),
+        getMemoryFacts(threadId, userId, sessionMode),
+        getMemorySessions(threadId, userId, sessionMode),
+        getMemoryRules(threadId, userId, sessionMode),
       ]);
       setStatus(s);
       setFacts(f);
@@ -54,7 +55,7 @@ export default function MemoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [threadId, userId]);
+  }, [sessionMode, threadId, userId]);
 
   useEffect(() => {
     loadAll();
@@ -63,7 +64,7 @@ export default function MemoryPage() {
   const handleDeleteFact = async (index: number) => {
     setError(null);
     try {
-      await deleteMemoryFact(index, threadId, userId || undefined);
+      await deleteMemoryFact(index, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     } catch {
       setError("Could not delete memory fact.");
@@ -73,7 +74,7 @@ export default function MemoryPage() {
   const handleDeleteSession = async (index: number) => {
     setError(null);
     try {
-      await deleteMemorySession(index, threadId, userId || undefined);
+      await deleteMemorySession(index, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     } catch {
       setError("Could not delete memory session.");
@@ -83,7 +84,7 @@ export default function MemoryPage() {
   const handleDeleteRule = async (index: number) => {
     setError(null);
     try {
-      await deleteMemoryRule(index, threadId, userId || undefined);
+      await deleteMemoryRule(index, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     } catch {
       setError("Could not delete memory rule.");
@@ -94,7 +95,12 @@ export default function MemoryPage() {
     setUpdatingRecall(true);
     setError(null);
     try {
-      const result = await updateMemoryRecall(enabled, threadId, userId || undefined);
+      const result = await updateMemoryRecall(
+        enabled,
+        threadId,
+        userId || undefined,
+        sessionMode
+      );
       setStatus((current) =>
         current
           ? {

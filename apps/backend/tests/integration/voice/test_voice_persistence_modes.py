@@ -11,6 +11,7 @@ from agent.runtime import PersistentAgentRuntime
 from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
+from tests.support.api_selection import runtime_selection
 
 
 class _FakeSessionRuntime:
@@ -37,7 +38,11 @@ async def test_incognito_voice_session_does_not_bootstrap_persistent_memory(
     runtime = _FakeSessionRuntime()
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
 
     async def fake_create_realtime_client_secret(
         *,
@@ -74,7 +79,7 @@ async def test_incognito_voice_session_does_not_bootstrap_persistent_memory(
 
 
 @pytest.mark.asyncio
-async def test_incognito_voice_turn_request_does_not_persist_runtime_state(
+async def test_incognito_voice_turn_request_records_ephemeral_runtime_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
@@ -82,11 +87,15 @@ async def test_incognito_voice_turn_request_does_not_persist_runtime_state(
         memory_sqlite_path=":memory:",
         crisis_log_sqlite_path=":memory:",
         feedback_sqlite_path=":memory:",
-        memory_mode=MemoryMode.LOCAL,
+        memory_mode=MemoryMode.INCOGNITO,
     )
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -107,8 +116,9 @@ async def test_incognito_voice_turn_request_does_not_persist_runtime_state(
         state = await runtime.get_state("voice-incognito-thread")
 
     assert response.status_code == 200
-    assert response.json()["recorded"] is False
-    assert state is None
+    assert response.json()["recorded"] is True
+    assert state is not None
+    assert state["message"] == "This should stay off the server record."
 
 
 @pytest.mark.asyncio
@@ -124,7 +134,11 @@ async def test_persistent_voice_turn_request_still_persists_runtime_state(
     )
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
@@ -159,21 +173,28 @@ class _FakeEndRuntime:
         self, thread_id: str, *, label: str, source: str
     ) -> None:
         self.feedback_called = True
-        raise AssertionError("incognito voice end should not persist feedback")
+        assert thread_id == "voice-thread"
+        assert label == "positive"
+        assert source == "api_end"
 
     async def end_session(self, thread_id: str, *, llm_client: object | None) -> Any:
         self.called = True
-        raise AssertionError("incognito voice end should not finalize runtime state")
+        assert thread_id == "voice-thread"
+        return None
 
 
 @pytest.mark.asyncio
-async def test_incognito_voice_end_request_skips_runtime_finalization(
+async def test_incognito_voice_end_request_records_feedback_before_finalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = _FakeEndRuntime()
     app = FastAPI()
     app.include_router(api_router, prefix="/api")
-    monkeypatch.setattr(voice_routes, "get_runtime_for_memory_mode", lambda _: runtime)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with AsyncClient(
@@ -190,14 +211,12 @@ async def test_incognito_voice_end_request_skips_runtime_finalization(
         )
 
     assert response.status_code == 200
-    assert runtime.called is False
-    assert runtime.feedback_called is False
+    assert runtime.called is True
+    assert runtime.feedback_called is True
     data = response.json()
     assert data["finalized"] is False
     assert data["summary"] is None
-    assert (
-        data["detail"] == "Incognito voice session ended without durable finalization."
-    )
+    assert data["detail"] == "Incognito session ended without durable finalization."
     assert data["themes"] == []
     assert data["mood_opened"] is None
     assert data["mood_closed"] is None
