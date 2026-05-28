@@ -24,6 +24,7 @@ from agent.runtime import (
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.specialists.triage import TRIAGE_AGENT_NAME
 from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM as _RouteLLM,
@@ -165,6 +166,7 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
     assert state["response_style"] == "supportive"
     assert state["therapeutic_approach"] == "none"
     assert state["diagnostics"]["text_agent_runtime"] == "openai"
+    assert state["diagnostics"]["openai_text_route_plan_kind"] == "therapeutic"
     assert [turn["role"] for turn in state["transcript"]] == [
         "user",
         "assistant",
@@ -536,6 +538,7 @@ async def test_openai_runtime_runs_grounded_lookup_through_sdk_tool() -> None:
     assert result["grounded_lookup"]["query"] == "grounded query"
     assert result["grounded_lookup"]["status"] == "answered"
     assert result["diagnostics"]["text_agent_runtime"] == "openai"
+    assert result["diagnostics"]["openai_text_route_plan_kind"] == "grounded_lookup"
     assert result["diagnostics"]["openai_text_runtime_mode"] == "grounded_lookup"
     assert result["diagnostics"]["openai_selected_agent"] == THERAPEUTIC_AGENT_NAME
     assert (
@@ -545,6 +548,8 @@ async def test_openai_runtime_runs_grounded_lookup_through_sdk_tool() -> None:
     assert result["diagnostics"]["openai_grounded_tool_calls"] == [
         "answer_grounded_lookup"
     ]
+    assert runner.triage_calls
+    assert runner.triage_calls[0]["agent"].name == TRIAGE_AGENT_NAME
     assert runner.run_calls
 
 
@@ -1092,6 +1097,28 @@ async def test_openai_runtime_shadow_reports_guided_exercise_agent() -> None:
     assert result.status == "eligible"
     assert result.eligible is True
     assert result.selected_agent == GUIDED_EXERCISE_AGENT_NAME
+    assert result.response_text_length is None
+    assert runner.run_calls == []
+    assert runner.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_openai_runtime_shadow_reports_grounded_lookup_route() -> None:
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner()
+    runtime = _runtime(workflow, runner)
+
+    result = await runtime.run_shadow_turn(
+        cast(Any, _initial_state("Can you look up the current rule?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(_RouteLLM(route="grounded_lookup")),
+    )
+
+    assert result.status == "eligible"
+    assert result.eligible is True
+    assert result.route == "grounded_lookup"
+    assert result.selected_agent == THERAPEUTIC_AGENT_NAME
+    assert result.grounded_lookup_query == "grounded query"
     assert result.response_text_length is None
     assert runner.run_calls == []
     assert runner.stream_calls == []

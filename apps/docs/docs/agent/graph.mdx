@@ -27,11 +27,12 @@ Click any step below to see what it does.
 
 ## Topology
 
-The text runtime keeps branch decisions explicit while delegating response
-generation to OpenAI Agents SDK specialist agents. The crisis gate runs first,
-deterministic dispatch handles memory-control and grounded lookup branches, and
-safe therapeutic turns enter the TherapeuticAgent. Post-response extractors
-remain runtime-managed side effects.
+The text runtime keeps branch decisions explicit through an app-owned
+`TextTurnGraph`. The graph resolves one typed route plan, then delegates response
+generation to the selected OpenAI Agents SDK specialist executor. The crisis gate
+runs first, deterministic dispatch handles memory-control and grounded lookup
+branches, and safe therapeutic turns enter the TherapeuticAgent. Post-response
+extractors remain runtime-managed side effects.
 
 <GraphTopology />
 
@@ -54,6 +55,9 @@ finalization → END
 Runtime stages own deterministic state deltas, persistence boundaries, and
 tool-result validation. Specialist agents own natural-language response
 generation and the tools assigned to their branch.
+
+The route plan is shared by normal, streaming, and shadow execution so those
+entrypoints do not each reimplement the branch table.
 
 Voice reuses the service implementations behind those tools, but not this
 text-stage topology. Realtime function tools call the backend service layer

@@ -118,6 +118,10 @@ def build_shadow_result(
     memory_reference_mode = (
         memory_reference.get("mode") if isinstance(memory_reference, dict) else None
     )
+    grounded_lookup = prepared.state.get("grounded_lookup", {}) or {}
+    grounded_lookup_query = (
+        grounded_lookup.get("query") if isinstance(grounded_lookup, dict) else None
+    )
     return TextRuntimeShadowResult(
         runtime="openai",
         status=status,
@@ -126,6 +130,9 @@ def build_shadow_result(
         route=prepared.state.get("route"),
         memory_reference_mode=(
             str(memory_reference_mode) if memory_reference_mode is not None else None
+        ),
+        grounded_lookup_query=(
+            str(grounded_lookup_query) if grounded_lookup_query else None
         ),
         crisis_level=getattr(assessment, "level", None),
         needs_crisis_response=getattr(assessment, "needs_crisis_response", None),

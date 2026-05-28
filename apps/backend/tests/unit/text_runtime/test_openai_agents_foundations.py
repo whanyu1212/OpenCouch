@@ -16,6 +16,7 @@ from agent.flows.guided_exercise import _build_guided_exercise_agent
 from agent.flows.therapeutic import run_therapeutic_turn
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.types import TurnDispatchDecision
 from agent.models import AgentInput
 from agent.runtime import build_initial_state
 from agent.runtime_context import WorkflowContext
@@ -168,6 +169,7 @@ def test_agent_roster_builds_dormant_specialists() -> None:
 
     roster = build_openai_text_agent_roster(model="gpt-test")
 
+    assert roster.triage_agent.output_type is TurnDispatchDecision
     assert roster.therapeutic_agent.name == THERAPEUTIC_AGENT_NAME
     assert roster.crisis_agent.name == CRISIS_AGENT_NAME
     assert roster.guided_exercise_agent.name == GUIDED_EXERCISE_AGENT_NAME

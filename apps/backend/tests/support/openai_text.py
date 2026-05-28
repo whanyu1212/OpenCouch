@@ -29,6 +29,7 @@ class FakeOpenAISDKRunner:
         self.tool_response_as_final = tool_response_as_final
         self.run_calls: list[dict[str, Any]] = []
         self.stream_calls: list[dict[str, Any]] = []
+        self.triage_calls: list[dict[str, Any]] = []
 
     async def run(
         self,
@@ -38,6 +39,21 @@ class FakeOpenAISDKRunner:
         context: Any,
         session: Any | None = None,
     ) -> SimpleNamespace:
+        if _agent_output_type_name(agent) == "TurnDispatchDecision":
+            call = {
+                "agent": agent,
+                "input_text": input_text,
+                "context": context,
+                "session": session,
+            }
+            self.triage_calls.append(call)
+            return SimpleNamespace(
+                final_output=await _generate_structured_agent_output(
+                    agent,
+                    input_text,
+                    context,
+                )
+            )
         self.run_calls.append(
             {
                 "agent": agent,
@@ -60,6 +76,28 @@ class FakeOpenAISDKRunner:
         if self.tool_response_as_final and tool_result is not None:
             final_output = str(getattr(tool_result, "response_text", final_output))
         return SimpleNamespace(final_output=final_output)
+
+    async def run_triage(
+        self,
+        *,
+        agent: Any,
+        input_text: str,
+        context: Any,
+    ) -> SimpleNamespace:
+        call = {
+            "agent": agent,
+            "input_text": input_text,
+            "context": context,
+            "session": None,
+        }
+        self.triage_calls.append(call)
+        return SimpleNamespace(
+            final_output=await _generate_structured_agent_output(
+                agent,
+                input_text,
+                context,
+            )
+        )
 
     def run_streamed(
         self,
@@ -184,6 +222,26 @@ async def _invoke_named_tool(
             payload,
         )
     raise AssertionError(f"Required tool {tool_name!r} was not attached to agent.")
+
+
+def _agent_output_type_name(agent: Any) -> str:
+    output_type = getattr(agent, "output_type", None)
+    return str(getattr(output_type, "__name__", ""))
+
+
+async def _generate_structured_agent_output(
+    agent: Any,
+    input_text: str,
+    context: Any,
+) -> Any:
+    output_type = getattr(agent, "output_type")
+    workflow_context = getattr(context, "workflow_context")
+    llm_client = workflow_context.llm_client
+    return await llm_client.generate_structured(
+        prompt=input_text,
+        response_schema=output_type,
+        system_instruction=getattr(agent, "instructions", None),
+    )
 
 
 class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
