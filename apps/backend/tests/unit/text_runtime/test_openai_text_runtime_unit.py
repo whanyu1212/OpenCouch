@@ -10,6 +10,7 @@ import pytest
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.flows.therapeutic import sanitize_response_llm_text
 from agent.memory.procedural_profile import aset_proactive_recall
+from agent.memory.types import TurnDispatchDecision
 from agent.runtime import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
@@ -98,6 +99,29 @@ class _RecordingResponseLLM(FakeCrossRestartLLM):
         self.system_instructions.append(system_instruction)
         for chunk in self.stream_chunks:
             yield chunk
+
+
+class _StaticTriageDecisionLLM(FakeCrossRestartLLM):
+    def __init__(self, decision: TurnDispatchDecision) -> None:
+        super().__init__()
+        self.decision = decision
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[Any],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> Any:
+        del prompt, system_instruction, use_search
+        if response_schema.__name__ == "TurnDispatchDecision":
+            return self.decision
+        return await super().generate_structured(
+            prompt="",
+            response_schema=response_schema,
+            system_instruction=None,
+        )
 
 
 @pytest.mark.parametrize(
@@ -208,6 +232,29 @@ async def test_response_llm_omits_tool_prompt_and_sanitizes_pseudo_tool_text() -
         "load_therapeutic_response_skill"
         in (state["diagnostics"]["openai_response_llm_raw_text_preview"])
     )
+
+
+@pytest.mark.asyncio
+async def test_triage_clarification_does_not_mutate_decision_route() -> None:
+    decision = TurnDispatchDecision(
+        route="grounded_lookup",
+        reasoning="ambiguous grounded lookup request",
+        confidence="low",
+        query="grounding techniques",
+    )
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused"))
+    state = cast(Any, _initial_state("Maybe look this up, or maybe just help?"))
+
+    result = await runtime._apply_triage_turn_dispatch(
+        state,
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(_StaticTriageDecisionLLM(decision)),
+    )
+
+    assert decision.route == "grounded_lookup"
+    assert result["route"] == "therapeutic"
+    assert result["turn_lifecycle"]["tentative_route"] == "grounded_lookup"
+    assert result["diagnostics"]["openai_triage_tentative_route"] == "grounded_lookup"
 
 
 @pytest.mark.asyncio
