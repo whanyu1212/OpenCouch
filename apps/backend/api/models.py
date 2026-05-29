@@ -165,15 +165,6 @@ class VoiceTurnRecordRequest(BaseModel):
     tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
 
 
-class VoiceTurnPolicyRequest(BaseModel):
-    """POST /api/voice/realtime/turn-policy request body."""
-
-    thread_id: str = Field(min_length=1)
-    user_id: str | None = None
-    user_text: str = Field(min_length=1)
-    memory_mode: ApiMemoryMode | None = None
-
-
 class VoiceEndSessionRequest(BaseModel):
     """POST /api/voice/realtime/end request body."""
 
@@ -294,16 +285,6 @@ class VoiceTurnRecordResponse(BaseModel):
     recorded: bool
     thread_id: str
     message_count: int
-
-
-class VoiceTurnPolicyResponse(BaseModel):
-    """POST /api/voice/realtime/turn-policy response body."""
-
-    route: str
-    response_style: str
-    required_tool_name: str | None = None
-    required_tool_arguments: dict[str, object] = Field(default_factory=dict)
-    instructions: str
 
 
 class VoiceEndSessionResponse(BaseModel):

@@ -229,42 +229,11 @@ test("creates realtime voice sessions with the selected assistant voice", async 
   assert.equal(response.session_config.audio.output.voice, "cedar");
 });
 
-test("prepares realtime voice turn policy through the backend API", async () => {
-  let capturedUrl = "";
-  let capturedBody = {};
-  globalThis.fetch = async (url, init) => {
-    capturedUrl = String(url);
-    capturedBody = JSON.parse(String(init.body));
-    return new Response(
-      JSON.stringify({
-        route: "grounded_lookup",
-        response_style: "grounded_lookup",
-        required_tool_name: "answer_grounded_lookup",
-        required_tool_arguments: { query: "current guidance" },
-        instructions: "Call answer_grounded_lookup.",
-      }),
-      { status: 200, headers: { "content-type": "application/json" } }
-    );
-  };
-
-  const response = await api.prepareRealtimeVoiceTurnPolicy({
-    threadId: "voice-thread",
-    userId: "user-1",
-    userText: "current guidance",
-    memoryMode: "persistent",
-  });
-
-  assert.equal(capturedUrl, "http://backend.test/api/voice/realtime/turn-policy");
-  assert.deepEqual(capturedBody, {
-    thread_id: "voice-thread",
-    user_id: "user-1",
-    user_text: "current guidance",
-    memory_mode: "persistent",
-  });
-  assert.equal(response.required_tool_name, "answer_grounded_lookup");
+test("does not expose realtime voice turn policy helper", () => {
+  assert.equal(api.prepareRealtimeVoiceTurnPolicy, undefined);
 });
 
-test("records realtime voice turns with route and tool metadata", async () => {
+test("records realtime voice turns with tool metadata", async () => {
   let capturedBody = {};
   globalThis.fetch = async (_url, init) => {
     capturedBody = JSON.parse(String(init.body));
@@ -284,8 +253,6 @@ test("records realtime voice turns with route and tool metadata", async () => {
     userText: "current guidance",
     assistantText: "verified answer",
     memoryMode: "persistent",
-    route: "grounded_lookup",
-    responseStyle: "grounded_lookup",
     toolCalls: [
       {
         tool_name: "answer_grounded_lookup",
@@ -306,8 +273,6 @@ test("records realtime voice turns with route and tool metadata", async () => {
     user_text: "current guidance",
     assistant_text: "verified answer",
     memory_mode: "persistent",
-    route: "grounded_lookup",
-    response_style: "grounded_lookup",
     tool_calls: [
       {
         tool_name: "answer_grounded_lookup",

@@ -47,7 +47,7 @@ def build_realtime_session_config(
                 "transcription": {"model": DEFAULT_INPUT_TRANSCRIPTION_MODEL},
                 "turn_detection": {
                     "type": "server_vad",
-                    "create_response": False,
+                    "create_response": True,
                     "interrupt_response": True,
                 },
             },

@@ -25,7 +25,6 @@ import {
 } from "@/lib/session";
 import type {
   RealtimeVoiceSessionResponse,
-  RealtimeVoiceTurnPolicyResponse,
 } from "@/lib/api";
 
 const REALTIME_SERVER_URL = "https://api.openai.com/v1/realtime/calls";
@@ -37,7 +36,6 @@ type RealtimeVoiceDisconnectOptions = {
 type RealtimeVoiceSessionContextValue = {
   status: RealtimeVoiceConnectionStatus;
   session: RealtimeVoiceSessionResponse | null;
-  latestPolicy: RealtimeVoiceTurnPolicyResponse | null;
   connected: boolean;
   busy: boolean;
   connect: () => Promise<void>;
@@ -219,8 +217,6 @@ export function RealtimeVoiceSessionProvider({
   const [status, setStatus] =
     useState<RealtimeVoiceConnectionStatus>("disconnected");
   const [session, setSession] = useState<RealtimeVoiceSessionResponse | null>(null);
-  const [latestPolicy, setLatestPolicy] =
-    useState<RealtimeVoiceTurnPolicyResponse | null>(null);
 
   const markFinalizationFailed = useCallback(
     (detail: string) => {
@@ -318,7 +314,6 @@ export function RealtimeVoiceSessionProvider({
     clearVoiceActivities();
     clearVoiceTranscripts();
     setLastEndedSession(null);
-    setLatestPolicy(null);
     setSession(null);
     setVoiceConnected(false);
     setVoiceAgentSpeaking(false);
@@ -362,7 +357,6 @@ export function RealtimeVoiceSessionProvider({
             bumpMemoryRefreshVersion();
           }
         },
-        onTurnPolicy: setLatestPolicy,
         onTurnRecorded: (response) => {
           if (sessionMode === "persistent" && response.recorded) {
             bumpMemoryRefreshVersion();
@@ -431,7 +425,6 @@ export function RealtimeVoiceSessionProvider({
     () => ({
       status,
       session,
-      latestPolicy,
       connected: status === "connected",
       busy:
         status === "requesting_session" ||
@@ -441,7 +434,7 @@ export function RealtimeVoiceSessionProvider({
       connect,
       disconnect,
     }),
-    [connect, disconnect, latestPolicy, session, status]
+    [connect, disconnect, session, status]
   );
 
   return (

@@ -17,8 +17,8 @@ inspection is available on demand through commands like `/status`,
 `/context`, `/memory status`, and `/debug state`.
 
 Voice has a different observability shape because OpenAI Realtime owns
-the live speech loop. The backend still records app-owned policy,
-tools, transcript persistence, and finalization state, but there is no
+the live speech loop. The backend still records app-owned tools,
+transcript persistence, inferred turn metadata, and finalization state, but there is no
 per-turn text-runtime graph trace for a spoken exchange.
 
 ---
@@ -86,10 +86,9 @@ Realtime voice debugging combines browser events and backend state:
 | Surface | What it shows |
 |---|---|
 | `/voice` | Product-level connection, transcript, tool activity, error, and finalization status. |
-| `/voice/realtime-dev` | Raw Realtime server events, parsed transcript updates, tool calls, policy responses, and end-session response. |
-| `/api/voice/realtime/turn-policy` | App-owned route/style hints and required tool instructions for a finalized user transcript. |
+| `/voice/realtime-dev` | Raw Realtime server events, parsed transcript updates, tool calls, and end-session response. |
 | `/api/voice/realtime/tools` | Backend execution result for one Realtime function call. |
-| `/api/voice/realtime/turn` | Whether the finalized voice turn was recorded and the resulting message count. |
+| `/api/voice/realtime/turn` | Whether the finalized voice turn was recorded and the resulting message count. Inferred route/style metadata is written into runtime state. |
 | `/api/voice/realtime/end` | Whether persistent session finalization produced a summary. |
 
 Recorded voice turns stamp `diagnostics.voice_runtime=openai_realtime`

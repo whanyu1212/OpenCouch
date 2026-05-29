@@ -2,13 +2,11 @@ import {
   createRealtimeVoiceSession,
   endRealtimeVoiceSession,
   executeRealtimeVoiceTool,
-  prepareRealtimeVoiceTurnPolicy,
   recordRealtimeVoiceTurn,
   type RealtimeVoiceEndSessionResponse,
   type RealtimeVoiceRecordedToolCall,
   type RealtimeVoiceSessionResponse,
   type RealtimeVoiceTurnRecordResponse,
-  type RealtimeVoiceTurnPolicyResponse,
   type AssistantVoiceOption,
   type VoiceMemoryMode,
 } from "./api";
@@ -22,6 +20,13 @@ import {
   type RealtimeTranscriptUpdate,
 } from "./realtime-voice-events";
 import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record";
+import {
+  readRealtimeVoiceUserQuote,
+  realtimeVoiceEvidenceMatchesUserQuote,
+  shouldCreateResponseAfterRealtimeVoiceTool,
+  shouldRecordRealtimeVoiceToolCall,
+  shouldWaitForRealtimeVoiceTranscriptEvidence,
+} from "./realtime-voice-tool-flow";
 
 const REALTIME_WEBRTC_URL = "https://api.openai.com/v1/realtime/calls";
 
@@ -53,7 +58,6 @@ export interface RealtimeVoiceSessionOptions {
   onParsedEvent?: (event: ParsedRealtimeServerEvent) => void;
   onTranscript?: (update: RealtimeTranscriptUpdate) => void;
   onToolEvent?: (event: RealtimeVoiceToolEvent) => void;
-  onTurnPolicy?: (policy: RealtimeVoiceTurnPolicyResponse) => void;
   onTurnRecorded?: (response: RealtimeVoiceTurnRecordResponse) => void;
   onEnded?: (response: RealtimeVoiceEndSessionResponse) => void;
   onAgentSpeaking?: (speaking: boolean) => void;
@@ -73,11 +77,13 @@ type TranscriptLogEntry = {
   item_id?: string;
 };
 
-export function buildRealtimeVoiceResponseCreateEvent(
-  policy?: RealtimeVoiceTurnPolicyResponse | null
-): Record<string, unknown> {
-  return buildResponseCreateEvent(policy?.instructions);
-}
+type UserTranscriptEvidenceWaiter = {
+  quote: string;
+  resolve: (evidence: string) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+const USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS = 2500;
 
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
@@ -91,11 +97,11 @@ export async function connectRealtimeVoiceSession(
   const handledCallIds = new Set<string>();
   const transcriptLog: TranscriptLogEntry[] = [];
   const completedToolCalls: RealtimeVoiceRecordedToolCall[] = [];
+  const userTranscriptDrafts = new Map<string, string>();
+  const userTranscriptEvidenceWaiters: UserTranscriptEvidenceWaiter[] = [];
   let pendingUserText = "";
   let pendingAssistantText = "";
-  let latestPolicy: RealtimeVoiceTurnPolicyResponse | null = null;
-  let pendingPolicyPromise: Promise<RealtimeVoiceTurnPolicyResponse | null> | null =
-    null;
+  let latestUserTranscriptDraft = "";
   let recordingTurn = false;
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
@@ -263,10 +269,20 @@ export async function connectRealtimeVoiceSession(
   }
 
   function handleTranscriptUpdate(update: RealtimeTranscriptUpdate): void {
-    if (!update.final) return;
-
-    const text = update.text.trim();
+    const rawText = update.text;
+    const text = rawText.trim();
     if (!text) return;
+
+    if (update.role === "user" && !update.final) {
+      const itemId = update.itemId || "__latest_user_audio__";
+      const nextDraft = `${userTranscriptDrafts.get(itemId) || ""}${rawText}`.trim();
+      userTranscriptDrafts.set(itemId, nextDraft);
+      latestUserTranscriptDraft = nextDraft;
+      resolveUserTranscriptEvidenceWaiters({ final: false });
+      return;
+    }
+
+    if (!update.final) return;
 
     transcriptLog.push({
       role: update.role,
@@ -275,9 +291,10 @@ export async function connectRealtimeVoiceSession(
     });
 
     if (update.role === "user") {
+      if (update.itemId) userTranscriptDrafts.delete(update.itemId);
+      latestUserTranscriptDraft = "";
       pendingUserText = text;
-      latestPolicy = null;
-      pendingPolicyPromise = prepareTurnPolicy(text);
+      resolveUserTranscriptEvidenceWaiters({ final: true });
     } else {
       pendingAssistantText = text;
     }
@@ -296,9 +313,6 @@ export async function connectRealtimeVoiceSession(
     recordingTurn = true;
 
     try {
-      const policy = pendingPolicyPromise
-        ? await pendingPolicyPromise
-        : latestPolicy;
       const toolCalls = completedToolCalls.splice(0);
       const response = await recordRealtimeVoiceTurn(
         buildRealtimeVoiceTurnRecordInput({
@@ -307,7 +321,6 @@ export async function connectRealtimeVoiceSession(
           userText,
           assistantText,
           memoryMode: options.memoryMode,
-          policy,
           toolCalls,
         })
       );
@@ -325,46 +338,6 @@ export async function connectRealtimeVoiceSession(
     }
   }
 
-  function prepareTurnPolicy(
-    userText: string
-  ): Promise<RealtimeVoiceTurnPolicyResponse | null> {
-    const request = prepareRealtimeVoiceTurnPolicy({
-      threadId: options.threadId,
-      userId: options.userId,
-      userText,
-      memoryMode: options.memoryMode,
-    });
-    const tracked = request
-      .then((policy) => {
-        latestPolicy = policy;
-        options.onTurnPolicy?.(policy);
-        sendResponseCreate(policy);
-        return policy;
-      })
-      .catch((error) => {
-        options.onError?.(
-          error instanceof Error
-            ? error
-            : new Error("Could not prepare Realtime voice turn policy.")
-        );
-        sendResponseCreate(null);
-        return null;
-      })
-      .finally(() => {
-        if (pendingPolicyPromise === tracked) pendingPolicyPromise = null;
-      });
-    return tracked;
-  }
-
-  function sendResponseCreate(
-    policy: RealtimeVoiceTurnPolicyResponse | null
-  ): void {
-    if (!dataChannel || dataChannel.readyState !== "open") return;
-    dataChannel.send(
-      serializeRealtimeEvent(buildRealtimeVoiceResponseCreateEvent(policy))
-    );
-  }
-
   async function executeToolCall(call: RealtimeFunctionCall): Promise<void> {
     if (!dataChannel || dataChannel.readyState !== "open") return;
     if (handledCallIds.has(call.callId)) return;
@@ -377,24 +350,29 @@ export async function connectRealtimeVoiceSession(
     });
 
     try {
+      const currentUserMessage = await currentUserMessageForToolCall(call);
       const result = await executeRealtimeVoiceTool({
         threadId: options.threadId,
         userId: options.userId,
-        currentUserMessage: pendingUserText,
+        currentUserMessage,
         transcript: transcriptLog,
         memoryMode: options.memoryMode,
         toolName: call.name,
         arguments: call.arguments,
       });
-      completedToolCalls.push({
-        tool_name: call.name,
-        status: "completed",
-        output: result.output,
-      });
+      if (shouldRecordRealtimeVoiceToolCall(call.name)) {
+        completedToolCalls.push({
+          tool_name: call.name,
+          status: "completed",
+          output: result.output,
+        });
+      }
       dataChannel.send(
         serializeRealtimeEvent(buildFunctionCallOutputEvent(call.callId, result.output))
       );
-      dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
+        dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      }
       options.onToolEvent?.({
         callId: call.callId,
         name: call.name,
@@ -404,18 +382,22 @@ export async function connectRealtimeVoiceSession(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Realtime voice tool failed.";
-      completedToolCalls.push({
-        tool_name: call.name,
-        status: "failed",
-        output: {},
-        error: message,
-      });
+      if (shouldRecordRealtimeVoiceToolCall(call.name)) {
+        completedToolCalls.push({
+          tool_name: call.name,
+          status: "failed",
+          output: {},
+          error: message,
+        });
+      }
       dataChannel.send(
         serializeRealtimeEvent(
           buildFunctionCallOutputEvent(call.callId, { error: message })
         )
       );
-      dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
+        dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      }
       options.onToolEvent?.({
         callId: call.callId,
         name: call.name,
@@ -424,5 +406,66 @@ export async function connectRealtimeVoiceSession(
       });
       options.onError?.(new Error(message));
     }
+  }
+
+  function latestUserTranscriptEvidence(): string {
+    return pendingUserText.trim() || latestUserTranscriptDraft.trim();
+  }
+
+  async function currentUserMessageForToolCall(
+    call: RealtimeFunctionCall
+  ): Promise<string> {
+    if (!shouldWaitForRealtimeVoiceTranscriptEvidence(call.name)) {
+      return pendingUserText;
+    }
+
+    const quote = readRealtimeVoiceUserQuote(call.arguments);
+    const evidence = latestUserTranscriptEvidence();
+    if (!quote || realtimeVoiceEvidenceMatchesUserQuote({ evidence, userQuote: quote })) {
+      return evidence;
+    }
+    if (pendingUserText.trim()) return pendingUserText;
+    return waitForUserTranscriptEvidence(quote);
+  }
+
+  function waitForUserTranscriptEvidence(quote: string): Promise<string> {
+    return new Promise((resolve) => {
+      const waiter: UserTranscriptEvidenceWaiter = {
+        quote,
+        resolve,
+        timeout: setTimeout(() => {
+          resolveUserTranscriptEvidenceWaiter(waiter);
+        }, USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS),
+      };
+      userTranscriptEvidenceWaiters.push(waiter);
+    });
+  }
+
+  function resolveUserTranscriptEvidenceWaiters({
+    final,
+  }: {
+    final: boolean;
+  }): void {
+    for (const waiter of [...userTranscriptEvidenceWaiters]) {
+      const evidence = latestUserTranscriptEvidence();
+      if (
+        final ||
+        realtimeVoiceEvidenceMatchesUserQuote({
+          evidence,
+          userQuote: waiter.quote,
+        })
+      ) {
+        resolveUserTranscriptEvidenceWaiter(waiter);
+      }
+    }
+  }
+
+  function resolveUserTranscriptEvidenceWaiter(
+    waiter: UserTranscriptEvidenceWaiter
+  ): void {
+    const index = userTranscriptEvidenceWaiters.indexOf(waiter);
+    if (index !== -1) userTranscriptEvidenceWaiters.splice(index, 1);
+    clearTimeout(waiter.timeout);
+    waiter.resolve(latestUserTranscriptEvidence());
   }
 }

@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   type RealtimeVoiceSessionResponse,
   type RealtimeVoiceEndSessionResponse,
-  type RealtimeVoiceTurnPolicyResponse,
   type VoiceMemoryMode,
 } from "@/lib/api";
 import {
@@ -131,8 +130,6 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
     useState<RealtimeVoiceEndSessionResponse | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptRow[]>([]);
   const [tools, setTools] = useState<ToolRow[]>([]);
-  const [latestPolicy, setLatestPolicy] =
-    useState<RealtimeVoiceTurnPolicyResponse | null>(null);
   const [logs, setLogs] = useState<DevLog[]>([]);
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -182,7 +179,6 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
     setSession(null);
     setTranscripts([]);
     setTools([]);
-    setLatestPolicy(null);
     setLogs([]);
     clearVoiceTranscripts();
     setVoiceError(null);
@@ -234,18 +230,6 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
             toolEvent.name,
             toolEvent.status,
             toolEvent.output
-          );
-        },
-        onTurnPolicy: (policy) => {
-          setLatestPolicy(policy);
-          pushLog(
-            "info",
-            "turn policy",
-            `${policy.route} / ${policy.response_style}`,
-            {
-              required_tool_name: policy.required_tool_name,
-              required_tool_arguments: policy.required_tool_arguments,
-            }
           );
         },
         onTurnRecorded: (response) => {
@@ -304,7 +288,6 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
     setSession(null);
     setTranscripts([]);
     setTools([]);
-    setLatestPolicy(null);
     setLogs([]);
     clearVoiceTranscripts();
   };
@@ -462,15 +445,7 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
                 <InfoRow label="mode" value={memoryMode} />
                 <InfoRow label="user" value={memoryMode === "persistent" ? userId || "none" : "anonymous"} />
                 <InfoRow label="thread" value={threadId || "none"} />
-                <InfoRow label="route" value={latestPolicy?.route || "none"} />
-                <InfoRow
-                  label="style"
-                  value={latestPolicy?.response_style || "none"}
-                />
-                <InfoRow
-                  label="required tool"
-                  value={latestPolicy?.required_tool_name || "none"}
-                />
+                <InfoRow label="turn response" value="realtime automatic" />
                 <InfoRow
                   label="model"
                   value={String(session?.session_config.model ?? "not connected")}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from agent.voice.tools import build_voice_realtime_tools
+import pytest
+
+from agent.voice.tools import build_voice_realtime_tools, execute_voice_tool_call
 
 
 _MUTATOR_TOOL_NAMES = {
@@ -21,6 +23,7 @@ def test_voice_tool_surface_is_narrow_for_incognito() -> None:
         tool["name"] for tool in build_voice_realtime_tools(memory_mode="incognito")
     }
 
+    assert "wait_for_user" in names
     assert "show_memory_status" in names
     assert "show_saved_memory" not in names
     assert "save_response_preference" not in names
@@ -32,6 +35,7 @@ def test_voice_tool_surface_includes_persistent_memory_tools() -> None:
         tool["name"] for tool in build_voice_realtime_tools(memory_mode="persistent")
     }
 
+    assert "wait_for_user" in names
     assert "show_saved_memory" in names
     assert "show_memory_status" in names
     assert "save_response_preference" in names
@@ -99,3 +103,24 @@ def test_voice_confirmation_tools_do_not_require_user_quote() -> None:
 
         assert "user_quote" not in properties
         assert "user_quote" not in required
+
+
+@pytest.mark.asyncio
+async def test_wait_for_user_tool_is_noop_signal() -> None:
+    result = await execute_voice_tool_call(
+        runtime=object(),
+        tool_name="wait_for_user",
+        arguments={},
+        thread_id="voice-thread",
+        user_id=None,
+        current_user_message="",
+        transcript=[],
+        memory_mode="incognito",
+        llm_client=None,
+    )
+
+    assert result == {
+        "response_text": "",
+        "should_respond": False,
+        "side_effect": "none",
+    }

@@ -94,7 +94,7 @@ async def test_voice_turn_endpoint_records_transcript(
 
 
 @pytest.mark.asyncio
-async def test_voice_turn_endpoint_records_route_and_tool_metadata(
+async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
@@ -127,8 +127,6 @@ async def test_voice_turn_endpoint_records_route_and_tool_metadata(
                     "memory_mode": "persistent",
                     "user_text": "What is the latest guidance?",
                     "assistant_text": "I found a verified answer.",
-                    "route": "grounded_lookup",
-                    "response_style": "grounded_lookup",
                     "tool_calls": [
                         {
                             "tool_name": "answer_grounded_lookup",
@@ -154,6 +152,7 @@ async def test_voice_turn_endpoint_records_route_and_tool_metadata(
         "query": "latest guidance",
         "status": "answered",
     }
+    assert state["transcript"][-1]["response_style"] == "grounded_lookup"
     assert state["diagnostics"]["voice_tool_calls"] == ["answer_grounded_lookup"]
 
 

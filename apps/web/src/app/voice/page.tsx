@@ -973,8 +973,8 @@ export default function VoicePage() {
               value={assistantVoiceSelected}
             />
             <VoiceDebugRow
-              label="policy route"
-              value={realtimeVoice.latestPolicy?.route}
+              label="turn response"
+              value="realtime automatic"
             />
             <VoiceDebugRow
               label="finalization"
