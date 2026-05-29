@@ -21,8 +21,11 @@ import {
 } from "./realtime-voice-events";
 import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record";
 import {
+  readRealtimeVoiceUserQuote,
+  realtimeVoiceEvidenceMatchesUserQuote,
   shouldCreateResponseAfterRealtimeVoiceTool,
   shouldRecordRealtimeVoiceToolCall,
+  shouldWaitForRealtimeVoiceTranscriptEvidence,
 } from "./realtime-voice-tool-flow";
 
 const REALTIME_WEBRTC_URL = "https://api.openai.com/v1/realtime/calls";
@@ -74,6 +77,14 @@ type TranscriptLogEntry = {
   item_id?: string;
 };
 
+type UserTranscriptEvidenceWaiter = {
+  quote: string;
+  resolve: (evidence: string) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+const USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS = 2500;
+
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
 ): Promise<RealtimeVoiceSessionHandle> {
@@ -86,8 +97,11 @@ export async function connectRealtimeVoiceSession(
   const handledCallIds = new Set<string>();
   const transcriptLog: TranscriptLogEntry[] = [];
   const completedToolCalls: RealtimeVoiceRecordedToolCall[] = [];
+  const userTranscriptDrafts = new Map<string, string>();
+  const userTranscriptEvidenceWaiters: UserTranscriptEvidenceWaiter[] = [];
   let pendingUserText = "";
   let pendingAssistantText = "";
+  let latestUserTranscriptDraft = "";
   let recordingTurn = false;
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
@@ -255,10 +269,20 @@ export async function connectRealtimeVoiceSession(
   }
 
   function handleTranscriptUpdate(update: RealtimeTranscriptUpdate): void {
-    if (!update.final) return;
-
-    const text = update.text.trim();
+    const rawText = update.text;
+    const text = rawText.trim();
     if (!text) return;
+
+    if (update.role === "user" && !update.final) {
+      const itemId = update.itemId || "__latest_user_audio__";
+      const nextDraft = `${userTranscriptDrafts.get(itemId) || ""}${rawText}`.trim();
+      userTranscriptDrafts.set(itemId, nextDraft);
+      latestUserTranscriptDraft = nextDraft;
+      resolveUserTranscriptEvidenceWaiters({ final: false });
+      return;
+    }
+
+    if (!update.final) return;
 
     transcriptLog.push({
       role: update.role,
@@ -267,7 +291,10 @@ export async function connectRealtimeVoiceSession(
     });
 
     if (update.role === "user") {
+      if (update.itemId) userTranscriptDrafts.delete(update.itemId);
+      latestUserTranscriptDraft = "";
       pendingUserText = text;
+      resolveUserTranscriptEvidenceWaiters({ final: true });
     } else {
       pendingAssistantText = text;
     }
@@ -323,10 +350,11 @@ export async function connectRealtimeVoiceSession(
     });
 
     try {
+      const currentUserMessage = await currentUserMessageForToolCall(call);
       const result = await executeRealtimeVoiceTool({
         threadId: options.threadId,
         userId: options.userId,
-        currentUserMessage: pendingUserText,
+        currentUserMessage,
         transcript: transcriptLog,
         memoryMode: options.memoryMode,
         toolName: call.name,
@@ -378,5 +406,66 @@ export async function connectRealtimeVoiceSession(
       });
       options.onError?.(new Error(message));
     }
+  }
+
+  function latestUserTranscriptEvidence(): string {
+    return pendingUserText.trim() || latestUserTranscriptDraft.trim();
+  }
+
+  async function currentUserMessageForToolCall(
+    call: RealtimeFunctionCall
+  ): Promise<string> {
+    if (!shouldWaitForRealtimeVoiceTranscriptEvidence(call.name)) {
+      return pendingUserText;
+    }
+
+    const quote = readRealtimeVoiceUserQuote(call.arguments);
+    const evidence = latestUserTranscriptEvidence();
+    if (!quote || realtimeVoiceEvidenceMatchesUserQuote({ evidence, userQuote: quote })) {
+      return evidence;
+    }
+    if (pendingUserText.trim()) return pendingUserText;
+    return waitForUserTranscriptEvidence(quote);
+  }
+
+  function waitForUserTranscriptEvidence(quote: string): Promise<string> {
+    return new Promise((resolve) => {
+      const waiter: UserTranscriptEvidenceWaiter = {
+        quote,
+        resolve,
+        timeout: setTimeout(() => {
+          resolveUserTranscriptEvidenceWaiter(waiter);
+        }, USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS),
+      };
+      userTranscriptEvidenceWaiters.push(waiter);
+    });
+  }
+
+  function resolveUserTranscriptEvidenceWaiters({
+    final,
+  }: {
+    final: boolean;
+  }): void {
+    for (const waiter of [...userTranscriptEvidenceWaiters]) {
+      const evidence = latestUserTranscriptEvidence();
+      if (
+        final ||
+        realtimeVoiceEvidenceMatchesUserQuote({
+          evidence,
+          userQuote: waiter.quote,
+        })
+      ) {
+        resolveUserTranscriptEvidenceWaiter(waiter);
+      }
+    }
+  }
+
+  function resolveUserTranscriptEvidenceWaiter(
+    waiter: UserTranscriptEvidenceWaiter
+  ): void {
+    const index = userTranscriptEvidenceWaiters.indexOf(waiter);
+    if (index !== -1) userTranscriptEvidenceWaiters.splice(index, 1);
+    clearTimeout(waiter.timeout);
+    waiter.resolve(latestUserTranscriptEvidence());
   }
 }
