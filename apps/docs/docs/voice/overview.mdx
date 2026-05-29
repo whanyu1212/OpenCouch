@@ -31,7 +31,7 @@ services.
 |---|---|
 | `/voice` | Production web voice page. Uses the app shell, session setup, assistant voice selector, transcript display, tool activity, and end-session options. |
 | `/voice/realtime-dev` | Lower-level dogfood route for inspecting raw Realtime events, parsed transcripts, tool calls, and finalization responses. |
-| `/api/voice/realtime/*` | Backend contract for session creation, tool execution, observe-only turn policy, turn recording, and session end. |
+| `/api/voice/realtime/*` | Backend contract for session creation, tool execution, turn recording, and session end. |
 
 ## Ownership boundary
 
@@ -39,7 +39,7 @@ services.
 |---|---|
 | Browser | Microphone permission, WebRTC peer connection, audio playback, Realtime data-channel parsing, transcript UI, and disconnect/finalization UX. |
 | OpenAI Realtime | Speech input/output, server VAD, interruption handling, live model response generation, and function-call events. |
-| FastAPI backend | Ephemeral client secret creation, Realtime session config, private memory context, function tool execution, turn policy hints, durable transcript recording, and persistent session finalization. |
+| FastAPI backend | Ephemeral client secret creation, Realtime session config, private memory context, function tool execution, durable transcript recording, inferred turn metadata, and persistent session finalization. |
 | Shared runtime services | Memory store, crisis log, grounded lookup, guided-exercise catalog/state, session feedback store, and `PersistentAgentRuntime.end_session(...)`. |
 
 ## What voice intentionally does not do
@@ -57,6 +57,6 @@ services.
 | Topic | Page |
 |---|---|
 | Realtime connection flow | [Realtime Lifecycle](/docs/voice/realtime-lifecycle) |
-| Function tools and turn policy | [Tools & Policy](/docs/voice/tools-and-policy) |
+| Function tools and Realtime policy | [Tools & Policy](/docs/voice/tools-and-policy) |
 | Transcript recording and memory finalization | [Voice Persistence](/docs/voice/persistence) |
 | Manual verification checklist | [Voice Dogfood](/docs/voice/dogfood) |

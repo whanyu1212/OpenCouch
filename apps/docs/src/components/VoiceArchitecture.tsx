@@ -34,12 +34,12 @@ export default function VoiceArchitecture(): React.JSX.Element {
             <p className={s.agentSub}>
               Owns the live spoken response loop. Receives compact
               instructions, private memory context, Realtime tool schemas, and
-              per-turn policy hints.
+              browser-returned tool outputs.
             </p>
             <ul className={s.agentList}>
               <li>server VAD with interrupt support</li>
               <li>input transcription for turn recording</li>
-              <li><code>response.create</code> policy injection</li>
+              <li>automatic response creation after user speech</li>
             </ul>
           </article>
 
@@ -60,8 +60,8 @@ export default function VoiceArchitecture(): React.JSX.Element {
               <h4 className={s.agentTitle}>Voice endpoints</h4>
             </header>
             <p className={s.agentSub}>
-              Create the session, execute tools, prepare observe-only turn
-              policy, record finalized turns, and close persistent sessions.
+              Create the session, execute tools, infer turn metadata, record
+              finalized turns, and close persistent sessions.
             </p>
             <ul className={s.agentList}>
               <li><code>/session</code> builds config and client secret</li>
