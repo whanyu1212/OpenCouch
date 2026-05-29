@@ -41,7 +41,7 @@ in OpenCouch:
 | Type | Example | Lives on |
 |---|---|---|
 | **Injected dependency** | `memory_store`, `crisis_log_backend`, `embedding_provider`, `llm_client` | `WorkflowContext` (frozen dataclass) |
-| **Gate / policy stage** | crisis guardrail, text turn triage, voice turn policy | `agent/guardrails/`, `agent/specialists/triage.py`, `agent/voice/turn_policy.py` |
+| **Gate / policy stage** | crisis guardrail, text turn triage, Realtime voice session policy | `agent/guardrails/`, `agent/specialists/triage.py`, `agent/voice/policy.py` |
 | **Tool** | `lookup_crisis_resources`, `answer_grounded_lookup`, memory-control actions, guided-exercise skill loading | `agent/tools/` plus Realtime schemas in `agent/voice/tools.py` |
 
 A capability qualifies as a **tool** when:

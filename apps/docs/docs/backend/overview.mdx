@@ -75,9 +75,9 @@ transport loop.
 
 | Area | Text agent | Realtime voice |
 |---|---|---|
-| Live turn loop | `OpenAITextRuntime` runs one SDK turn per message through app-owned routing and specialist agents. | OpenAI Realtime owns the live speech loop; the browser sends policy hints and tool outputs over the data channel. |
+| Live turn loop | `OpenAITextRuntime` runs one SDK turn per message through app-owned routing and specialist agents. | OpenAI Realtime owns the live speech loop; the browser returns tool outputs over the data channel and posts finalized transcripts to the backend. |
 | Short-term conversation | SDK session plus reducer-backed runtime state. | Realtime session context plus final transcript recording after each exchange. |
-| Safety and lookup policy | Crisis gate and turn triage run before the text specialist response. | Compact session instructions plus observe-only turn policy can require crisis-resource or grounded-lookup tools. |
+| Safety and lookup policy | Crisis gate and turn triage run before the text specialist response. | Compact session instructions and Realtime tool schemas require crisis-resource or grounded-lookup tools when needed. |
 | Tools | SDK function tools attached to the owning specialist agent or runtime branch. | Realtime function schemas that call the same backend service functions. |
 | Persistence | `run_turn` / `run_turn_stream` save text state and emit streaming status events. | `record_voice_turn` appends finalized transcript entries; `end_session` finalizes persistent voice sessions. |
 
@@ -113,7 +113,7 @@ composition logic.
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
 | `llm/` | `BaseLLMClient` protocol, factory, and OpenAI client |
 | `opencouch_cli/` | Rich-based interactive CLI |
-| `agent/voice/` | OpenAI Realtime voice policy, session config, tool schemas, tool execution, turn policy, and transcript finalization helpers |
+| `agent/voice/` | OpenAI Realtime voice policy, session config, tool schemas, tool execution, inferred turn metadata, and transcript finalization helpers |
 | `api/` | FastAPI routes (chat, threads, memory, Realtime voice session/tools/turns/finalization) |
 | `tests/` | Pytest suites for runtime stages, memory, retrieval, dispatcher, persistence |
 
