@@ -60,8 +60,8 @@ from agent.runtime.session_store import (
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.runtime.context import OpenAITextRunContext
+from agent.voice.turn_metadata import infer_voice_turn_metadata
 from agent.voice.transcript import voice_turn_to_transcript_entries
-from agent.voice.turn_policy import VoiceTurnPolicy, build_voice_turn_policy
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
@@ -1181,14 +1181,6 @@ class PersistentAgentRuntime:
     ) -> AgentState:
         """Persist a finalized voice turn without running the text agent."""
 
-        entries = voice_turn_to_transcript_entries(
-            user_text=user_text,
-            assistant_text=assistant_text,
-            response_style=response_style,
-        )
-        if not entries:
-            raise ValueError("record_voice_turn requires user_text or assistant_text.")
-
         async with self._thread_lock(thread_id):
             self._remember_llm_client(thread_id, llm_client)
             prior_state = await self.get_state(thread_id)
@@ -1229,6 +1221,21 @@ class PersistentAgentRuntime:
                 grounded_output = output.get("grounded_lookup")
                 if isinstance(grounded_output, Mapping):
                     grounded_lookup = dict(grounded_output)
+            voice_metadata = infer_voice_turn_metadata(
+                route=route,
+                response_style=response_style,
+                tool_calls=voice_tool_calls,
+                has_grounded_lookup=bool(grounded_lookup),
+            )
+            entries = voice_turn_to_transcript_entries(
+                user_text=user_text,
+                assistant_text=assistant_text,
+                response_style=voice_metadata.response_style,
+            )
+            if not entries:
+                raise ValueError(
+                    "record_voice_turn requires user_text or assistant_text."
+                )
 
             state.update(
                 {
@@ -1237,9 +1244,8 @@ class PersistentAgentRuntime:
                     "user_id": user_id,
                     "session_id": thread_id,
                     "response_text": assistant_text.strip(),
-                    "response_style": response_style
-                    or ("grounded_lookup" if grounded_lookup else "voice"),
-                    "route": route or "therapeutic",
+                    "response_style": voice_metadata.response_style,
+                    "route": voice_metadata.route,
                     "session_action": "none",
                     "should_persist_memory": False,
                     "transcript": [*prior_transcript, *entries],
@@ -1284,40 +1290,6 @@ class PersistentAgentRuntime:
                     mutation_token,
                 )
                 return state
-
-    async def prepare_voice_turn_policy(
-        self,
-        *,
-        thread_id: str,
-        user_id: str | None,
-        user_text: str,
-        memory_mode: str,
-    ) -> VoiceTurnPolicy:
-        """Return observe-only voice turn policy for one finalized transcript."""
-
-        del user_id
-        prior_state = await self.get_state(thread_id)
-        exercise_state = (
-            prior_state.get("exercise_state", {}) if prior_state is not None else {}
-        )
-        memory_control = (
-            prior_state.get("memory_control", {}) if prior_state is not None else {}
-        )
-        has_active_guided_exercise = bool(
-            isinstance(exercise_state, Mapping)
-            and exercise_state.get("exercise_type") is not None
-            and exercise_state.get("exercise_step") is not None
-        )
-        pending_memory_action = bool(
-            isinstance(memory_control, Mapping)
-            and memory_control.get("pending_action") is not None
-        )
-        return build_voice_turn_policy(
-            user_text=user_text,
-            memory_mode=memory_mode,
-            has_active_guided_exercise=has_active_guided_exercise,
-            pending_memory_action=pending_memory_action,
-        )
 
     async def get_history(self, thread_id: str) -> list[Message]:
         """Load the full persisted transcript for a thread.

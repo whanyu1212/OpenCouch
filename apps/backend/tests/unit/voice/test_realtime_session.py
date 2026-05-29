@@ -48,9 +48,7 @@ def test_voice_session_config_uses_selected_realtime_voice() -> None:
     assert config["audio"]["output"]["voice"] == "cedar"
 
 
-def test_voice_session_disables_automatic_realtime_responses_for_policy_gating() -> (
-    None
-):
+def test_voice_session_lets_realtime_create_responses_after_vad() -> None:
     config = build_realtime_session_config(
         thread_id="voice-thread",
         user_id="user-1",
@@ -58,7 +56,7 @@ def test_voice_session_disables_automatic_realtime_responses_for_policy_gating()
     )
 
     assert config["audio"]["input"]["turn_detection"]["type"] == "server_vad"
-    assert config["audio"]["input"]["turn_detection"]["create_response"] is False
+    assert config["audio"]["input"]["turn_detection"]["create_response"] is True
     assert config["audio"]["input"]["turn_detection"]["interrupt_response"] is True
 
 

@@ -2,13 +2,11 @@ import {
   createRealtimeVoiceSession,
   endRealtimeVoiceSession,
   executeRealtimeVoiceTool,
-  prepareRealtimeVoiceTurnPolicy,
   recordRealtimeVoiceTurn,
   type RealtimeVoiceEndSessionResponse,
   type RealtimeVoiceRecordedToolCall,
   type RealtimeVoiceSessionResponse,
   type RealtimeVoiceTurnRecordResponse,
-  type RealtimeVoiceTurnPolicyResponse,
   type AssistantVoiceOption,
   type VoiceMemoryMode,
 } from "./api";
@@ -22,6 +20,10 @@ import {
   type RealtimeTranscriptUpdate,
 } from "./realtime-voice-events";
 import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record";
+import {
+  shouldCreateResponseAfterRealtimeVoiceTool,
+  shouldRecordRealtimeVoiceToolCall,
+} from "./realtime-voice-tool-flow";
 
 const REALTIME_WEBRTC_URL = "https://api.openai.com/v1/realtime/calls";
 
@@ -53,7 +55,6 @@ export interface RealtimeVoiceSessionOptions {
   onParsedEvent?: (event: ParsedRealtimeServerEvent) => void;
   onTranscript?: (update: RealtimeTranscriptUpdate) => void;
   onToolEvent?: (event: RealtimeVoiceToolEvent) => void;
-  onTurnPolicy?: (policy: RealtimeVoiceTurnPolicyResponse) => void;
   onTurnRecorded?: (response: RealtimeVoiceTurnRecordResponse) => void;
   onEnded?: (response: RealtimeVoiceEndSessionResponse) => void;
   onAgentSpeaking?: (speaking: boolean) => void;
@@ -73,12 +74,6 @@ type TranscriptLogEntry = {
   item_id?: string;
 };
 
-export function buildRealtimeVoiceResponseCreateEvent(
-  policy?: RealtimeVoiceTurnPolicyResponse | null
-): Record<string, unknown> {
-  return buildResponseCreateEvent(policy?.instructions);
-}
-
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
 ): Promise<RealtimeVoiceSessionHandle> {
@@ -93,9 +88,6 @@ export async function connectRealtimeVoiceSession(
   const completedToolCalls: RealtimeVoiceRecordedToolCall[] = [];
   let pendingUserText = "";
   let pendingAssistantText = "";
-  let latestPolicy: RealtimeVoiceTurnPolicyResponse | null = null;
-  let pendingPolicyPromise: Promise<RealtimeVoiceTurnPolicyResponse | null> | null =
-    null;
   let recordingTurn = false;
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
@@ -276,8 +268,6 @@ export async function connectRealtimeVoiceSession(
 
     if (update.role === "user") {
       pendingUserText = text;
-      latestPolicy = null;
-      pendingPolicyPromise = prepareTurnPolicy(text);
     } else {
       pendingAssistantText = text;
     }
@@ -296,9 +286,6 @@ export async function connectRealtimeVoiceSession(
     recordingTurn = true;
 
     try {
-      const policy = pendingPolicyPromise
-        ? await pendingPolicyPromise
-        : latestPolicy;
       const toolCalls = completedToolCalls.splice(0);
       const response = await recordRealtimeVoiceTurn(
         buildRealtimeVoiceTurnRecordInput({
@@ -307,7 +294,6 @@ export async function connectRealtimeVoiceSession(
           userText,
           assistantText,
           memoryMode: options.memoryMode,
-          policy,
           toolCalls,
         })
       );
@@ -323,46 +309,6 @@ export async function connectRealtimeVoiceSession(
     } finally {
       recordingTurn = false;
     }
-  }
-
-  function prepareTurnPolicy(
-    userText: string
-  ): Promise<RealtimeVoiceTurnPolicyResponse | null> {
-    const request = prepareRealtimeVoiceTurnPolicy({
-      threadId: options.threadId,
-      userId: options.userId,
-      userText,
-      memoryMode: options.memoryMode,
-    });
-    const tracked = request
-      .then((policy) => {
-        latestPolicy = policy;
-        options.onTurnPolicy?.(policy);
-        sendResponseCreate(policy);
-        return policy;
-      })
-      .catch((error) => {
-        options.onError?.(
-          error instanceof Error
-            ? error
-            : new Error("Could not prepare Realtime voice turn policy.")
-        );
-        sendResponseCreate(null);
-        return null;
-      })
-      .finally(() => {
-        if (pendingPolicyPromise === tracked) pendingPolicyPromise = null;
-      });
-    return tracked;
-  }
-
-  function sendResponseCreate(
-    policy: RealtimeVoiceTurnPolicyResponse | null
-  ): void {
-    if (!dataChannel || dataChannel.readyState !== "open") return;
-    dataChannel.send(
-      serializeRealtimeEvent(buildRealtimeVoiceResponseCreateEvent(policy))
-    );
   }
 
   async function executeToolCall(call: RealtimeFunctionCall): Promise<void> {
@@ -386,15 +332,19 @@ export async function connectRealtimeVoiceSession(
         toolName: call.name,
         arguments: call.arguments,
       });
-      completedToolCalls.push({
-        tool_name: call.name,
-        status: "completed",
-        output: result.output,
-      });
+      if (shouldRecordRealtimeVoiceToolCall(call.name)) {
+        completedToolCalls.push({
+          tool_name: call.name,
+          status: "completed",
+          output: result.output,
+        });
+      }
       dataChannel.send(
         serializeRealtimeEvent(buildFunctionCallOutputEvent(call.callId, result.output))
       );
-      dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
+        dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      }
       options.onToolEvent?.({
         callId: call.callId,
         name: call.name,
@@ -404,18 +354,22 @@ export async function connectRealtimeVoiceSession(
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Realtime voice tool failed.";
-      completedToolCalls.push({
-        tool_name: call.name,
-        status: "failed",
-        output: {},
-        error: message,
-      });
+      if (shouldRecordRealtimeVoiceToolCall(call.name)) {
+        completedToolCalls.push({
+          tool_name: call.name,
+          status: "failed",
+          output: {},
+          error: message,
+        });
+      }
       dataChannel.send(
         serializeRealtimeEvent(
           buildFunctionCallOutputEvent(call.callId, { error: message })
         )
       );
-      dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
+        dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      }
       options.onToolEvent?.({
         callId: call.callId,
         name: call.name,

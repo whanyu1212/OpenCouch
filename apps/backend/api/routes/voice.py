@@ -18,8 +18,6 @@ from api.models import (
     VoiceRealtimeSessionResponse,
     VoiceToolCallRequest,
     VoiceToolCallResponse,
-    VoiceTurnPolicyRequest,
-    VoiceTurnPolicyResponse,
     VoiceTurnRecordRequest,
     VoiceTurnRecordResponse,
     VoiceEndSessionRequest,
@@ -31,7 +29,6 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 _VOICE_SESSION_FAILURE_HTTP_STATUS = 500
 _VOICE_TOOL_FAILURE_HTTP_STATUS = 500
-_VOICE_POLICY_FAILURE_HTTP_STATUS = 500
 _VOICE_TURN_FAILURE_HTTP_STATUS = 500
 _VOICE_END_FAILURE_HTTP_STATUS = 500
 
@@ -113,33 +110,6 @@ async def execute_voice_realtime_tool(
         ) from exc
 
     return VoiceToolCallResponse(output=output)
-
-
-@router.post("/realtime/turn-policy", response_model=VoiceTurnPolicyResponse)
-async def prepare_voice_realtime_turn_policy(
-    body: VoiceTurnPolicyRequest,
-) -> VoiceTurnPolicyResponse:
-    """Return observe-only app policy for a finalized voice user transcript."""
-
-    selection = get_runtime_selection(body.memory_mode)
-    try:
-        policy = await selection.runtime.prepare_voice_turn_policy(
-            thread_id=body.thread_id,
-            user_id=body.user_id,
-            user_text=body.user_text,
-            memory_mode=selection.memory_mode,
-        )
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
-        raise HTTPException(
-            status_code=_VOICE_POLICY_FAILURE_HTTP_STATUS,
-            detail={
-                "code": "voice_realtime_turn_policy_failed",
-                "message": message,
-            },
-        ) from exc
-
-    return VoiceTurnPolicyResponse(**policy.model_dump(mode="json"))
 
 
 @router.post("/realtime/turn", response_model=VoiceTurnRecordResponse)

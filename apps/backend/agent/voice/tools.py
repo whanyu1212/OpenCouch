@@ -29,6 +29,7 @@ _RECALL_DEFAULT_LIMIT = 5
 _RECALL_MAX_LIMIT = 10
 
 _SUPPORTED_VOICE_TOOL_NAMES = {
+    "wait_for_user",
     "show_memory_status",
     "show_saved_memory",
     "recall_saved_memory",
@@ -82,6 +83,17 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
 
     persistent = memory_mode.strip().lower() == "persistent"
     tools: list[dict[str, Any]] = [
+        _function_tool(
+            name="wait_for_user",
+            description=(
+                "Call this when the latest audio should not receive a spoken "
+                "reply, such as silence, background noise, hold music, TV audio, "
+                "side conversation, or speech not addressed to OpenCouch. Side "
+                "effects: none. After calling this tool, do not respond."
+            ),
+            properties={},
+            required=[],
+        ),
         _function_tool(
             name="show_memory_status",
             description=(
@@ -398,6 +410,13 @@ async def execute_voice_tool_call(
 
     if tool_name not in _SUPPORTED_VOICE_TOOL_NAMES:
         raise ValueError(f"Unsupported voice tool: {tool_name!r}")
+
+    if tool_name == "wait_for_user":
+        return {
+            "response_text": "",
+            "should_respond": False,
+            "side_effect": "none",
+        }
 
     effective_memory_mode = _effective_memory_mode(runtime, memory_mode)
     if effective_memory_mode == "incognito":

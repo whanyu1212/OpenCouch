@@ -1,6 +1,5 @@
 import type {
   RealtimeVoiceRecordedToolCall,
-  RealtimeVoiceTurnPolicyResponse,
   VoiceMemoryMode,
 } from "./api";
 
@@ -10,7 +9,6 @@ export function buildRealtimeVoiceTurnRecordInput({
   userText,
   assistantText,
   memoryMode,
-  policy,
   toolCalls,
 }: {
   threadId: string;
@@ -18,7 +16,6 @@ export function buildRealtimeVoiceTurnRecordInput({
   userText: string;
   assistantText: string;
   memoryMode: VoiceMemoryMode;
-  policy?: RealtimeVoiceTurnPolicyResponse | null;
   toolCalls?: RealtimeVoiceRecordedToolCall[];
 }) {
   return {
@@ -27,8 +24,6 @@ export function buildRealtimeVoiceTurnRecordInput({
     userText,
     assistantText,
     memoryMode,
-    route: policy?.route,
-    responseStyle: policy?.response_style,
     toolCalls: toolCalls || [],
   };
 }

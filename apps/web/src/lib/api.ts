@@ -151,14 +151,6 @@ export interface RealtimeVoiceRecordedToolCall {
   error?: string;
 }
 
-export interface RealtimeVoiceTurnPolicyResponse {
-  route: string;
-  response_style: string;
-  required_tool_name: string | null;
-  required_tool_arguments: Record<string, unknown>;
-  instructions: string;
-}
-
 export interface RealtimeVoiceEndSessionResponse {
   finalized: boolean;
   summary: string | null;
@@ -609,41 +601,12 @@ export async function executeRealtimeVoiceTool({
   return res.json();
 }
 
-export async function prepareRealtimeVoiceTurnPolicy({
-  threadId,
-  userId,
-  userText,
-  memoryMode,
-}: {
-  threadId: string;
-  userId?: string;
-  userText: string;
-  memoryMode: VoiceMemoryMode;
-}): Promise<RealtimeVoiceTurnPolicyResponse> {
-  const res = await fetch(`${API_BASE}/voice/realtime/turn-policy`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      thread_id: threadId,
-      user_id: userId || undefined,
-      user_text: userText,
-      memory_mode: memoryMode,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Realtime voice turn policy failed: ${res.status}`);
-  }
-  return res.json();
-}
-
 export async function recordRealtimeVoiceTurn({
   threadId,
   userId,
   userText,
   assistantText,
   memoryMode,
-  route,
-  responseStyle,
   toolCalls,
 }: {
   threadId: string;
@@ -651,8 +614,6 @@ export async function recordRealtimeVoiceTurn({
   userText: string;
   assistantText: string;
   memoryMode: VoiceMemoryMode;
-  route?: string | null;
-  responseStyle?: string | null;
   toolCalls?: RealtimeVoiceRecordedToolCall[];
 }): Promise<RealtimeVoiceTurnRecordResponse> {
   const res = await fetch(`${API_BASE}/voice/realtime/turn`, {
@@ -664,8 +625,6 @@ export async function recordRealtimeVoiceTurn({
       user_text: userText,
       assistant_text: assistantText,
       memory_mode: memoryMode,
-      route: route || undefined,
-      response_style: responseStyle || undefined,
       tool_calls: toolCalls || [],
     }),
   });

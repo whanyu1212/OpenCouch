@@ -57,13 +57,13 @@ long-term memory.
 |---|---|---|
 | `/api/voice/realtime/session` | `POST` | Create an OpenAI Realtime client secret for browser WebRTC voice |
 | `/api/voice/realtime/tools` | `POST` | Execute one app-owned Realtime function tool call |
-| `/api/voice/realtime/turn-policy` | `POST` | Return observe-only app policy for a finalized voice transcript |
 | `/api/voice/realtime/turn` | `POST` | Persist a finalized voice user/assistant turn in app-owned history |
 | `/api/voice/realtime/end` | `POST` | Finalize a persistent voice session through the runtime session finalizer |
 
 Voice is OpenAI Realtime-native. The browser owns WebRTC audio, while
 the backend owns session configuration, memory bootstrap, function-tool
-execution, turn persistence, and end-session memory finalization.
+execution, route/style inference during turn persistence, and
+end-session memory finalization.
 
 Session creation request:
 
@@ -92,18 +92,6 @@ Tool execution request:
 }
 ```
 
-Turn-policy response:
-
-```json
-{
-  "route": "grounded_lookup",
-  "response_style": "grounded_lookup",
-  "required_tool_name": "answer_grounded_lookup",
-  "required_tool_arguments": {"query": "Can you look up the official guidance?"},
-  "instructions": "Call answer_grounded_lookup exactly once before answering. Answer only from the tool result."
-}
-```
-
 Turn recording request:
 
 ```json
@@ -113,8 +101,6 @@ Turn recording request:
   "memory_mode": "persistent",
   "user_text": "Can you look up the official guidance?",
   "assistant_text": "I found the official source...",
-  "route": "grounded_lookup",
-  "response_style": "grounded_lookup",
   "tool_calls": [
     {
       "tool_name": "answer_grounded_lookup",
@@ -124,6 +110,9 @@ Turn recording request:
   ]
 }
 ```
+
+The backend infers the recorded `route` and `response_style` from the
+tool calls that occurred during the Realtime turn.
 
 End-session request:
 

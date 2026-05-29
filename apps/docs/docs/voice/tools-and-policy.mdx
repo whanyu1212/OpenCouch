@@ -15,6 +15,7 @@ guided exercises.
 
 | Tool | Mode | Purpose |
 |---|---|---|
+| `wait_for_user` | Incognito + persistent | Stay quiet for silence, background audio, side conversations, or speech not addressed to OpenCouch. |
 | `show_memory_status` | Incognito + persistent | Explain whether memory is enabled and report saved-memory counts. |
 | `load_therapeutic_response_skill` | Incognito + persistent | Load prompt-local therapeutic response-style guidance for ordinary replies. |
 | `answer_grounded_lookup` | Incognito + persistent | Answer explicit current, official, source-backed, or externally verifiable requests from grounded results. |
@@ -34,23 +35,26 @@ Persistent-only tools are rejected in incognito voice mode. The one
 exception is `show_memory_status`, which returns an explicit incognito
 status so the assistant can explain that durable memory is off.
 
-## Observe-only turn policy
+## Realtime-owned turns
 
-After a final user transcript arrives, the browser calls
-`POST /api/voice/realtime/turn-policy`. The backend returns a
-`VoiceTurnPolicy` with:
+Realtime server VAD owns turn detection and response creation for live
+voice sessions. The session configuration enables automatic response
+creation after finalized user speech, so the browser does not call a
+backend policy endpoint before each response.
 
-| Field | Meaning |
-|---|---|
-| `route` | App-level route label such as `therapeutic`, `grounded_lookup`, or `crisis`. |
-| `response_style` | Voice response style metadata recorded with the turn. |
-| `required_tool_name` | Optional tool that the Realtime session should call before answering. |
-| `required_tool_arguments` | Tool arguments for required calls, such as a grounded lookup query. |
-| `instructions` | Short Realtime instructions injected into the next `response.create`. |
+The backend still owns the app-specific boundaries:
 
-This policy is intentionally lightweight. It is not a second text-agent
-turn. It gives the live Realtime model app-owned constraints while
-leaving speech response generation in the Realtime session.
+- Realtime function tools call `POST /api/voice/realtime/tools`.
+- Tools that require app data, safety resources, memory state, grounded
+  lookup, or guided-exercise state execute through shared backend
+  services.
+- `wait_for_user` is a no-op signal for silence, background audio, side
+  conversations, or speech not addressed to OpenCouch. Its function
+  output is returned to Realtime without asking the model to continue.
+- When the browser records a completed exchange through
+  `POST /api/voice/realtime/turn`, the backend infers route and
+  response-style metadata from the actual tool calls that happened in
+  the Realtime session.
 
 ## Crisis and factual lookups
 
@@ -93,7 +97,7 @@ provided.
 | File | Purpose |
 |---|---|
 | `agent/voice/tools.py` | Realtime function-tool schemas and dispatcher. |
-| `agent/voice/turn_policy.py` | Observe-only voice turn policy model and policy builder. |
+| `agent/voice/turn_metadata.py` | Route and response-style metadata inference from recorded Realtime tool calls. |
 | `agent/voice/policy.py` | Compact Realtime instruction policy for one voice session. |
 | `agent/tools/` | Shared tool implementations used by both text and voice. |
 | `agent/skills/guided_exercises/registry.py` | Shared exercise catalog and voice filtering. |

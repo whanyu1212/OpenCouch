@@ -33,23 +33,23 @@ channel. The browser handles them in `apps/web/src/lib/realtime-voice-session.ts
 
 | Event family | Browser behavior |
 |---|---|
-| Final user transcript | Calls `POST /api/voice/realtime/turn-policy` and sends a `response.create` event with the returned instructions. |
+| Final user transcript | Stores the pending user transcript. Realtime server VAD creates the next response automatically. |
 | Final assistant transcript | Pairs it with the pending user transcript and records the turn. |
-| Function call | Calls `POST /api/voice/realtime/tools`, sends the function-call output back to Realtime, then asks Realtime to continue. |
+| Function call | Calls `POST /api/voice/realtime/tools` and sends the function-call output back to Realtime. Most tools then ask Realtime to continue; `wait_for_user` intentionally does not. |
 | Agent speaking / ready state | Updates the UI and session store so the page can show listening, warming, and speaking states. |
 
-The turn-policy endpoint is observe-only. It does not run the text
-agent. It gives the live Realtime session a small app-owned hint such
-as "call grounded lookup before answering" or "use crisis resources
-when specific resources are needed."
+The live speech loop is Realtime-native. OpenCouch does not run the
+text agent or a per-turn policy endpoint before voice responses.
+App-owned behavior is enforced through the session instructions,
+Realtime function tools, and persisted turn metadata.
 
 ## Turn recording
 
 When both sides of a spoken exchange are finalized, the browser calls
 `POST /api/voice/realtime/turn`. The backend calls
 `PersistentAgentRuntime.record_voice_turn(...)`, which appends the
-finalized user/assistant transcript entries, route metadata,
-response-style metadata, grounded lookup result metadata, and
+finalized user/assistant transcript entries, inferred route metadata,
+inferred response-style metadata, grounded lookup result metadata, and
 voice-specific diagnostics to the persisted thread state.
 
 Incognito voice skips durable turn recording and returns
@@ -74,6 +74,6 @@ without durable finalization.
 | `apps/web/src/components/realtime-voice-session-provider.tsx` | App-shell provider that stores voice state, transcripts, activity, errors, and finalization status. |
 | `apps/web/src/app/voice/page.tsx` | Production voice UI. |
 | `apps/web/src/app/voice/realtime-dev/page.tsx` | Raw dogfood/debug UI for Realtime events. |
-| `apps/backend/api/routes/voice.py` | FastAPI endpoints for Realtime session, tools, policy, turn recording, and end. |
+| `apps/backend/api/routes/voice.py` | FastAPI endpoints for Realtime session creation, tool execution, turn recording, and end-session finalization. |
 | `apps/backend/agent/voice/realtime.py` | Realtime session configuration and client-secret creation. |
-| `apps/backend/agent/runtime/runtime.py` | Shared runtime methods used by voice: memory bootstrap, tool context, turn policy, turn recording, and end session. |
+| `apps/backend/agent/runtime/runtime.py` | Shared runtime methods used by voice: memory bootstrap, tool context, turn recording, and end session. |
