@@ -47,6 +47,8 @@ Source layout:
   specialist agent definitions split by owner.
 - `agent/tools/`: memory, grounded lookup, crisis lookup, therapeutic skill,
   and guided-exercise skill tools exposed to the SDK.
+- `agent/memory/control/`: saved-memory inspection, preference updates, and
+  pending deletion state shared by text and voice tools.
 
 ## Memory And Session Boundaries
 

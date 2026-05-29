@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -145,6 +146,73 @@ def _multiple_matches_reply(targets: list[MemoryControlTarget]) -> str:
         for index, target in enumerate(targets, start=1)
     )
     return "\n\n".join([lines[0], "\n".join(lines[1:])])
+
+
+def _pending_delete_options(targets: list[MemoryControlTarget]) -> dict[str, Any]:
+    """Return pending-state payload for a disambiguation list."""
+
+    return {"type": "delete_options", "targets": targets}
+
+
+def _pending_delete_options_from_action(
+    pending_action: Mapping[str, Any] | None,
+) -> list[MemoryControlTarget] | None:
+    """Extract pending deletion candidates from serialized memory-control state."""
+
+    if not pending_action or pending_action.get("type") != "delete_options":
+        return None
+    raw_targets = pending_action.get("targets")
+    if not isinstance(raw_targets, list) or not raw_targets:
+        return None
+    targets: list[MemoryControlTarget] = []
+    for raw_target in raw_targets:
+        if not isinstance(raw_target, Mapping):
+            return None
+        if raw_target.get("kind") not in {"fact", "session", "rule"}:
+            return None
+        if not isinstance(raw_target.get("key"), str):
+            return None
+        if not isinstance(raw_target.get("preview"), str):
+            return None
+        namespace = raw_target.get("namespace")
+        if not isinstance(namespace, list) or not all(
+            isinstance(part, str) for part in namespace
+        ):
+            return None
+        rule_id = raw_target.get("rule_id")
+        if rule_id is not None and not isinstance(rule_id, str):
+            return None
+        targets.append(
+            {
+                "kind": cast(Literal["fact", "session", "rule"], raw_target["kind"]),
+                "namespace": namespace,
+                "key": raw_target["key"],
+                "rule_id": rule_id,
+                "preview": raw_target["preview"],
+            }
+        )
+    return targets
+
+
+def _pending_delete_selection_index(query: str, option_count: int) -> int | None:
+    """Return zero-based selected option index from a user disambiguation reply."""
+
+    match = re.search(r"\b(\d+)\b", query)
+    if match is None:
+        return None
+    index_1based = int(match.group(1))
+    if index_1based < 1 or index_1based > option_count:
+        return None
+    return index_1based - 1
+
+
+def _invalid_delete_selection_reply(targets: list[MemoryControlTarget]) -> str:
+    """Return wording for an out-of-range deletion option reply."""
+
+    return (
+        "Please choose one of the listed memory options by number, or say cancel.\n\n"
+        + _multiple_matches_reply(targets)
+    )
 
 
 def _incognito_reply() -> str:
@@ -394,9 +462,34 @@ def _is_session_wide_forget_query(query: str) -> bool:
 
 
 async def _handle_forget_by_query(
-    *, action: ForgetByQueryAction, store: Any, owner_id: str
+    *,
+    action: ForgetByQueryAction,
+    store: Any,
+    owner_id: str,
+    pending_action: Mapping[str, Any] | None,
 ) -> MemoryControlServiceResult:
     clear_session_buffer = _is_session_wide_forget_query(action.query)
+    pending_options = _pending_delete_options_from_action(pending_action)
+    if pending_options is not None:
+        selection_index = _pending_delete_selection_index(
+            action.query,
+            option_count=len(pending_options),
+        )
+        if selection_index is None:
+            return MemoryControlServiceResult(
+                response_text=_invalid_delete_selection_reply(pending_options),
+                memory_control={
+                    "pending_action": _pending_delete_options(pending_options)
+                },
+                clear_session_buffer=clear_session_buffer,
+            )
+        target = pending_options[selection_index]
+        return MemoryControlServiceResult(
+            response_text=_pending_delete_reply(target),
+            memory_control={"pending_action": {"type": "delete", "target": target}},
+            clear_session_buffer=clear_session_buffer,
+        )
+
     targets = await find_memory_targets(store, owner_id=owner_id, query=action.query)
     if not targets:
         return MemoryControlServiceResult(
@@ -407,7 +500,7 @@ async def _handle_forget_by_query(
     if len(targets) > 1:
         return MemoryControlServiceResult(
             response_text=_multiple_matches_reply(targets),
-            memory_control={"pending_action": None},
+            memory_control={"pending_action": _pending_delete_options(targets)},
             clear_session_buffer=clear_session_buffer,
         )
     target = targets[0]
@@ -512,7 +605,10 @@ async def execute_memory_control_request(
             )
         case ForgetByQueryAction():
             return await _handle_forget_by_query(
-                action=action, store=store, owner_id=owner_id
+                action=action,
+                store=store,
+                owner_id=owner_id,
+                pending_action=request.pending_action,
             )
         case ConfirmPendingAction():
             return await _handle_confirm_pending(

@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
 
-from openai import APIConnectionError, AuthenticationError, OpenAIError
-
+from agent.flows.sdk_fallback import (
+    can_fallback_to_control_response,
+    openai_sdk_fallback_reason,
+)
 from agent.observability.timing import elapsed_ms
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.specialists.therapeutic_prompts import (
@@ -37,16 +39,19 @@ from agent.state import AgentState
 from llm.base import BaseLLMClient
 
 
-_OPENAI_API_KEY_FALLBACK_REASON = "missing_openai_api_key"
-_OPENAI_CONNECTION_FALLBACK_REASON = "openai_api_connection_error"
-
-
 @dataclass(frozen=True)
 class TherapeuticAgentResult:
     response_text: str
     runtime_mode: str
     response_style: str
     sdk_duration_ms: float
+
+
+@dataclass(frozen=True)
+class TherapeuticToolMergeResult:
+    runtime_mode: str
+    response_style: str
+    response_text: str
 
 
 @dataclass(frozen=True)
@@ -272,15 +277,15 @@ def resolve_therapeutic_result(
     response_text: str,
     sdk_duration_ms: float,
 ) -> TherapeuticAgentResult:
-    runtime_mode, response_style, resolved_text = merge_therapeutic_tool_results(
+    merge_result = merge_therapeutic_tool_results(
         state,
         run_context=run_context,
         response_text=response_text,
     )
     return TherapeuticAgentResult(
-        response_text=resolved_text,
-        runtime_mode=runtime_mode,
-        response_style=response_style,
+        response_text=merge_result.response_text,
+        runtime_mode=merge_result.runtime_mode,
+        response_style=merge_result.response_style,
         sdk_duration_ms=sdk_duration_ms,
     )
 
@@ -330,23 +335,6 @@ def therapeutic_agent_prompt_for_state(state: AgentState) -> str:
         f"{memory_block}\n"
         f"Current user message:\nuser: {state['message']}"
     )
-
-
-def can_fallback_to_control_response(
-    exc: Exception,
-    context: WorkflowContext,
-) -> bool:
-    return (
-        context.llm_client is not None and openai_sdk_fallback_reason(exc) is not None
-    )
-
-
-def openai_sdk_fallback_reason(exc: Exception) -> str | None:
-    if _is_missing_openai_api_key_error(exc):
-        return _OPENAI_API_KEY_FALLBACK_REASON
-    if isinstance(exc, APIConnectionError):
-        return _OPENAI_CONNECTION_FALLBACK_REASON
-    return None
 
 
 def operational_context_for_prompt(state: AgentState) -> str:
@@ -507,7 +495,7 @@ def merge_therapeutic_tool_results(
     *,
     run_context: OpenAITextRunContext,
     response_text: str,
-) -> tuple[str, str, str]:
+) -> TherapeuticToolMergeResult:
     from agent.runtime.state_ops import apply_state_delta
 
     memory_calls = list(run_context.memory_tool_calls)
@@ -594,21 +582,22 @@ def merge_therapeutic_tool_results(
 
     if grounded_calls:
         apply_state_delta(state, {"route": "grounded_lookup"})
-        return "grounded_lookup", "grounded_lookup", grounded_calls[-1].response_text
+        return TherapeuticToolMergeResult(
+            runtime_mode="grounded_lookup",
+            response_style="grounded_lookup",
+            response_text=grounded_calls[-1].response_text,
+        )
     if memory_calls:
         apply_state_delta(state, {"route": "memory_control"})
-        return "memory_control", "memory_control", memory_calls[-1].response_text
+        return TherapeuticToolMergeResult(
+            runtime_mode="memory_control",
+            response_style="memory_control",
+            response_text=memory_calls[-1].response_text,
+        )
 
     apply_state_delta(state, {"route": "therapeutic"})
-    return "safe_therapeutic", response_style_from_state(state), response_text
-
-
-def _is_missing_openai_api_key_error(exc: Exception) -> bool:
-    if isinstance(exc, AuthenticationError):
-        return True
-    if not isinstance(exc, OpenAIError):
-        return False
-    message = str(exc)
-    return (
-        "OPENAI_API_KEY" in message and "api_key" in message
-    ) or "Missing bearer or basic authentication in header" in message
+    return TherapeuticToolMergeResult(
+        runtime_mode="safe_therapeutic",
+        response_style=response_style_from_state(state),
+        response_text=response_text,
+    )

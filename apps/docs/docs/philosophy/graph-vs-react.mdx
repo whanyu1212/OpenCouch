@@ -52,8 +52,8 @@ specialist; it never asks the SDK "which specialist should I be?"
 **Safety classification.** Crisis assessment runs before any
 specialist is built. There is no serving path that reaches ordinary
 response generation without going through the gate. Implementation:
-`agent/gates/` for the classifier, with the runtime branching on its
-output in `agent/runtime/openai_text_runtime.py`.
+`agent.guardrails` for the classifier, with the runtime branching on
+its output in `agent/runtime/openai_text_runtime.py`.
 
 **Specialist selection.** The runtime picks the specialist agent
 deterministically — `THERAPEUTIC_AGENT_NAME`, `CRISIS_AGENT_NAME`, or

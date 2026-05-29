@@ -30,10 +30,12 @@ from agent.flows.guided_exercise import (
 from agent.flows.grounded_lookup import (
     run_grounded_lookup_turn as run_grounded_lookup_turn_path,
 )
-from agent.flows.therapeutic import (
-    TherapeuticAgentResult as TherapeuticAgentResultPath,
+from agent.flows.sdk_fallback import (
     can_fallback_to_control_response as can_fallback_to_control_response_path,
     openai_sdk_fallback_reason as openai_sdk_fallback_reason_path,
+)
+from agent.flows.therapeutic import (
+    TherapeuticAgentResult as TherapeuticAgentResultPath,
     operational_context_for_prompt as operational_context_for_prompt_path,
     resolve_therapeutic_result as resolve_therapeutic_result_path,
     run_therapeutic_response_llm_stream as run_therapeutic_response_llm_stream_path,
