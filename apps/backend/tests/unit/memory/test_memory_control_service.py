@@ -95,15 +95,22 @@ def _request(
     )
 
 
-async def _seed_fact(store: OpenCouchMemoryStore, *, owner_id: str = "user-1") -> None:
+async def _seed_fact(
+    store: OpenCouchMemoryStore,
+    *,
+    owner_id: str = "user-1",
+    fact_id: str = "fact-presentations",
+    object_identifier: str = "presentations",
+    evidence_quote: str = "Presentations make me anxious.",
+) -> None:
     now = iso_now()
     fact = SemanticFact(
-        id="fact-presentations",
+        id=fact_id,
         category="trigger",
         subject=EntityRef(type="User", identifier=owner_id),
         predicate="WORRIES_ABOUT",
-        object=EntityRef(type="Event", identifier="presentations"),
-        evidence_quote="Presentations make me anxious.",
+        object=EntityRef(type="Event", identifier=object_identifier),
+        evidence_quote=evidence_quote,
         confidence="high",
         source_session_id="thread-1",
         source_turn_index=0,
@@ -257,3 +264,110 @@ async def test_service_confirm_pending_deletes_target() -> None:
     assert "Deleted that saved fact" in result.response_text
     assert result.memory_control == {"pending_action": None}
     assert await store.aget(("user-1", "semantic"), "fact-presentations") is None
+
+
+@pytest.mark.asyncio
+async def test_service_forget_by_query_keeps_multiple_matches_pending() -> None:
+    store = OpenCouchMemoryStore()
+    await _seed_fact(
+        store,
+        fact_id="fact-presentations",
+        evidence_quote="Presentations make me anxious.",
+    )
+    await _seed_fact(
+        store,
+        fact_id="fact-work-presentations",
+        evidence_quote="Work presentations make my chest tight.",
+    )
+
+    result = await execute_memory_control_request(
+        _request(
+            "Forget the saved memory about presentations.",
+            {"type": "forget_by_query", "query": "presentations"},
+        ),
+        _context(store=store),
+    )
+
+    pending_action = result.memory_control["pending_action"]
+    assert pending_action["type"] == "delete_options"
+    assert [target["key"] for target in pending_action["targets"]] == [
+        "fact-presentations",
+        "fact-work-presentations",
+    ]
+    assert "Which one should I delete?" in result.response_text
+
+
+@pytest.mark.asyncio
+async def test_service_forget_by_query_selects_pending_match_by_number() -> None:
+    store = OpenCouchMemoryStore()
+    await _seed_fact(
+        store,
+        fact_id="fact-presentations",
+        evidence_quote="Presentations make me anxious.",
+    )
+    await _seed_fact(
+        store,
+        fact_id="fact-work-presentations",
+        evidence_quote="Work presentations make my chest tight.",
+    )
+    ambiguous_result = await execute_memory_control_request(
+        _request(
+            "Forget the saved memory about presentations.",
+            {"type": "forget_by_query", "query": "presentations"},
+        ),
+        _context(store=store),
+    )
+
+    result = await execute_memory_control_request(
+        _request(
+            "Delete number 2.",
+            {"type": "forget_by_query", "query": "2"},
+            pending_action=ambiguous_result.memory_control["pending_action"],
+        ),
+        _context(store=store),
+    )
+
+    pending_action = result.memory_control["pending_action"]
+    assert pending_action["type"] == "delete"
+    assert pending_action["target"]["key"] == "fact-work-presentations"
+    assert "Do you want me to delete it?" in result.response_text
+    assert (
+        await store.aget(("user-1", "semantic"), "fact-work-presentations") is not None
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_forget_by_query_keeps_options_on_invalid_pending_selection() -> (
+    None
+):
+    store = OpenCouchMemoryStore()
+    await _seed_fact(
+        store,
+        fact_id="fact-presentations",
+        evidence_quote="Presentations make me anxious.",
+    )
+    await _seed_fact(
+        store,
+        fact_id="fact-work-presentations",
+        evidence_quote="Work presentations make my chest tight.",
+    )
+    ambiguous_result = await execute_memory_control_request(
+        _request(
+            "Forget the saved memory about presentations.",
+            {"type": "forget_by_query", "query": "presentations"},
+        ),
+        _context(store=store),
+    )
+    pending_options = ambiguous_result.memory_control["pending_action"]
+
+    result = await execute_memory_control_request(
+        _request(
+            "Delete number 9.",
+            {"type": "forget_by_query", "query": "9"},
+            pending_action=pending_options,
+        ),
+        _context(store=store),
+    )
+
+    assert result.memory_control["pending_action"] == pending_options
+    assert "Please choose one of the listed memory options" in result.response_text

@@ -187,6 +187,7 @@ STALE_PHRASES = {
         "compiled directed graph",
         "LangGraph",
         "Compiled graph",
+        "agent/gates/",
         "crisis_gate_node",
         "finalize_turn_node",
         "graph END",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent.flows.therapeutic import (
+from agent.flows.sdk_fallback import (
     can_fallback_to_control_response,
     openai_sdk_fallback_reason,
 )

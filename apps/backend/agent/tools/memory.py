@@ -277,8 +277,9 @@ async def prepare_memory_deletion_by_index(
     description_override=(
         "Prepare deletion of a saved memory selected by a concrete query. This "
         "only creates a pending deletion or asks the user to disambiguate; it "
-        "must not delete by itself. Side effects: pending deletion state only. "
-        "Retry safety: safe."
+        "can also select a pending disambiguation option when query is a listed "
+        "number. It must not delete by itself. Side effects: pending deletion "
+        "state only. Retry safety: safe."
     ),
 )
 async def prepare_memory_deletion_by_query(
