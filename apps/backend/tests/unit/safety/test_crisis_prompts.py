@@ -88,6 +88,25 @@ def test_crisis_prompt_no_verified_results_names_location_without_numbers() -> N
     assert "Do not invent phone numbers" in prompt
 
 
+def test_crisis_prompt_lookup_error_gives_safe_guidance_without_claiming_lookup() -> (
+    None
+):
+    prompt = build_crisis_response_prompt(
+        _crisis_state(
+            inferred_location="Singapore",
+            resource_lookup_status="lookup_error",
+        )
+    )
+
+    assert "failed due to a temporary issue" in prompt
+    assert "Do not claim a lookup was completed or that no resources exist" in prompt
+    assert "local emergency services" in prompt
+    assert "Do not invent phone numbers" in prompt
+    # The error case must not borrow the verified-empty wording, which would
+    # falsely imply a search ran and returned nothing.
+    assert "No verified, actionable local crisis line was found" not in prompt
+
+
 def test_crisis_prompt_found_resources_includes_verified_resource_block() -> None:
     prompt = build_crisis_response_prompt(
         _crisis_state(

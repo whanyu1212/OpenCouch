@@ -164,6 +164,21 @@ async def write_crisis_log(
     return {}
 
 
+async def record_crisis_outcome(
+    state: Mapping[str, Any],
+    context: Any,
+) -> dict[str, Any]:
+    """Write the crisis audit record for a finalized turn, channel-neutral.
+
+    Thin wrapper over :func:`write_crisis_log` so non-text channels (voice)
+    can audit a crisis through the same seam without importing the text
+    flow. ``write_crisis_log`` self-guards non-crisis turns, so callers may
+    invoke this unconditionally on any finalized turn.
+    """
+
+    return await write_crisis_log(state, context)
+
+
 def _resource_lookup_status_from_state(
     state: Mapping[str, Any],
 ) -> CrisisResourceLookupStatus:
@@ -174,6 +189,7 @@ def _resource_lookup_status_from_state(
         "no_location",
         "location_refused",
         "no_verified_results",
+        "lookup_error",
     }:
         return cast(CrisisResourceLookupStatus, status)
     return "not_attempted"

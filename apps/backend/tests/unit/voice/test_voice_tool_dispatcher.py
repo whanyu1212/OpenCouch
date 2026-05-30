@@ -4,7 +4,8 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
-from agent.voice.tools import execute_voice_tool_call
+from agent.runtime.context import CrisisResourceToolCallRecord
+from agent.voice.tools import _execute_crisis_support_template, execute_voice_tool_call
 
 
 class _RuntimeThatMustNotBuildContext:
@@ -379,6 +380,76 @@ async def test_voice_tool_dispatcher_loads_therapeutic_response_skill() -> None:
     assert output["response_style"] == "supportive"
     assert output["side_effect"] == "none"
     assert "skill_context" in output
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_dispatcher_loads_crisis_support_template() -> None:
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+    async with runtime:
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="get_crisis_support_template",
+            arguments={"risk_level": "imminent"},
+            thread_id="voice-thread",
+            user_id=None,
+            current_user_message="I might hurt myself tonight.",
+            transcript=[{"role": "user", "content": "I might hurt myself tonight."}],
+            llm_client=None,
+        )
+
+    assert output["risk_level"] == "imminent"
+    assert output["side_effect"] == "none"
+    # No prior lookup ran, so the scaffold must steer toward emergency help
+    # without inventing any phone number.
+    assert "emergency services" in output["response_text"]
+
+
+class _ContextWithPriorLookup:
+    """Minimal context exposing one recorded crisis-resource lookup."""
+
+    def __init__(self, record: CrisisResourceToolCallRecord) -> None:
+        self._record = record
+
+    def latest_crisis_resource_tool_result(self) -> CrisisResourceToolCallRecord:
+        return self._record
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_reuses_prior_lookup_resources() -> None:
+    """The scaffold threads verified resources from a prior lookup through.
+
+    Each voice tool call builds a fresh context, but within one context a
+    prior ``lookup_crisis_resources`` result should flow into the scaffold so
+    the model is handed verified numbers it must not restate or invent.
+    """
+
+    context = _ContextWithPriorLookup(
+        CrisisResourceToolCallRecord(
+            tool_name="lookup_crisis_resources",
+            response_text="Verified resource.",
+            inferred_location="Singapore",
+            found_resources=[
+                {
+                    "name": "Samaritans of Singapore",
+                    "phone": "1767",
+                    "url": "https://www.sos.org.sg",
+                    "region": "Singapore",
+                }
+            ],
+            resource_lookup_status="found",
+        )
+    )
+
+    output = await _execute_crisis_support_template(context, {"risk_level": "imminent"})
+
+    assert "Samaritans of Singapore: 1767" in output["response_text"]
+    assert "Do not modify phone numbers" in output["response_text"]
 
 
 @pytest.mark.asyncio

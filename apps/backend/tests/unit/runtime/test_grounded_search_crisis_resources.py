@@ -215,7 +215,7 @@ async def test_lookup_accepts_neutral_request() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookup_returns_safe_fallback_when_resource_search_fails() -> None:
+async def test_lookup_returns_lookup_error_when_resource_search_fails() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
@@ -234,8 +234,31 @@ async def test_lookup_returns_safe_fallback_when_resource_search_fails() -> None
 
     assert location == "Singapore"
     assert resources == []
-    assert status == "no_verified_results"
+    assert status == "lookup_error"
     assert [call["use_search"] for call in llm.calls] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_lookup_returns_lookup_error_on_timeout() -> None:
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            {
+                "status": "provided",
+                "location": "Singapore",
+                "reasoning": "User stated location.",
+            },
+            TimeoutError("provider timed out"),
+        ],
+    )
+
+    location, resources, status = await find_crisis_resources(
+        _state(),
+        llm_client=llm,
+    )
+
+    assert location == "Singapore"
+    assert resources == []
+    assert status == "lookup_error"
 
 
 @pytest.mark.asyncio

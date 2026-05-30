@@ -7,6 +7,7 @@ layer.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -16,6 +17,8 @@ from pydantic import BaseModel, Field
 from agent.runtime.session.state import get_transcript
 from agent.state import AgentState
 from llm.base import BaseLLMClient
+
+logger = logging.getLogger(__name__)
 
 FactualLookupStatus = Literal[
     "not_attempted",
@@ -28,6 +31,7 @@ CrisisResourceLookupStatus = Literal[
     "no_location",
     "location_refused",
     "no_verified_results",
+    "lookup_error",
 ]
 LookupPreflightStatus = Literal["search", "no_verified_answer"]
 LookupSourceQuality = Literal["official", "reputable", "weak", "none"]
@@ -316,7 +320,11 @@ async def find_crisis_resources_for_request(
     try:
         resources, status = await _lookup_resources(location, llm_client=llm_client)
     except Exception:
-        return location, [], "no_verified_results"
+        logger.error(
+            "crisis resource lookup failed; returning lookup_error",
+            exc_info=True,
+        )
+        return location, [], "lookup_error"
     return location, resources, status
 
 

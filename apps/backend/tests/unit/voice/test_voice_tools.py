@@ -69,6 +69,29 @@ def test_voice_tool_surface_includes_therapeutic_response_skill_loader() -> None
     assert "load_therapeutic_response_skill" in names
 
 
+@pytest.mark.parametrize("memory_mode", ["incognito", "persistent"])
+def test_voice_tool_surface_includes_crisis_support_template(memory_mode: str) -> None:
+    # The crisis scaffold is safety-critical and must not depend on memory mode.
+    names = {
+        tool["name"] for tool in build_voice_realtime_tools(memory_mode=memory_mode)
+    }
+
+    assert "get_crisis_support_template" in names
+
+
+def test_crisis_support_template_tool_requires_risk_level_enum() -> None:
+    tool = _tool_by_name("get_crisis_support_template")
+    parameters = tool["parameters"]
+    assert isinstance(parameters, dict)
+    properties = parameters["properties"]
+    assert isinstance(properties, dict)
+    required = parameters["required"]
+    assert isinstance(required, list)
+
+    assert required == ["risk_level"]
+    assert properties["risk_level"]["enum"] == ["moderate", "high", "imminent"]
+
+
 def test_voice_tools_are_realtime_function_schemas() -> None:
     tools = build_voice_realtime_tools(memory_mode="persistent")
 

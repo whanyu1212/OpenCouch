@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -154,6 +156,140 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
     }
     assert state["transcript"][-1]["response_style"] == "grounded_lookup"
     assert state["diagnostics"]["voice_tool_calls"] == ["answer_grounded_lookup"]
+
+
+@pytest.mark.asyncio
+async def test_voice_crisis_turn_writes_one_audit_record() -> None:
+    """A voice turn that called lookup_crisis_resources is audited like text.
+
+    Voice crisis handling is prompt-driven, so the only crisis signal is the
+    model's tool call. The runtime must still write exactly one
+    ``CrisisLogRecord`` so a crisis over voice is as auditable as one over
+    text, and the verified resource status must thread into the record.
+    """
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-crisis-thread",
+            user_id="user-1",
+            user_text="I might hurt myself tonight.",
+            assistant_text="I'm here with you. Your safety matters most right now.",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {
+                        "inferred_location": "Singapore",
+                        "found_resources": [
+                            {
+                                "name": "Samaritans of Singapore",
+                                "phone": "1767",
+                                "url": "https://www.sos.org.sg",
+                                "region": "Singapore",
+                            }
+                        ],
+                        "resource_lookup_status": "found",
+                    },
+                }
+            ],
+            llm_client=None,
+        )
+
+        # The crisis log stamps detected_at in UTC, so read by the UTC day.
+        records = await runtime.crisis_log_backend.alist_by_date(
+            datetime.now(timezone.utc).date()
+        )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.level == 2
+    assert record.reason == "voice_crisis_tool_call"
+    assert record.classifier_path == "llm_primary"
+    assert record.override_kind == "none"
+    assert record.resource_lookup_status == "found"
+    assert record.resource_count == 1
+    assert record.tool_calls == ["lookup_crisis_resources"]
+
+
+@pytest.mark.asyncio
+async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
+    """An ordinary voice turn must not produce a crisis audit record."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text="I had a rough day at work.",
+            assistant_text="That sounds draining. Want to talk it through?",
+            response_style="supportive",
+            llm_client=None,
+        )
+
+        count = await runtime.crisis_log_backend.arecord_count()
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_voice_crisis_turn_records_lookup_error_status() -> None:
+    """A crisis turn whose lookup hit an outage audits lookup_error, not empty.
+
+    Distinguishing a transient lookup failure from a true "no resources"
+    result is the whole point of the ``lookup_error`` status; the audit log
+    must preserve that distinction for review.
+    """
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    async with runtime:
+        await runtime.record_voice_turn(
+            thread_id="voice-crisis-error",
+            user_id="user-1",
+            user_text="I don't think I can stay safe.",
+            assistant_text="Your safety matters most. Let's get you immediate support.",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {
+                        "inferred_location": "Singapore",
+                        "found_resources": [],
+                        "resource_lookup_status": "lookup_error",
+                    },
+                }
+            ],
+            llm_client=None,
+        )
+
+        records = await runtime.crisis_log_backend.alist_by_date(
+            datetime.now(timezone.utc).date()
+        )
+
+    assert len(records) == 1
+    assert records[0].resource_lookup_status == "lookup_error"
+    assert records[0].resource_count == 0
 
 
 @pytest.mark.asyncio
