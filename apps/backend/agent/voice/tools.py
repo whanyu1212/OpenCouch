@@ -486,7 +486,7 @@ async def execute_voice_tool_call(
             ),
         )
 
-    context = await runtime.build_voice_tool_context(
+    context = await runtime.voice.build_voice_tool_context(
         thread_id=thread_id,
         user_id=user_id,
         current_user_message=current_user_message,
@@ -562,7 +562,7 @@ async def execute_voice_tool_call(
         )
     elif tool_name == "lookup_crisis_resources":
         result = await execute_crisis_resource_lookup_tool(context)
-        await runtime.persist_voice_crisis_resource_lookup(
+        await runtime.voice.persist_voice_crisis_resource_lookup(
             thread_id=thread_id,
             user_id=user_id,
             inferred_location=result.inferred_location,

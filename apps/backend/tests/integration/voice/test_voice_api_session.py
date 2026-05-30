@@ -11,7 +11,7 @@ from api.routes import voice as voice_routes
 from tests.support.api_selection import runtime_selection
 
 
-class _FakeRuntime:
+class _FakeVoiceFacade:
     async def voice_session_memory_context(
         self,
         *,
@@ -20,6 +20,10 @@ class _FakeRuntime:
         memory_mode: str,
     ) -> str:
         return ""
+
+
+class _FakeRuntime:
+    voice = _FakeVoiceFacade()
 
 
 @pytest.fixture
@@ -141,7 +145,7 @@ async def test_create_voice_realtime_session_includes_runtime_memory_context(
         captured["safety_identifier"] = safety_identifier
         return "ek_test_secret"
 
-    monkeypatch.setattr(_FakeRuntime, "voice_session_memory_context", fake_context)
+    monkeypatch.setattr(_FakeVoiceFacade, "voice_session_memory_context", fake_context)
     monkeypatch.setattr(
         "agent.voice.realtime.create_realtime_client_secret",
         fake_create_realtime_client_secret,

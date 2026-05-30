@@ -9,11 +9,14 @@ from agent.voice.tools import _execute_crisis_support_template, execute_voice_to
 from tests.support.persistence import FakeCrossRestartLLM
 
 
-class _RuntimeThatMustNotBuildContext:
-    memory_mode = MemoryMode.LOCAL
-
+class _VoiceFacadeThatMustNotBuildContext:
     async def build_voice_tool_context(self, **kwargs: object) -> object:
         raise AssertionError("incognito memory status must not read persistent runtime")
+
+
+class _RuntimeThatMustNotBuildContext:
+    memory_mode = MemoryMode.LOCAL
+    voice = _VoiceFacadeThatMustNotBuildContext()
 
 
 _MUTATOR_CASES = (
@@ -555,7 +558,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
 
     async with runtime:
         # Turn 1: a crisis whose lookup finds and persists a Singapore hotline.
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id=None,
             user_text="I might hurt myself tonight.",
@@ -576,7 +579,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
         # Turn 2: a new crisis turn that pulls the scaffold but does NOT look up
         # resources again. Route is forced to crisis so the audit-population path
         # runs even without a fresh lookup tool call -- the exact bleed scenario.
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id=None,
             user_text="It is getting worse, I do not know what to do.",
@@ -650,14 +653,16 @@ async def test_voice_tool_dispatcher_runtime_incognito_overrides_persistent_body
     cause persistent-only tools to refuse before any context is built.
     """
 
-    class _IncognitoRuntimeThatMustNotBuildContext:
-        memory_mode = MemoryMode.INCOGNITO
-
+    class _IncognitoVoiceFacade:
         async def build_voice_tool_context(self, **kwargs: object) -> object:
             raise AssertionError(
                 "incognito runtime must refuse persistent-only tools "
                 "regardless of request body"
             )
+
+    class _IncognitoRuntimeThatMustNotBuildContext:
+        memory_mode = MemoryMode.INCOGNITO
+        voice = _IncognitoVoiceFacade()
 
     with pytest.raises(ValueError, match="not available in incognito"):
         await execute_voice_tool_call(
