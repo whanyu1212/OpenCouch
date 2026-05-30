@@ -27,7 +27,7 @@ from typing import Any
 import aiosqlite
 
 from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
-from agent.memory.store import (
+from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
     MemoryStore,
     Namespace,
