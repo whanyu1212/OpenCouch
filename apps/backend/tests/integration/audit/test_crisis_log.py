@@ -834,3 +834,63 @@ class TestNullCrisisLogRetentionPurge:
         backend = NullCrisisLogBackend()
         deleted = await backend.apurge_before(date(2026, 4, 1))
         assert deleted == 0
+
+
+class TestCrisisStatusLiteralConsolidation:
+    """Structural guards, not behavior tests.
+
+    The crisis-resource-lookup status type used to be declared in three
+    places under two names, plus a hand-maintained validation set — so
+    adding a value meant editing four copies in lockstep. These pins keep
+    the type at one definition under one name, and keep the runtime
+    validation set derived from (not copied from) that type, so the two
+    can never drift again.
+    """
+
+    def test_status_literal_has_the_expected_values(self) -> None:
+        from typing import get_args
+
+        from agent.audit.models import CrisisResourceLookupStatus
+
+        assert set(get_args(CrisisResourceLookupStatus)) == {
+            "not_attempted",
+            "found",
+            "no_location",
+            "location_refused",
+            "no_verified_results",
+            "lookup_error",
+        }
+
+    def test_validation_set_is_derived_from_the_literal(self) -> None:
+        from typing import get_args
+
+        from agent.audit import crisis_log
+        from agent.audit.models import CrisisResourceLookupStatus
+
+        assert crisis_log._VALID_RESOURCE_LOOKUP_STATUSES == frozenset(
+            get_args(CrisisResourceLookupStatus)
+        )
+
+    def test_old_tool_status_name_is_gone(self) -> None:
+        from agent.runtime import context
+
+        assert not hasattr(context, "CrisisResourceToolStatus")
+
+
+class TestCrisisAuditSeam:
+    """The text crisis path audits through the channel-neutral wrapper.
+
+    ``record_crisis_outcome`` is a passthrough over ``write_crisis_log``,
+    so a regression that routes text back to the lower-level function
+    would still pass every behavior test. This source-level pin guards
+    the seam itself: both channels must audit through one entry point.
+    """
+
+    def test_text_flow_uses_record_crisis_outcome(self) -> None:
+        import inspect
+
+        from agent.flows import crisis as crisis_flow
+
+        source = inspect.getsource(crisis_flow)
+        assert "record_crisis_outcome" in source
+        assert "write_crisis_log" not in source

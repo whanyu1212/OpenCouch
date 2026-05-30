@@ -6,7 +6,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agent.audit.crisis_log import write_crisis_log
+from agent.audit.crisis_log import record_crisis_outcome
 from agent.observability.timing import elapsed_ms
 from agent.runtime.prompt_utils import chunk_from_sdk_event, final_output_text
 from agent.runtime.session.state import format_recent_history
@@ -104,7 +104,7 @@ async def run_crisis_turn(
         else:
             _apply_crisis_resource_tool_result(state, run_context)
         _apply_lookup_delta(state, crisis_response_delta(response_text))
-        await write_crisis_log(state, context)
+        await record_crisis_outcome(state, context)
     else:
         state["route"] = "therapeutic"
         state["response_style"] = response_style
@@ -226,7 +226,7 @@ async def run_crisis_turn_stream(
             yield TextRuntimeChunkEvent(text=response_text)
         _apply_lookup_delta(state, crisis_response_delta(response_text))
         yield TextRuntimeStatusEvent(stage="crisis_log")
-        await write_crisis_log(state, context)
+        await record_crisis_outcome(state, context)
     else:
         for chunk in chunks:
             yield TextRuntimeChunkEvent(text=chunk)
@@ -298,7 +298,7 @@ async def run_crisis_response_llm_turn(
     if runtime_mode == "crisis_response":
         diagnostics["openai_crisis_tool_fallback"] = True
         _apply_lookup_delta(state, crisis_response_delta(response_text))
-        await write_crisis_log(state, context)
+        await record_crisis_outcome(state, context)
     else:
         state["route"] = "therapeutic"
         state["response_style"] = response_style

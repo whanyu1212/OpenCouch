@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
+from agent.audit.models import CrisisResourceLookupStatus
 from agent.models import Channel
 from agent.runtime_context import WorkflowContext
 
@@ -31,14 +32,6 @@ MemoryToolSideEffect = Literal[
     "cancel_pending",
 ]
 GroundedToolStatus = Literal["answered", "no_verified_answer"]
-CrisisResourceToolStatus = Literal[
-    "not_attempted",
-    "found",
-    "no_location",
-    "location_refused",
-    "no_verified_results",
-    "lookup_error",
-]
 GuidedExerciseProgressOutcome = Literal[
     "complete",
     "partial",
@@ -100,7 +93,7 @@ class CrisisResourceToolCallRecord:
     response_text: str
     inferred_location: str
     found_resources: list[dict[str, str]]
-    resource_lookup_status: CrisisResourceToolStatus
+    resource_lookup_status: CrisisResourceLookupStatus
     side_effect: Literal["none"] = "none"
     retry_safe: bool = True
 
@@ -242,7 +235,7 @@ class OpenAITextRunContext:
         response_text: str,
         inferred_location: str,
         found_resources: list[dict[str, str]],
-        resource_lookup_status: CrisisResourceToolStatus,
+        resource_lookup_status: CrisisResourceLookupStatus,
     ) -> None:
         """Remember a crisis-resource lookup result for state merge."""
 

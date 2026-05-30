@@ -7,10 +7,8 @@ from typing import Any, Literal, cast
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
-from agent.runtime.context import (
-    CrisisResourceToolStatus,
-    OpenAITextRunContext,
-)
+from agent.audit.models import CrisisResourceLookupStatus
+from agent.runtime.context import OpenAITextRunContext
 from agent.runtime_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded_search import (
@@ -34,7 +32,7 @@ class CrisisResourceLookupToolResult(BaseModel):
         default_factory=list,
         description="Verified crisis-resource rows from official/reputable sources.",
     )
-    resource_lookup_status: CrisisResourceToolStatus = Field(
+    resource_lookup_status: CrisisResourceLookupStatus = Field(
         description="Whether local crisis resources were found or why not."
     )
     side_effect: str = Field(
@@ -140,11 +138,11 @@ async def execute_crisis_resource_lookup_tool(
         response_text=_resource_lookup_response_text(
             inferred_location=inferred_location,
             found_resources=found_resources,
-            status=cast(CrisisResourceToolStatus, status),
+            status=cast(CrisisResourceLookupStatus, status),
         ),
         inferred_location=inferred_location,
         found_resources=found_resources,
-        resource_lookup_status=cast(CrisisResourceToolStatus, status),
+        resource_lookup_status=cast(CrisisResourceLookupStatus, status),
     )
     context.record_crisis_resource_tool_result(
         response_text=result.response_text,
@@ -177,7 +175,7 @@ async def execute_crisis_support_template_tool(
     risk_level: str,
     inferred_location: str = "",
     found_resources: list[dict[str, str]] | None = None,
-    resource_lookup_status: CrisisResourceToolStatus = "not_attempted",
+    resource_lookup_status: CrisisResourceLookupStatus = "not_attempted",
 ) -> CrisisSupportTemplateToolResult:
     """Return a deterministic safety scaffold for the crisis specialist."""
 
@@ -235,7 +233,7 @@ async def get_crisis_support_template(
     wrapper: RunContextWrapper[OpenAITextRunContext],
     risk_level: str,
     inferred_location: str = "",
-    resource_lookup_status: CrisisResourceToolStatus = "not_attempted",
+    resource_lookup_status: CrisisResourceLookupStatus = "not_attempted",
     resource_name: str = "",
     resource_phone: str = "",
     resource_url: str = "",
@@ -328,7 +326,7 @@ def _resource_lookup_response_text(
     *,
     inferred_location: str,
     found_resources: list[dict[str, str]],
-    status: CrisisResourceToolStatus,
+    status: CrisisResourceLookupStatus,
 ) -> str:
     if found_resources:
         location_label = inferred_location or "the user's region"

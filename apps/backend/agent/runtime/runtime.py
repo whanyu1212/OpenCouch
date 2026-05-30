@@ -20,6 +20,7 @@ from agent.runtime.session.active_session import (
 )
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend, record_crisis_outcome
+from agent.audit.models import CrisisResourceLookupStatus
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
@@ -59,7 +60,7 @@ from agent.runtime.session_store import (
     create_text_session_store,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
-from agent.runtime.context import CrisisResourceToolStatus, OpenAITextRunContext
+from agent.runtime.context import OpenAITextRunContext
 from agent.voice.turn_metadata import infer_voice_turn_metadata
 from agent.voice.transcript import voice_turn_to_transcript_entries
 from agent.memory.modes import MemoryMode
@@ -1169,7 +1170,7 @@ class PersistentAgentRuntime:
                 inferred_location if isinstance(inferred_location, str) else ""
             ),
             found_resources=rows,
-            resource_lookup_status=cast(CrisisResourceToolStatus, status),
+            resource_lookup_status=cast(CrisisResourceLookupStatus, status),
         )
 
     async def persist_voice_crisis_resource_lookup(
