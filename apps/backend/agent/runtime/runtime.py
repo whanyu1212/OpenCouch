@@ -1299,6 +1299,17 @@ class PersistentAgentRuntime:
                 AgentState,
                 {**dict(initial_state), **dict(prior_state or {})},
             )
+            # Crisis-resource fields persist across turns so a within-turn
+            # get_crisis_support_template can reuse the lookup from the same
+            # turn (see persist/rehydrate in build_voice_tool_context). The
+            # prior-wins merge above also carries a *previous* turn's lookup
+            # into this turn, though, so reset to the per-turn baseline here:
+            # this turn's real lookup, if any, is written back below from its
+            # own tool calls, and a turn with no fresh lookup must not surface
+            # a stale hotline from an earlier turn.
+            state["resource_lookup_status"] = "not_attempted"
+            state["found_resources"] = []
+            state["inferred_location"] = ""
             prior_transcript = (
                 list(prior_state.get("transcript", []) or [])
                 if prior_state is not None

@@ -110,50 +110,58 @@ async def write_crisis_log(
         logger.debug("crisis log called on non-crisis turn; skipping write")
         return {}
 
-    backend = context.crisis_log_backend
-    crisis_audit = state.get("crisis_audit", {})
-    override_kind = crisis_audit.get("crisis_override_kind", "none")
-    classifier_path = crisis_audit.get("crisis_classifier_path", "llm_primary")
-    llm_failure_occurred = crisis_audit.get("crisis_llm_failure_occurred", False)
-
-    if "crisis_classifier_path" not in crisis_audit:
-        logger.debug(
-            "crisis log: no classifier_path in crisis_audit state; "
-            "using default 'llm_primary'"
-        )
-
-    user_id = (
-        None if context.memory_mode == MemoryMode.INCOGNITO else state.get("user_id")
-    )
-    level = crisis.get("level", 0) if isinstance(crisis, Mapping) else crisis.level
-    reason = crisis.get("reason", "") if isinstance(crisis, Mapping) else crisis.reason
-    diagnostics = state.get("diagnostics", {})
-    if not isinstance(diagnostics, Mapping):
-        diagnostics = {}
-    response_path = _response_path_from_diagnostics(diagnostics)
-    record = CrisisLogRecord(
-        id=str(uuid4()),
-        session_id_opaque=hash_session_id(state.get("session_id")),
-        user_id_or_null=user_id,
-        detected_at=iso_now(),
-        level=level,
-        override_kind=override_kind,
-        classifier_path=classifier_path,
-        reason=reason or "",
-        response_node_completed=True,
-        llm_failure_occurred=llm_failure_occurred,
-        response_style=str(state.get("response_style") or "crisis_response"),
-        resource_lookup_status=_resource_lookup_status_from_state(state),
-        resource_count=_resource_count_from_state(state),
-        tool_calls=_tool_calls_from_diagnostics(diagnostics),
-        response_path=response_path,
-        fallback_reason=_fallback_reason_from_diagnostics(
-            diagnostics,
-            response_path=response_path,
-        ),
-    )
-
+    # Guard the whole write, not just the append: record construction reads
+    # several state fields and validates a Pydantic model, and the backend
+    # handle is resolved here too. A crisis audit write is a safety side-channel
+    # -- if any of it raises, it must degrade to a logged error and never
+    # propagate out to break the crisis response or the turn lifecycle.
     try:
+        backend = context.crisis_log_backend
+        crisis_audit = state.get("crisis_audit", {})
+        override_kind = crisis_audit.get("crisis_override_kind", "none")
+        classifier_path = crisis_audit.get("crisis_classifier_path", "llm_primary")
+        llm_failure_occurred = crisis_audit.get("crisis_llm_failure_occurred", False)
+
+        if "crisis_classifier_path" not in crisis_audit:
+            logger.debug(
+                "crisis log: no classifier_path in crisis_audit state; "
+                "using default 'llm_primary'"
+            )
+
+        user_id = (
+            None
+            if context.memory_mode == MemoryMode.INCOGNITO
+            else state.get("user_id")
+        )
+        level = crisis.get("level", 0) if isinstance(crisis, Mapping) else crisis.level
+        reason = (
+            crisis.get("reason", "") if isinstance(crisis, Mapping) else crisis.reason
+        )
+        diagnostics = state.get("diagnostics", {})
+        if not isinstance(diagnostics, Mapping):
+            diagnostics = {}
+        response_path = _response_path_from_diagnostics(diagnostics)
+        record = CrisisLogRecord(
+            id=str(uuid4()),
+            session_id_opaque=hash_session_id(state.get("session_id")),
+            user_id_or_null=user_id,
+            detected_at=iso_now(),
+            level=level,
+            override_kind=override_kind,
+            classifier_path=classifier_path,
+            reason=reason or "",
+            response_node_completed=True,
+            llm_failure_occurred=llm_failure_occurred,
+            response_style=str(state.get("response_style") or "crisis_response"),
+            resource_lookup_status=_resource_lookup_status_from_state(state),
+            resource_count=_resource_count_from_state(state),
+            tool_calls=_tool_calls_from_diagnostics(diagnostics),
+            response_path=response_path,
+            fallback_reason=_fallback_reason_from_diagnostics(
+                diagnostics,
+                response_path=response_path,
+            ),
+        )
         await backend.aappend(record)
     except Exception:
         logger.error(
@@ -212,6 +220,11 @@ def _tool_calls_from_diagnostics(diagnostics: Mapping[str, Any]) -> list[str]:
 def _response_path_from_diagnostics(
     diagnostics: Mapping[str, Any],
 ) -> CrisisResponsePath:
+    # Voice crisis turns answer in the Realtime model's live reply, not via the
+    # text SDK tool loop, so none of the text fallback keys below are set. Map
+    # them to "sdk" up front; otherwise every voice record would read "unknown".
+    if diagnostics.get("voice_runtime") == "openai_realtime":
+        return "sdk"
     if diagnostics.get("openai_response_llm_override") is True:
         return "response_llm_override"
     if diagnostics.get("openai_crisis_tool_fallback") is True:

@@ -526,6 +526,80 @@ async def test_crisis_support_template_reuses_lookup_across_separate_tool_calls(
 
 
 @pytest.mark.asyncio
+async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
+    """A new crisis turn must not surface a prior turn's verified resources.
+
+    Crisis-resource fields persist across turns so a within-turn template can
+    reuse the same turn's lookup. The prior-wins state merge in
+    ``record_voice_turn`` would also carry a *previous* turn's lookup forward,
+    so a later crisis turn that calls ``get_crisis_support_template`` without a
+    fresh ``lookup_crisis_resources`` could otherwise recite a stale (possibly
+    wrong-country) hotline. The per-turn reset must clear that, leaving the
+    scaffold nothing stale to rehydrate.
+    """
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    found_resource = {
+        "name": "Samaritans of Singapore",
+        "phone": "1767",
+        "url": "https://www.sos.org.sg",
+        "region": "Singapore",
+    }
+
+    async with runtime:
+        # Turn 1: a crisis whose lookup finds and persists a Singapore hotline.
+        await runtime.record_voice_turn(
+            thread_id="voice-thread",
+            user_id=None,
+            user_text="I might hurt myself tonight.",
+            assistant_text="I hear you. Let me find someone you can reach now.",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "output": {
+                        "inferred_location": "Singapore",
+                        "found_resources": [found_resource],
+                        "resource_lookup_status": "found",
+                    },
+                }
+            ],
+        )
+        after_turn_one = await runtime.get_state("voice-thread")
+
+        # Turn 2: a new crisis turn that pulls the scaffold but does NOT look up
+        # resources again. Route is forced to crisis so the audit-population path
+        # runs even without a fresh lookup tool call -- the exact bleed scenario.
+        await runtime.record_voice_turn(
+            thread_id="voice-thread",
+            user_id=None,
+            user_text="It is getting worse, I do not know what to do.",
+            assistant_text="You are not alone in this. Let's keep you safe.",
+            route="crisis",
+            response_style="crisis_response",
+            tool_calls=[{"tool_name": "get_crisis_support_template"}],
+        )
+        after_turn_two = await runtime.get_state("voice-thread")
+
+    assert after_turn_one is not None
+    # Turn 1 persisted the verified resource so a same-turn scaffold could use it.
+    assert after_turn_one["resource_lookup_status"] == "found"
+    assert after_turn_one["found_resources"] == [found_resource]
+
+    assert after_turn_two is not None
+    # Turn 2 had no fresh lookup, so the prior hotline must not survive.
+    assert after_turn_two["resource_lookup_status"] == "not_attempted"
+    assert after_turn_two["found_resources"] == []
+    assert after_turn_two["inferred_location"] == ""
+
+
+@pytest.mark.asyncio
 async def test_voice_tool_dispatcher_rejects_unknown_tool() -> None:
     runtime = PersistentAgentRuntime(
         sqlite_path=":memory:",
