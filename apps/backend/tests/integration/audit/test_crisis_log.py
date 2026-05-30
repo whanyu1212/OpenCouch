@@ -382,6 +382,61 @@ class TestCrisisLogNode:
         assert delta == {}  # must not raise
         assert any("audit trail lost" in r.message for r in caplog.records)
 
+    @pytest.mark.asyncio
+    async def test_pre_append_failure_is_logged_but_does_not_crash(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failure *before* aappend must also degrade to a logged error.
+
+        The guard previously wrapped only ``backend.aappend``; record
+        construction and backend resolution ran unguarded. A crisis audit
+        write is a safety side-channel reached from inside the turn-finalize
+        path, so any failure here -- not just an I/O failure -- must not
+        propagate and break the turn lifecycle. This drives a failure at
+        backend resolution, which now sits inside the widened guard.
+        """
+
+        class _RaisingContext:
+            memory_mode = MemoryMode.LOCAL
+
+            @property
+            def crisis_log_backend(self) -> InMemoryCrisisLogBackend:
+                raise RuntimeError("simulated backend resolution failure")
+
+        state = _build_crisis_state()
+
+        with caplog.at_level(logging.ERROR, logger="agent.audit.crisis_log"):
+            delta = await write_crisis_log(state, cast(Any, _RaisingContext()))
+
+        assert delta == {}  # must not raise
+        assert any("audit trail lost" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_voice_crisis_record_uses_sdk_response_path(self) -> None:
+        """Voice crisis turns must record a meaningful response_path, not unknown.
+
+        Voice crisis handling answers in the Realtime model's live reply, so the
+        text SDK fallback diagnostics keys are never set. Without a voice-aware
+        branch every voice crisis record would read ``response_path="unknown"``,
+        making the field useless for voice audit reads.
+        """
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=2)
+        state["response_style"] = "crisis_response"
+        state["diagnostics"] = {
+            "voice_runtime": "openai_realtime",
+            "openai_crisis_tool_calls": ["lookup_crisis_resources"],
+        }
+
+        await write_crisis_log(state, runtime.context)
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        assert records[0].response_path == "sdk"
+
 
 # ─── 3. End-to-end crisis log behavior via run_agent ─────────────────────
 

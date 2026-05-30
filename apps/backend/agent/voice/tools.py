@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from agent.tools.crisis import execute_crisis_resource_lookup_tool
+from agent.tools.crisis import (
+    execute_crisis_resource_lookup_tool,
+    execute_crisis_support_template_tool,
+)
 from agent.tools.grounded import execute_grounded_lookup_tool
 from agent.tools.guided_exercise import (
     execute_guided_exercise_discovery_tool,
@@ -25,6 +28,9 @@ from agent.tools.memory import (
 from agent.tools.therapeutic import execute_therapeutic_response_skill_tool
 from llm.base import BaseLLMClient
 
+if TYPE_CHECKING:
+    from agent.runtime.context import CrisisResourceToolStatus
+
 _RECALL_DEFAULT_LIMIT = 5
 _RECALL_MAX_LIMIT = 10
 
@@ -41,6 +47,7 @@ _SUPPORTED_VOICE_TOOL_NAMES = {
     "cancel_memory_deletion",
     "answer_grounded_lookup",
     "lookup_crisis_resources",
+    "get_crisis_support_template",
     "list_guided_exercise_skills",
     "load_therapeutic_response_skill",
     "load_guided_exercise_skill",
@@ -152,6 +159,35 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
             ),
             properties={},
             required=[],
+        ),
+        _function_tool(
+            name="get_crisis_support_template",
+            description=(
+                "Load a deterministic crisis-response safety scaffold to shape "
+                "the current spoken reply when the user expresses self-harm, "
+                "suicidal ideation, or imminent danger. It does not replace "
+                "lookup_crisis_resources and must not be used to invent phone "
+                "numbers. Verified resource details from a prior "
+                "lookup_crisis_resources call are reused automatically. Side "
+                "effects: none."
+            ),
+            properties={
+                "risk_level": {
+                    "type": "string",
+                    "enum": ["moderate", "high", "imminent"],
+                    "description": (
+                        "Severity of the current crisis turn: moderate, high, "
+                        "or imminent."
+                    ),
+                },
+                "inferred_location": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "User-stated location, only if the user already shared it."
+                    ),
+                },
+            },
+            required=["risk_level"],
         ),
         _function_tool(
             name="list_guided_exercise_skills",
@@ -526,6 +562,15 @@ async def execute_voice_tool_call(
         )
     elif tool_name == "lookup_crisis_resources":
         result = await execute_crisis_resource_lookup_tool(context)
+        await runtime.persist_voice_crisis_resource_lookup(
+            thread_id=thread_id,
+            user_id=user_id,
+            inferred_location=result.inferred_location,
+            found_resources=result.found_resources,
+            resource_lookup_status=result.resource_lookup_status,
+        )
+    elif tool_name == "get_crisis_support_template":
+        result = await _execute_crisis_support_template(context, arguments)
     elif tool_name == "list_guided_exercise_skills":
         result = await execute_guided_exercise_discovery_tool(
             context,
@@ -676,6 +721,38 @@ def _voice_mutator_refusal(*, reason: str, response_text: str) -> dict[str, obje
         "side_effect": "none",
         "retry_safe": True,
     }
+
+
+async def _execute_crisis_support_template(
+    context: Any,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    """Load the deterministic crisis scaffold for a spoken crisis turn.
+
+    Mirrors the SDK ``get_crisis_support_template`` tool: when the model does
+    not pass resource details, reuse the latest ``lookup_crisis_resources``
+    result recorded on the context so verified numbers thread through without
+    the voice model re-stating them.
+    """
+
+    inferred_location = _optional_string(arguments.get("inferred_location")) or ""
+    found_resources: list[dict[str, str]] = []
+    resource_lookup_status: CrisisResourceToolStatus = "not_attempted"
+
+    latest_lookup = context.latest_crisis_resource_tool_result()
+    if latest_lookup is not None:
+        found_resources = [dict(row) for row in latest_lookup.found_resources]
+        if not inferred_location:
+            inferred_location = latest_lookup.inferred_location
+        resource_lookup_status = latest_lookup.resource_lookup_status
+
+    result = await execute_crisis_support_template_tool(
+        risk_level=str(arguments.get("risk_level") or "high"),
+        inferred_location=inferred_location,
+        found_resources=found_resources,
+        resource_lookup_status=resource_lookup_status,
+    )
+    return dict(result.model_dump(mode="json"))
 
 
 async def _execute_recall_saved_memory(

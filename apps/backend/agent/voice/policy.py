@@ -49,10 +49,22 @@ def build_voice_instructions(
         "tools, or spend extra reasoning on unclear audio."
     )
     crisis_policy = (
-        "# Crisis Resources\n"
-        "Use lookup_crisis_resources as the only source for specific crisis "
-        "resource names, phone numbers, URLs, or local availability. Do not "
-        "invent crisis resources."
+        "# Crisis Response\n"
+        "When the user expresses self-harm, suicidal thoughts, intent to harm "
+        "someone, or that they may not stay safe, treat this turn as a crisis "
+        "and respond directly and calmly in the same reply. Acknowledge what "
+        "they said without minimizing it, and prioritize immediate safety: if "
+        "they may act soon, encourage local emergency services or the nearest "
+        "emergency department, moving away from anything they could use to hurt "
+        "themselves, and asking someone nearby to stay with them. Ask at most "
+        "one short safety question. Call get_crisis_support_template (with "
+        "risk_level moderate, high, or imminent) to shape the reply, and call "
+        "lookup_crisis_resources to obtain any specific crisis resource names, "
+        "phone numbers, URLs, or local availability. Those tools are the only "
+        "source for crisis resources; never invent or guess a phone number or "
+        "service. Do not diagnose, do not promise confidentiality or that "
+        "everything will be okay, and never claim OpenCouch has contacted "
+        "emergency services or another person."
     )
     exercise_policy = (
         "# Guided Exercises\n"

@@ -173,6 +173,17 @@ def build_crisis_response_prompt(state: AgentState) -> str:
             "and do not ask a follow-up question unless it is needed for an "
             "immediate safety step. Do not invent phone numbers.\n"
         )
+    elif resource_lookup_status == "lookup_error":
+        resource_block = (
+            "\nLooking up local crisis resources failed due to a temporary issue, "
+            "so none could be verified this turn. Do not claim a lookup was "
+            "completed or that no resources exist. Give immediate safety guidance "
+            "using local emergency services, the nearest emergency department, "
+            "moving away from means, and contacting a trusted person nearby. Keep "
+            "this especially brief: 2-4 short sentences, and do not ask a "
+            "follow-up question unless it is needed for an immediate safety step. "
+            "Do not invent phone numbers.\n"
+        )
     else:
         resource_block = (
             "\nNo verified local resources were found. "

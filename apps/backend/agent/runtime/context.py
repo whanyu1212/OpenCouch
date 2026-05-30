@@ -37,6 +37,7 @@ CrisisResourceToolStatus = Literal[
     "no_location",
     "location_refused",
     "no_verified_results",
+    "lookup_error",
 ]
 GuidedExerciseProgressOutcome = Literal[
     "complete",

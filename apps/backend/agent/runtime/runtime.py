@@ -19,7 +19,7 @@ from agent.runtime.session.active_session import (
     SqliteActiveSessionStore,
 )
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.audit.crisis_log import CrisisLogBackend
+from agent.audit.crisis_log import CrisisLogBackend, record_crisis_outcome
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
@@ -59,7 +59,7 @@ from agent.runtime.session_store import (
     create_text_session_store,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
-from agent.runtime.context import OpenAITextRunContext
+from agent.runtime.context import CrisisResourceToolStatus, OpenAITextRunContext
 from agent.voice.turn_metadata import infer_voice_turn_metadata
 from agent.voice.transcript import voice_turn_to_transcript_entries
 from agent.memory.modes import MemoryMode
@@ -79,6 +79,7 @@ from agent.models import (
     AgentInput,
     Channel,
     ChunkEvent,
+    CrisisAssessment,
     DoneEvent,
     Message,
     MessageRole,
@@ -1110,7 +1111,7 @@ class PersistentAgentRuntime:
             response_llm_client=llm_client,
             track_session=False,
         )
-        return OpenAITextRunContext(
+        context = OpenAITextRunContext(
             thread_id=thread_id,
             workflow_context=workflow_context,
             current_user_message=effective_user_message,
@@ -1127,6 +1128,99 @@ class PersistentAgentRuntime:
             transcript=cast(list[dict[str, Any]], list(state.get("transcript", []))),
             turn_count=turn_count_from_state(state),
         )
+        self._rehydrate_crisis_resource_lookup(context, prior_state)
+        return context
+
+    @staticmethod
+    def _rehydrate_crisis_resource_lookup(
+        context: OpenAITextRunContext,
+        prior_state: Mapping[str, Any] | None,
+    ) -> None:
+        """Re-seed a prior voice crisis lookup onto a freshly built context.
+
+        Counterpart to ``persist_voice_crisis_resource_lookup``: because each
+        Realtime tool call builds its own context, the resource result a prior
+        ``lookup_crisis_resources`` call found only survives in thread state.
+        Restoring it here lets ``latest_crisis_resource_tool_result`` return it
+        so ``get_crisis_support_template`` can reuse verified resources instead
+        of degrading to ``not_attempted``.
+
+        Reads ``prior_state`` rather than the merged turn state on purpose: the
+        per-turn ``build_initial_state`` defaults reset these fields to
+        ``not_attempted`` / empty, so only the pre-merge persisted state still
+        carries the prior lookup.
+        """
+
+        if prior_state is None:
+            return
+        status = prior_state.get("resource_lookup_status")
+        if not isinstance(status, str) or status in {"", "not_attempted"}:
+            return
+        found_resources = prior_state.get("found_resources")
+        rows = (
+            [dict(row) for row in found_resources]
+            if isinstance(found_resources, list)
+            else []
+        )
+        inferred_location = prior_state.get("inferred_location")
+        context.record_crisis_resource_tool_result(
+            response_text="",
+            inferred_location=(
+                inferred_location if isinstance(inferred_location, str) else ""
+            ),
+            found_resources=rows,
+            resource_lookup_status=cast(CrisisResourceToolStatus, status),
+        )
+
+    async def persist_voice_crisis_resource_lookup(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        inferred_location: str,
+        found_resources: list[dict[str, str]],
+        resource_lookup_status: str,
+    ) -> None:
+        """Persist a voice crisis-resource lookup so a later tool call can reuse it.
+
+        OpenAI Realtime invokes each app tool as a separate ``/realtime/tools``
+        request, so the ``OpenAITextRunContext`` built per request starts with an
+        empty ``crisis_resource_tool_calls`` list. Without persistence, a later
+        ``get_crisis_support_template`` call cannot see the resource the
+        immediately preceding ``lookup_crisis_resources`` call found. Recording
+        the result onto thread state lets ``build_voice_tool_context`` rehydrate
+        it on the next request. ``save_state`` is a whole-document replace, so
+        this reads-modifies-writes under the thread lock to avoid clobbering
+        concurrent state.
+
+        Tool calls fire mid-turn, before ``record_voice_turn`` finalizes the
+        turn, so on a first-turn crisis no state row exists yet. Seed a minimal
+        turn state in that case rather than dropping the lookup -- a first-turn
+        crisis is exactly when the scaffold must still see the resource.
+        """
+
+        async with self._thread_lock(thread_id):
+            prior_state = await self._state_store.load_state(thread_id)
+            if prior_state is None:
+                state = cast(
+                    AgentState,
+                    dict(
+                        self._build_turn_initial_state(
+                            thread_id=thread_id,
+                            message="voice tool call",
+                            channel=Channel.VOICE,
+                            user_id=user_id,
+                            installed_skills=None,
+                            prior_turn_count=0,
+                        )
+                    ),
+                )
+            else:
+                state = cast(AgentState, dict(prior_state))
+            state["inferred_location"] = inferred_location
+            state["found_resources"] = [dict(row) for row in found_resources]
+            state["resource_lookup_status"] = resource_lookup_status
+            await self._state_store.save_state(thread_id, state)
 
     async def voice_session_memory_context(
         self,
@@ -1205,6 +1299,17 @@ class PersistentAgentRuntime:
                 AgentState,
                 {**dict(initial_state), **dict(prior_state or {})},
             )
+            # Crisis-resource fields persist across turns so a within-turn
+            # get_crisis_support_template can reuse the lookup from the same
+            # turn (see persist/rehydrate in build_voice_tool_context). The
+            # prior-wins merge above also carries a *previous* turn's lookup
+            # into this turn, though, so reset to the per-turn baseline here:
+            # this turn's real lookup, if any, is written back below from its
+            # own tool calls, and a turn with no fresh lookup must not surface
+            # a stale hotline from an earlier turn.
+            state["resource_lookup_status"] = "not_attempted"
+            state["found_resources"] = []
+            state["inferred_location"] = ""
             prior_transcript = (
                 list(prior_state.get("transcript", []) or [])
                 if prior_state is not None
@@ -1212,6 +1317,7 @@ class PersistentAgentRuntime:
             )
             voice_tool_calls = list(tool_calls or [])
             grounded_lookup: dict[str, Any] = {}
+            crisis_resource_output: dict[str, Any] = {}
             for call in voice_tool_calls:
                 if not isinstance(call, Mapping):
                     continue
@@ -1221,6 +1327,8 @@ class PersistentAgentRuntime:
                 grounded_output = output.get("grounded_lookup")
                 if isinstance(grounded_output, Mapping):
                     grounded_lookup = dict(grounded_output)
+                if call.get("tool_name") == "lookup_crisis_resources":
+                    crisis_resource_output = dict(output)
             voice_metadata = infer_voice_turn_metadata(
                 route=route,
                 response_style=response_style,
@@ -1270,6 +1378,13 @@ class PersistentAgentRuntime:
                 }
             )
 
+            if voice_metadata.route == "crisis":
+                self._populate_voice_crisis_audit_state(
+                    state,
+                    crisis_resource_output=crisis_resource_output,
+                    voice_tool_calls=voice_tool_calls,
+                )
+
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="voice_turn",
@@ -1280,6 +1395,19 @@ class PersistentAgentRuntime:
                     session_transcript_soft_limit=None,
                 )
                 await self._state_store.save_state(thread_id, state)
+                # Audit after save_state (synthesis happened before it) so the
+                # persisted turn and its crisis record can never diverge.
+                if voice_metadata.route == "crisis":
+                    crisis_context = self._context_for_turn(
+                        thread_id=thread_id,
+                        message=state.get("message", ""),
+                        prior_state=prior_state,
+                        user_id=user_id,
+                        llm_client=llm_client,
+                        response_llm_client=llm_client,
+                        track_session=False,
+                    )
+                    await record_crisis_outcome(state, crisis_context)
                 await self._ensure_openai_sdk_turn_recorded(
                     thread_id,
                     user_message=user_text,
@@ -1290,6 +1418,54 @@ class PersistentAgentRuntime:
                     mutation_token,
                 )
                 return state
+
+    def _populate_voice_crisis_audit_state(
+        self,
+        state: AgentState,
+        *,
+        crisis_resource_output: Mapping[str, Any],
+        voice_tool_calls: list[dict[str, Any]],
+    ) -> None:
+        """Synthesize crisis audit fields for a voice crisis turn.
+
+        Voice crisis handling is prompt-driven: the route is inferred from the
+        model calling ``lookup_crisis_resources`` (see ``infer_voice_turn_metadata``).
+        There is no server classifier, so the audit record records the
+        tool-call signal rather than a classifier verdict. ``level`` is held at
+        2 because voice has no independent imminence judgment to justify 3, and
+        ``crisis_classifier_path`` is intentionally omitted so ``write_crisis_log``
+        keeps its ``llm_primary`` default rather than inventing a new enum value.
+        """
+
+        state["crisis"] = CrisisAssessment(
+            level=2,
+            confidence="medium",
+            reason="voice_crisis_tool_call",
+            needs_crisis_response=True,
+        )
+        state["crisis_audit"] = {
+            "crisis_override_kind": "none",
+            "crisis_llm_failure_occurred": False,
+        }
+
+        status = crisis_resource_output.get("resource_lookup_status")
+        if isinstance(status, str) and status:
+            state["resource_lookup_status"] = status
+        found_resources = crisis_resource_output.get("found_resources")
+        if isinstance(found_resources, list):
+            state["found_resources"] = [dict(row) for row in found_resources]
+        inferred_location = crisis_resource_output.get("inferred_location")
+        if isinstance(inferred_location, str) and inferred_location:
+            state["inferred_location"] = inferred_location
+
+        crisis_tool_names = [
+            str(call.get("tool_name"))
+            for call in voice_tool_calls
+            if isinstance(call, Mapping) and call.get("tool_name")
+        ]
+        diagnostics = dict(state.get("diagnostics", {}) or {})
+        diagnostics["openai_crisis_tool_calls"] = crisis_tool_names
+        state["diagnostics"] = diagnostics
 
     async def get_history(self, thread_id: str) -> list[Message]:
         """Load the full persisted transcript for a thread.

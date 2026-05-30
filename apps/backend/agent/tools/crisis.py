@@ -365,6 +365,15 @@ def _resource_lookup_response_text(
             "nearby. Briefly state that a local crisis line could not be verified. "
             "Do not invent phone numbers."
         )
+    if status == "lookup_error":
+        return (
+            "Looking up local crisis resources failed due to a temporary issue, "
+            "so none could be verified this turn. Do not claim a lookup was "
+            "completed or that none exist. Give immediate safety guidance using "
+            "local emergency services, the nearest emergency department, moving "
+            "away from means, and contacting a trusted person nearby. Do not "
+            "invent phone numbers."
+        )
     return (
         "No verified local resources were found. Ask once for country or region "
         "only if the user is comfortable sharing it, and do not invent phone "
