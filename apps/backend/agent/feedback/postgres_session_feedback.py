@@ -18,6 +18,7 @@ from psycopg.types.json import Jsonb
 
 from agent.feedback.models import SessionFeedbackRecord
 from agent.feedback.session_feedback import SessionFeedbackBackend
+from agent.memory.hashing import extract_iso_date
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class PostgresSessionFeedbackBackend:
         """
 
         conn = await self._ensure_connection()
-        recorded_date = self._extract_date_prefix(record.recorded_at)
+        recorded_date = extract_iso_date(record.recorded_at)
         serialized = record.model_dump(mode="json")
 
         async with conn.cursor() as cursor:
@@ -241,21 +242,6 @@ class PostgresSessionFeedbackBackend:
                 )
             finally:
                 self._connection = None
-
-    @staticmethod
-    def _extract_date_prefix(recorded_at: str) -> str:
-        """Extract the date prefix from an ISO-8601 timestamp.
-
-        Args:
-            recorded_at (str): ISO-8601 feedback timestamp.
-
-        Returns:
-            str: ``YYYY-MM-DD`` date prefix.
-        """
-
-        date_prefix = recorded_at.split("T", 1)[0]
-        date.fromisoformat(date_prefix)
-        return date_prefix
 
 
 if TYPE_CHECKING:

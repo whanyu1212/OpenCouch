@@ -7,7 +7,7 @@ duplicating timestamp formatting and opaque session-id hashing.
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 _NO_SESSION_PLACEHOLDER = "__no_session_id__"
 
@@ -34,3 +34,26 @@ def iso_now() -> str:
     """
 
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def extract_iso_date(timestamp: str) -> str:
+    """Return the ``YYYY-MM-DD`` date bucket from an ISO-8601 timestamp.
+
+    Splitting on ``"T"`` yields the date portion of a full timestamp and is a
+    no-op for an already-bare date. ``date.fromisoformat`` is called for its
+    validation side effect: a malformed prefix raises ``ValueError`` rather than
+    letting a bad date bucket reach storage.
+
+    Args:
+        timestamp (str): ISO-8601 timestamp (or a bare ``YYYY-MM-DD`` date).
+
+    Returns:
+        str: The ``YYYY-MM-DD`` date prefix.
+
+    Raises:
+        ValueError: If the date prefix is not a valid ISO-8601 date.
+    """
+
+    date_prefix = timestamp.split("T", 1)[0]
+    date.fromisoformat(date_prefix)
+    return date_prefix

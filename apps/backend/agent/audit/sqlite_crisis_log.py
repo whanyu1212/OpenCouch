@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING
 import aiosqlite
 
 from agent.audit.crisis_log import CrisisLogBackend
+from agent.audit.crisis_log_serialization import (
+    deserialize_crisis_record,
+    serialize_crisis_record,
+)
 from agent.audit.models import CrisisLogRecord
+from agent.memory.hashing import extract_iso_date
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +132,8 @@ class SqliteCrisisLogBackend:
         """
 
         conn = await self._ensure_connection()
-        detected_date = self._extract_date_prefix(record.detected_at)
-        serialized = record.model_dump(mode="json")
+        detected_date = extract_iso_date(record.detected_at)
+        serialized = serialize_crisis_record(record)
         value_json = json.dumps(serialized, default=str)
 
         await conn.execute(
@@ -171,9 +176,7 @@ class SqliteCrisisLogBackend:
             (date_prefix,),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [
-            CrisisLogRecord.model_validate(json.loads(row["value"])) for row in rows
-        ]
+        return [deserialize_crisis_record(json.loads(row["value"])) for row in rows]
 
     async def arecord_count(self) -> int:
         """Count SQLite-backed crisis records.
@@ -233,21 +236,6 @@ class SqliteCrisisLogBackend:
                 )
             finally:
                 self._connection = None
-
-    @staticmethod
-    def _extract_date_prefix(detected_at: str) -> str:
-        """Extract the date prefix from an ISO-8601 timestamp.
-
-        Args:
-            detected_at (str): ISO-8601 crisis detection timestamp.
-
-        Returns:
-            str: ``YYYY-MM-DD`` date prefix.
-        """
-
-        date_prefix = detected_at.split("T", 1)[0]
-        date.fromisoformat(date_prefix)
-        return date_prefix
 
 
 if TYPE_CHECKING:

@@ -17,7 +17,12 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from agent.audit.crisis_log import CrisisLogBackend
+from agent.audit.crisis_log_serialization import (
+    deserialize_crisis_record,
+    serialize_crisis_record,
+)
 from agent.audit.models import CrisisLogRecord
+from agent.memory.hashing import extract_iso_date
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +134,8 @@ class PostgresCrisisLogBackend:
         """
 
         conn = await self._ensure_connection()
-        detected_date = self._extract_date_prefix(record.detected_at)
-        serialized = record.model_dump(mode="json")
+        detected_date = extract_iso_date(record.detected_at)
+        serialized = serialize_crisis_record(record)
 
         async with conn.cursor() as cursor:
             await cursor.execute(
@@ -172,7 +177,7 @@ class PostgresCrisisLogBackend:
                 (day.isoformat(),),
             )
             rows = await cursor.fetchall()
-        return [CrisisLogRecord.model_validate(row["value"]) for row in rows]
+        return [deserialize_crisis_record(row["value"]) for row in rows]
 
     async def arecord_count(self) -> int:
         """Count PostgreSQL-backed crisis records.
@@ -232,21 +237,6 @@ class PostgresCrisisLogBackend:
                 )
             finally:
                 self._connection = None
-
-    @staticmethod
-    def _extract_date_prefix(detected_at: str) -> str:
-        """Extract the date prefix from an ISO-8601 timestamp.
-
-        Args:
-            detected_at (str): ISO-8601 crisis detection timestamp.
-
-        Returns:
-            str: ``YYYY-MM-DD`` date prefix.
-        """
-
-        date_prefix = detected_at.split("T", 1)[0]
-        date.fromisoformat(date_prefix)
-        return date_prefix
 
 
 if TYPE_CHECKING:
