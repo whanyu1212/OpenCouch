@@ -894,3 +894,43 @@ class TestCrisisAuditSeam:
         source = inspect.getsource(crisis_flow)
         assert "record_crisis_outcome" in source
         assert "write_crisis_log" not in source
+
+
+class TestCrisisRecordSerializationSeam:
+    """The shared serialization boundary round-trips a record losslessly.
+
+    Both crisis drivers route the Pydantic boundary through
+    ``serialize_crisis_record`` / ``deserialize_crisis_record`` while
+    keeping their own storage encoding (SQLite TEXT via ``json.dumps``,
+    Postgres JSONB via ``Jsonb``). These pin the boundary's contract:
+    serialize→deserialize is the identity, and the serialized form is a
+    plain JSON-encodable dict that both storage paths can encode.
+    """
+
+    def test_round_trip_is_identity(self) -> None:
+        from agent.audit.crisis_log_serialization import (
+            deserialize_crisis_record,
+            serialize_crisis_record,
+        )
+
+        record = _build_retention_record(
+            record_id="seam-roundtrip",
+            detected_at="2026-04-16T10:00:00Z",
+        )
+        restored = deserialize_crisis_record(serialize_crisis_record(record))
+        assert restored == record
+
+    def test_serialized_form_is_json_encodable_dict(self) -> None:
+        import json
+
+        from agent.audit.crisis_log_serialization import serialize_crisis_record
+
+        record = _build_retention_record(
+            record_id="seam-jsonable",
+            detected_at="2026-04-16T10:00:00Z",
+        )
+        serialized = serialize_crisis_record(record)
+        assert isinstance(serialized, dict)
+        # Must survive json.dumps (SQLite TEXT path) without a custom encoder;
+        # the same plain-dict shape is what Postgres wraps in Jsonb.
+        json.dumps(serialized)

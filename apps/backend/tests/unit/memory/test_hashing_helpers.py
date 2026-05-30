@@ -11,7 +11,9 @@ import hashlib
 import re
 from datetime import datetime
 
-from agent.memory.hashing import hash_session_id, iso_now
+import pytest
+
+from agent.memory.hashing import extract_iso_date, hash_session_id, iso_now
 
 
 # ── hash_session_id ────────────────────────────────────────────────
@@ -93,6 +95,40 @@ class TestIsoNow:
         parsed = datetime.fromisoformat(iso_now().replace("Z", "+00:00"))
         assert parsed.utcoffset() is not None
         assert parsed.utcoffset().total_seconds() == 0  # type: ignore[union-attr]
+
+
+# ── extract_iso_date ───────────────────────────────────────────────
+
+
+class TestExtractIsoDate:
+    """Behaviour mirrors the four private ``_extract_date_prefix`` static
+    methods previously duplicated across the crisis and feedback drivers.
+
+    The ``date.fromisoformat`` validation is the load-bearing part: a bad
+    timestamp must raise rather than silently land in a wrong date bucket.
+    """
+
+    def test_extracts_date_portion_from_full_timestamp(self) -> None:
+        """A full ISO-8601 timestamp yields just the ``YYYY-MM-DD`` prefix."""
+        assert extract_iso_date("2026-04-16T10:00:00Z") == "2026-04-16"
+
+    def test_bare_date_is_returned_unchanged(self) -> None:
+        """An already-bare date has no ``"T"`` to split on and round-trips
+        unchanged — callers may pass either a timestamp or a date."""
+        assert extract_iso_date("2026-04-16") == "2026-04-16"
+
+    def test_malformed_prefix_raises_valueerror(self) -> None:
+        """The ``date.fromisoformat`` side effect rejects a non-date prefix,
+        preserving the fail-loud contract the driver copies provided."""
+        with pytest.raises(ValueError):
+            extract_iso_date("not-a-date")
+
+    def test_invalid_calendar_date_raises_valueerror(self) -> None:
+        """A syntactically date-shaped but impossible value (month 13) is
+        still rejected — ``fromisoformat`` validates the calendar, not just
+        the shape."""
+        with pytest.raises(ValueError):
+            extract_iso_date("2026-13-99T00:00:00Z")
 
 
 # ── Public aliases ─────────────────────────────────────────────────

@@ -374,7 +374,7 @@ class TestSqliteBackend:
     async def test_malformed_recorded_at_raises_valueerror(
         self, tmp_path: Path
     ) -> None:
-        """The backend's ``_extract_date_prefix`` helper validates the
+        """The shared ``extract_iso_date`` helper validates the
         ISO-8601 date portion at insert time. A malformed
         ``recorded_at`` should fail loudly rather than silently
         landing the record in a bad date bucket (and breaking
