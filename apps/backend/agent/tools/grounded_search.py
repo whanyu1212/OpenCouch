@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agent.audit.models import CrisisResourceLookupStatus
 from agent.runtime.session.state import get_transcript
 from agent.state import AgentState
 from llm.base import BaseLLMClient
@@ -24,14 +25,6 @@ FactualLookupStatus = Literal[
     "not_attempted",
     "answered",
     "no_verified_answer",
-]
-CrisisResourceLookupStatus = Literal[
-    "not_attempted",
-    "found",
-    "no_location",
-    "location_refused",
-    "no_verified_results",
-    "lookup_error",
 ]
 LookupPreflightStatus = Literal["search", "no_verified_answer"]
 LookupSourceQuality = Literal["official", "reputable", "weak", "none"]

@@ -29,7 +29,7 @@ from agent.tools.therapeutic import execute_therapeutic_response_skill_tool
 from llm.base import BaseLLMClient
 
 if TYPE_CHECKING:
-    from agent.runtime.context import CrisisResourceToolStatus
+    from agent.audit.models import CrisisResourceLookupStatus
 
 _RECALL_DEFAULT_LIMIT = 5
 _RECALL_MAX_LIMIT = 10
@@ -737,7 +737,7 @@ async def _execute_crisis_support_template(
 
     inferred_location = _optional_string(arguments.get("inferred_location")) or ""
     found_resources: list[dict[str, str]] = []
-    resource_lookup_status: CrisisResourceToolStatus = "not_attempted"
+    resource_lookup_status: CrisisResourceLookupStatus = "not_attempted"
 
     latest_lookup = context.latest_crisis_resource_tool_result()
     if latest_lookup is not None:

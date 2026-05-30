@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import date
-from typing import TYPE_CHECKING, Any, Mapping, Protocol, cast
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, cast, get_args
 from uuid import uuid4
 
 from agent.audit.models import (
@@ -33,6 +33,12 @@ from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 
 logger = logging.getLogger(__name__)
+
+# Derived from the canonical Literal so the runtime guard can never drift from
+# the type. Adding a status to CrisisResourceLookupStatus extends this set too.
+_VALID_RESOURCE_LOOKUP_STATUSES: frozenset[str] = frozenset(
+    get_args(CrisisResourceLookupStatus)
+)
 
 
 class CrisisLogBackend(Protocol):
@@ -191,14 +197,7 @@ def _resource_lookup_status_from_state(
     state: Mapping[str, Any],
 ) -> CrisisResourceLookupStatus:
     status = str(state.get("resource_lookup_status") or "not_attempted")
-    if status in {
-        "not_attempted",
-        "found",
-        "no_location",
-        "location_refused",
-        "no_verified_results",
-        "lookup_error",
-    }:
+    if status in _VALID_RESOURCE_LOOKUP_STATUSES:
         return cast(CrisisResourceLookupStatus, status)
     return "not_attempted"
 
