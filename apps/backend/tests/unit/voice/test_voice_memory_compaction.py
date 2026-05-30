@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.runtime.runtime import _compact_voice_memory_context
+from agent.voice.runtime_facade import _compact_voice_memory_context
 
 
 def _compact_context(*, proactive_recall_enabled: bool) -> str:

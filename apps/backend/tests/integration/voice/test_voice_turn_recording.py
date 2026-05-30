@@ -28,7 +28,7 @@ async def test_record_voice_turn_persists_thread_history() -> None:
     )
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id=None,
             user_text="I feel overwhelmed.",
@@ -177,7 +177,7 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
     )
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-crisis-thread",
             user_id="user-1",
             user_text="I might hurt myself tonight.",
@@ -232,7 +232,7 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
     )
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id="user-1",
             user_text="I had a rough day at work.",
@@ -264,7 +264,7 @@ async def test_voice_crisis_turn_records_lookup_error_status() -> None:
     )
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-crisis-error",
             user_id="user-1",
             user_text="I don't think I can stay safe.",
@@ -314,7 +314,7 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization(
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id=None,
             user_text="I feel overwhelmed.",
@@ -438,7 +438,7 @@ async def test_voice_end_with_positive_feedback_writes_record(
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-feedback-thread",
             user_id="user-1",
             user_text="I want to wrap up for today.",
@@ -492,7 +492,7 @@ async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
     app.dependency_overrides[get_llm_client] = lambda: None
 
     async with runtime:
-        await runtime.record_voice_turn(
+        await runtime.voice.record_voice_turn(
             thread_id="voice-incognito-feedback",
             user_id="private-user",
             user_text="I want to wrap up privately.",

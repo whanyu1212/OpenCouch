@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -19,13 +18,11 @@ from agent.runtime.session.active_session import (
     SqliteActiveSessionStore,
 )
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.audit.crisis_log import CrisisLogBackend, record_crisis_outcome
-from agent.audit.models import CrisisResourceLookupStatus
+from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.embeddings import EmbeddingProvider
 from agent.memory.policy.write import text_contains_memory_control_request
-from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.recall import load_memory_for_turn
 from agent.feedback.models import (
     FeedbackLabel,
@@ -60,9 +57,6 @@ from agent.runtime.session_store import (
     create_text_session_store,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
-from agent.runtime.context import OpenAITextRunContext
-from agent.voice.turn_metadata import infer_voice_turn_metadata
-from agent.voice.transcript import voice_turn_to_transcript_entries
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
@@ -80,7 +74,6 @@ from agent.models import (
     AgentInput,
     Channel,
     ChunkEvent,
-    CrisisAssessment,
     DoneEvent,
     Message,
     MessageRole,
@@ -102,7 +95,7 @@ from agent.runtime.types import (
 )
 from agent.runtime_context import PrefetchedTurnMemory
 from agent.runtime_context import WorkflowContext
-from agent.state import AgentState, AgentTurnInputState, resolve_owner_id
+from agent.state import AgentState, AgentTurnInputState
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -515,6 +508,17 @@ class PersistentAgentRuntime:
             thread_llm_clients=self._thread_llm_clients,
             session_sweep_interval_seconds=self._session_sweep_interval_seconds,
             auto_finalize_excluded=self._auto_finalize_excluded,
+        )
+
+        from agent.voice.runtime_facade import VoiceRuntimeFacade
+
+        self.voice = VoiceRuntimeFacade(
+            runtime=self,
+            state_store=self._state_store,
+            memory_store=self._memory_store,
+            active_session_manager=self._active_session_manager,
+            lock_for=self._thread_lock,
+            memory_mode=self.memory_mode,
         )
 
     async def __aenter__(self) -> PersistentAgentRuntime:
@@ -1064,409 +1068,6 @@ class PersistentAgentRuntime:
         """
 
         return await self._state_store.load_state(thread_id)
-
-    async def build_voice_tool_context(
-        self,
-        *,
-        thread_id: str,
-        user_id: str | None,
-        current_user_message: str,
-        transcript: list[dict[str, object]],
-        llm_client: BaseLLMClient | None = None,
-    ) -> OpenAITextRunContext:
-        """Build the app-owned context used by voice function tools."""
-
-        effective_user_message = current_user_message.strip() or _latest_user_text(
-            transcript
-        )
-        if not effective_user_message:
-            effective_user_message = "voice tool call"
-        prior_state = await self.get_state(thread_id)
-        prior_turn_count = turn_count_from_state(prior_state)
-        initial_state = self._build_turn_initial_state(
-            thread_id=thread_id,
-            message=effective_user_message,
-            channel=Channel.VOICE,
-            user_id=user_id,
-            installed_skills=None,
-            prior_turn_count=prior_turn_count,
-        )
-        state = cast(AgentState, {**dict(prior_state or {}), **dict(initial_state)})
-        if transcript:
-            state["transcript"] = cast(Any, [dict(turn) for turn in transcript])
-        elif prior_state is not None:
-            state["transcript"] = list(prior_state.get("transcript", []) or [])
-
-        memory_control = state.get("memory_control", {}) or {}
-        pending_memory_action = (
-            memory_control.get("pending_action")
-            if isinstance(memory_control, Mapping)
-            else None
-        )
-        workflow_context = self._context_for_turn(
-            thread_id=thread_id,
-            message=effective_user_message,
-            prior_state=prior_state,
-            user_id=user_id,
-            llm_client=llm_client,
-            response_llm_client=llm_client,
-            track_session=False,
-        )
-        context = OpenAITextRunContext(
-            thread_id=thread_id,
-            workflow_context=workflow_context,
-            current_user_message=effective_user_message,
-            user_id=user_id,
-            session_id=thread_id,
-            channel=Channel.VOICE,
-            pending_memory_action=(
-                dict(pending_memory_action)
-                if isinstance(pending_memory_action, Mapping)
-                else None
-            ),
-            agent_state=state,
-            installed_skills=list(state.get("installed_skills", []) or []),
-            transcript=cast(list[dict[str, Any]], list(state.get("transcript", []))),
-            turn_count=turn_count_from_state(state),
-        )
-        self._rehydrate_crisis_resource_lookup(context, prior_state)
-        return context
-
-    @staticmethod
-    def _rehydrate_crisis_resource_lookup(
-        context: OpenAITextRunContext,
-        prior_state: Mapping[str, Any] | None,
-    ) -> None:
-        """Re-seed a prior voice crisis lookup onto a freshly built context.
-
-        Counterpart to ``persist_voice_crisis_resource_lookup``: because each
-        Realtime tool call builds its own context, the resource result a prior
-        ``lookup_crisis_resources`` call found only survives in thread state.
-        Restoring it here lets ``latest_crisis_resource_tool_result`` return it
-        so ``get_crisis_support_template`` can reuse verified resources instead
-        of degrading to ``not_attempted``.
-
-        Reads ``prior_state`` rather than the merged turn state on purpose: the
-        per-turn ``build_initial_state`` defaults reset these fields to
-        ``not_attempted`` / empty, so only the pre-merge persisted state still
-        carries the prior lookup.
-        """
-
-        if prior_state is None:
-            return
-        status = prior_state.get("resource_lookup_status")
-        if not isinstance(status, str) or status in {"", "not_attempted"}:
-            return
-        found_resources = prior_state.get("found_resources")
-        rows = (
-            [dict(row) for row in found_resources]
-            if isinstance(found_resources, list)
-            else []
-        )
-        inferred_location = prior_state.get("inferred_location")
-        context.record_crisis_resource_tool_result(
-            response_text="",
-            inferred_location=(
-                inferred_location if isinstance(inferred_location, str) else ""
-            ),
-            found_resources=rows,
-            resource_lookup_status=cast(CrisisResourceLookupStatus, status),
-        )
-
-    async def persist_voice_crisis_resource_lookup(
-        self,
-        *,
-        thread_id: str,
-        user_id: str | None,
-        inferred_location: str,
-        found_resources: list[dict[str, str]],
-        resource_lookup_status: str,
-    ) -> None:
-        """Persist a voice crisis-resource lookup so a later tool call can reuse it.
-
-        OpenAI Realtime invokes each app tool as a separate ``/realtime/tools``
-        request, so the ``OpenAITextRunContext`` built per request starts with an
-        empty ``crisis_resource_tool_calls`` list. Without persistence, a later
-        ``get_crisis_support_template`` call cannot see the resource the
-        immediately preceding ``lookup_crisis_resources`` call found. Recording
-        the result onto thread state lets ``build_voice_tool_context`` rehydrate
-        it on the next request. ``save_state`` is a whole-document replace, so
-        this reads-modifies-writes under the thread lock to avoid clobbering
-        concurrent state.
-
-        Tool calls fire mid-turn, before ``record_voice_turn`` finalizes the
-        turn, so on a first-turn crisis no state row exists yet. Seed a minimal
-        turn state in that case rather than dropping the lookup -- a first-turn
-        crisis is exactly when the scaffold must still see the resource.
-        """
-
-        async with self._thread_lock(thread_id):
-            prior_state = await self._state_store.load_state(thread_id)
-            if prior_state is None:
-                state = cast(
-                    AgentState,
-                    dict(
-                        self._build_turn_initial_state(
-                            thread_id=thread_id,
-                            message="voice tool call",
-                            channel=Channel.VOICE,
-                            user_id=user_id,
-                            installed_skills=None,
-                            prior_turn_count=0,
-                        )
-                    ),
-                )
-            else:
-                state = cast(AgentState, dict(prior_state))
-            state["inferred_location"] = inferred_location
-            state["found_resources"] = [dict(row) for row in found_resources]
-            state["resource_lookup_status"] = resource_lookup_status
-            await self._state_store.save_state(thread_id, state)
-
-    async def voice_session_memory_context(
-        self,
-        *,
-        thread_id: str,
-        user_id: str | None,
-        memory_mode: str | None = None,
-    ) -> str:
-        """Return compact saved-memory context for a Realtime voice session.
-
-        Voice sessions are created before the user has said anything, so a
-        semantic recall here has no real query to match on. Bootstrap context
-        is therefore limited to the user's standing procedural rules and the
-        proactive-recall toggle; topic-specific recall happens mid-session via
-        the ``recall_saved_memory`` tool when the user introduces a topic.
-        """
-
-        if memory_mode == "incognito" or self.memory_mode == MemoryMode.INCOGNITO:
-            return ""
-
-        initial_state = self._build_turn_initial_state(
-            thread_id=thread_id,
-            message="",
-            channel=Channel.VOICE,
-            user_id=user_id,
-            installed_skills=None,
-            prior_turn_count=0,
-        )
-        owner_id = resolve_owner_id(cast(AgentState, initial_state))
-        profile = await aget_procedural_profile(self._memory_store, user_id=owner_id)
-        delta: dict[str, Any] = {
-            "working_memory": [],
-            "session_memory": {"summary": ""},
-            "procedural_profile": {
-                "procedural_rules": [{"rule": rule.rule} for rule in profile.rules],
-                "proactive_recall_enabled": profile.proactive_recall_enabled,
-            },
-        }
-        return _compact_voice_memory_context(delta)
-
-    async def record_voice_turn(
-        self,
-        *,
-        thread_id: str,
-        user_id: str | None,
-        user_text: str,
-        assistant_text: str,
-        route: str | None = None,
-        response_style: str | None = None,
-        tool_calls: list[dict[str, Any]] | None = None,
-        llm_client: BaseLLMClient | None = None,
-    ) -> AgentState:
-        """Persist a finalized voice turn without running the text agent."""
-
-        async with self._thread_lock(thread_id):
-            self._remember_llm_client(thread_id, llm_client)
-            prior_state = await self.get_state(thread_id)
-            await self._prepare_session_for_turn(
-                thread_id=thread_id,
-                prior_state=prior_state,
-                llm_client=llm_client,
-            )
-            prior_state = await self.get_state(thread_id)
-            prior_turn_count = turn_count_from_state(prior_state)
-            seed_message = user_text.strip() or assistant_text.strip()
-            initial_state = self._build_turn_initial_state(
-                thread_id=thread_id,
-                message=seed_message,
-                channel=Channel.VOICE,
-                user_id=user_id,
-                installed_skills=None,
-                prior_turn_count=prior_turn_count,
-            )
-
-            state = cast(
-                AgentState,
-                {**dict(initial_state), **dict(prior_state or {})},
-            )
-            # Crisis-resource fields persist across turns so a within-turn
-            # get_crisis_support_template can reuse the lookup from the same
-            # turn (see persist/rehydrate in build_voice_tool_context). The
-            # prior-wins merge above also carries a *previous* turn's lookup
-            # into this turn, though, so reset to the per-turn baseline here:
-            # this turn's real lookup, if any, is written back below from its
-            # own tool calls, and a turn with no fresh lookup must not surface
-            # a stale hotline from an earlier turn.
-            state["resource_lookup_status"] = "not_attempted"
-            state["found_resources"] = []
-            state["inferred_location"] = ""
-            prior_transcript = (
-                list(prior_state.get("transcript", []) or [])
-                if prior_state is not None
-                else []
-            )
-            voice_tool_calls = list(tool_calls or [])
-            grounded_lookup: dict[str, Any] = {}
-            crisis_resource_output: dict[str, Any] = {}
-            for call in voice_tool_calls:
-                if not isinstance(call, Mapping):
-                    continue
-                output = call.get("output")
-                if not isinstance(output, Mapping):
-                    continue
-                grounded_output = output.get("grounded_lookup")
-                if isinstance(grounded_output, Mapping):
-                    grounded_lookup = dict(grounded_output)
-                if call.get("tool_name") == "lookup_crisis_resources":
-                    crisis_resource_output = dict(output)
-            voice_metadata = infer_voice_turn_metadata(
-                route=route,
-                response_style=response_style,
-                tool_calls=voice_tool_calls,
-                has_grounded_lookup=bool(grounded_lookup),
-            )
-            entries = voice_turn_to_transcript_entries(
-                user_text=user_text,
-                assistant_text=assistant_text,
-                response_style=voice_metadata.response_style,
-            )
-            if not entries:
-                raise ValueError(
-                    "record_voice_turn requires user_text or assistant_text."
-                )
-
-            state.update(
-                {
-                    "message": user_text.strip(),
-                    "channel": Channel.VOICE,
-                    "user_id": user_id,
-                    "session_id": thread_id,
-                    "response_text": assistant_text.strip(),
-                    "response_style": voice_metadata.response_style,
-                    "route": voice_metadata.route,
-                    "session_action": "none",
-                    "should_persist_memory": False,
-                    "transcript": [*prior_transcript, *entries],
-                    "grounded_lookup": {
-                        **dict(state.get("grounded_lookup", {}) or {}),
-                        **grounded_lookup,
-                    },
-                    "diagnostics": {
-                        **dict(state.get("diagnostics", {}) or {}),
-                        "voice_runtime": "openai_realtime",
-                        "voice_tool_calls": [
-                            str(call.get("tool_name"))
-                            for call in voice_tool_calls
-                            if isinstance(call, Mapping) and call.get("tool_name")
-                        ],
-                    },
-                    "session_progress": {
-                        **dict(state.get("session_progress", {}) or {}),
-                        "turn_count": prior_turn_count + 1,
-                        "is_guest": user_id is None,
-                    },
-                }
-            )
-
-            if voice_metadata.route == "crisis":
-                self._populate_voice_crisis_audit_state(
-                    state,
-                    crisis_resource_output=crisis_resource_output,
-                    voice_tool_calls=voice_tool_calls,
-                )
-
-            async with self._active_session_manager.active_session_mutation(
-                thread_id,
-                mutation_kind="voice_turn",
-            ) as mutation_token:
-                await self._record_successful_turn_tracking(
-                    thread_id,
-                    state,
-                    session_transcript_soft_limit=None,
-                )
-                await self._state_store.save_state(thread_id, state)
-                # Audit after save_state (synthesis happened before it) so the
-                # persisted turn and its crisis record can never diverge.
-                if voice_metadata.route == "crisis":
-                    crisis_context = self._context_for_turn(
-                        thread_id=thread_id,
-                        message=state.get("message", ""),
-                        prior_state=prior_state,
-                        user_id=user_id,
-                        llm_client=llm_client,
-                        response_llm_client=llm_client,
-                        track_session=False,
-                    )
-                    await record_crisis_outcome(state, crisis_context)
-                await self._ensure_openai_sdk_turn_recorded(
-                    thread_id,
-                    user_message=user_text,
-                    final_state=state,
-                )
-                await self._active_session_manager.clear_active_session_mutation(
-                    thread_id,
-                    mutation_token,
-                )
-                return state
-
-    def _populate_voice_crisis_audit_state(
-        self,
-        state: AgentState,
-        *,
-        crisis_resource_output: Mapping[str, Any],
-        voice_tool_calls: list[dict[str, Any]],
-    ) -> None:
-        """Synthesize crisis audit fields for a voice crisis turn.
-
-        Voice crisis handling is prompt-driven: the route is inferred from the
-        model calling ``lookup_crisis_resources`` (see ``infer_voice_turn_metadata``).
-        There is no server classifier, so the audit record records the
-        tool-call signal rather than a classifier verdict. ``level`` is held at
-        2 because voice has no independent imminence judgment to justify 3, and
-        ``crisis_classifier_path`` is intentionally omitted so ``write_crisis_log``
-        keeps its ``llm_primary`` default rather than inventing a new enum value.
-        """
-
-        state["crisis"] = CrisisAssessment(
-            level=2,
-            confidence="medium",
-            reason="voice_crisis_tool_call",
-            needs_crisis_response=True,
-        )
-        state["crisis_audit"] = {
-            "crisis_override_kind": "none",
-            "crisis_llm_failure_occurred": False,
-        }
-
-        status = crisis_resource_output.get("resource_lookup_status")
-        if isinstance(status, str) and status:
-            state["resource_lookup_status"] = status
-        found_resources = crisis_resource_output.get("found_resources")
-        if isinstance(found_resources, list):
-            state["found_resources"] = [dict(row) for row in found_resources]
-        inferred_location = crisis_resource_output.get("inferred_location")
-        if isinstance(inferred_location, str) and inferred_location:
-            state["inferred_location"] = inferred_location
-
-        crisis_tool_names = [
-            str(call.get("tool_name"))
-            for call in voice_tool_calls
-            if isinstance(call, Mapping) and call.get("tool_name")
-        ]
-        diagnostics = dict(state.get("diagnostics", {}) or {})
-        diagnostics["openai_crisis_tool_calls"] = crisis_tool_names
-        state["diagnostics"] = diagnostics
 
     async def get_history(self, thread_id: str) -> list[Message]:
         """Load the full persisted transcript for a thread.
@@ -2151,72 +1752,3 @@ def _merge_history_response_styles(
             )
         )
     return enriched
-
-
-def _latest_user_text(transcript: list[dict[str, object]]) -> str:
-    for turn in reversed(transcript):
-        if turn.get("role") == "user":
-            return str(turn.get("content") or "").strip()
-    return ""
-
-
-def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
-    blocks: list[str] = []
-    procedural_profile = delta.get("procedural_profile") or {}
-    proactive_recall_enabled = False
-    if isinstance(procedural_profile, Mapping):
-        proactive_recall_enabled = bool(
-            procedural_profile.get("proactive_recall_enabled", False)
-        )
-
-    if proactive_recall_enabled:
-        working_memory = delta.get("working_memory") or []
-        if working_memory:
-            rendered = [
-                _compact_memory_value(item) for item in list(working_memory)[:5]
-            ]
-            rendered = [item for item in rendered if item]
-            if rendered:
-                blocks.append(
-                    "Relevant saved facts:\n"
-                    + "\n".join(f"- {item}" for item in rendered)
-                )
-
-        session_memory = delta.get("session_memory") or {}
-        if isinstance(session_memory, Mapping):
-            summary = str(session_memory.get("summary") or "").strip()
-            if summary and summary != "Guest session without long-term memory.":
-                blocks.append(f"Recent session summary: {summary}")
-
-    if isinstance(procedural_profile, Mapping):
-        rules = procedural_profile.get("procedural_rules") or []
-        rendered_rules = [_compact_memory_value(rule) for rule in list(rules)[:5]]
-        rendered_rules = [rule for rule in rendered_rules if rule]
-        if rendered_rules:
-            blocks.append(
-                "Saved response preferences:\n"
-                + "\n".join(f"- {rule}" for rule in rendered_rules)
-            )
-    if proactive_recall_enabled:
-        blocks.append("Proactive memory recall is enabled.")
-    else:
-        blocks.append("Proactive saved-memory recall is disabled.")
-
-    return "\n\n".join(blocks)[:2000]
-
-
-def _compact_memory_value(value: object) -> str:
-    if isinstance(value, Mapping):
-        for key in (
-            "evidence_quote",
-            "rule",
-            "summary",
-            "preference",
-            "text",
-            "content",
-        ):
-            text = str(value.get(key) or "").strip()
-            if text:
-                return text
-        return json.dumps(dict(value), sort_keys=True, default=str)[:300]
-    return str(value).strip()[:300]

@@ -40,7 +40,7 @@ async def create_voice_realtime_session(
     """Create an ephemeral OpenAI Realtime client secret for browser voice."""
 
     selection = get_runtime_selection(body.memory_mode)
-    memory_context = await selection.runtime.voice_session_memory_context(
+    memory_context = await selection.runtime.voice.voice_session_memory_context(
         thread_id=body.thread_id,
         user_id=body.user_id,
         memory_mode=selection.memory_mode,
@@ -121,7 +121,7 @@ async def record_voice_realtime_turn(
 
     selection = get_runtime_selection(body.memory_mode)
     try:
-        state = await selection.runtime.record_voice_turn(
+        state = await selection.runtime.voice.record_voice_turn(
             thread_id=body.thread_id,
             user_id=body.user_id,
             user_text=body.user_text,

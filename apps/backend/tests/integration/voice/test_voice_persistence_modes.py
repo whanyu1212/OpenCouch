@@ -14,9 +14,9 @@ from api.routes import voice as voice_routes
 from tests.support.api_selection import runtime_selection
 
 
-class _FakeSessionRuntime:
-    def __init__(self) -> None:
-        self.seen_memory_mode: str | None = None
+class _FakeVoiceFacade:
+    def __init__(self, owner: _FakeSessionRuntime) -> None:
+        self._owner = owner
 
     async def voice_session_memory_context(
         self,
@@ -25,10 +25,16 @@ class _FakeSessionRuntime:
         user_id: str | None,
         memory_mode: str,
     ) -> str:
-        self.seen_memory_mode = memory_mode
+        self._owner.seen_memory_mode = memory_mode
         if memory_mode == "incognito":
             return ""
         return "PRIVATE SAVED MEMORY SHOULD APPEAR"
+
+
+class _FakeSessionRuntime:
+    def __init__(self) -> None:
+        self.seen_memory_mode: str | None = None
+        self.voice = _FakeVoiceFacade(self)
 
 
 @pytest.mark.asyncio
