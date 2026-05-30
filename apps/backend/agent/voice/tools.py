@@ -562,6 +562,13 @@ async def execute_voice_tool_call(
         )
     elif tool_name == "lookup_crisis_resources":
         result = await execute_crisis_resource_lookup_tool(context)
+        await runtime.persist_voice_crisis_resource_lookup(
+            thread_id=thread_id,
+            user_id=user_id,
+            inferred_location=result.inferred_location,
+            found_resources=result.found_resources,
+            resource_lookup_status=result.resource_lookup_status,
+        )
     elif tool_name == "get_crisis_support_template":
         result = await _execute_crisis_support_template(context, arguments)
     elif tool_name == "list_guided_exercise_skills":

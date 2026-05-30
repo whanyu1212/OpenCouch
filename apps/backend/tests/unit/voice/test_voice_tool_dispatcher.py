@@ -6,6 +6,7 @@ from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
 from agent.runtime.context import CrisisResourceToolCallRecord
 from agent.voice.tools import _execute_crisis_support_template, execute_voice_tool_call
+from tests.support.persistence import FakeCrossRestartLLM
 
 
 class _RuntimeThatMustNotBuildContext:
@@ -450,6 +451,78 @@ async def test_crisis_support_template_reuses_prior_lookup_resources() -> None:
 
     assert "Samaritans of Singapore: 1767" in output["response_text"]
     assert "Do not modify phone numbers" in output["response_text"]
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_reuses_lookup_across_separate_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prior lookup must reach the template across two Realtime requests.
+
+    OpenAI Realtime dispatches each tool call as its own ``/realtime/tools``
+    request, so ``lookup_crisis_resources`` and ``get_crisis_support_template``
+    build separate contexts. This is the exact flow the per-context recording
+    misses: without persisting the lookup to thread state, the template degrades
+    to ``not_attempted`` and can tell the model no verified resource exists right
+    after one was found. Both calls run against one real runtime so the bridge
+    is the persisted state, not an in-memory context shared by the test.
+    """
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    async def fake_find_crisis_resources_for_request(request, *, llm_client):
+        return (
+            "Singapore",
+            [
+                {
+                    "name": "Samaritans of Singapore",
+                    "phone": "1767",
+                    "url": "https://www.sos.org.sg",
+                    "region": "Singapore",
+                }
+            ],
+            "found",
+        )
+
+    monkeypatch.setattr(
+        "agent.tools.crisis.find_crisis_resources_for_request",
+        fake_find_crisis_resources_for_request,
+    )
+
+    llm_client = FakeCrossRestartLLM()
+    async with runtime:
+        lookup_output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="lookup_crisis_resources",
+            arguments={},
+            thread_id="voice-thread",
+            user_id=None,
+            current_user_message="I might hurt myself tonight.",
+            transcript=[{"role": "user", "content": "I might hurt myself tonight."}],
+            llm_client=llm_client,
+        )
+        # Second, separate request: a brand-new context is built internally.
+        template_output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="get_crisis_support_template",
+            arguments={"risk_level": "imminent"},
+            thread_id="voice-thread",
+            user_id=None,
+            current_user_message="I might hurt myself tonight.",
+            transcript=[{"role": "user", "content": "I might hurt myself tonight."}],
+            llm_client=llm_client,
+        )
+
+    assert lookup_output["resource_lookup_status"] == "found"
+    # The verified resource threads through to the second call's scaffold.
+    assert "Samaritans of Singapore: 1767" in template_output["response_text"]
+    assert "Do not modify phone numbers" in template_output["response_text"]
 
 
 @pytest.mark.asyncio

@@ -59,7 +59,7 @@ from agent.runtime.session_store import (
     create_text_session_store,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
-from agent.runtime.context import OpenAITextRunContext
+from agent.runtime.context import CrisisResourceToolStatus, OpenAITextRunContext
 from agent.voice.turn_metadata import infer_voice_turn_metadata
 from agent.voice.transcript import voice_turn_to_transcript_entries
 from agent.memory.modes import MemoryMode
@@ -1111,7 +1111,7 @@ class PersistentAgentRuntime:
             response_llm_client=llm_client,
             track_session=False,
         )
-        return OpenAITextRunContext(
+        context = OpenAITextRunContext(
             thread_id=thread_id,
             workflow_context=workflow_context,
             current_user_message=effective_user_message,
@@ -1128,6 +1128,99 @@ class PersistentAgentRuntime:
             transcript=cast(list[dict[str, Any]], list(state.get("transcript", []))),
             turn_count=turn_count_from_state(state),
         )
+        self._rehydrate_crisis_resource_lookup(context, prior_state)
+        return context
+
+    @staticmethod
+    def _rehydrate_crisis_resource_lookup(
+        context: OpenAITextRunContext,
+        prior_state: Mapping[str, Any] | None,
+    ) -> None:
+        """Re-seed a prior voice crisis lookup onto a freshly built context.
+
+        Counterpart to ``persist_voice_crisis_resource_lookup``: because each
+        Realtime tool call builds its own context, the resource result a prior
+        ``lookup_crisis_resources`` call found only survives in thread state.
+        Restoring it here lets ``latest_crisis_resource_tool_result`` return it
+        so ``get_crisis_support_template`` can reuse verified resources instead
+        of degrading to ``not_attempted``.
+
+        Reads ``prior_state`` rather than the merged turn state on purpose: the
+        per-turn ``build_initial_state`` defaults reset these fields to
+        ``not_attempted`` / empty, so only the pre-merge persisted state still
+        carries the prior lookup.
+        """
+
+        if prior_state is None:
+            return
+        status = prior_state.get("resource_lookup_status")
+        if not isinstance(status, str) or status in {"", "not_attempted"}:
+            return
+        found_resources = prior_state.get("found_resources")
+        rows = (
+            [dict(row) for row in found_resources]
+            if isinstance(found_resources, list)
+            else []
+        )
+        inferred_location = prior_state.get("inferred_location")
+        context.record_crisis_resource_tool_result(
+            response_text="",
+            inferred_location=(
+                inferred_location if isinstance(inferred_location, str) else ""
+            ),
+            found_resources=rows,
+            resource_lookup_status=cast(CrisisResourceToolStatus, status),
+        )
+
+    async def persist_voice_crisis_resource_lookup(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        inferred_location: str,
+        found_resources: list[dict[str, str]],
+        resource_lookup_status: str,
+    ) -> None:
+        """Persist a voice crisis-resource lookup so a later tool call can reuse it.
+
+        OpenAI Realtime invokes each app tool as a separate ``/realtime/tools``
+        request, so the ``OpenAITextRunContext`` built per request starts with an
+        empty ``crisis_resource_tool_calls`` list. Without persistence, a later
+        ``get_crisis_support_template`` call cannot see the resource the
+        immediately preceding ``lookup_crisis_resources`` call found. Recording
+        the result onto thread state lets ``build_voice_tool_context`` rehydrate
+        it on the next request. ``save_state`` is a whole-document replace, so
+        this reads-modifies-writes under the thread lock to avoid clobbering
+        concurrent state.
+
+        Tool calls fire mid-turn, before ``record_voice_turn`` finalizes the
+        turn, so on a first-turn crisis no state row exists yet. Seed a minimal
+        turn state in that case rather than dropping the lookup -- a first-turn
+        crisis is exactly when the scaffold must still see the resource.
+        """
+
+        async with self._thread_lock(thread_id):
+            prior_state = await self._state_store.load_state(thread_id)
+            if prior_state is None:
+                state = cast(
+                    AgentState,
+                    dict(
+                        self._build_turn_initial_state(
+                            thread_id=thread_id,
+                            message="voice tool call",
+                            channel=Channel.VOICE,
+                            user_id=user_id,
+                            installed_skills=None,
+                            prior_turn_count=0,
+                        )
+                    ),
+                )
+            else:
+                state = cast(AgentState, dict(prior_state))
+            state["inferred_location"] = inferred_location
+            state["found_resources"] = [dict(row) for row in found_resources]
+            state["resource_lookup_status"] = resource_lookup_status
+            await self._state_store.save_state(thread_id, state)
 
     async def voice_session_memory_context(
         self,
