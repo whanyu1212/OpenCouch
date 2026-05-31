@@ -9,6 +9,7 @@ in :mod:`agent.memory.store.sqlite` and :mod:`agent.memory.store.postgres`.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
@@ -16,8 +17,14 @@ from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
     Namespace,
     StoreRecord,
-    _NamespaceBucket,
 )
+
+
+@dataclass(slots=True)
+class _NamespaceBucket:
+    """Internal per-namespace storage. One bucket per unique namespace."""
+
+    records: dict[str, StoreRecord] = field(default_factory=dict)
 
 
 class OpenCouchMemoryStore:
@@ -363,7 +370,8 @@ class OpenCouchMemoryStore:
             StoreRecord | None: Most recent record, or ``None``.
         """
 
-        self._ensure_open()
+        if self._closed:
+            return None
         bucket = self._buckets.get(namespace)
         if bucket is None or not bucket.records:
             return None

@@ -19,7 +19,7 @@ provider is configured.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 # A namespace is typically ``(user_id, kind)`` where kind is one of
@@ -76,13 +76,6 @@ class StoreRecord:
     value: dict[str, Any]
     embedding: list[float] | None = None
     embedding_model: str | None = None
-
-
-@dataclass(slots=True)
-class _NamespaceBucket:
-    """Internal per-namespace storage. One bucket per unique namespace."""
-
-    records: dict[str, StoreRecord] = field(default_factory=dict)
 
 
 @runtime_checkable

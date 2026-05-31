@@ -437,6 +437,25 @@ async def test_memory_store_close_is_idempotent() -> None:
     await store.aclose()  # must not raise
 
 
+@pytest.mark.asyncio
+async def test_memory_store_observability_helpers_degrade_after_close() -> None:
+    """After aclose, observability helpers degrade gracefully instead of raising.
+
+    Mutating ops (aput/aget) raise RuntimeError once closed, but the
+    read-only observability helpers (alatest/arecord_count/anamespaces)
+    return empty results. This matches SqliteMemoryStore so callers can
+    treat any backend interchangeably through the MemoryStore protocol.
+    """
+
+    store = OpenCouchMemoryStore()
+    await store.aput(("user-1", "semantic"), "fact-1", {"v": 1})
+    await store.aclose()
+
+    assert await store.alatest(("user-1", "semantic")) is None
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+    assert await store.anamespaces() == []
+
+
 # ─── v0.4 episodic namespace model + store tests ────────────────────────
 #
 # These tests cover the Stage A scope of v0.4: the pydantic models for
