@@ -17,16 +17,17 @@ from agent.runtime import (
 from config import PersistenceBackend, get_settings
 
 
-def build_cli_parser() -> argparse.ArgumentParser:
-    """Build the legacy OpenCouch CLI argument parser."""
+def add_common_args(parser: argparse.ArgumentParser) -> None:
+    """Add shared CLI arguments used by both the Rich CLI and Textual TUI.
 
-    parser = argparse.ArgumentParser(
-        description="Run the interactive OpenCouch CLI.",
-        epilog=(
-            "Example: uv run python -m opencouch_cli --mode auto "
-            "--thread-id local-demo --sqlite-path .opencouch_threads.sqlite3"
-        ),
-    )
+    Covers the seven flags that are identical across surfaces: mode,
+    thread-id, user-id, sqlite-path, memory-sqlite-path,
+    crisis-log-sqlite-path, and response-model-tier.
+
+    Args:
+        parser: Argument parser to extend in-place.
+    """
+
     parser.add_argument(
         "--mode",
         choices=["deterministic", "hybrid", "auto"],
@@ -79,19 +80,34 @@ def build_cli_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--memory-mode",
-        choices=["guest", "persistent", "ask"],
-        default="ask",
-        help="Local memory behavior: guest (ephemeral), persistent (configured backend), or ask at startup.",
-    )
-    parser.add_argument(
         "--response-model-tier",
+        "--response-tier",
+        dest="response_model_tier",
         choices=["fast", "quality"],
         default="fast",
         help=(
             "Text response tier for therapeutic prose generation. "
             "'fast' favors lower latency; 'quality' favors richer replies."
         ),
+    )
+
+
+def build_cli_parser() -> argparse.ArgumentParser:
+    """Build the legacy OpenCouch CLI argument parser."""
+
+    parser = argparse.ArgumentParser(
+        description="Run the interactive OpenCouch CLI.",
+        epilog=(
+            "Example: uv run python -m opencouch_cli --mode auto "
+            "--thread-id local-demo --sqlite-path .opencouch_threads.sqlite3"
+        ),
+    )
+    add_common_args(parser)
+    parser.add_argument(
+        "--memory-mode",
+        choices=["guest", "persistent", "ask"],
+        default="ask",
+        help="Local memory behavior: guest (ephemeral), persistent (configured backend), or ask at startup.",
     )
     parser.add_argument(
         "--disable-tracing",
