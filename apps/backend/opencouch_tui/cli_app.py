@@ -103,9 +103,12 @@ from agent.runtime.session.state import (
 from config import (
     PersistenceBackend,
     ResponseModelTier,
-    create_configured_control_llm_client,
-    create_configured_response_llm_client,
     get_settings,
+)
+from opencouch_console.runtime import (
+    recoverable_error_message as _recoverable_error_message,
+    resolve_llm_client,
+    resolve_response_llm_client,
 )
 from opencouch_tui.cli_compat import build_cli_parser, resolve_cli_memory_mode
 from opencouch_tui.command_helpers import (
@@ -175,7 +178,6 @@ from opencouch_tui.models import (
     TraceMode,
     UIMode,
 )
-from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -344,16 +346,6 @@ async def _drain_turn_stream_tail(
     return final_output
 
 
-def _recoverable_error_message(prefix: str, exc: Exception) -> str:
-    """Return a compact user-facing error for recoverable CLI failures."""
-
-    detail = str(exc).strip() or type(exc).__name__
-    return (
-        f"{prefix}: {detail}\n"
-        "The CLI stayed open. Fix the runtime configuration or retry the turn."
-    )
-
-
 def _owner_scope_display(session: RunnerSession) -> str:
     """Return a compact owner-scope label for status surfaces."""
 
@@ -484,52 +476,6 @@ def build_parser() -> argparse.ArgumentParser:
     """
 
     return build_cli_parser()
-
-
-def resolve_llm_client(mode: str) -> tuple[BaseLLMClient | None, str]:
-    """Resolve the runtime LLM client for the selected mode.
-
-    Args:
-        mode: Requested runtime mode from the CLI.
-
-    Returns:
-        The resolved client and the effective mode label.
-    """
-
-    if mode == "deterministic":
-        return None, "deterministic"
-
-    if mode == "hybrid":
-        return create_configured_control_llm_client(), "hybrid"
-
-    try:
-        return create_configured_control_llm_client(), "hybrid"
-    except Exception:
-        return None, "deterministic"
-
-
-def resolve_response_llm_client(
-    mode: str,
-    tier: ResponseModelTier,
-) -> BaseLLMClient | None:
-    """Resolve the response-writer LLM client for the selected mode and tier.
-
-    Args:
-        mode: Requested runtime mode from the CLI.
-        tier: Response model tier for user-facing prose.
-
-    Returns:
-        Configured response LLM client, or None in deterministic mode
-        or when client setup fails.
-    """
-
-    if mode == "deterministic":
-        return None
-
-    try:
-        return create_configured_response_llm_client(tier)
-    except Exception:
-        return None
 
 
 def resolve_memory_mode(

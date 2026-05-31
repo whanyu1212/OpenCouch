@@ -294,9 +294,15 @@ def resolve_response_llm_client(
         return None
 
 
-def _recoverable_error_message(prefix: str, exc: Exception) -> str:
+def recoverable_error_message(prefix: str, exc: Exception) -> str:
+    """Return a compact user-facing error for recoverable terminal failures."""
+
     detail = str(exc).strip() or type(exc).__name__
     return (
         f"{prefix}: {detail}\n"
-        "The console stayed open. Fix the runtime configuration or retry the turn."
+        "The session stayed open. Fix the runtime configuration or retry the turn."
     )
+
+
+# Legacy private alias kept for any internal callers.
+_recoverable_error_message = recoverable_error_message
