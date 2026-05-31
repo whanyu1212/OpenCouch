@@ -1,4 +1,4 @@
-"""Compatibility facade for memory embedding providers."""
+"""Memory provider integrations."""
 
 from agent.memory.providers.embeddings import (
     DEFAULT_OPENAI_EMBEDDING_DIMENSION,
