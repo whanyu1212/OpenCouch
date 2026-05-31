@@ -71,7 +71,7 @@ from agent.memory.types import (
     ProceduralRule,
     ProceduralRuleSource,
 )
-from agent.memory.reconciliation import (
+from agent.memory.operations.reconciliation import (
     ProceduralReconciliationPlan,
     plan_procedural_rule_write_llm_primary,
     plan_procedural_rule_write_without_llm,

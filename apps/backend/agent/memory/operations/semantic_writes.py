@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from agent.memory.dedup import find_near_duplicate
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.types import MemoryWrite, SemanticFact
-from agent.memory.reconciliation import (
+from agent.memory.operations.dedup import find_near_duplicate
+from agent.memory.operations.reconciliation import (
     filter_semantic_collision_candidates,
     plan_semantic_write_llm_primary,
 )
+from agent.memory.types import MemoryWrite, SemanticFact
 from agent.memory.store import MemoryStore, StoreRecord
 
 if TYPE_CHECKING:
