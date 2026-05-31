@@ -29,7 +29,7 @@ from agent.memory.retrieval import (
     lexical_rank,
     rrf_fuse,
 )
-from agent.memory.store import (
+from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
     MemoryStore,
     Namespace,

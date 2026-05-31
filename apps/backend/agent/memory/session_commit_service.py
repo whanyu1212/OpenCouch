@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# ── Tuning constants ─────────────────────────────────────────────────
+# Cue/stopword/category vocabularies that calibrate signature normalization,
+# semantic-vs-procedural overlap resolution, and behavior-guidance detection.
+
 _SEMANTIC_PROCEDURAL_OVERLAP_CUES = (
     "prefer",
     "help",
@@ -104,6 +109,9 @@ _SEMANTIC_GENERIC_OBJECT_TOKENS = {
 }
 
 
+# ── Result type ──────────────────────────────────────────────────────
+
+
 @dataclass(slots=True)
 class SessionMemoryCommitResult:
     """Outcome of the session-end promotion pass."""
@@ -116,6 +124,11 @@ class SessionMemoryCommitResult:
     procedural_skips: int = 0
     procedural_failures: int = 0
     support_load_failed: bool = False
+
+
+# ── Tokenization & signatures ────────────────────────────────────────
+# Token sets and normalized signatures used to compare candidates for
+# grouping, clustering, and similarity scoring.
 
 
 def _semantic_group_key(candidate: SemanticCandidate) -> tuple[str, ...]:
@@ -229,6 +242,11 @@ def _semantic_object_anchor_tokens(candidate: SemanticCandidate) -> frozenset[st
         for token in _normalized_signature_tokens(candidate.payload.object.identifier)
         if token not in _SEMANTIC_GENERIC_OBJECT_TOKENS
     )
+
+
+# ── Support scoring ──────────────────────────────────────────────────
+# Derive per-candidate support strength from the session transcript and
+# any prior-session evidence, gating which patterns are durable enough.
 
 
 def _user_turn_texts(state: AgentState) -> list[str]:
@@ -444,6 +462,11 @@ def _token_similarity(left: frozenset[str], right: frozenset[str]) -> float:
     return len(left & right) / len(union)
 
 
+# ── Clustering ───────────────────────────────────────────────────────
+# Group buffered semantic candidates that express the same support
+# pattern so near-duplicates collapse before selection.
+
+
 def _cluster_semantic_candidates(
     buffered_candidates: list[BufferedSemanticCandidate],
 ) -> list[list[BufferedSemanticCandidate]]:
@@ -555,6 +578,11 @@ def _cluster_procedural_candidates(
             group_normalized_tokens.append(normalized_tokens)
 
     return groups
+
+
+# ── Selection ────────────────────────────────────────────────────────
+# Decide which clustered candidates clear the durability bar for
+# promotion, weighing in-session and prior-session support.
 
 
 def _select_semantic_candidates_to_commit(
@@ -753,6 +781,11 @@ def _semantic_procedural_overlap_resolution(
     return "semantic"
 
 
+# ── Commit & write ───────────────────────────────────────────────────
+# Resolve session scope and persist the selected semantic and procedural
+# memories to the store, tallying successes and failures.
+
+
 def _current_session_ids_for_commit(
     state: AgentState,
     *,
@@ -938,6 +971,11 @@ async def _commit_procedural_candidates(
                 exc_info=True,
             )
             result.procedural_failures += 1
+
+
+# ── Orchestrator ─────────────────────────────────────────────────────
+# Public entry point: runs the full session-end promotion pipeline and
+# returns the aggregated commit result.
 
 
 async def commit_session_memory(
