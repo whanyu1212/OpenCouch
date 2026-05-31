@@ -301,17 +301,3 @@ def create_configured_response_llm_clients(
         "fast": create_configured_response_llm_client("fast", settings),
         "quality": create_configured_response_llm_client("quality", settings),
     }
-
-
-def create_configured_llm_client(settings: Settings | None = None) -> BaseLLMClient:
-    """Return the configured control-plane client.
-
-    Args:
-        settings: Optional preloaded settings. Reads the environment
-            when omitted.
-
-    Returns:
-        Configured control-plane LLM client.
-    """
-
-    return create_configured_control_llm_client(settings)
