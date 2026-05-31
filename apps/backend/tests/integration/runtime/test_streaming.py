@@ -92,7 +92,7 @@ class _StreamingResponseLLM(BaseLLMClient):
                 ),
             )
         if schema_name == "DispatchDecision":
-            from agent.memory.models import DispatchDecision
+            from agent.memory.types import DispatchDecision
 
             return cast(
                 StructuredResponseT,

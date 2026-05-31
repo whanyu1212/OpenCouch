@@ -17,8 +17,8 @@ from agent.audit.crisis_log import (
     InMemoryCrisisLogBackend,
     NullCrisisLogBackend,
 )
-from agent.memory.models import (
-    CrisisLogRecord,
+from agent.audit.models import CrisisLogRecord
+from agent.memory.types import (
     MoodArc,
     SessionArc,
     StoredSessionArc,

@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.models import (
+from agent.memory.types import (
     CBTContext,
     MoodArc,
     SessionArc,

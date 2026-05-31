@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
 
-from agent.memory.models import (
+from agent.memory.types import (
     EntityRef,
     ExtractionResult,
     MemoryWrite,
@@ -107,7 +107,7 @@ class FakeCrossRestartLLM(BaseLLMClient):
 
         if schema_name == "DispatchDecision":
             self.dispatch_calls += 1
-            from agent.memory.models import DispatchDecision
+            from agent.memory.types import DispatchDecision
 
             return cast(
                 StructuredResponseT,

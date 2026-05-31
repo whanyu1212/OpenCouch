@@ -18,7 +18,7 @@ from typing import cast
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent.memory.models import (
+from agent.memory.types import (
     DispatchDecision,
     ExtractionResult,
     ProceduralExtractionResult,

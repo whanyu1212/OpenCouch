@@ -18,7 +18,7 @@ from agent.memory.policy.candidates import (
     build_procedural_candidate,
     build_semantic_candidate,
 )
-from agent.memory.models import (
+from agent.memory.types import (
     EntityRef,
     ExtractionResult,
     MemoryWrite,
@@ -211,7 +211,7 @@ class _FakeSessionCommitLLM(BaseLLMClient):
             )
 
         if schema_name == "DispatchDecision":
-            from agent.memory.models import DispatchDecision
+            from agent.memory.types import DispatchDecision
 
             return cast(
                 StructuredResponseT,

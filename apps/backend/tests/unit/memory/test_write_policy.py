@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.models import EntityRef, MemoryWrite, ProceduralRuleDraft
+from agent.memory.types import EntityRef, MemoryWrite, ProceduralRuleDraft
 from agent.memory.policy.candidates import (
     PolicyDecision,
     SessionMemoryBuffer,

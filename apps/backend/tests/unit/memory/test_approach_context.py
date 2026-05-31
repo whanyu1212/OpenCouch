@@ -11,7 +11,7 @@ These tests verify the full Option D data path:
 from __future__ import annotations
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.memory.models import (
+from agent.memory.types import (
     ACTContext,
     CBTContext,
     DBTContext,

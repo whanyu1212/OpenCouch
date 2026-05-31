@@ -24,7 +24,7 @@ from agent.memory.dedup import (
     _triples_match,
     find_near_duplicate,
 )
-from agent.memory.models import EntityRef, MemoryWrite
+from agent.memory.types import EntityRef, MemoryWrite
 from agent.memory.store import StoreRecord
 
 

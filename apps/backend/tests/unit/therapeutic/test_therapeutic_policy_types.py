@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import get_args
 
-from agent.memory.models import (
+from agent.memory.types import (
     GuidancePermission as TextGuidancePermission,
     SessionIntent as TextSessionIntent,
     TherapeuticApproach as TextTherapeuticApproach,
