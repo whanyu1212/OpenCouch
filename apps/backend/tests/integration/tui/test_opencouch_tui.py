@@ -538,12 +538,10 @@ class _FakeConsoleRuntime:
 
     def __init__(self, config) -> None:
         self.config = config
-        owner_id = config.user_id or config.thread_id
         self.session = ConsoleSession(
             requested_mode=config.requested_mode,
             resolved_mode="deterministic",
             thread_id=config.thread_id,
-            owner_id=owner_id,
             memory_mode=config.memory_mode,
             persistence_backend="sqlite",
             user_id=config.user_id,
