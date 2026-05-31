@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from agent.memory.models import EntityRef, MemoryWrite
+from agent.memory.types import EntityRef, MemoryWrite
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 if str(REPO_ROOT) not in sys.path:

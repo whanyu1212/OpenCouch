@@ -18,7 +18,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.models import ProceduralProfile, ProceduralRule
+from agent.memory.types import ProceduralProfile, ProceduralRule
 from agent.memory.procedural_profile import (
     PROCEDURAL_KEY,
     aadd_procedural_rule,

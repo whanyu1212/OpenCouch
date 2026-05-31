@@ -42,7 +42,7 @@ from uuid import uuid4
 
 import pytest
 
-from agent.memory.models import (
+from agent.memory.types import (
     EntityRef,
     ExtractionResult,
     MemoryWrite,
@@ -107,7 +107,7 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
             )
 
         self.dispatch_calls += 1
-        from agent.memory.models import DispatchDecision
+        from agent.memory.types import DispatchDecision
 
         lowered = prompt.lower()
         current_message = lowered.rsplit("current user message:", 1)[-1]
@@ -491,7 +491,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
     paths = runtime_paths(tmp_path)
 
     # Runtime A: write a crisis record directly to the backend
-    from agent.memory.models import CrisisLogRecord
+    from agent.audit.models import CrisisLogRecord
 
     async with PersistentAgentRuntime(
         **paths,
@@ -656,7 +656,7 @@ async def test_full_trajectory_parity_in_postgres(
     user_id = f"user-trajectory-{uuid4()}"
     llm_a = FakeCrossRestartLLM()
 
-    from agent.memory.models import CrisisLogRecord
+    from agent.audit.models import CrisisLogRecord
 
     async with PersistentAgentRuntime(
         **paths,

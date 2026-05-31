@@ -28,7 +28,7 @@ from datetime import date
 import pytest
 
 from agent.audit.crisis_log import CrisisLogBackend
-from agent.memory.models import CrisisLogRecord
+from agent.audit.models import CrisisLogRecord
 from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
 
 

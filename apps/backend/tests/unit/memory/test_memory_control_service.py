@@ -10,7 +10,7 @@ import pytest
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
-from agent.memory.models import EntityRef, SemanticFact
+from agent.memory.types import EntityRef, SemanticFact
 from agent.memory.procedural_profile import aget_procedural_profile
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.control.service import (

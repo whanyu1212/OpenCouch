@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agent.memory.models import EntityRef, MemoryWrite
+from agent.memory.types import EntityRef, MemoryWrite
 from agent.memory.semantic_writes import (
     apply_semantic_write,
     bump_semantic_last_referenced_at,

@@ -35,7 +35,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from config import load_runtime_env  # noqa: E402
 from agent.audit.crisis_log import InMemoryCrisisLogBackend  # noqa: E402
 from agent.memory.hashing import iso_now as _iso_now  # noqa: E402
-from agent.memory.models import (  # noqa: E402
+from agent.memory.types import (  # noqa: E402
     ExtractionResult,
     ProceduralExtractionResult,
 )
