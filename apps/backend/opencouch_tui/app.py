@@ -26,16 +26,12 @@ from agent.models import (
     StatusEvent,
 )
 from agent.observability.routing_trace import routing_trace_from_diagnostics
-from agent.runtime import (
-    DEFAULT_CRISIS_LOG_DB_PATH,
-    DEFAULT_MEMORY_DB_PATH,
-    DEFAULT_THREAD_DB_PATH,
-)
-from opencouch_console.runtime import (
+from opencouch_tui.runtime import (
     ConsoleConfig,
     ConsoleErrorEvent,
     ConsoleRuntime,
 )
+from opencouch_tui.parser import add_common_args
 from opencouch_tui.command_helpers import (
     format_history_plain,
     format_memory_snapshot_plain,
@@ -119,50 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the experimental OpenCouch Textual TUI.",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["deterministic", "hybrid", "auto"],
-        default="auto",
-        help="How to resolve the LLM client for crisis classification.",
-    )
-    parser.add_argument(
-        "--thread-id",
-        default=None,
-        help="Stable thread identifier to resume a prior local conversation.",
-    )
-    parser.add_argument(
-        "--user-id",
-        default=None,
-        help="Stable owner identifier for persistent long-term memory.",
-    )
-    parser.add_argument(
-        "--sqlite-path",
-        default=str(DEFAULT_THREAD_DB_PATH),
-        help="Legacy SQLite path for persisted session state.",
-    )
-    parser.add_argument(
-        "--memory-sqlite-path",
-        default=str(DEFAULT_MEMORY_DB_PATH),
-        help="Legacy SQLite path for local memory storage.",
-    )
-    parser.add_argument(
-        "--crisis-log-sqlite-path",
-        default=str(DEFAULT_CRISIS_LOG_DB_PATH),
-        help="Legacy SQLite path for crisis audit storage.",
-    )
+    add_common_args(parser)
     parser.add_argument(
         "--memory-mode",
         choices=["guest", "persistent"],
         default="guest",
         help="Local memory behavior for the TUI.",
-    )
-    parser.add_argument(
-        "--response-model-tier",
-        "--response-tier",
-        dest="response_model_tier",
-        choices=["fast", "quality"],
-        default="fast",
-        help="Text response tier for therapeutic prose generation.",
     )
     parser.add_argument(
         "--view",

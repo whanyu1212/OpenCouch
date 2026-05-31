@@ -43,14 +43,13 @@ class ConsoleConfig:
     crisis_log_sqlite_path: str = str(DEFAULT_CRISIS_LOG_DB_PATH)
 
 
-@dataclass(slots=True)
+@dataclass
 class ConsoleSession:
     """Mutable runtime/session state exposed to terminal UIs."""
 
     requested_mode: str
     resolved_mode: str
     thread_id: str
-    owner_id: str
     memory_mode: MemoryModeName
     persistence_backend: PersistenceBackend
     user_id: str | None
@@ -59,6 +58,18 @@ class ConsoleSession:
     response_llm_client: BaseLLMClient | None
     history: list[Message]
     last_context: AgentState | None
+
+    @property
+    def owner_id(self) -> str:
+        """Return the effective owner identifier for memory operations.
+
+        Returns the explicit ``user_id`` when set, otherwise falls back to
+        ``thread_id``. Mirrors ``RunnerSession.owner_id()`` in
+        ``opencouch_tui.models`` so both session types use identical
+        ownership semantics.
+        """
+
+        return self.user_id or self.thread_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +132,6 @@ class ConsoleRuntime:
             else settings.text_session_database_url or settings.memory_database_url
         )
         effective_user_id = None if is_guest_mode else self.config.user_id
-        owner_id = effective_user_id or self.config.thread_id
 
         runtime = PersistentAgentRuntime(
             ":memory:" if is_guest_mode else self.config.sqlite_path,
@@ -148,7 +158,6 @@ class ConsoleRuntime:
             requested_mode=self.config.requested_mode,
             resolved_mode=resolved_mode,
             thread_id=self.config.thread_id,
-            owner_id=owner_id,
             memory_mode=self.config.memory_mode,
             persistence_backend=settings.persistence_backend,
             user_id=effective_user_id,
@@ -294,9 +303,15 @@ def resolve_response_llm_client(
         return None
 
 
-def _recoverable_error_message(prefix: str, exc: Exception) -> str:
+def recoverable_error_message(prefix: str, exc: Exception) -> str:
+    """Return a compact user-facing error for recoverable terminal failures."""
+
     detail = str(exc).strip() or type(exc).__name__
     return (
         f"{prefix}: {detail}\n"
-        "The console stayed open. Fix the runtime configuration or retry the turn."
+        "The session stayed open. Fix the runtime configuration or retry the turn."
     )
+
+
+# Legacy private alias kept for any internal callers.
+_recoverable_error_message = recoverable_error_message
