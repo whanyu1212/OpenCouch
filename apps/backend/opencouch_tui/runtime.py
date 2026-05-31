@@ -64,8 +64,9 @@ class ConsoleSession:
         """Return the effective owner identifier for memory operations.
 
         Returns the explicit ``user_id`` when set, otherwise falls back to
-        ``thread_id``. Mirrors ``RunnerSession.owner_id()`` so both terminal
-        surfaces use identical ownership semantics.
+        ``thread_id``. Mirrors ``RunnerSession.owner_id()`` in
+        ``opencouch_tui.models`` so both session types use identical
+        ownership semantics.
         """
 
         return self.user_id or self.thread_id

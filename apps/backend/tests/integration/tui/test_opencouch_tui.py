@@ -18,7 +18,7 @@ from agent.models import (
     StatusEvent,
 )
 from agent.runtime import ThreadSummary
-from opencouch_console.runtime import ConsoleSession
+from opencouch_tui.runtime import ConsoleSession
 
 
 def test_tui_parser_defaults_to_dogfood_guest_mode() -> None:

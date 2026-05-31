@@ -26,12 +26,12 @@ from agent.models import (
     StatusEvent,
 )
 from agent.observability.routing_trace import routing_trace_from_diagnostics
-from opencouch_console.runtime import (
+from opencouch_tui.runtime import (
     ConsoleConfig,
     ConsoleErrorEvent,
     ConsoleRuntime,
 )
-from opencouch_tui.cli_compat import add_common_args
+from opencouch_tui.parser import add_common_args
 from opencouch_tui.command_helpers import (
     format_history_plain,
     format_memory_snapshot_plain,

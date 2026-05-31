@@ -13,7 +13,7 @@ from agent.models import DoneEvent, ResponseReadyEvent, StatusEvent
 async def test_console_runtime_streams_deterministic_guest_turn() -> None:
     """Deterministic guest mode should run without configured credentials."""
 
-    from opencouch_console.runtime import ConsoleConfig, ConsoleRuntime
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
 
     async with ConsoleRuntime(
         ConsoleConfig(
@@ -47,7 +47,7 @@ async def test_console_runtime_streams_deterministic_guest_turn() -> None:
 async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> None:
     """Runtime exceptions should become recoverable events for terminal UIs."""
 
-    from opencouch_console.runtime import (
+    from opencouch_tui.runtime import (
         ConsoleConfig,
         ConsoleErrorEvent,
         ConsoleRuntime,
@@ -71,7 +71,7 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
             raise RuntimeError("crisis gate failed")
 
     monkeypatch.setattr(
-        "opencouch_console.runtime.get_settings",
+        "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
             persistence_backend="sqlite",
             memory_database_url=None,
@@ -80,7 +80,7 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
         ),
     )
     monkeypatch.setattr(
-        "opencouch_console.runtime.PersistentAgentRuntime",
+        "opencouch_tui.runtime.PersistentAgentRuntime",
         lambda *args, **kwargs: _FailingPersistentRuntime(),
     )
 
@@ -104,7 +104,7 @@ def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 
     from agent.runtime import DEFAULT_CRISIS_LOG_DB_PATH, DEFAULT_MEMORY_DB_PATH
-    from opencouch_console.runtime import ConsoleConfig
+    from opencouch_tui.runtime import ConsoleConfig
 
     config = ConsoleConfig(thread_id="tui-defaults")
 

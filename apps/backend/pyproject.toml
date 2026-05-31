@@ -53,7 +53,6 @@ source = [
   "api",
   "channels",
   "core",
-  "opencouch_cli",
   "services",
 ]
 
