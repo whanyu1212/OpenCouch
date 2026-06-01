@@ -5,7 +5,11 @@ import pytest
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
 from agent.runtime.context import CrisisResourceToolCallRecord
-from agent.voice.tools import _execute_crisis_support_template, execute_voice_tool_call
+from agent.voice.tools import (
+    _execute_crisis_support_template,
+    _registered_voice_tool_names,
+    execute_voice_tool_call,
+)
 from tests.support.persistence import FakeCrossRestartLLM
 
 
@@ -17,6 +21,33 @@ class _VoiceFacadeThatMustNotBuildContext:
 class _RuntimeThatMustNotBuildContext:
     memory_mode = MemoryMode.LOCAL
     voice = _VoiceFacadeThatMustNotBuildContext()
+
+
+def test_voice_tool_registry_covers_supported_tools() -> None:
+    from agent.voice.tools import _SUPPORTED_VOICE_TOOL_NAMES
+
+    assert _registered_voice_tool_names() == _SUPPORTED_VOICE_TOOL_NAMES
+
+
+@pytest.mark.asyncio
+async def test_wait_for_user_tool_is_fast_path_without_context_build() -> None:
+    output = await execute_voice_tool_call(
+        runtime=_RuntimeThatMustNotBuildContext(),
+        tool_name="wait_for_user",
+        arguments={},
+        thread_id="voice-thread",
+        user_id="user-1",
+        current_user_message="",
+        transcript=[],
+        llm_client=None,
+        memory_mode="persistent",
+    )
+
+    assert output == {
+        "response_text": "",
+        "should_respond": False,
+        "side_effect": "none",
+    }
 
 
 _MUTATOR_CASES = (
