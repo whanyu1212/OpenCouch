@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from agent.audit.crisis_log import record_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural_profile import aget_procedural_profile
+from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
 from agent.models import Channel, CrisisAssessment
 from agent.runtime.context import OpenAITextRunContext

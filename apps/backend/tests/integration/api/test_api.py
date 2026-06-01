@@ -26,7 +26,7 @@ from agent.memory.types import (
     ProceduralRule,
     SummarizationResult,
 )
-from agent.memory.procedural_profile import (
+from agent.memory.operations.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
 )

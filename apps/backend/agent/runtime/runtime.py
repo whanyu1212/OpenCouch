@@ -21,9 +21,9 @@ from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.policy.write import text_contains_memory_control_request
-from agent.memory.recall import load_memory_for_turn
+from agent.memory.retrieval.service import load_memory_for_turn
 from agent.feedback.models import (
     FeedbackLabel,
     FeedbackModality,

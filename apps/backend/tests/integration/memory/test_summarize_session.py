@@ -28,7 +28,7 @@ from agent.memory.types import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.episodic import (
+from agent.memory.operations.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
 from agent.runtime.session import run_summarize_session

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.types import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore

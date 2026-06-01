@@ -47,8 +47,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from agent.memory.procedural_profile import aget_procedural_profile
-from agent.memory.reconciliation import is_active_semantic_record_value
+from agent.memory.operations.procedural_profile import aget_procedural_profile
+from agent.memory.operations.reconciliation import is_active_semantic_record_value
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.memory.entries import (

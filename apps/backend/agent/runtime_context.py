@@ -18,9 +18,9 @@ from dataclasses import dataclass, field
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
-from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.modes import MemoryMode
-from agent.memory.recall import LoadMemoryResult
+from agent.memory.retrieval.service import LoadMemoryResult
 from agent.memory.store import MemoryStore
 from llm.base import BaseLLMClient
 

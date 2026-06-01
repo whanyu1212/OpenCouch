@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from agent.memory.procedural_profile import (
+from agent.memory.operations.procedural_profile import (
     aadd_procedural_rule,
     aset_proactive_recall,
 )

@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 from agent.memory.commit import service as _service
 from agent.memory.commit.scoring import _load_prior_session_support_texts
-from agent.memory.procedural_profile import aupsert_procedural_rule
+from agent.memory.operations.procedural_profile import aupsert_procedural_rule
 
 if TYPE_CHECKING:
-    from agent.memory.embeddings import EmbeddingProvider
+    from agent.memory.providers.embeddings import EmbeddingProvider
     from agent.memory.policy.candidates import SessionMemoryBuffer
     from agent.memory.store import MemoryStore
     from agent.memory.types import StoredSessionArc

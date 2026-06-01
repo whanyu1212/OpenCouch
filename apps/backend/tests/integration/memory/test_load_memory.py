@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.memory.recall import (
+from agent.memory.retrieval.service import (
     SEMANTIC_SEARCH_LIMIT,
     SEMANTIC_WORKING_MEMORY_LIMIT,
 )
@@ -573,7 +573,7 @@ class TestSpeculativeMemoryPrefetch:
 
         import asyncio
 
-        from agent.memory.recall import load_memory_for_turn
+        from agent.memory.retrieval.service import load_memory_for_turn
         from agent.runtime_context import PrefetchedTurnMemory
 
         store = OpenCouchMemoryStore()
@@ -672,7 +672,7 @@ class TestSpeculativeMemoryPrefetch:
 
         import asyncio
 
-        from agent.memory.recall import load_memory_for_turn
+        from agent.memory.retrieval.service import load_memory_for_turn
         from agent.runtime_context import PrefetchedTurnMemory
 
         store = OpenCouchMemoryStore()
@@ -790,7 +790,7 @@ class TestProceduralRetrieval:
         store = OpenCouchMemoryStore()
         # Plant a rule in the store under the eval-user namespace — the
         # guest-mode read must NOT return it.
-        from agent.memory.procedural_profile import (
+        from agent.memory.operations.procedural_profile import (
             aadd_procedural_rule,
             build_procedural_rule,
         )
@@ -850,7 +850,7 @@ class TestProceduralRetrieval:
         regardless of the current user message.
         """
 
-        from agent.memory.procedural_profile import (
+        from agent.memory.operations.procedural_profile import (
             aadd_procedural_rule,
             build_procedural_rule,
         )
@@ -891,7 +891,7 @@ class TestProceduralRetrieval:
         stored toggle and the prompt layer.
         """
 
-        from agent.memory.procedural_profile import aset_proactive_recall
+        from agent.memory.operations.procedural_profile import aset_proactive_recall
 
         store = OpenCouchMemoryStore()
         await aset_proactive_recall(store, user_id="thread-test", enabled=True)
@@ -948,7 +948,7 @@ class TestProceduralRetrieval:
         this string, so drift would be a UX regression.
         """
 
-        from agent.memory.procedural_profile import (
+        from agent.memory.operations.procedural_profile import (
             aadd_procedural_rule,
             build_procedural_rule,
             aset_proactive_recall,

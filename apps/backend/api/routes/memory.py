@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from agent.memory.reconciliation import filter_active_semantic_records
-from agent.memory.procedural_profile import (
+from agent.memory.operations.reconciliation import filter_active_semantic_records
+from agent.memory.operations.procedural_profile import (
     adelete_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,

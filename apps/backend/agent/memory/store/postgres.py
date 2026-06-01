@@ -21,8 +21,8 @@ from typing import Any, cast
 import psycopg
 from psycopg.rows import dict_row
 
-from agent.memory.embeddings import DEFAULT_OPENAI_EMBEDDING_DIMENSION
-from agent.memory.retrieval import (
+from agent.memory.providers.embeddings import DEFAULT_OPENAI_EMBEDDING_DIMENSION
+from agent.memory.retrieval.ranking import (
     EMBEDDING_MATCH_THRESHOLD,
     IndexedRecord,
     ScoredRecord,

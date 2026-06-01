@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.memory.embeddings import (
+from agent.memory.providers.embeddings import (
     NullEmbeddingProvider,
     create_configured_embedding_provider,
 )

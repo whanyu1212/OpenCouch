@@ -8,8 +8,8 @@ from typing import Any, Literal, cast
 
 import pytest
 
-import agent.memory.semantic_writes as semantic_writes
-import agent.memory.session_commit_service as session_commit_service
+import agent.memory.operations.semantic_writes as semantic_writes
+import agent.memory.commit.service as session_commit_service
 from agent.memory.policy.candidates import (
     PolicyDecision,
     ProceduralCandidate,
@@ -28,7 +28,7 @@ from agent.memory.types import (
     SessionArc,
     SummarizationResult,
 )
-from agent.memory.episodic import (
+from agent.memory.operations.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
 from agent.audit.crisis_log import InMemoryCrisisLogBackend

@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from agent.memory.procedural_profile import (
+from agent.memory.operations.procedural_profile import (
     aclear_procedural_rules,
     adelete_procedural_rule,
     aget_procedural_profile,
 )
-from agent.memory.reconciliation import filter_active_semantic_records
+from agent.memory.operations.reconciliation import filter_active_semantic_records
 
 
 def get_history_command_limit(
