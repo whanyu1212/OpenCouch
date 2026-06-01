@@ -50,12 +50,14 @@ from agent.memory.policy.write import (  # noqa: E402
     decide_procedural_candidate_llm_primary,
     decide_semantic_candidate_llm_primary,
 )
-from agent.memory.procedural_profile import (  # noqa: E402
+from agent.memory.operations.procedural_profile import (  # noqa: E402
     aupsert_procedural_rule,
     build_procedural_rule,
 )
-from agent.memory.reconciliation import filter_active_semantic_records  # noqa: E402
-from agent.memory.semantic_writes import (  # noqa: E402
+from agent.memory.operations.reconciliation import (  # noqa: E402
+    filter_active_semantic_records,
+)
+from agent.memory.operations.semantic_writes import (  # noqa: E402
     BatchWriteItem,
     apply_semantic_writes_batch,
 )

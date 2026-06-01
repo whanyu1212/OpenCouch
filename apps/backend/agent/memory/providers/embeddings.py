@@ -214,7 +214,7 @@ class OpenAIEmbeddingProvider:
     :class:`NullEmbeddingProvider` at the runtime wiring layer — don't
     catch the ValueError from construction and silently fall back,
     because that would hide configuration mistakes. The runtime's
-    :func:`agent.memory.embeddings.create_configured_embedding_provider`
+    :func:`agent.memory.providers.embeddings.create_configured_embedding_provider`
     helper handles the key-missing case explicitly.
     """
 

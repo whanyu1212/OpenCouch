@@ -19,7 +19,7 @@ Module layout:
 Episodic writes are append-only on the hot path; reconciliation between
 arcs (merging or superseding old session summaries) is not done here.
 The retrieval-side helpers that read these arcs live in
-:mod:`agent.memory.recall`.
+:mod:`agent.memory.retrieval.service`.
 """
 
 from __future__ import annotations
