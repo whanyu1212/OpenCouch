@@ -24,14 +24,13 @@ from agent.audit.models import CrisisResourceLookupStatus
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
-from agent.models import Channel, CrisisAssessment
+from agent.models import Channel
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
 from agent.runtime.state_store import RuntimeStateStore
 from agent.state import AgentState, resolve_owner_id
-from agent.voice.transcript import voice_turn_to_transcript_entries
-from agent.voice.turn_metadata import infer_voice_turn_metadata
+from agent.voice.state_transition import VoiceTurnStateInputs, build_voice_turn_state
 from llm.base import BaseLLMClient
 
 if TYPE_CHECKING:
@@ -381,96 +380,21 @@ class VoiceRuntimeFacade:
                 installed_skills=None,
                 prior_turn_count=prior_turn_count,
             )
-
-            state = cast(
-                AgentState,
-                {**dict(initial_state), **dict(prior_state or {})},
-            )
-            # Crisis-resource fields persist across turns so a within-turn
-            # get_crisis_support_template can reuse the lookup from the same
-            # turn (see persist/rehydrate in build_voice_tool_context). The
-            # prior-wins merge above also carries a *previous* turn's lookup
-            # into this turn, though, so reset to the per-turn baseline here:
-            # this turn's real lookup, if any, is written back below from its
-            # own tool calls, and a turn with no fresh lookup must not surface
-            # a stale hotline from an earlier turn.
-            state["resource_lookup_status"] = "not_attempted"
-            state["found_resources"] = []
-            state["inferred_location"] = ""
-            prior_transcript = (
-                list(prior_state.get("transcript", []) or [])
-                if prior_state is not None
-                else []
-            )
-            voice_tool_calls = list(tool_calls or [])
-            grounded_lookup: dict[str, Any] = {}
-            crisis_resource_output: dict[str, Any] = {}
-            for call in voice_tool_calls:
-                if not isinstance(call, Mapping):
-                    continue
-                output = call.get("output")
-                if not isinstance(output, Mapping):
-                    continue
-                grounded_output = output.get("grounded_lookup")
-                if isinstance(grounded_output, Mapping):
-                    grounded_lookup = dict(grounded_output)
-                if call.get("tool_name") == "lookup_crisis_resources":
-                    crisis_resource_output = dict(output)
-            voice_metadata = infer_voice_turn_metadata(
-                route=route,
-                response_style=response_style,
-                tool_calls=voice_tool_calls,
-                has_grounded_lookup=bool(grounded_lookup),
-            )
-            entries = voice_turn_to_transcript_entries(
-                user_text=user_text,
-                assistant_text=assistant_text,
-                response_style=voice_metadata.response_style,
-            )
-            if not entries:
-                raise ValueError(
-                    "record_voice_turn requires user_text or assistant_text."
+            transition = build_voice_turn_state(
+                VoiceTurnStateInputs(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    user_text=user_text,
+                    assistant_text=assistant_text,
+                    route=route,
+                    response_style=response_style,
+                    tool_calls=list(tool_calls or []),
+                    prior_state=prior_state,
+                    initial_state=initial_state,
+                    prior_turn_count=prior_turn_count,
                 )
-
-            state.update(
-                {
-                    "message": user_text.strip(),
-                    "channel": Channel.VOICE,
-                    "user_id": user_id,
-                    "session_id": thread_id,
-                    "response_text": assistant_text.strip(),
-                    "response_style": voice_metadata.response_style,
-                    "route": voice_metadata.route,
-                    "session_action": "none",
-                    "should_persist_memory": False,
-                    "transcript": [*prior_transcript, *entries],
-                    "grounded_lookup": {
-                        **dict(state.get("grounded_lookup", {}) or {}),
-                        **grounded_lookup,
-                    },
-                    "diagnostics": {
-                        **dict(state.get("diagnostics", {}) or {}),
-                        "voice_runtime": "openai_realtime",
-                        "voice_tool_calls": [
-                            str(call.get("tool_name"))
-                            for call in voice_tool_calls
-                            if isinstance(call, Mapping) and call.get("tool_name")
-                        ],
-                    },
-                    "session_progress": {
-                        **dict(state.get("session_progress", {}) or {}),
-                        "turn_count": prior_turn_count + 1,
-                        "is_guest": user_id is None,
-                    },
-                }
             )
-
-            if voice_metadata.route == "crisis":
-                self._populate_voice_crisis_audit_state(
-                    state,
-                    crisis_resource_output=crisis_resource_output,
-                    voice_tool_calls=voice_tool_calls,
-                )
+            state = transition.state
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -484,7 +408,7 @@ class VoiceRuntimeFacade:
                 await self._state_store.save_state(thread_id, state)
                 # Audit after save_state (synthesis happened before it) so the
                 # persisted turn and its crisis record can never diverge.
-                if voice_metadata.route == "crisis":
+                if transition.metadata.route == "crisis":
                     crisis_context = self._runtime._context_for_turn(
                         thread_id=thread_id,
                         message=state.get("message", ""),
@@ -505,56 +429,6 @@ class VoiceRuntimeFacade:
                     mutation_token,
                 )
                 return state
-
-    # ── _populate_voice_crisis_audit_state ────────────────────────
-
-    def _populate_voice_crisis_audit_state(
-        self,
-        state: AgentState,
-        *,
-        crisis_resource_output: Mapping[str, Any],
-        voice_tool_calls: list[dict[str, Any]],
-    ) -> None:
-        """Synthesize crisis audit fields for a voice crisis turn.
-
-        Voice crisis handling is prompt-driven: the route is inferred from the
-        model calling ``lookup_crisis_resources`` (see ``infer_voice_turn_metadata``).
-        There is no server classifier, so the audit record records the
-        tool-call signal rather than a classifier verdict. ``level`` is held at
-        2 because voice has no independent imminence judgment to justify 3, and
-        ``crisis_classifier_path`` is intentionally omitted so ``write_crisis_log``
-        keeps its ``llm_primary`` default rather than inventing a new enum value.
-        """
-
-        state["crisis"] = CrisisAssessment(
-            level=2,
-            confidence="medium",
-            reason="voice_crisis_tool_call",
-            needs_crisis_response=True,
-        )
-        state["crisis_audit"] = {
-            "crisis_override_kind": "none",
-            "crisis_llm_failure_occurred": False,
-        }
-
-        status = crisis_resource_output.get("resource_lookup_status")
-        if isinstance(status, str) and status:
-            state["resource_lookup_status"] = status
-        found_resources = crisis_resource_output.get("found_resources")
-        if isinstance(found_resources, list):
-            state["found_resources"] = [dict(row) for row in found_resources]
-        inferred_location = crisis_resource_output.get("inferred_location")
-        if isinstance(inferred_location, str) and inferred_location:
-            state["inferred_location"] = inferred_location
-
-        crisis_tool_names = [
-            str(call.get("tool_name"))
-            for call in voice_tool_calls
-            if isinstance(call, Mapping) and call.get("tool_name")
-        ]
-        diagnostics = dict(state.get("diagnostics", {}) or {})
-        diagnostics["openai_crisis_tool_calls"] = crisis_tool_names
-        state["diagnostics"] = diagnostics
 
 
 __all__ = [
