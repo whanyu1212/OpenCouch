@@ -54,7 +54,7 @@ Source layout:
 
 Turn memory loading is orchestrated by `agent.runtime.memory_context`, which
 turns durable recall into runner-turn state before `Runner.run`. Long-term
-memory retrieval and storage remain in `agent.memory.recall` and
+memory retrieval and storage remain in `agent.memory.retrieval.service` and
 `agent.memory.store`, while session-end summarization and candidate promotion
 run through `agent.runtime.session`.
 
