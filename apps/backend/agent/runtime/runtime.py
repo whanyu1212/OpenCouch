@@ -12,10 +12,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from agent.runtime.session.active_session import (
-    ActiveSessionManager,
     PersistedActiveSessionState,
-    PostgresActiveSessionStore,
-    SqliteActiveSessionStore,
 )
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
@@ -51,25 +48,11 @@ from agent.runtime.streaming import (
     response_ready_output,
     stamp_turn_total_ms,
 )
-from agent.runtime.session_store import (
-    TextSessionBackend,
-    TextSessionStore,
-    create_text_session_store,
-)
+from agent.runtime.session_store import TextSessionBackend
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.runtime.backends import (
-    create_crisis_log_backend,
-    create_embedding_provider,
-    create_memory_store,
-    create_session_feedback_backend,
-    effective_thread_persistence_backend,
-)
-from agent.runtime.state_store import (
-    RuntimeStateStore,
-    create_runtime_state_store,
-)
+from agent.runtime.resources import RuntimeResources, build_runtime_resources
 from agent.models import (
     AgentInput,
     Channel,
@@ -406,41 +389,6 @@ class PersistentAgentRuntime:
                 )
 
         self.memory_mode = memory_mode
-        is_incognito = memory_mode == MemoryMode.INCOGNITO
-
-        resolved_sqlite = ":memory:" if is_incognito else sqlite_path
-        self.sqlite_path = (
-            Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
-        )
-        if text_session_sqlite_path is not None:
-            resolved_text_session_sqlite_path = text_session_sqlite_path
-        elif resolved_sqlite == ":memory:":
-            resolved_text_session_sqlite_path = ":memory:"
-        else:
-            resolved_text_session_sqlite_path = Path(resolved_sqlite).with_name(
-                DEFAULT_TEXT_SESSION_DB_PATH.name
-            )
-
-        self._thread_persistence_backend = effective_thread_persistence_backend(
-            memory_mode=memory_mode,
-            thread_persistence_backend=thread_persistence_backend,
-        )
-        self._thread_database_url = thread_database_url
-        self._openai_text_runtime: OpenAITextRuntime | None = None
-        self._openai_shadow_runtime: OpenAITextRuntime | None = None
-        self._state_store: RuntimeStateStore = create_runtime_state_store(
-            backend=self._thread_persistence_backend,
-            sqlite_path=self.sqlite_path,
-            database_url=self._thread_database_url,
-        )
-        self._text_session_store: TextSessionStore | None = create_text_session_store(
-            memory_mode=memory_mode,
-            backend=text_session_backend,
-            sqlite_path=resolved_text_session_sqlite_path,
-            database_url=text_session_database_url,
-            create_tables=text_session_create_tables,
-            history_limit=text_session_history_limit,
-        )
         self._default_llm_client = default_llm_client
         self._session_timeout = session_timeout
         self._session_sweep_interval_seconds = max(
@@ -450,52 +398,46 @@ class PersistentAgentRuntime:
         self._auto_finalize_excluded = auto_finalize_excluded
         self._speculative_memory_prefetch = speculative_memory_prefetch
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
+        self._openai_text_runtime: OpenAITextRuntime | None = None
+        self._openai_shadow_runtime: OpenAITextRuntime | None = None
+        self._session_tracker = RuntimeSessionTracker()
 
-        self._memory_store = create_memory_store(
+        self._resources: RuntimeResources = build_runtime_resources(
             memory_mode=memory_mode,
+            sqlite_path=sqlite_path,
+            text_session_sqlite_path=text_session_sqlite_path,
+            thread_persistence_backend=thread_persistence_backend,
+            thread_database_url=thread_database_url,
+            text_session_backend=text_session_backend,
+            text_session_database_url=text_session_database_url,
+            text_session_create_tables=text_session_create_tables,
+            text_session_history_limit=text_session_history_limit,
             memory_store=memory_store,
             memory_backend=memory_backend,
             memory_database_url=memory_database_url,
             memory_sqlite_path=memory_sqlite_path,
-        )
-        self._crisis_log_backend = create_crisis_log_backend(
-            memory_mode=memory_mode,
             crisis_log_backend=crisis_log_backend,
             crisis_log_persistence_backend=crisis_log_persistence_backend,
             crisis_log_database_url=crisis_log_database_url,
             crisis_log_sqlite_path=crisis_log_sqlite_path,
-        )
-        self._session_feedback_backend = create_session_feedback_backend(
-            memory_mode=memory_mode,
             session_feedback_backend=session_feedback_backend,
             session_feedback_persistence_backend=session_feedback_persistence_backend,
             session_feedback_database_url=session_feedback_database_url,
             feedback_sqlite_path=feedback_sqlite_path,
-        )
-        self._embedding_provider: EmbeddingProvider = create_embedding_provider(
-            memory_mode=memory_mode,
             embedding_provider=embedding_provider,
-        )
-
-        self._session_tracker = RuntimeSessionTracker()
-        if self._thread_persistence_backend == "postgres":
-            if not self._thread_database_url:
-                raise ValueError(
-                    "thread_database_url is required when "
-                    "thread_persistence_backend='postgres'"
-                )
-            self._active_session_store = PostgresActiveSessionStore(
-                dsn=self._thread_database_url
-            )
-        else:
-            self._active_session_store = SqliteActiveSessionStore(
-                sqlite_path=self.sqlite_path
-            )
-        self._active_session_manager = ActiveSessionManager(
-            store=self._active_session_store,
-            memory_mode=self.memory_mode,
             session_timeout=self._session_timeout,
         )
+        self.sqlite_path = self._resources.sqlite_path
+        self._thread_persistence_backend = self._resources.thread_persistence_backend
+        self._thread_database_url = self._resources.thread_database_url
+        self._state_store = self._resources.state_store
+        self._text_session_store = self._resources.text_session_store
+        self._memory_store = self._resources.memory_store
+        self._crisis_log_backend = self._resources.crisis_log_backend
+        self._session_feedback_backend = self._resources.session_feedback_backend
+        self._embedding_provider = self._resources.embedding_provider
+        self._active_session_store = self._resources.active_session_store
+        self._active_session_manager = self._resources.active_session_manager
         self._session_lifecycle = SessionLifecycleService(
             memory_mode=self.memory_mode,
             session_tracker=self._session_tracker,
@@ -545,13 +487,7 @@ class PersistentAgentRuntime:
         await self._session_lifecycle.stop_background_tasks()
         if self._finalize_active_sessions_on_close:
             await self.finalize_active_sessions(llm_client=self._default_llm_client)
-        await self._memory_store.aclose()
-        await self._crisis_log_backend.aclose()
-        await self._session_feedback_backend.aclose()
-        if self._text_session_store is not None:
-            await self._text_session_store.aclose()
-        await self._state_store.aclose()
-        await self._active_session_store.aclose()
+        await self._resources.aclose()
 
     async def _ensure_runtime_schema(self) -> None:
         """Create runtime-owned tables.
@@ -560,7 +496,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        await self._state_store.ensure_schema()
+        await self._resources.ensure_schema()
 
     async def _prewarm(self) -> None:
         """Warm runtime resources before the first user turn.
@@ -569,23 +505,7 @@ class PersistentAgentRuntime:
             None.
         """
 
-        self._get_openai_text_runtime()
-
-        try:
-            await asyncio.wait_for(self._embedding_provider.awarmup(), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "PersistentAgentRuntime prewarm: embedding warmup timed out; "
-                "continuing with cold provider."
-            )
-        except Exception:
-            logger.warning(
-                "PersistentAgentRuntime prewarm: embedding warmup failed; "
-                "continuing with cold provider.",
-                exc_info=True,
-            )
-
-        await self._active_session_manager.ensure_schema()
+        await self._resources.prewarm(get_text_runtime=self._get_openai_text_runtime)
 
     def _thread_lock(self, thread_id: str) -> asyncio.Lock:
         """Return the in-process lock for one thread.
