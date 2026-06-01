@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 import pytest
@@ -132,6 +133,41 @@ async def test_clear_session_continuity_in_state_suppresses_errors_when_requeste
         {"therapeutic_approach": "cbt"},
         suppress_errors=True,
     )
+
+
+def test_thread_lock_returns_same_lock_for_same_thread() -> None:
+    service = _build_service()
+
+    assert service.thread_lock("thread-a") is service.thread_lock("thread-a")
+    assert service.thread_lock("thread-a") is not service.thread_lock("thread-b")
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_start_and_stop_cleanly() -> None:
+    service = _build_service()
+
+    async def _finalize_once() -> SessionSweepResult:
+        await asyncio.sleep(60)
+        return SessionSweepResult()
+
+    service.start_background_tasks(finalize_expired_sessions_once=_finalize_once)
+
+    assert service._session_sweeper_task is not None  # noqa: SLF001
+    assert not service._session_sweeper_task.done()  # noqa: SLF001
+
+    await service.stop_background_tasks()
+
+    assert service._session_sweeper_task is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_stop_is_idempotent() -> None:
+    service = _build_service()
+
+    await service.stop_background_tasks()
+    await service.stop_background_tasks()
+
+    assert service._session_sweeper_task is None  # noqa: SLF001
 
 
 @pytest.mark.asyncio

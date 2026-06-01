@@ -449,9 +449,7 @@ class PersistentAgentRuntime:
         self._finalize_active_sessions_on_close = finalize_active_sessions_on_close
         self._auto_finalize_excluded = auto_finalize_excluded
         self._speculative_memory_prefetch = speculative_memory_prefetch
-        self._session_sweeper_task: asyncio.Task[None] | None = None
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
-        self._thread_locks: dict[str, asyncio.Lock] = {}
 
         self._memory_store = create_memory_store(
             memory_mode=memory_mode,
@@ -517,7 +515,7 @@ class PersistentAgentRuntime:
             state_store=self._state_store,
             memory_store=self._memory_store,
             active_session_manager=self._active_session_manager,
-            lock_for=self._thread_lock,
+            lock_for=self._session_lifecycle.thread_lock,
             memory_mode=self.memory_mode,
         )
 
@@ -530,7 +528,9 @@ class PersistentAgentRuntime:
 
         await self._ensure_runtime_schema()
         await self._prewarm()
-        self._session_sweeper_task = asyncio.create_task(self._session_sweeper_loop())
+        self._session_lifecycle.start_background_tasks(
+            finalize_expired_sessions_once=self._finalize_expired_sessions_once
+        )
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -542,13 +542,7 @@ class PersistentAgentRuntime:
             tb: The active traceback, if any.
         """
 
-        if self._session_sweeper_task is not None:
-            self._session_sweeper_task.cancel()
-            try:
-                await self._session_sweeper_task
-            except asyncio.CancelledError:
-                pass
-            self._session_sweeper_task = None
+        await self._session_lifecycle.stop_background_tasks()
         if self._finalize_active_sessions_on_close:
             await self.finalize_active_sessions(llm_client=self._default_llm_client)
         await self._memory_store.aclose()
@@ -603,11 +597,7 @@ class PersistentAgentRuntime:
             The per-thread asyncio lock.
         """
 
-        lock = self._thread_locks.get(thread_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._thread_locks[thread_id] = lock
-        return lock
+        return self._session_lifecycle.thread_lock(thread_id)
 
     def _auto_finalization_excluded(self, thread_id: str) -> bool:
         """Return whether runtime background finalization should skip a thread."""
@@ -701,13 +691,6 @@ class PersistentAgentRuntime:
             effective_llm_client=self._effective_llm_client,
             list_active_thread_ids=self._list_active_thread_ids,
             is_auto_finalization_excluded=self._auto_finalization_excluded,
-        )
-
-    async def _session_sweeper_loop(self) -> None:
-        """Run the background session-timeout sweeper loop."""
-
-        await self._session_lifecycle.session_sweeper_loop(
-            finalize_expired_sessions_once=self._finalize_expired_sessions_once
         )
 
     async def _prepare_session_for_turn(
