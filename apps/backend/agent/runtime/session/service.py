@@ -88,6 +88,44 @@ class SessionLifecycleService:
         self._thread_llm_clients = thread_llm_clients
         self._session_sweep_interval_seconds = session_sweep_interval_seconds
         self._auto_finalize_excluded = auto_finalize_excluded
+        self._session_sweeper_task: asyncio.Task[None] | None = None
+        self._thread_locks: dict[str, asyncio.Lock] = {}
+
+    def thread_lock(self, thread_id: str) -> asyncio.Lock:
+        """Return the in-process lock for one thread."""
+        lock = self._thread_locks.get(thread_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._thread_locks[thread_id] = lock
+        return lock
+
+    def start_background_tasks(
+        self,
+        *,
+        finalize_expired_sessions_once: Callable[[], Awaitable[SessionSweepResult]],
+    ) -> None:
+        """Start lifecycle-owned background tasks."""
+        if (
+            self._session_sweeper_task is not None
+            and not self._session_sweeper_task.done()
+        ):
+            return
+        self._session_sweeper_task = asyncio.create_task(
+            self.session_sweeper_loop(
+                finalize_expired_sessions_once=finalize_expired_sessions_once
+            )
+        )
+
+    async def stop_background_tasks(self) -> None:
+        """Stop lifecycle-owned background tasks."""
+        if self._session_sweeper_task is None:
+            return
+        self._session_sweeper_task.cancel()
+        try:
+            await self._session_sweeper_task
+        except asyncio.CancelledError:
+            pass
+        self._session_sweeper_task = None
 
     def auto_finalization_excluded(self, thread_id: str) -> bool:
         """Return whether runtime background finalization should skip a thread."""
