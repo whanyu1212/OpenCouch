@@ -28,11 +28,11 @@ from agent.memory.policy.write import (
     semantic_candidate_needs_repetition_guard,
     text_contains_memory_control_request,
 )
-from agent.memory.procedural_profile import (
+from agent.memory.operations.procedural_profile import (
     aupsert_procedural_rule,
     build_procedural_rule,
 )
-from agent.memory.semantic_writes import (
+from agent.memory.operations.semantic_writes import (
     BatchSemanticWriteOutcome,
     BatchWriteItem,
     apply_semantic_writes_batch,
@@ -41,7 +41,7 @@ from agent.memory.store import MemoryStore
 from agent.state import AgentState, resolve_owner_id
 
 if TYPE_CHECKING:
-    from agent.memory.embeddings import EmbeddingProvider
+    from agent.memory.providers.embeddings import EmbeddingProvider
     from agent.memory.types import StoredSessionArc
     from llm.base import BaseLLMClient
 

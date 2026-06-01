@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from agent.memory.procedural_profile import (
+from agent.memory.operations.procedural_profile import (
     adelete_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,
     aupsert_procedural_rule,
     build_procedural_rule,
 )
-from agent.memory.reconciliation import filter_active_semantic_records
+from agent.memory.operations.reconciliation import filter_active_semantic_records
 from agent.memory.store import MemoryStore, Namespace
 from agent.memory.text_tokens import tokenize_meaningful
 from llm.base import BaseLLMClient

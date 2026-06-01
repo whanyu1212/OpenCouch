@@ -18,8 +18,8 @@ from agent.tools.guided_exercise import (
     execute_guided_exercise_skill_tool,
 )
 from agent.memory.modes import resolve_effective_memory_mode
-from agent.memory.procedural_profile import aget_procedural_profile
-from agent.memory.recall import load_memory_for_turn
+from agent.memory.operations.procedural_profile import aget_procedural_profile
+from agent.memory.retrieval.service import load_memory_for_turn
 from agent.state import resolve_owner_id
 from agent.tools.memory import (
     execute_memory_tool_action,

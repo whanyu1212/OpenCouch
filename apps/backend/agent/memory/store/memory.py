@@ -12,7 +12,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.memory.retrieval import IndexedRecord, dense_rank, lexical_rank, rrf_fuse
+from agent.memory.retrieval.ranking import (
+    IndexedRecord,
+    dense_rank,
+    lexical_rank,
+    rrf_fuse,
+)
 from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
     Namespace,

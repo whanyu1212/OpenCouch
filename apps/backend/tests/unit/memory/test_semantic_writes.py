@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from agent.memory.types import EntityRef, MemoryWrite
-from agent.memory.semantic_writes import (
+from agent.memory.operations.semantic_writes import (
     apply_semantic_write,
     bump_semantic_last_referenced_at,
     fetch_existing_semantic_records,

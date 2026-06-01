@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from agent.memory.episodic import (
+from agent.memory.operations.episodic import (
     prepare_session_summary_metadata,
     session_arc_to_stored,
     write_session_arc,
@@ -61,7 +61,7 @@ from agent.state import AgentState, resolve_owner_id
 from llm.base import BaseLLMClient
 
 if TYPE_CHECKING:
-    from agent.memory.embeddings import EmbeddingProvider
+    from agent.memory.providers.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 

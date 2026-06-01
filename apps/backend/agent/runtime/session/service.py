@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from agent.memory.embeddings import EmbeddingProvider
+from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer

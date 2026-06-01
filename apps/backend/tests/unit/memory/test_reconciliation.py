@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 
 from agent.memory.types import EntityRef, SemanticFact
-from agent.memory.procedural_profile import build_procedural_rule
-from agent.memory.reconciliation import (
+from agent.memory.operations.procedural_profile import build_procedural_rule
+from agent.memory.operations.reconciliation import (
     filter_active_semantic_records,
     is_active_semantic_record_value,
     plan_procedural_rule_write_llm_primary,

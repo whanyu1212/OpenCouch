@@ -29,7 +29,7 @@ from agent.runtime.session.active_session import (
     SqliteActiveSessionStore,
 )
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
-from agent.memory.embeddings import NullEmbeddingProvider
+from agent.memory.providers.embeddings import NullEmbeddingProvider
 from agent.memory.modes import MemoryMode
 from agent.feedback.session_feedback import (
     InMemorySessionFeedbackBackend,

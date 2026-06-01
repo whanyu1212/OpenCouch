@@ -14,7 +14,7 @@ from agent.feedback.session_feedback import (
     InMemorySessionFeedbackBackend,
     SessionFeedbackBackend,
 )
-from agent.memory.embeddings import (
+from agent.memory.providers.embeddings import (
     EmbeddingProvider,
     NullEmbeddingProvider,
     create_configured_embedding_provider,

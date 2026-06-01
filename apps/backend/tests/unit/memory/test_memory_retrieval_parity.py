@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from agent.memory.procedural_profile import aget_procedural_profile
-from agent.memory.reconciliation import is_active_semantic_record_value
+from agent.memory.operations.procedural_profile import aget_procedural_profile
+from agent.memory.operations.reconciliation import is_active_semantic_record_value
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from tests.support.memory_fixtures import (

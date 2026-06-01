@@ -19,7 +19,7 @@ from agent.memory.control.operations import (
     set_memory_recall,
 )
 from agent.memory.modes import MemoryMode
-from agent.memory.procedural_profile import aget_procedural_profile
+from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.control.actions import (
     CancelPendingAction,
     ConfirmPendingAction,
