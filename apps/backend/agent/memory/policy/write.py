@@ -22,6 +22,7 @@ from agent.memory.policy.clamps import (
     semantic_hard_policy_guard,
 )
 from agent.memory.policy.markers import (
+    semantic_candidate_is_memory_control_request,
     semantic_candidate_is_turn_scoped,
     semantic_candidate_needs_repetition_guard,
     text_contains_memory_control_request,
@@ -116,6 +117,7 @@ async def decide_procedural_candidate_llm_primary(
 __all__ = [
     "decide_procedural_candidate_llm_primary",
     "decide_semantic_candidate_llm_primary",
+    "semantic_candidate_is_memory_control_request",
     "semantic_candidate_is_turn_scoped",
     "semantic_candidate_needs_repetition_guard",
     "semantic_hard_policy_guard",
