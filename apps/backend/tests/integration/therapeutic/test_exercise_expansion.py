@@ -33,9 +33,9 @@ from agent.skills.guided_exercises.registry import (
     EXERCISE_TINY_ACTION,
     EXERCISE_VALUES_COMPASS,
 )
-from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
+from agent.skills.guided_exercises.engine.lifecycle import GuidedExerciseSkillService
 from agent.skills.guided_exercises.types import ExerciseDefinition, ExerciseStep
-from agent.skills.guided_exercises.memory import (
+from agent.skills.guided_exercises.engine.memory import (
     ExerciseCompletionMemoryRequest,
     write_exercise_completion_fact,
 )

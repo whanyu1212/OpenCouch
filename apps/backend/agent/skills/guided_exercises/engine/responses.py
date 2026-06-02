@@ -12,7 +12,9 @@ from agent.specialists.therapeutic_response.prompts import (
     build_therapeutic_response_prompt,
 )
 from agent.state import AgentState
-from agent.skills.guided_exercises.memory import _write_exercise_completion_fact
+from agent.skills.guided_exercises.engine.memory import (
+    _write_exercise_completion_fact,
+)
 from agent.skills.guided_exercises.registry import (
     EXERCISE_5_4_3_2_1,
     get_exercise_display_name,
@@ -21,7 +23,7 @@ from agent.skills.guided_exercises.registry import (
 from agent.skills.guided_exercises.rendering.skill_context import (
     render_exercise_skill_context,
 )
-from agent.skills.guided_exercises.state import (
+from agent.skills.guided_exercises.engine.state import (
     _advance_step_delta,
     _get_current_step,
     _start_exercise_delta,
