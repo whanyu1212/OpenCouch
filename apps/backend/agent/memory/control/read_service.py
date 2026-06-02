@@ -7,7 +7,7 @@ from typing import Any
 from agent.memory.control.operations import list_memory_for_owner
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.control.types import MemoryControlServiceResult
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 
 
 def empty_memory_reply() -> str:

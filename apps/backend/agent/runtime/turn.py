@@ -16,7 +16,7 @@ from agent.models import (
     ResponseCategory,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentTurnInputState
 from llm.base import BaseLLMClient
 

@@ -14,7 +14,7 @@ from agent.runtime import build_initial_state, run_agent
 from agent.memory.modes import MemoryMode
 from agent.memory.store import Namespace, OpenCouchMemoryStore, StoreRecord
 from agent.models import AgentInput, ResponseCategory
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.persistence import FakeCrossRestartLLM
 

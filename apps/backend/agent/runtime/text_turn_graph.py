@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agent.runtime.types import TextRuntimeConfig
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME

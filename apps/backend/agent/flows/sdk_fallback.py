@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from openai import APIConnectionError, AuthenticationError, OpenAIError
 
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 
 _OPENAI_API_KEY_FALLBACK_REASON = "missing_openai_api_key"
 _OPENAI_CONNECTION_FALLBACK_REASON = "openai_api_connection_error"

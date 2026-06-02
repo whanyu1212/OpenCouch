@@ -71,7 +71,7 @@ from agent.runtime.session.history import (  # noqa: E402
     session_conversation_from_transcript,
 )
 from agent.runtime.session.summarize import run_summarize_session  # noqa: E402
-from agent.runtime_context import WorkflowContext  # noqa: E402
+from agent.runtime.workflow_context import WorkflowContext  # noqa: E402
 from eval.runners.helpers.judge import (  # noqa: E402
     ProviderName,
     clear_empty_provider_env_vars,

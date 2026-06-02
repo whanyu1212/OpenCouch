@@ -17,7 +17,7 @@ from agent.memory.control.service import (
     MemoryControlRequest,
     execute_memory_control_request,
 )
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 
 
 class _FakePreferenceRuleLLM:

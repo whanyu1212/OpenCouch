@@ -16,7 +16,7 @@ import pytest
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from agent.skills.guided_exercises.registry import (
     EXERCISE_5_4_3_2_1,

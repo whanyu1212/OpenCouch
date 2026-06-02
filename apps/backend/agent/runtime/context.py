@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from agent.audit.models import CrisisResourceLookupStatus
 from agent.models import Channel
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 
 if TYPE_CHECKING:
     from agent.state import AgentState

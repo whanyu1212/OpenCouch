@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from agent.audit.models import CrisisResourceLookupStatus
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded_search import (
     CrisisResourceLookupRequest,

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from agent.memory.modes import MemoryMode
 from agent.memory.retrieval.service import LoadMemoryResult, load_memory_for_turn
 from agent.observability.timing import elapsed_ms
-from agent.runtime_context import PrefetchedTurnMemory, WorkflowContext
+from agent.runtime.workflow_context import PrefetchedTurnMemory, WorkflowContext
 from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)

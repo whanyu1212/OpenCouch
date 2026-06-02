@@ -19,7 +19,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
 from agent.runtime.triage_dispatch import apply_triage_decision_to_state
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.runtime import (
     OpenAITextRuntime,
     TextRuntimeChunkEvent,

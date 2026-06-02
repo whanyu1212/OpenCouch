@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.types import TextRuntimeConfig
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.specialists.roster import OpenAITextAgentRoster
 from agent.state import AgentState
 

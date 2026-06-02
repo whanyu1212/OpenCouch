@@ -18,7 +18,7 @@ from agent.runtime.types import (
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
 )
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
 from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
 
