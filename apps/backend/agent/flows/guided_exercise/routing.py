@@ -10,7 +10,7 @@ from agent.skills.guided_exercises.registry import (
     available_exercise_definitions,
     iter_exercise_selection_aliases,
 )
-from agent.skills.guided_exercises.state import clear_exercise_delta
+from agent.skills.guided_exercises.engine.state import clear_exercise_delta
 from agent.state import AgentState
 
 
