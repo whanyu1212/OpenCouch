@@ -17,7 +17,6 @@ column.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import struct
 from collections.abc import Callable
@@ -37,6 +36,9 @@ from agent.memory.store.base import (
     MemoryStore,
     Namespace,
     StoreRecord,
+    build_store_record,
+    prepare_memory_record_fields,
+    unpack_memory_namespace,
 )
 
 logger = logging.getLogger(__name__)
@@ -308,16 +310,10 @@ class SqliteMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
-        category = value.get("category")
-        created_at = str(value.get("created_at") or "")
-        last_referenced_at = str(value.get("last_referenced_at") or created_at or "")
-        dormant_at = value.get("dormant_at")
-        user_visible = 1 if value.get("user_visible", True) else 0
-        serialized = json.dumps(value, default=str)
-
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
+        fields = prepare_memory_record_fields(value, embedding=embedding)
+        user_visible = 1 if fields.user_visible else 0
         embedding_blob = _encode_embedding(embedding)
-        embedding_dim = len(embedding) if embedding is not None else None
 
         # INSERT OR REPLACE via a conflict clause on the compound
         # UNIQUE (id, owner_id, namespace_kind) constraint. When a row
@@ -348,14 +344,14 @@ class SqliteMemoryStore:
                 key,
                 owner_id,
                 namespace_kind,
-                category,
-                serialized,
-                created_at,
-                last_referenced_at,
-                dormant_at,
+                fields.category,
+                fields.serialized_value,
+                fields.created_at,
+                fields.last_referenced_at,
+                fields.dormant_at,
                 user_visible,
                 embedding_blob,
-                embedding_dim,
+                fields.embedding_dim,
                 embedding_model,
             ),
         )
@@ -390,17 +386,10 @@ class SqliteMemoryStore:
         try:
             await conn.execute("BEGIN")
             for namespace, key, value, embedding, embedding_model in items:
-                owner_id, namespace_kind = self._unpack_namespace(namespace)
-                category = value.get("category")
-                created_at = str(value.get("created_at") or "")
-                last_referenced_at = str(
-                    value.get("last_referenced_at") or created_at or ""
-                )
-                dormant_at = value.get("dormant_at")
-                user_visible = 1 if value.get("user_visible", True) else 0
-                serialized = json.dumps(value, default=str)
+                owner_id, namespace_kind = unpack_memory_namespace(namespace)
+                fields = prepare_memory_record_fields(value, embedding=embedding)
+                user_visible = 1 if fields.user_visible else 0
                 embedding_blob = _encode_embedding(embedding)
-                embedding_dim = len(embedding) if embedding is not None else None
                 await conn.execute(
                     """
                     INSERT INTO memory_records
@@ -423,14 +412,14 @@ class SqliteMemoryStore:
                         key,
                         owner_id,
                         namespace_kind,
-                        category,
-                        serialized,
-                        created_at,
-                        last_referenced_at,
-                        dormant_at,
+                        fields.category,
+                        fields.serialized_value,
+                        fields.created_at,
+                        fields.last_referenced_at,
+                        fields.dormant_at,
                         user_visible,
                         embedding_blob,
-                        embedding_dim,
+                        fields.embedding_dim,
                         embedding_model,
                     ),
                 )
@@ -467,10 +456,10 @@ class SqliteMemoryStore:
         except IndexError:
             embedding_model = None
 
-        return StoreRecord(
+        return build_store_record(
             namespace=namespace,
             key=row["id"],
-            value=json.loads(row["value"]),
+            value=row["value"],
             embedding=_decode_embedding(embedding_blob),
             embedding_model=embedding_model,
         )
@@ -491,7 +480,7 @@ class SqliteMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
         async with conn.execute(
             """
             SELECT id, value, embedding, embedding_model FROM memory_records
@@ -524,7 +513,7 @@ class SqliteMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
 
         if query is None:
             # Return all records in insertion order, limited.
@@ -596,7 +585,7 @@ class SqliteMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
 
         # Build the age filter clause. Use datetime() to normalize both
         # sides — stored timestamps may use "Z" suffix while datetime('now')
@@ -696,7 +685,7 @@ class SqliteMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
         cursor = await conn.execute(
             """
             DELETE FROM memory_records
@@ -757,7 +746,7 @@ class SqliteMemoryStore:
             async with conn.execute("SELECT COUNT(*) FROM memory_records") as cursor:
                 row = await cursor.fetchone()
         else:
-            owner_id, namespace_kind = self._unpack_namespace(namespace)
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
             async with conn.execute(
                 """
                 SELECT COUNT(*) FROM memory_records
@@ -800,7 +789,7 @@ class SqliteMemoryStore:
         if self._closed:
             return None
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
         async with conn.execute(
             """
             SELECT id, value, embedding, embedding_model FROM memory_records
@@ -814,25 +803,6 @@ class SqliteMemoryStore:
         if row is None:
             return None
         return self._row_to_store_record(row, namespace)
-
-    @staticmethod
-    def _unpack_namespace(namespace: Namespace) -> tuple[str, str]:
-        """Extract normalized namespace fields from the tuple.
-
-        Args:
-            namespace (Namespace): Namespace tuple to validate and unpack.
-
-        Returns:
-            tuple[str, str]: ``(owner_id, namespace_kind)`` pair.
-        """
-
-        if len(namespace) != 2:
-            raise ValueError(
-                f"SqliteMemoryStore namespace must be (owner_id, kind) "
-                f"tuple; got {namespace!r}"
-            )
-        owner_id, namespace_kind = namespace
-        return str(owner_id), str(namespace_kind)
 
 
 # Static conformance check for the ``MemoryStore`` protocol.

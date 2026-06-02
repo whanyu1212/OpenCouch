@@ -13,7 +13,6 @@ project migrates persistence off SQLite.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Callable
 from typing import Any, cast
@@ -34,6 +33,9 @@ from agent.memory.store.base import (
     MemoryStore,
     Namespace,
     StoreRecord,
+    build_store_record,
+    prepare_memory_record_fields,
+    unpack_memory_namespace,
 )
 
 logger = logging.getLogger(__name__)
@@ -314,20 +316,14 @@ class PostgresMemoryStore:
             StoreRecord: Converted store record.
         """
 
-        value = row["value"]
-        if isinstance(value, str):
-            parsed_value = cast(dict[str, Any], json.loads(value))
-        else:
-            parsed_value = cast(dict[str, Any], value)
-
         embedding = row.get("embedding")
         if embedding is not None:
             embedding = list(embedding)
 
-        return StoreRecord(
+        return build_store_record(
             namespace=namespace,
-            key=str(row["id"]),
-            value=parsed_value,
+            key=row["id"],
+            value=row["value"],
             embedding=cast(list[float] | None, embedding),
             embedding_model=cast(str | None, row.get("embedding_model")),
         )
@@ -355,16 +351,11 @@ class PostgresMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
-        category = value.get("category")
-        created_at = str(value.get("created_at") or "")
-        last_referenced_at = str(value.get("last_referenced_at") or created_at or "")
-        dormant_at = value.get("dormant_at")
-        user_visible = bool(value.get("user_visible", True))
-        embedding_dim = len(embedding) if embedding is not None else None
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
+        fields = prepare_memory_record_fields(value, embedding=embedding)
         embedding_vector_3072 = self._embedding_vector_3072_literal(
             embedding,
-            embedding_dim,
+            fields.embedding_dim,
         )
 
         async with conn.transaction():
@@ -394,15 +385,15 @@ class PostgresMemoryStore:
                         key,
                         owner_id,
                         namespace_kind,
-                        category,
-                        json.dumps(value, default=str),
-                        created_at,
-                        last_referenced_at,
-                        dormant_at,
-                        user_visible,
+                        fields.category,
+                        fields.serialized_value,
+                        fields.created_at,
+                        fields.last_referenced_at,
+                        fields.dormant_at,
+                        fields.user_visible,
                         embedding,
                         embedding_vector_3072,
-                        embedding_dim,
+                        fields.embedding_dim,
                         embedding_model,
                     ),
                 )
@@ -436,18 +427,11 @@ class PostgresMemoryStore:
         async with conn.transaction():
             async with conn.cursor() as cursor:
                 for namespace, key, value, embedding, embedding_model in items:
-                    owner_id, namespace_kind = self._unpack_namespace(namespace)
-                    category = value.get("category")
-                    created_at = str(value.get("created_at") or "")
-                    last_referenced_at = str(
-                        value.get("last_referenced_at") or created_at or ""
-                    )
-                    dormant_at = value.get("dormant_at")
-                    user_visible = bool(value.get("user_visible", True))
-                    embedding_dim = len(embedding) if embedding is not None else None
+                    owner_id, namespace_kind = unpack_memory_namespace(namespace)
+                    fields = prepare_memory_record_fields(value, embedding=embedding)
                     embedding_vector_3072 = self._embedding_vector_3072_literal(
                         embedding,
-                        embedding_dim,
+                        fields.embedding_dim,
                     )
                     await cursor.execute(
                         """
@@ -474,15 +458,15 @@ class PostgresMemoryStore:
                             key,
                             owner_id,
                             namespace_kind,
-                            category,
-                            json.dumps(value, default=str),
-                            created_at,
-                            last_referenced_at,
-                            dormant_at,
-                            user_visible,
+                            fields.category,
+                            fields.serialized_value,
+                            fields.created_at,
+                            fields.last_referenced_at,
+                            fields.dormant_at,
+                            fields.user_visible,
                             embedding,
                             embedding_vector_3072,
-                            embedding_dim,
+                            fields.embedding_dim,
                             embedding_model,
                         ),
                     )
@@ -503,7 +487,7 @@ class PostgresMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
         async with conn.cursor() as cursor:
             await cursor.execute(
                 """
@@ -538,7 +522,7 @@ class PostgresMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
 
         async with conn.cursor() as cursor:
             if query is None:
@@ -608,7 +592,7 @@ class PostgresMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
 
         age_clause = ""
         age_params: list[Any] = []
@@ -720,7 +704,7 @@ class PostgresMemoryStore:
         """
 
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
         async with conn.transaction():
             async with conn.cursor() as cursor:
                 await cursor.execute(
@@ -772,7 +756,7 @@ class PostgresMemoryStore:
             if namespace is None:
                 await cursor.execute("SELECT COUNT(*) AS count FROM memory_records")
             else:
-                owner_id, namespace_kind = self._unpack_namespace(namespace)
+                owner_id, namespace_kind = unpack_memory_namespace(namespace)
                 await cursor.execute(
                     """
                     SELECT COUNT(*) AS count
@@ -817,7 +801,7 @@ class PostgresMemoryStore:
         if self._closed:
             return None
         conn = await self._ensure_connection()
-        owner_id, namespace_kind = self._unpack_namespace(namespace)
+        owner_id, namespace_kind = unpack_memory_namespace(namespace)
         async with conn.cursor() as cursor:
             await cursor.execute(
                 """
@@ -833,25 +817,6 @@ class PostgresMemoryStore:
         if row is None:
             return None
         return self._row_to_store_record(row, namespace)
-
-    @staticmethod
-    def _unpack_namespace(namespace: Namespace) -> tuple[str, str]:
-        """Extract normalized namespace fields from the tuple.
-
-        Args:
-            namespace (Namespace): Namespace tuple to validate and unpack.
-
-        Returns:
-            tuple[str, str]: ``(owner_id, namespace_kind)`` pair.
-        """
-
-        if len(namespace) != 2:
-            raise ValueError(
-                f"PostgresMemoryStore namespace must be (owner_id, kind) "
-                f"tuple; got {namespace!r}"
-            )
-        owner_id, namespace_kind = namespace
-        return str(owner_id), str(namespace_kind)
 
 
 _: type[MemoryStore] = PostgresMemoryStore
