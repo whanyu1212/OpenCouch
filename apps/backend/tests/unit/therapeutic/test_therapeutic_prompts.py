@@ -2,7 +2,7 @@
 
 These tests cover the new ``_format_procedural_rules_block`` and
 ``_format_recall_toggle_constraint`` helpers in
-``agent.specialists.therapeutic_prompts``, plus verification that public
+``agent.specialists.therapeutic_response.prompts``, plus verification that public
 system-prompt builders correctly weave the dynamic blocks into their
 output based on state.
 
@@ -36,7 +36,7 @@ from typing import Any, cast
 
 from agent.models import CrisisAssessment
 from agent.specialists.guided_exercise import build_guided_exercise_system_prompt
-from agent.specialists.therapeutic_prompts import (
+from agent.specialists.therapeutic_response.prompts import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
     build_clarifying_system_prompt,

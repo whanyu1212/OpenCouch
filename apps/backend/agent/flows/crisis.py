@@ -13,7 +13,9 @@ from agent.runtime.session.state import format_recent_history
 from agent.runtime.services import TextRuntimeServices
 from agent.specialists.crisis import CRISIS_AGENT_NAME, build_runtime_crisis_agent
 from agent.guardrails.prompts import build_crisis_response_system_prompt
-from agent.specialists.therapeutic_prompts import build_clarifying_system_prompt
+from agent.specialists.therapeutic_response.prompts import (
+    build_clarifying_system_prompt,
+)
 from agent.tools.crisis import (
     build_crisis_resource_lookup_delta,
     crisis_response_delta,

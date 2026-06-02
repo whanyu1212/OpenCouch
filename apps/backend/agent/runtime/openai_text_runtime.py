@@ -70,7 +70,9 @@ from agent.runtime.types import (
 )
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
-from agent.specialists.therapeutic_prompts import build_therapeutic_response_prompt
+from agent.specialists.therapeutic_response.prompts import (
+    build_therapeutic_response_prompt,
+)
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService
 from llm.base import BaseLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL
