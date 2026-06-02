@@ -18,6 +18,7 @@ from agent.runtime import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
+from agent.runtime.triage_dispatch import apply_triage_decision_to_state
 from agent.runtime_context import WorkflowContext
 from agent.runtime import (
     OpenAITextRuntime,
@@ -126,29 +127,6 @@ class _RecordingResponseLLM(FakeCrossRestartLLM):
             prompt=prompt,
             response_schema=response_schema,
             system_instruction=system_instruction,
-        )
-
-
-class _StaticTriageDecisionLLM(FakeCrossRestartLLM):
-    def __init__(self, decision: TurnDispatchDecision) -> None:
-        super().__init__()
-        self.decision = decision
-
-    async def generate_structured(
-        self,
-        *,
-        prompt: str,
-        response_schema: type[Any],
-        system_instruction: str | None = None,
-        use_search: bool = False,
-    ) -> Any:
-        del prompt, system_instruction, use_search
-        if response_schema.__name__ == "TurnDispatchDecision":
-            return self.decision
-        return await super().generate_structured(
-            prompt="",
-            response_schema=response_schema,
-            system_instruction=None,
         )
 
 
@@ -294,22 +272,16 @@ async def test_response_llm_structured_contract_sanitizes_pseudo_tool_text() -> 
     )
 
 
-@pytest.mark.asyncio
-async def test_triage_clarification_does_not_mutate_decision_route() -> None:
+def test_triage_clarification_does_not_mutate_decision_route() -> None:
     decision = TurnDispatchDecision(
         route="grounded_lookup",
         reasoning="ambiguous grounded lookup request",
         confidence="low",
         query="grounding techniques",
     )
-    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused"))
     state = cast(Any, _initial_state("Maybe look this up, or maybe just help?"))
 
-    result = await runtime._apply_triage_turn_dispatch(
-        state,
-        config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(_StaticTriageDecisionLLM(decision)),
-    )
+    result = apply_triage_decision_to_state(state, decision)
 
     assert decision.route == "grounded_lookup"
     assert result["route"] == "therapeutic"

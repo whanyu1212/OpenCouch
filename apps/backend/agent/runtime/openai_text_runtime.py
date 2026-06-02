@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
 
 from agents import Runner
-from agent.runtime.session.state import format_recent_history
 from agent.guardrails.prompts import build_crisis_response_prompt
 from agent.models import Channel, CrisisAssessment, MessageRole
 from agent.observability.timing import elapsed_ms
@@ -31,10 +30,6 @@ from agent.flows.guided_exercise import (
 from agent.flows.grounded_lookup import (
     run_grounded_lookup_turn as run_grounded_lookup_turn_path,
 )
-from agent.flows.sdk_fallback import (
-    can_fallback_to_control_response as can_fallback_to_control_response_path,
-    openai_sdk_fallback_reason as openai_sdk_fallback_reason_path,
-)
 from agent.flows.therapeutic import (
     TherapeuticAgentResult as TherapeuticAgentResultPath,
     operational_context_for_prompt as operational_context_for_prompt_path,
@@ -46,7 +41,6 @@ from agent.flows.therapeutic import (
     therapeutic_agent_prompt_for_state as therapeutic_agent_prompt_for_state_path,
 )
 from agent.guardrails import run_crisis_input_guardrail
-from agent.memory.types import TurnDispatchDecision
 from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime.state_ops import (
     DICT_REDUCER_KEYS,
@@ -66,7 +60,7 @@ from agent.runtime.text_turn_graph import (
     TextTurnGraph,
     TextTurnGraphResult,
 )
-from agent.runtime.turn_dispatch import state_delta_for_turn_dispatch
+from agent.runtime.triage_dispatch import apply_triage_turn_dispatch
 from agent.runtime.types import (
     TextRuntimeConfig,
     TextRuntimeShadowResult,
@@ -477,82 +471,18 @@ class OpenAITextRuntime:
         config: TextRuntimeConfig,
         context: WorkflowContext,
     ) -> AgentState:
-        llm_client = context.llm_client
-        if llm_client is None:
-            return state
-        run_context = self._run_context_for_state(state, config, context)
-        triage_input = self._triage_input_text_for_state(state)
-        fallback_reason: str | None = None
-        try:
-            result = await self._runner.run_triage(
-                agent=self._roster.triage_agent,
-                input_text=triage_input,
-                context=run_context,
-            )
-            decision = _turn_dispatch_decision_from_output(
-                getattr(result, "final_output", None)
-            )
-        except Exception as exc:
-            if not can_fallback_to_control_response_path(exc, context):
-                raise
-            fallback_reason = openai_sdk_fallback_reason_path(exc)
-            decision = await llm_client.generate_structured(
-                prompt=triage_input,
-                response_schema=TurnDispatchDecision,
-                system_instruction=self._roster.triage_agent.instructions,
-            )
-        clarification_kind = decision.clarification_kind
-        needs_blocking_clarification = (
-            decision.clarification_needed and clarification_kind == "blocking"
-        )
-        legacy_low_confidence_clarification = (
-            decision.confidence == "low" and not decision.clarification_needed
-        )
-        should_route_to_clarification = (
-            needs_blocking_clarification or legacy_low_confidence_clarification
-        )
-        tentative_route = decision.route if should_route_to_clarification else None
-        effective_decision = (
-            decision.model_copy(update={"route": "therapeutic"})
-            if should_route_to_clarification
-            else decision
-        )
-        apply_state_delta(
+        return await apply_triage_turn_dispatch(
             state,
-            state_delta_for_turn_dispatch(state, effective_decision),
+            config=config,
+            context=context,
+            run_context_factory=lambda: self._run_context_for_state(
+                state,
+                config,
+                context,
+            ),
+            runner=self._runner,
+            triage_agent=self._roster.triage_agent,
         )
-        if fallback_reason is not None:
-            apply_state_delta(
-                state,
-                {
-                    "diagnostics": {
-                        "openai_triage_sdk_fallback_reason": fallback_reason,
-                    }
-                },
-            )
-        if should_route_to_clarification:
-            apply_state_delta(
-                state,
-                {
-                    "response_style": "clarifying",
-                    "turn_lifecycle": {
-                        "active_flow": self._active_flow_for_state(state),
-                        "action": decision.active_flow_action,
-                        "tentative_route": tentative_route,
-                        "triage_confidence": decision.confidence,
-                        "clarification_needed": True,
-                        "clarification_kind": clarification_kind,
-                        "secondary_route": decision.secondary_route,
-                        "intent_summary": decision.intent_summary,
-                        "clarification_question": decision.clarification_question,
-                        "no_clarification_reason": decision.no_clarification_reason,
-                    },
-                    "diagnostics": {
-                        "openai_triage_tentative_route": tentative_route,
-                    },
-                },
-            )
-        return state
 
     async def _load_turn_memory(
         self,
@@ -851,54 +781,6 @@ class OpenAITextRuntime:
             return prompt
         return f"{prompt}\n\n{operational_context}"
 
-    def _active_flow_for_state(self, state: AgentState) -> str:
-        active_flow = "none"
-        exercise_state = state.get("exercise_state", {}) or {}
-        if (
-            isinstance(exercise_state, Mapping)
-            and exercise_state.get("exercise_type") is not None
-            and exercise_state.get("exercise_step") is not None
-        ):
-            active_flow = "guided_exercise"
-        memory_control = state.get("memory_control", {}) or {}
-        if (
-            isinstance(memory_control, Mapping)
-            and memory_control.get("pending_action") is not None
-        ):
-            active_flow = "pending_memory_action"
-        return active_flow
-
-    def _triage_input_text_for_state(self, state: AgentState) -> str:
-        active_flow = self._active_flow_for_state(state)
-        memory_reference = state.get("memory_reference", {}) or {}
-        memory_reference_mode = (
-            memory_reference.get("mode")
-            if isinstance(memory_reference, Mapping)
-            else "none"
-        )
-        turn_lifecycle = state.get("turn_lifecycle", {}) or {}
-        prior_clarification = ""
-        if (
-            isinstance(turn_lifecycle, Mapping)
-            and turn_lifecycle.get("triage_confidence") == "low"
-        ):
-            tentative_route = str(turn_lifecycle.get("tentative_route") or "").strip()
-            if tentative_route:
-                prior_clarification = (
-                    "Prior low-confidence clarification: the previous turn asked the "
-                    f"user to clarify ambiguous intent; tentative route was "
-                    f'"{tentative_route}". Treat the current message as a possible '
-                    "answer to that clarification, but do not force the tentative "
-                    "route if the user changed topics.\n"
-                )
-        return (
-            f"Active flow: {active_flow}\n"
-            f"Memory reference mode: {memory_reference_mode}\n"
-            f"{prior_clarification}"
-            f"Recent conversation:\n{format_recent_history(state)}\n\n"
-            f'Current user message: "{state.get("message", "")}"'
-        )
-
     def _crisis_input_text_for_state(
         self,
         state: AgentState,
@@ -982,17 +864,6 @@ def _effective_turn_state(
         else:
             state[key] = value
     return cast(AgentState, state)
-
-
-def _turn_dispatch_decision_from_output(output: Any) -> TurnDispatchDecision:
-    if isinstance(output, TurnDispatchDecision):
-        return output
-    if isinstance(output, Mapping):
-        return TurnDispatchDecision.model_validate(dict(output))
-    raise TypeError(
-        "OpenAI triage agent returned unsupported output "
-        f"{type(output).__name__}; expected TurnDispatchDecision."
-    )
 
 
 def _deterministic_smoke_state(
