@@ -18,9 +18,10 @@ provider is configured.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 # A namespace is typically ``(user_id, kind)`` where kind is one of
 # "semantic", "episodic", or "procedural". The tuple shape mirrors common
@@ -58,6 +59,19 @@ Namespace = tuple[str, ...]
 SEARCH_MATCH_THRESHOLD = 0.33
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedMemoryRecordFields:
+    """Backend-neutral fields derived from a memory payload before persistence."""
+
+    category: Any
+    serialized_value: str
+    created_at: str
+    last_referenced_at: str
+    dormant_at: Any
+    user_visible: bool
+    embedding_dim: int | None
+
+
 @dataclass(slots=True)
 class StoreRecord:
     """One record in the memory store.
@@ -76,6 +90,63 @@ class StoreRecord:
     value: dict[str, Any]
     embedding: list[float] | None = None
     embedding_model: str | None = None
+
+
+def unpack_memory_namespace(namespace: Namespace) -> tuple[str, str]:
+    """Extract normalized owner and kind fields from a memory namespace."""
+
+    if len(namespace) != 2:
+        raise ValueError(
+            f"MemoryStore namespace must be (owner_id, kind) tuple; got {namespace!r}"
+        )
+    owner_id, namespace_kind = namespace
+    return str(owner_id), str(namespace_kind)
+
+
+def prepare_memory_record_fields(
+    value: dict[str, Any],
+    *,
+    embedding: list[float] | None,
+) -> PreparedMemoryRecordFields:
+    """Derive backend-neutral memory row fields from a serialized payload."""
+
+    created_at = str(value.get("created_at") or "")
+    return PreparedMemoryRecordFields(
+        category=value.get("category"),
+        serialized_value=json.dumps(value, default=str),
+        created_at=created_at,
+        last_referenced_at=str(value.get("last_referenced_at") or created_at or ""),
+        dormant_at=value.get("dormant_at"),
+        user_visible=bool(value.get("user_visible", True)),
+        embedding_dim=len(embedding) if embedding is not None else None,
+    )
+
+
+def parse_store_record_value(value: Any) -> dict[str, Any]:
+    """Return a StoreRecord value from SQLite JSON text or Postgres JSONB."""
+
+    if isinstance(value, str):
+        return cast(dict[str, Any], json.loads(value))
+    return cast(dict[str, Any], value)
+
+
+def build_store_record(
+    *,
+    namespace: Namespace,
+    key: Any,
+    value: Any,
+    embedding: list[float] | None,
+    embedding_model: str | None,
+) -> StoreRecord:
+    """Build the shared StoreRecord shape from backend-extracted fields."""
+
+    return StoreRecord(
+        namespace=namespace,
+        key=str(key),
+        value=parse_store_record_value(value),
+        embedding=embedding,
+        embedding_model=embedding_model,
+    )
 
 
 @runtime_checkable
