@@ -13,7 +13,7 @@ from agent.skills.guided_exercises.registry import (
     EXERCISE_BOX_BREATHING,
     iter_exercise_definitions,
 )
-from agent.skills.guided_exercises.skill_docs import (
+from agent.skills.guided_exercises.rendering.skill_docs import (
     get_guided_exercise_skill_doc,
     iter_guided_exercise_skill_docs,
     validate_guided_exercise_skill_docs,
@@ -136,6 +136,14 @@ def test_guided_exercise_loadout_respects_voice_channel() -> None:
     assert EXERCISE_BOX_BREATHING in loadout.available_exercise_ids
     assert loadout.selected_exercise_id == EXERCISE_BOX_BREATHING
     assert loadout.channel == "voice"
+
+
+def test_legacy_skill_doc_import_path_reexports_parser() -> None:
+    from agent.skills.guided_exercises.skill_docs import (
+        get_guided_exercise_skill_doc as legacy_get_doc,
+    )
+
+    assert legacy_get_doc(EXERCISE_5_4_3_2_1) is not None
 
 
 def _write_skill_doc(

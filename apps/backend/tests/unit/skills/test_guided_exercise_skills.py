@@ -12,7 +12,7 @@ from agent.skills.guided_exercises.registry import (
     get_exercise_definition,
     iter_exercise_definitions,
 )
-from agent.skills.guided_exercises.skills import (
+from agent.skills.guided_exercises.rendering.skill_context import (
     build_exercise_skill,
     render_exercise_skill_context,
 )
@@ -99,6 +99,21 @@ def test_available_exercises_filter_by_channel_and_capability() -> None:
     assert voice_ids.issubset(
         {definition.id for definition in iter_exercise_definitions()}
     )
+
+
+def test_legacy_skill_context_import_path_reexports_renderer() -> None:
+    from agent.skills.guided_exercises.skills import (
+        render_exercise_skill_context as legacy_render,
+    )
+
+    rendered = legacy_render(
+        EXERCISE_5_4_3_2_1,
+        current_step_index=0,
+        runtime_action="start",
+    )
+
+    assert "Exercise skill:" in rendered
+    assert f"- skill_id: {EXERCISE_5_4_3_2_1}" in rendered
 
 
 def test_build_exercise_skill_rejects_unknown_exercise() -> None:

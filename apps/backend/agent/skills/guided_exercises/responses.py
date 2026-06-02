@@ -18,7 +18,9 @@ from agent.skills.guided_exercises.registry import (
     get_exercise_display_name,
     get_exercise_steps,
 )
-from agent.skills.guided_exercises.skills import render_exercise_skill_context
+from agent.skills.guided_exercises.rendering.skill_context import (
+    render_exercise_skill_context,
+)
 from agent.skills.guided_exercises.state import (
     _advance_step_delta,
     _get_current_step,

@@ -17,7 +17,9 @@ from agent.skills.guided_exercises.registry import (
     available_exercise_definitions,
     get_exercise_definition,
 )
-from agent.skills.guided_exercises.skills import render_exercise_skill_context
+from agent.skills.guided_exercises.rendering.skill_context import (
+    render_exercise_skill_context,
+)
 
 
 class GuidedExerciseSkillSummary(BaseModel):
