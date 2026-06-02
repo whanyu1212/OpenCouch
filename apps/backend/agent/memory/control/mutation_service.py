@@ -11,7 +11,7 @@ from agent.memory.control.types import (
     MemoryControlServiceResult,
     PreferenceRuleDecision,
 )
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 
 
 def _build_preference_rule_prompt(

@@ -68,7 +68,7 @@ from agent.runtime.types import (
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
 )
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
 from agent.specialists.therapeutic_prompts import build_therapeutic_response_prompt
 from agent.skills.guided_exercises.lifecycle import GuidedExerciseSkillService

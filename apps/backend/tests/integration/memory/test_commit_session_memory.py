@@ -39,7 +39,7 @@ from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import run_commit_session_memory
 from agent.runtime.session.history import session_conversation_from_transcript
 from agent.runtime import PersistentAgentRuntime
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 

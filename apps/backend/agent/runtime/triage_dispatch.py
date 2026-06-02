@@ -15,7 +15,7 @@ from agent.runtime.session.state import format_recent_history
 from agent.runtime.state_ops import apply_state_delta
 from agent.runtime.turn_dispatch import state_delta_for_turn_dispatch
 from agent.runtime.types import TextRuntimeConfig
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 
 from agent.runtime.state_ops import apply_state_delta
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.skills.guided_exercises.registry import (
     available_exercise_definitions,
     iter_exercise_selection_aliases,

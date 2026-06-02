@@ -12,7 +12,7 @@ from agent.runtime import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded import build_grounded_lookup_delta
 from agent.tools.grounded_search import (

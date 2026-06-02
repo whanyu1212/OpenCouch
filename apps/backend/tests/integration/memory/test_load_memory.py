@@ -38,7 +38,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
 from agent.runtime.turn_finalization import finalize_assistant_turn_delta
 from agent.runtime.memory_context import build_turn_memory_delta
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from agent.memory.entries import format_working_memory_entry
 
@@ -542,7 +542,7 @@ class TestSpeculativeMemoryPrefetch:
         from contextlib import suppress
 
         from agent.runtime import PersistentAgentRuntime
-        from agent.runtime_context import PrefetchedTurnMemory
+        from agent.runtime.workflow_context import PrefetchedTurnMemory
 
         runtime = PersistentAgentRuntime(
             sqlite_path=tmp_path / "threads.sqlite3",
@@ -574,7 +574,7 @@ class TestSpeculativeMemoryPrefetch:
         import asyncio
 
         from agent.memory.retrieval.service import load_memory_for_turn
-        from agent.runtime_context import PrefetchedTurnMemory
+        from agent.runtime.workflow_context import PrefetchedTurnMemory
 
         store = OpenCouchMemoryStore()
         await store.aput(
@@ -625,7 +625,7 @@ class TestSpeculativeMemoryPrefetch:
 
         import asyncio
 
-        from agent.runtime_context import PrefetchedTurnMemory
+        from agent.runtime.workflow_context import PrefetchedTurnMemory
 
         async def _boom() -> Any:
             raise RuntimeError("simulated speculation failure")
@@ -673,7 +673,7 @@ class TestSpeculativeMemoryPrefetch:
         import asyncio
 
         from agent.memory.retrieval.service import load_memory_for_turn
-        from agent.runtime_context import PrefetchedTurnMemory
+        from agent.runtime.workflow_context import PrefetchedTurnMemory
 
         store = OpenCouchMemoryStore()
         await store.aput(

@@ -19,7 +19,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.types import TurnDispatchDecision
 from agent.models import AgentInput
 from agent.runtime import build_initial_state
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.runtime.services import TextRuntimeServices
 from agent.runtime.state_ops import finalize_openai_turn
 from agent.specialists.crisis import CRISIS_AGENT_NAME

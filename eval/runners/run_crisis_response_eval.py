@@ -32,7 +32,7 @@ from agent.memory.modes import MemoryMode  # noqa: E402
 from agent.memory.store import OpenCouchMemoryStore  # noqa: E402
 from agent.models import AgentInput  # noqa: E402
 from agent.runtime import OpenAITextRuntime, build_initial_state  # noqa: E402
-from agent.runtime_context import WorkflowContext  # noqa: E402
+from agent.runtime.workflow_context import WorkflowContext  # noqa: E402
 from tests.support.openai_text import (  # noqa: E402
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,

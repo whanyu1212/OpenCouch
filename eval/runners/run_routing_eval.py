@@ -32,7 +32,7 @@ from agent.memory.modes import MemoryMode  # noqa: E402
 from agent.memory.store import OpenCouchMemoryStore  # noqa: E402
 from agent.models import AgentInput  # noqa: E402
 from agent.runtime import OpenAITextRuntime, build_initial_state  # noqa: E402
-from agent.runtime_context import WorkflowContext  # noqa: E402
+from agent.runtime.workflow_context import WorkflowContext  # noqa: E402
 from eval.runners.helpers.judge import make_judge_client  # noqa: E402
 from eval.types.quality import SessionQualityJudgeResult  # noqa: E402
 from llm.base import BaseLLMClient  # noqa: E402

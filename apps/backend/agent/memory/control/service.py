@@ -37,7 +37,7 @@ from agent.memory.control.types import (
     PreferenceRuleDecision,
 )
 from agent.memory.modes import MemoryMode
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 
 __all__ = [
     "MemoryControlRequest",

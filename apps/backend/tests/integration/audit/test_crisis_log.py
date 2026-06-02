@@ -34,7 +34,7 @@ from agent.audit.summary import summarize_crisis_log_records
 from agent.guardrails.service import CrisisAssessmentSchema
 from agent.audit.crisis_log import write_crisis_log
 from agent.models import AgentInput, CrisisAssessment, ResponseCategory
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.persistence import FakeCrossRestartLLM

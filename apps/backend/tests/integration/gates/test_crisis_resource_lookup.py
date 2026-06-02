@@ -11,7 +11,7 @@ from agent.runtime import build_initial_state
 from agent.tools.crisis import build_crisis_resource_lookup_delta
 from agent.memory.modes import MemoryMode
 from agent.models import AgentInput, CrisisAssessment
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 

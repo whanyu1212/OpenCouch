@@ -23,7 +23,7 @@ from agent.runtime.session.history import (
     strip_recent_history_from_prompt,
 )
 from agent.runtime.services import TextRuntimeServices
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_INSTRUCTIONS
 
 
