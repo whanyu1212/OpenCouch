@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent.skills.guided_exercises.skill_docs import get_guided_exercise_skill_doc
 from agent.skills.guided_exercises.registry import get_exercise_definition
 from agent.skills.guided_exercises.types import CompletionMode, ExerciseDefinition
 
@@ -98,13 +99,18 @@ def render_exercise_skill_context(
         f"- duration_seconds: {_format_optional_int(skill.duration_seconds)}",
         f"- supported_channels: {_format_tuple(skill.supported_channels)}",
         f"- required_capability: {skill.required_capability or 'none'}",
-        "Operating boundaries:",
-        "- Use this skill only because the application runtime selected it.",
-        "- Follow the current runtime step exactly; do not skip, reorder, or add steps.",
-        "- Rephrase step instructions naturally without changing the task.",
-        "- Keep the reply brief and paced for one exercise turn.",
-        "- If the runtime action is exit or complete, do not start another exercise.",
     ]
+    lines.extend(_skill_doc_guidance(exercise_type))
+    lines.extend(
+        [
+            "Operating boundaries:",
+            "- Use this skill only because the application runtime selected it.",
+            "- Follow the current runtime step exactly; do not skip, reorder, or add steps.",
+            "- Rephrase step instructions naturally without changing the task.",
+            "- Keep the reply brief and paced for one exercise turn.",
+            "- If the runtime action is exit or complete, do not start another exercise.",
+        ]
+    )
 
     if current_step_index is not None:
         step = _step_at(skill, current_step_index)
@@ -131,6 +137,16 @@ def render_exercise_skill_context(
             details.append(f"min_items={step.min_items}")
         lines.append(f"- {'; '.join(details)}")
     return "\n".join(lines)
+
+
+def _skill_doc_guidance(exercise_type: str) -> list[str]:
+    skill_doc = get_guided_exercise_skill_doc(exercise_type)
+    if skill_doc is None:
+        return []
+    return [
+        "Skill document guidance:",
+        skill_doc.body,
+    ]
 
 
 def _skill_from_definition(definition: ExerciseDefinition) -> ExerciseSkill:
